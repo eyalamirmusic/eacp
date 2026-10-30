@@ -54,24 +54,29 @@ EACP_FAULT_NO_INLINE void runFaultOnBackgroundThread(const Fault& fault)
     auto pauses = pausesBackgroundWatch.load();
 
     if (pauses)
-        Threads::pauseThreadWatch();
+        pauseHangDetection();
 
     fault.trigger();
 
     if (pauses)
-        Threads::resumeThreadWatch();
+        resumeHangDetection();
 
     returnedBackgroundFaults.fetch_add(1);
 }
 
+// Named, and alive once, so a stall on it is reported under that name.
 void startBackgroundThread(const Callback& body)
 {
-    auto options = Threads::ThreadOptions {};
-    options.watchName = std::string {backgroundWatchName};
+    auto watchedBody = [body]
+    {
+        Detail::setCurrentThreadName(backgroundWatchName);
+        sendHeartbeat();
+        body();
+    };
 
     auto& registry = Singleton::getImmortal<BackgroundThreads>();
     auto lock = std::lock_guard {registry.mutex};
-    registry.threads.createNew(options, body);
+    registry.threads.createNew(watchedBody);
 }
 
 void setPausesBackgroundWatch(bool shouldPause)

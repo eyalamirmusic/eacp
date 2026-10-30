@@ -594,6 +594,23 @@ std::uint64_t getCurrentThreadId()
     return ::GetCurrentThreadId();
 }
 
+std::string getCurrentThreadName()
+{
+    auto* description = PWSTR {};
+
+    if (FAILED(::GetThreadDescription(::GetCurrentThread(), &description)))
+        return {};
+
+    auto name = Strings::narrow(description);
+    ::LocalFree(description);
+    return name;
+}
+
+void setCurrentThreadName(std::string_view name)
+{
+    ::SetThreadDescription(::GetCurrentThread(), Strings::widen(name).c_str());
+}
+
 // The handler process watches the heartbeat and samples from outside.
 void startHangWatchdog(SharedState&) {}
 void stopHangWatchdog() {}

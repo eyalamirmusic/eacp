@@ -88,15 +88,6 @@ std::uint64_t getSteadyMilliseconds()
     return static_cast<std::uint64_t>(milliseconds.count());
 }
 
-std::uint64_t getWatchThreshold(const SharedHangInfo& hang,
-                                const SharedWatchedThread& thread)
-{
-    if (hang.thresholdMilliseconds == 0 || thread.thresholdMilliseconds == 0)
-        return hang.thresholdMilliseconds;
-
-    return thread.thresholdMilliseconds;
-}
-
 std::uint64_t findStallDuration(const SharedHangInfo& hang,
                                 const SharedWatchedThread& thread,
                                 std::uint64_t now,
@@ -106,7 +97,7 @@ std::uint64_t findStallDuration(const SharedHangInfo& hang,
     auto heartbeat =
         thread.lastHeartbeatMilliseconds.load(std::memory_order_acquire);
     auto isPaused = thread.pauseDepth.load(std::memory_order_acquire) > 0;
-    auto threshold = getWatchThreshold(hang, thread);
+    auto threshold = hang.thresholdMilliseconds;
 
     if (!isLive || heartbeat == 0 || isPaused || threshold == 0 || now < heartbeat)
         return 0;
@@ -121,7 +112,6 @@ std::uint64_t findStallDuration(const SharedHangInfo& hang,
 
 std::optional<std::size_t> claimWatchedThread(SharedHangInfo& hang,
                                               std::string_view name,
-                                              std::uint64_t thresholdMilliseconds,
                                               std::uint64_t threadId)
 {
     for (auto slot = mainThreadSlot + 1; slot < maxWatchedThreads; ++slot)
@@ -135,10 +125,9 @@ std::optional<std::size_t> claimWatchedThread(SharedHangInfo& hang,
 
         thread.generation.fetch_add(1, std::memory_order_acq_rel);
         thread.pauseDepth.store(0, std::memory_order_relaxed);
-        thread.thresholdMilliseconds = thresholdMilliseconds;
+        thread.lastHeartbeatMilliseconds.store(0, std::memory_order_relaxed);
         thread.threadId = threadId;
         copyBoundedText(thread.name, name);
-        sendWatchedThreadHeartbeat(thread);
         thread.status.store(watchedThreadLive, std::memory_order_release);
         return slot;
     }
@@ -150,7 +139,6 @@ void watchMainThread(SharedHangInfo& hang, std::uint64_t threadId)
 {
     auto& thread = hang.threads[mainThreadSlot];
     thread.generation.fetch_add(1, std::memory_order_acq_rel);
-    thread.thresholdMilliseconds = 0;
     thread.threadId = threadId;
     copyBoundedText(thread.name, mainThreadName);
     thread.status.store(watchedThreadLive, std::memory_order_release);
@@ -160,6 +148,19 @@ void releaseWatchedThread(SharedWatchedThread& thread)
 {
     thread.lastHeartbeatMilliseconds.store(0, std::memory_order_release);
     thread.status.store(watchedThreadFree, std::memory_order_release);
+}
+
+void releaseWatchedThreadWithId(SharedHangInfo& hang, std::uint64_t threadId)
+{
+    for (auto slot = mainThreadSlot + 1; slot < maxWatchedThreads; ++slot)
+    {
+        auto& thread = hang.threads[slot];
+        auto isLive =
+            thread.status.load(std::memory_order_acquire) == watchedThreadLive;
+
+        if (isLive && thread.threadId == threadId)
+            releaseWatchedThread(thread);
+    }
 }
 
 void sendWatchedThreadHeartbeat(SharedWatchedThread& thread)

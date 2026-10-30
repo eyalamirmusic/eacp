@@ -70,10 +70,10 @@ constexpr auto hangReason = "Hang";
 constexpr auto messageEventReason = "Message";
 constexpr auto exceptionEventReason = "Exception";
 
-// A crash ended the app; a hang is a watched thread (the main one, or a
-// ThreadWatch's) that stopped sending heartbeats, and an event is one the app reported
-// itself (captureMessage, captureException); the app was left running after
-// both.
+// A crash ended the app. A hang is a watched thread (the main one, or one that
+// has called sendHeartbeat) that stopped sending heartbeats. An event is one the
+// app reported itself (captureMessage, captureException). After a hang or an
+// event the app is still running.
 enum class ReportKind
 {
     crash,
@@ -153,15 +153,18 @@ struct CrashReport
     // for a hang. 0 for a crash.
     std::int64_t hangDurationMilliseconds = 0;
 
-    // For a hang, the stalled thread's watch name ("main" for the main
-    // thread). Empty for a crash.
+    // For a hang, the stalled thread's name as the OS knows it ("main" for the
+    // main thread). Empty for a crash.
     std::string threadName;
 
-    // For a hang, every watched thread found silent in the same check, the
-    // first of them crashingThread: two for a deadlock between watched threads.
+    // In a hang report, every watched thread that had stopped sending heartbeats
+    // when the hang was detected, each with its stack; the first is also
+    // crashingThread. Two threads deadlocked on each other appear here together.
     Vector<CrashedThread> stalledThreads;
 
-    // Empty where no minidump was written (macOS has no writer yet).
+    // Empty for an event, for a macOS crash caught only by the in-app signal
+    // handler (captureMachExceptions off or its handshake failed), and when
+    // writing the minidump failed.
     FilePath minidumpPath;
 
     // The module's own keys: appName, appVersion, os, release, environment,

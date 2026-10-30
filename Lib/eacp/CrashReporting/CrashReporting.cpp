@@ -1,6 +1,5 @@
 #include "CrashReporting.h"
 #include "CrashReportingPlatform.h"
-#include "ThreadWatch.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -40,8 +39,9 @@ struct CrashReportingSession
     std::optional<std::reference_wrapper<Detail::SharedState>> sharedState;
     std::atomic<bool> heartbeatRunning {false};
 
-    // Set once sharedState is, for the lock-free reads a ThreadWatch heartbeat makes.
+    // Set once sharedState is, for the lock-free reads a heartbeat makes.
     std::atomic<bool> threadsWatched {false};
+    std::atomic<bool> workerThreadsWatched {false};
 };
 
 CrashReportingSession& getSession()
@@ -256,14 +256,13 @@ void writeHangSettings(Detail::SharedState& state, const Options& options)
     hang.thresholdMilliseconds = Detail::countMilliseconds(options.hangThreshold);
     hang.pollIntervalMilliseconds =
         Detail::countMilliseconds(options.heartbeatInterval);
+
+    if (!options.detectMainThreadHangs)
+        return;
+
     Detail::watchMainThread(hang, Detail::getCurrentThreadId());
     Detail::recordThreadForSampling(getMainThreadWatch(hang));
-}
-
-OwningPointer<Threads::ThreadWatchScope> openThreadWatch(std::string_view name,
-                                                         Time::MS threshold)
-{
-    return makeOwned<ThreadWatch>(name, threshold);
+    Detail::useMainSlotOnCurrentThread();
 }
 
 void armHangDetection(CrashReportingSession& session, Detail::SharedState& state)
@@ -273,11 +272,21 @@ void armHangDetection(CrashReportingSession& session, Detail::SharedState& state
     if (hang.thresholdMilliseconds == 0 || hang.pollIntervalMilliseconds == 0)
         return;
 
-    session.heartbeatRunning = true;
     session.threadsWatched = true;
-    scheduleHeartbeat(session, hang);
+
+    if (session.options.detectMainThreadHangs)
+    {
+        session.heartbeatRunning = true;
+        scheduleHeartbeat(session, hang);
+    }
+
+    if (session.options.detectWorkerThreadHangs)
+    {
+        session.workerThreadsWatched = true;
+        Detail::setReleasesWatchOnThreadEnd(true);
+    }
+
     Detail::startHangWatchdog(state);
-    Threads::setThreadWatchFactory(openThreadWatch);
 }
 
 Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
@@ -409,9 +418,10 @@ void stop()
     if (!session.started || !session.sharedState)
         return;
 
-    Threads::setThreadWatchFactory({});
     Detail::stopHangWatchdog();
     session.heartbeatRunning = false;
+    session.workerThreadsWatched = false;
+    Detail::setReleasesWatchOnThreadEnd(false);
     session.threadsWatched = false;
     Detail::uninstallCrashHandlers();
     Detail::setStackOverflowStackOnNewThreads(false);
@@ -470,31 +480,17 @@ void addBreadcrumb(const Breadcrumb& breadcrumb)
         });
 }
 
-void pauseHangDetection()
-{
-    writeToSharedState(
-        [](Detail::SharedState& state)
-        { Detail::pauseWatchedThread(getMainThreadWatch(state.hang)); });
-}
-
-void resumeHangDetection()
-{
-    writeToSharedState(
-        [](Detail::SharedState& state)
-        { Detail::resumeWatchedThread(getMainThreadWatch(state.hang)); });
-}
-
 namespace
 {
 void deliverEvent(const CrashReport& report)
 {
     try
     {
-        createRegisteredCrashHandler()->eventReported(report);
+        createRegisteredCrashHandler()->reportWritten(report);
     }
     catch (const std::exception& error)
     {
-        Console::printError(std::string {"eventReported threw: "} + error.what());
+        Console::printError(std::string {"reportWritten threw: "} + error.what());
     }
 }
 } // namespace
@@ -580,5 +576,10 @@ std::optional<std::reference_wrapper<SharedHangInfo>> findWatchedHangInfo()
         return std::nullopt;
 
     return session.sharedState->get().hang;
+}
+
+bool isWatchingWorkerThreads()
+{
+    return getSession().workerThreadsWatched.load(std::memory_order_acquire);
 }
 } // namespace eacp::CrashReporting::Detail

@@ -13,8 +13,9 @@
 #include <span>
 #include <string>
 
-// Reading a crashed app from the handler process through its task port: the
-// faulting thread's registers, its memory, its stack and its images.
+// Run in the handler process after the app has crashed. Through the app's task
+// port (the handle that lets one macOS process read another) they read the
+// crashed thread's registers, the app's memory, its stack and loaded libraries.
 namespace eacp::CrashReporting::Detail
 {
 #if defined(__arm64__)

@@ -87,13 +87,19 @@ struct Options
     Vector<FilePath> attachments;
 
     // How often the main thread's heartbeat is written, from a timer on the
-    // event loop, and how long it may go silent before that is reported as a
-    // hang. A zero threshold turns hang detection off.
+    // event loop, and how long any watched thread may go silent before that
+    // is reported as a hang. A zero threshold turns hang detection off.
     Time::MS heartbeatInterval {500};
     Time::MS hangThreshold {10000};
 
+    // The main thread, from start() on.
+    bool detectMainThreadHangs = true;
+
+    // Every other thread, from its first sendHeartbeat() on.
+    bool detectWorkerThreadHangs = true;
+
     StackOverflowReporting stackOverflowReporting =
-        StackOverflowReporting::startingThread;
+        StackOverflowReporting::everyThread;
 
     // macOS: faults reach the handler as Mach exceptions, read from outside
     // the app with a minidump. Off leaves only the in-app signal handler.
@@ -103,7 +109,7 @@ struct Options
     // Windows Error Reporting hands those crashes to eacp, so they are reported
     // with a stack like any other. It registers eacp's helper for the current
     // user; an installer can register it for all users in HKEY_LOCAL_MACHINE.
-    bool registerCrashHelperWithWindowsErrorReporting = false;
+    bool registerCrashHelperWithWindowsErrorReporting = true;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command
@@ -148,8 +154,14 @@ bool setUser(const User& user);
 void clearUser();
 bool addAttachment(const FilePath& path);
 
-// For main-thread work that is meant to take longer than the hang threshold.
-// Nests; the silence is measured afresh from resumeHangDetection.
+// Marks the calling thread alive. A thread is watched for hangs from its first
+// call, so one that waits without ever calling it is never reported. Its watch
+// is freed when it ends. Up to Detail::maxWatchedThreads - 1 threads beside the
+// main one; a thread that finds every slot taken stays unwatched. Lock-free.
+void sendHeartbeat();
+
+// For work on the calling thread that is meant to take longer than the hang
+// threshold. Nests; the silence is measured afresh from resumeHangDetection.
 void pauseHangDetection();
 void resumeHangDetection();
 
@@ -170,7 +182,7 @@ struct Event
 //
 // Writes a report of kind event, with the calling thread's stack and
 // everything a crash report carries but a minidump, into pending/, and hands
-// it to eventReported on the calling thread. The app keeps running and the
+// it to reportWritten on the calling thread. The app keeps running and the
 // handler process is not involved. The report's id; empty before start() or
 // when the report could not be written.
 std::string captureEvent(const Event& event);

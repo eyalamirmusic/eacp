@@ -9,43 +9,41 @@
 namespace eacp::CrashReporting
 {
 // What an app does with its crashes. One is registered per app with
-// EACP_REGISTER_CRASH_HANDLER, and the reporter makes its own instances:
-//
-// crashReported runs in the handler process, once the report is on disk and the
-// crashed app is gone, so it may allocate, open windows and take as long as it
-// likes; the handler exits when it returns. Apps::commandLineArgs() there is
-// the executable followed by Options::handlerArguments.
-//
-// hangReported runs in the handler process too, once a hang's report is on
-// disk; the app is still running, and the handler goes back to watching it
-// when this returns, so it returns promptly (a window is a process of its own).
-//
-// eventReported runs in the app, on the thread that called captureEvent, once
-// the event's report is on disk; the report stays in pending/ like any other.
-//
-// pendingReportFound runs in the app on the message thread, after start() has
-// returned and the event loop has started, once per report still in pending/ on
-// each launch until markReportHandled moves it to handled/, hangs included
-// (CrashReport::kind tells them apart). That includes a
-// folder a capture left without its report.json. It runs on the loop, so long
-// work (an upload) is started asynchronously from it, never awaited in it.
-//
-// handlerUnavailable runs in the app on the message thread, once, when start()
-// could not bring the handler process up; crashes then go unreported.
-//
-// unreportedExit runs in the app on the message thread, once, when start()
-// finds the session marker of a run that ended without a clean exit and left
-// no crash report: the handler was gone, or the process was killed.
+// EACP_REGISTER_CRASH_HANDLER, and the reporter makes its own instances.
+// A std::exception a callback throws is logged and dropped.
 struct CrashHandler
 {
     virtual ~CrashHandler() = default;
 
-    virtual void crashReported(const CrashReport&) {}
-    virtual void hangReported(const CrashReport&) {}
-    virtual void eventReported(const CrashReport&) {}
-    virtual void pendingReportFound(const CrashReport&) {}
-    virtual void handlerUnavailable(const std::string&) {}
-    virtual void unreportedExit(const AppSession&) {}
+    // Called once a report is on disk; report.kind says which and where:
+    // - crash: in the handler process, the app already gone, so it may open a
+    //   window or upload and take as long as it likes; the handler exits when it
+    //   returns. Apps::commandLineArgs() there holds Options::handlerArguments.
+    // - hang: in the handler process, the app still running; return promptly,
+    //   since the handler resumes watching after (a window is its own process).
+    // - event: in the app, on the thread that called captureEvent.
+    // Typically: show the report, or send it to your service.
+    virtual void reportWritten([[maybe_unused]] const CrashReport& report) {}
+
+    // Called in the app on the message thread, after start(), once per report
+    // still in pending/ (crashes, hangs and events from earlier runs, and folders
+    // a capture left without report.json), on every launch until
+    // markReportHandled. Typically: start an upload asynchronously, then mark it
+    // handled when it succeeds; never block the loop here.
+    virtual void pendingReportFound([[maybe_unused]] const CrashReport& report) {}
+
+    // Called once at startup, on the message thread, when the handler process
+    // could not start, so crashes in this run will not be reported. `reason` is
+    // a sentence for logging, e.g. that the handler did not start within N ms.
+    // Typically: log it or send it to analytics.
+    virtual void handlerUnavailable([[maybe_unused]] const std::string& reason) {}
+
+    // Called on the next launch, on the message thread, when the previous run
+    // ended without a clean exit and left no crash report (the handler was gone,
+    // or the process was killed). Typically: count it as an unexplained exit.
+    virtual void unreportedExit([[maybe_unused]] const AppSession& previousSession)
+    {
+    }
 };
 
 using CrashHandlerFactory = std::function<OwningPointer<CrashHandler>()>;
@@ -62,8 +60,13 @@ struct CrashHandlerRegistration
 } // namespace Detail
 } // namespace eacp::CrashReporting
 
+// Named by line rather than by type, so a qualified type name works.
+#define EACP_CRASH_HANDLER_CONCATENATE(first, second) first##second
+#define EACP_CRASH_HANDLER_REGISTRATION_NAME(line)                                  \
+    EACP_CRASH_HANDLER_CONCATENATE(eacpCrashHandlerRegistration, line)
+
 #define EACP_REGISTER_CRASH_HANDLER(HandlerType)                                    \
-    static const auto eacpCrashHandlerRegistration##HandlerType =                   \
+    static const auto EACP_CRASH_HANDLER_REGISTRATION_NAME(__LINE__) =              \
         ::eacp::CrashReporting::Detail::CrashHandlerRegistration                    \
     {                                                                               \
         [] { return ::eacp::makeOwned<HandlerType>(); }                             \

@@ -127,12 +127,7 @@ int deliverReportInHandler(const CrashReport& report)
 {
     try
     {
-        auto handler = createRegisteredCrashHandler();
-
-        if (report.kind == ReportKind::hang)
-            handler->hangReported(report);
-        else
-            handler->crashReported(report);
+        createRegisteredCrashHandler()->reportWritten(report);
 
         return 0;
     }

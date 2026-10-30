@@ -10,6 +10,7 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashHandler.h>
 #include <eacp/CrashReporting/CrashReporting.h>
+#include <eacp/CrashReporting/CrashReportingPlatform.h>
 #include <eacp/CrashReporting/Faults/Faults.h>
 
 #include <algorithm>
@@ -55,8 +56,11 @@ std::optional<StackOverflowReporting> findReporting(std::string_view name)
 
 struct CrashingProcessCrashHandler final : CrashHandler
 {
-    void eventReported(const CrashReport& report) override
+    void reportWritten(const CrashReport& report) override
     {
+        if (report.kind != ReportKind::event)
+            return;
+
         Console::print(std::string {crashingProcessEventLine} + report.id + " ("
                        + report.reason + ": " + report.message + ")");
     }
@@ -98,6 +102,8 @@ struct CrashingProcessSettings
     bool skipsCrashReporting = false;
     bool signalsOnly = false;
     bool withoutWindowsErrorReportingHelper = false;
+    bool withoutWorkerHangDetection = false;
+    std::string workerBehaviour;
     std::string probe;
     std::string eventKind;
     std::string libraryFunction;
@@ -124,6 +130,7 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
     options.captureMachExceptions = !settings.signalsOnly;
     options.registerCrashHelperWithWindowsErrorReporting =
         !settings.withoutWindowsErrorReportingHelper;
+    options.detectWorkerThreadHangs = !settings.withoutWorkerHangDetection;
     options.environment = testEnvironment;
     options.attachments = {writeSessionLog()};
 
@@ -216,6 +223,54 @@ int crashNow(const CrashingProcessSettings& settings)
     return Apps::run<FaultApp>(fault->get(), *thread, settings.pausesHangDetection);
 }
 
+// Each sends one heartbeat and ends, more of them than there are slots, so the
+// stalling worker after them gets one only if each was freed.
+void runFinishedWorkers()
+{
+    constexpr auto finishedWorkerCount = Detail::maxWatchedThreads * 2;
+
+    for (auto index = std::size_t {0}; index < finishedWorkerCount; ++index)
+    {
+        auto worker = std::thread {[] { sendHeartbeat(); }};
+        worker.join();
+    }
+}
+
+void runWorker(std::string_view behaviour)
+{
+    constexpr auto heartbeatsBeforeStalling = 3;
+    Detail::setCurrentThreadName(crashingProcessWorkerName);
+
+    if (behaviour != "silent")
+    {
+        for (auto index = 0; index < heartbeatsBeforeStalling; ++index)
+        {
+            sendHeartbeat();
+            Time::sleep(Options {}.heartbeatInterval);
+        }
+    }
+
+    Time::sleep(Faults::getHangDuration());
+    Threads::callAsync([] { Apps::quit(); });
+}
+
+// A plain std::thread, so nothing but start() and sendHeartbeat() watches it;
+// it quits the app once its stall is over.
+struct WorkerApp
+{
+    explicit WorkerApp(const std::string& behaviour)
+    {
+        if (behaviour == "stall-after-finished-workers")
+            runFinishedWorkers();
+
+        worker = std::thread {[behaviour] { runWorker(behaviour); }};
+    }
+
+    ~WorkerApp() { worker.join(); }
+
+    std::thread worker;
+};
+
 // The library stays loaded for the rest of the process, which is short.
 int crashInLoadedLibrary(const CrashingProcessSettings& settings)
 {
@@ -294,6 +349,13 @@ int runCrashingProcess()
              settings.withoutWindowsErrorReportingHelper,
              "Windows: skip the Windows Error Reporting helper, so fast-fail "
              "and heap-corruption crashes get no stack");
+    cli.option("--worker",
+               settings.workerBehaviour,
+               "stall (heartbeats, then stalls), silent (stalls with no "
+               "heartbeat) or stall-after-finished-workers");
+    cli.flag("--without-worker-hang-detection",
+             settings.withoutWorkerHangDetection,
+             "Options::detectWorkerThreadHangs off");
     cli.flag("--kill-handler",
              settings.killsHandler,
              "end the handler process first, so the crash goes unreported");
@@ -326,6 +388,9 @@ int runCrashingProcess()
 
     if (!settings.libraryFunction.empty())
         return crashInLoadedLibrary(settings);
+
+    if (!settings.workerBehaviour.empty())
+        return Apps::run<WorkerApp>(settings.workerBehaviour);
 
     return crashNow(settings);
 }

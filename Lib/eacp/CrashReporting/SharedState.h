@@ -19,7 +19,7 @@
 namespace eacp::CrashReporting::Detail
 {
 constexpr auto sharedStateMagic = std::uint32_t {0xEAC9C4A5};
-constexpr auto sharedStateVersion = std::uint32_t {6};
+constexpr auto sharedStateVersion = std::uint32_t {7};
 
 constexpr auto maxMetadataEntries = std::size_t {64};
 constexpr auto maxBreadcrumbs = std::size_t {64};
@@ -122,7 +122,7 @@ constexpr auto watchedThreadClaiming = std::uint32_t {1};
 constexpr auto watchedThreadLive = std::uint32_t {2};
 
 // One thread whose heartbeat is watched: the main thread in mainThreadSlot, a
-// ThreadWatch's thread in any other. Only the owning thread writes it, and
+// thread that called sendHeartbeat in any other. Only the owning thread writes it, and
 // only while `status` is live does a watcher read it.
 struct SharedWatchedThread
 {
@@ -139,8 +139,6 @@ struct SharedWatchedThread
     // Nothing is reported while above 0.
     std::atomic<std::uint32_t> pauseDepth;
 
-    // 0 is SharedHangInfo::thresholdMilliseconds.
-    std::uint64_t thresholdMilliseconds;
     std::uint64_t threadId;
     BoundedText<maxThreadNameLength> name;
 
@@ -237,10 +235,6 @@ Vector<Breadcrumb> readSharedBreadcrumbs(const SharedState& state);
 // The steady clock the heartbeat is measured on, in milliseconds.
 std::uint64_t getSteadyMilliseconds();
 
-// The slot's threshold, or the session's when it names none.
-std::uint64_t getWatchThreshold(const SharedHangInfo& hang,
-                                const SharedWatchedThread& thread);
-
 // How long the thread has been silent when that is a hang to report: the slot
 // is live and has sent a heartbeat, detection is on and not paused, and the silence is
 // at least `grace` past the threshold. 0 otherwise.
@@ -250,11 +244,13 @@ std::uint64_t findStallDuration(const SharedHangInfo& hang,
                                 std::uint64_t grace);
 
 // Called on the thread to be watched. The slot index, or nullopt when every
-// slot but the main thread's is taken. The claim is the first heartbeat.
+// slot but the main thread's is taken. Silent until its first heartbeat.
 std::optional<std::size_t> claimWatchedThread(SharedHangInfo& hang,
                                               std::string_view name,
-                                              std::uint64_t thresholdMilliseconds,
                                               std::uint64_t threadId);
+
+// Frees the slot holding this thread, if one does.
+void releaseWatchedThreadWithId(SharedHangInfo& hang, std::uint64_t threadId);
 // The main thread's slot, live but silent until the event loop sends its first heartbeat.
 void watchMainThread(SharedHangInfo& hang, std::uint64_t threadId);
 void releaseWatchedThread(SharedWatchedThread& thread);

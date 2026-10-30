@@ -22,12 +22,12 @@ target_sources(eacp-crash-reporting PRIVATE
         CrashReporting.cpp
         HandlerReport.cpp
         SharedState.cpp
-        ThreadWatch.cpp)
+        ThreadHeartbeats.cpp)
 
 if (APPLE)
     target_sources(eacp-crash-reporting PRIVATE
             CrashClient-macOS.cpp
-            StackOverflowStack-macOS.cpp
+            ThreadHooks-macOS.cpp
             CrashHandlerProcess-macOS.cpp
             EventStack-macOS.cpp
             HangWatchdog-macOS.cpp
@@ -48,7 +48,7 @@ elseif (WIN32)
             CrashHandlerProcess-Windows.cpp
             EventStack-Windows.cpp
             ExceptionNames-Windows.cpp
-            StackOverflowStack-Windows.cpp
+            ThreadHooks-Windows.cpp
             SymbolNames-Windows.cpp)
     target_link_libraries(eacp-crash-reporting PRIVATE dbghelp)
     add_subdirectory(WindowsErrorReporting)

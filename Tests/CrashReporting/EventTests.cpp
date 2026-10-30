@@ -31,7 +31,7 @@ bool hasCallerFrame(const CrashReport& report, std::string_view caller)
         { return frame.symbol.find(caller) != std::string::npos; });
 }
 
-// The app reports the event, hands it to eventReported, and goes on to exit
+// The app reports the event, hands it to reportWritten, and goes on to exit
 // normally; nothing marks the run as crashed.
 CrashReport checkEvent(std::string_view kind, std::string_view caller)
 {

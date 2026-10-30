@@ -677,4 +677,19 @@ std::uint64_t getCurrentThreadId()
     return threadId;
 }
 
+std::string getCurrentThreadName()
+{
+    auto name = std::array<char, maxThreadNameLength> {};
+
+    if (::pthread_getname_np(::pthread_self(), name.data(), name.size()) != 0)
+        return {};
+
+    return name.data();
+}
+
+void setCurrentThreadName(std::string_view name)
+{
+    ::pthread_setname_np(std::string {name}.c_str());
+}
+
 } // namespace eacp::CrashReporting::Detail

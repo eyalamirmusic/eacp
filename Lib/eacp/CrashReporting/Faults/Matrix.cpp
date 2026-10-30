@@ -209,7 +209,7 @@ ExpectedOutcome expectStall(Lane lane, ThreadChoice thread)
     {
         outcome.pullRequest = threadWatchPullRequest;
         outcome.note =
-            "the background fault thread is a watched worker (ThreadWatch)";
+            "the background fault thread sends a heartbeat before it stalls";
     }
 
     if (isArm64Windows(lane))

@@ -52,6 +52,10 @@ void installCrashHandlers(SharedState& state);
 bool installStackOverflowStackOnCurrentThread();
 void setStackOverflowStackOnNewThreads(bool shouldInstall);
 
+// Through the same per-thread hook: each thread that ends frees its watch slot.
+void setReleasesWatchOnThreadEnd(bool shouldRelease);
+void releaseWatchOfThread(std::uint64_t threadId);
+
 bool isHandlerProcessRunning();
 
 // Ends the handler process without telling it, as if it had died: the crash
@@ -82,6 +86,12 @@ std::uint64_t countMilliseconds(Time::MS duration);
 // The block start() made, while the session is started and watching for hangs.
 std::optional<std::reference_wrapper<SharedHangInfo>> findWatchedHangInfo();
 
+// Whether a thread's first sendHeartbeat claims it a slot.
+bool isWatchingWorkerThreads();
+
+// Makes the calling thread's heartbeat, pause and resume act on the main slot.
+void useMainSlotOnCurrentThread();
+
 // Records what the in-app watchdog needs to sample the calling thread later
 // (macOS); nothing on Windows.
 void recordThreadForSampling(SharedWatchedThread& thread);
@@ -91,6 +101,10 @@ std::uint64_t getCurrentProcessId();
 
 // The OS's id for the calling thread, as a report names it.
 std::uint64_t getCurrentThreadId();
+
+// The name the OS holds for the calling thread; empty when it has none.
+std::string getCurrentThreadName();
+void setCurrentThreadName(std::string_view name);
 
 // Launches `<executable> <handlerFlag> <database> <channel> -- <arguments>`.
 Vector<std::string> makeHandlerCommandLine(const HandlerLaunch& launch,
@@ -117,7 +131,6 @@ bool finishHandlerReport(const ReportDatabase& database,
                          CrashReport& report,
                          const SharedState& state);
 
-// crashReported, or hangReported for a hang, catching whatever it throws: the
-// handler's exit code.
+// reportWritten, catching whatever it throws: the handler's exit code.
 int deliverReportInHandler(const CrashReport& report);
 } // namespace eacp::CrashReporting::Detail
