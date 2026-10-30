@@ -17,6 +17,15 @@ if (LINUX AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endforeach ()
 endif ()
 
+# GCC exempts the main file's own types from -Wsubobject-linkage, and in a unity
+# batch every source is an include, so each anonymous-namespace member warns.
+# Directory-scoped because the test executables never pass through
+# set_default_warnings_level.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(
+            "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<BOOL:$<TARGET_PROPERTY:UNITY_BUILD>>>:-Wno-subobject-linkage>")
+endif ()
+
 function(eacp_bundle_plist_template out_var)
     if (IOS)
         set(${out_var} "${EACP_IOS_PLIST}" PARENT_SCOPE)
@@ -128,7 +137,9 @@ endfunction()
 
 # For a vendored dependency, whose warnings are not ours to fix and whose noise is
 # how eacp's own warnings get missed. The flag is appended after the dependency
-# set its own, so it wins. Targets with no compile line of their own are skipped.
+# set its own, so it wins; on MSVC the dependency's own level is dropped first,
+# since cl reports D9025 for a /w overriding a /W4. Targets with no compile line
+# of their own are skipped.
 function(silence_target_warnings target)
     get_target_property(type ${target} TYPE)
 
@@ -137,6 +148,13 @@ function(silence_target_warnings target)
     endif ()
 
     if (MSVC)
+        get_target_property(options ${target} COMPILE_OPTIONS)
+
+        if (options)
+            list(FILTER options EXCLUDE REGEX "^[/-](W[0-4]|Wall)$")
+            set_target_properties(${target} PROPERTIES COMPILE_OPTIONS "${options}")
+        endif ()
+
         target_compile_options(${target} PRIVATE /w)
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${target} PRIVATE -w)
