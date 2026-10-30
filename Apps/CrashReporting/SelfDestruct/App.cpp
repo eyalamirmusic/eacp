@@ -1,8 +1,7 @@
-#include "PersistentState.h"
+#include "App.h"
 #include "ReportWindow.h"
 
 #include <eacp/Core/App/Args.h>
-#include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashReporting.h>
@@ -10,9 +9,11 @@
 #include <eacp/CrashReporting/Faults/Matrix.h>
 #include <eacp/UI/UI.h>
 
+#include <atomic>
+
 // An app that crashes itself on purpose, one button per way to die, so the
 // crash reporter can be watched end to end: the fault, the handler process
-// writing pending/<id>/report.json, and that handler's crashReported opening
+// writing pending/<id>/report.json, and that handler's reportWritten opening
 // a window with the report in it.
 //
 //   SelfDestruct                                   the window of buttons
@@ -52,61 +53,9 @@ constexpr auto expectationHeight = 34.f;
 constexpr auto dangerColour = UI::Color {0.86f, 0.27f, 0.25f};
 constexpr auto runningColour = UI::Color {0.42f, 0.8f, 0.5f};
 constexpr auto stoppedColour = UI::Color {1.f, 0.62f, 0.3f};
-constexpr auto projectName = "eacp SelfDestruct";
-constexpr auto noReportWindowFlag = "--no-report-window";
-constexpr auto showReportFlag = "--show-report";
 constexpr auto hangBeyondThreshold = Time::MS {2000};
-constexpr auto demoEnvironment = "demo";
-constexpr auto demoUserId = "self-destruct-user";
-constexpr auto demoUserEmail = "user@example.com";
-constexpr auto demoUserName = "selfdestruct";
-
-struct SelfDestructCrashHandler final : CrashReporting::CrashHandler
-{
-    void crashReported(const CrashReporting::CrashReport& report) override
-    {
-        auto noReportWindow = false;
-        auto cli = Args::Parser {"SelfDestruct crash handler"};
-        cli.flag(noReportWindowFlag, noReportWindow, "write the report and exit");
-
-        if (cli.exitCodeFor(cli.parse()) || noReportWindow)
-            return;
-
-        SelfDestruct::runReportWindow(report);
-    }
-
-    // The app is still running and the handler goes back to watching it, so
-    // the window is a process of its own.
-    void hangReported(const CrashReporting::CrashReport& report) override
-    {
-        auto noReportWindow = false;
-        auto cli = Args::Parser {"SelfDestruct crash handler"};
-        cli.flag(noReportWindowFlag, noReportWindow, "write the report and exit");
-
-        if (cli.exitCodeFor(cli.parse()) || noReportWindow)
-            return;
-
-        auto options = Processes::ProcessOptions {};
-        options.executable = Files::executablePath().str();
-        options.arguments = {showReportFlag, report.folder.str()};
-        options.detached = true;
-        auto window = Processes::Process {options};
-    }
-
-    void eventReported(const CrashReporting::CrashReport& report) override
-    {
-        Console::print("SelfDestruct: event " + report.id + " (" + report.reason
-                       + ": " + report.message + ")");
-    }
-
-    void pendingReportFound(const CrashReporting::CrashReport& report) override
-    {
-        Console::print("SelfDestruct: pending report " + report.id + " ("
-                       + report.reason + ")");
-    }
-};
-
-EACP_REGISTER_CRASH_HANDLER(SelfDestructCrashHandler);
+constexpr auto encoderChunkDuration = Time::MS {10};
+constexpr auto encoderStallDuration = Time::MS {10000};
 
 std::string describeHandlerStatus()
 {
@@ -197,6 +146,55 @@ CardContent makeEventCardContent()
             runningColour};
 }
 
+// A worker that sends heartbeats is watched for hangs; one that never does is not.
+struct BackgroundEncoder
+{
+    ~BackgroundEncoder() { isRunning = false; }
+
+    void start()
+    {
+        if (isRunning.exchange(true))
+            return;
+
+        worker = Threads::Thread {[this] { runEncodeLoop(); }};
+    }
+
+    void stall() { stallRequested = true; }
+
+    void runEncodeLoop()
+    {
+        while (isRunning)
+        {
+            encodeNextChunk();
+            CrashReporting::sendHeartbeat();
+        }
+    }
+
+    void encodeNextChunk()
+    {
+        if (stallRequested.exchange(false))
+            Time::sleep(encoderStallDuration);
+
+        Time::sleep(encoderChunkDuration);
+    }
+
+    std::atomic<bool> isRunning = false;
+    std::atomic<bool> stallRequested = false;
+    Threads::Thread worker;
+};
+
+CardContent makeEncoderCardContent(BackgroundEncoder& encoder)
+{
+    return {"Background encoder",
+            "A worker loop that sends a heartbeat per chunk",
+            "Start encoder",
+            "Stall encoder",
+            "Encodes until the app quits",
+            "Reported as a hang on the encoder thread",
+            [&encoder] { encoder.start(); },
+            [&encoder] { encoder.stall(); }};
+}
+
 struct ActionCard final : UI::Component
 {
     explicit ActionCard(const CardContent& content)
@@ -273,6 +271,7 @@ struct FaultButtons final : UI::Component
             addAndMakeVisible(cards.createNew(makeFaultCardContent(fault)));
 
         addAndMakeVisible(cards.createNew(makeEventCardContent()));
+        addAndMakeVisible(cards.createNew(makeEncoderCardContent(encoder)));
 
         showHandlerStatus();
     }
@@ -322,6 +321,7 @@ struct FaultButtons final : UI::Component
                         "process writes the report and shows it."};
     UI::Label database;
     UI::Label handlerStatus;
+    BackgroundEncoder encoder;
     OwnedVector<ActionCard> cards;
     Threads::Timer statusTimer {[this] { showHandlerStatus(); },
                                 handlerStatusRefreshHz};
@@ -347,45 +347,6 @@ Graphics::WindowOptions makeWindowOptions()
     options.title = "SelfDestruct";
 
     return options;
-}
-
-FilePath writeSessionLog()
-{
-    auto log = FilePath::appCacheDirectory() / "SelfDestruct.log";
-    Files::removeFile(log);
-    Files::appendFile(log, std::string_view {"SelfDestruct started\n"});
-
-    return log;
-}
-
-void startCrashReporting(const FilePath& databaseDirectory,
-                         const Vector<std::string>& handlerArguments,
-                         Time::MS hangThreshold,
-                         bool capturesMachExceptions,
-                         bool registersWindowsErrorReportingHelper)
-{
-    auto options = CrashReporting::Options {};
-    options.captureMachExceptions = capturesMachExceptions;
-    options.handlerArguments = handlerArguments;
-    options.hangThreshold = hangThreshold;
-    options.stackOverflowReporting =
-        CrashReporting::StackOverflowReporting::everyThread;
-
-    if (!databaseDirectory.empty())
-        options.databaseDirectory = databaseDirectory;
-
-    options.registerCrashHelperWithWindowsErrorReporting =
-        registersWindowsErrorReportingHelper;
-    options.environment = demoEnvironment;
-    options.attachments = {writeSessionLog()};
-
-    CrashReporting::start(options);
-    CrashReporting::setTag("project", projectName);
-    CrashReporting::setExtra("launchedFrom", Files::executablePath().str());
-    CrashReporting::setUser({demoUserId, demoUserEmail, demoUserName});
-    CrashReporting::addBreadcrumb({"app", "crash reporting started"});
-    CrashReporting::addBreadcrumb(
-        {"app", "about to offer ways to crash", CrashReporting::Level::warning});
 }
 
 // Nothing is watched for a hang until the loop has sent a few heartbeats.
@@ -486,7 +447,10 @@ int reportEventNow(std::string_view kind)
     Console::printError("SelfDestruct: no event called " + std::string {kind});
     return Args::badArguments;
 }
+} // namespace
 
+namespace SelfDestruct
+{
 int showReport(const FilePath& folder)
 {
     auto report = CrashReporting::getDatabase().readReport(folder);
@@ -499,72 +463,60 @@ int showReport(const FilePath& folder)
 
     return SelfDestruct::runReportWindow(*report);
 }
-} // namespace
 
-int main(int argc, char* argv[])
+std::optional<int> parseLaunchFlags(LaunchFlags& flags)
 {
-    if (auto code = CrashReporting::runHandlerIfRequested(argc, argv))
-        return *code;
-
-    Apps::setCommandLineArgs(argc, argv);
-    SelfDestruct::ignorePersistentUIState();
-
-    auto crashKind = std::string {};
-    auto databaseDirectory = FilePath {};
-    auto handlerArguments = Vector<std::string> {};
     auto hangThresholdMilliseconds = CrashReporting::Options {}.hangThreshold.count;
-    auto reportToShow = FilePath {};
-    auto eventKind = std::string {};
-    auto pausesHangDetection = false;
-    auto threadName = std::string {"main"};
-    auto killsHandler = false;
-    auto usesSignalsOnly = false;
 
     auto cli = Args::Parser {"SelfDestruct", "Crashes itself, on purpose."};
-    cli.option("--crash", crashKind, "fault at once with no window");
-    cli.option("--thread", threadName, "main or background");
+    cli.option("--crash", flags.crashKind, "fault at once with no window");
+    cli.option("--thread", flags.threadName, "main or background");
     cli.flag("--kill-handler",
-             killsHandler,
+             flags.killsHandler,
              "end the handler process first, so the crash goes unreported");
-    cli.option("--crash-database", databaseDirectory, "where reports go");
+    cli.option("--crash-database", flags.databaseDirectory, "where reports go");
     cli.option("--hang-threshold-ms",
                hangThresholdMilliseconds,
                "how long the main thread may stall; 0 turns hang detection off");
     cli.flag("--pause-hang-detection",
-             pausesHangDetection,
+             flags.pausesHangDetection,
              "pause the stalling thread's hang watch around its fault");
     cli.flag("--signals-only",
-             usesSignalsOnly,
+             flags.usesSignalsOnly,
              "macOS: no Mach exception port, the in-app signal handler only");
-    cli.option(showReportFlag, reportToShow, "show the report in this folder");
-    cli.option("--event", eventKind, "message or exception: report it, no crash");
-    auto withoutWindowsErrorReportingHelper = false;
+    cli.option(showReportFlag, flags.reportToShow, "show the report in this folder");
+    cli.option(
+        "--event", flags.eventKind, "message or exception: report it, no crash");
     cli.flag("--without-windows-error-reporting-helper",
-             withoutWindowsErrorReportingHelper,
+             flags.withoutWindowsErrorReportingHelper,
              "Windows: skip the Windows Error Reporting helper, so fast-fail "
              "and heap-corruption crashes get no stack");
-    cli.positional(handlerArguments, "handler-argument", "after --, the handler's");
+    cli.positional(
+        flags.handlerArguments, "handler-argument", "after --, the handler's");
 
     if (auto code = cli.exitCodeFor(cli.parse()))
-        return *code;
+        return code;
 
-    if (!reportToShow.empty())
-        return showReport(reportToShow);
+    flags.hangThreshold = Time::MS {hangThresholdMilliseconds};
+    CrashReporting::Faults::setHangDuration(flags.hangThreshold
+                                            + hangBeyondThreshold);
+    return {};
+}
 
-    auto hangThreshold = Time::MS {hangThresholdMilliseconds};
-    CrashReporting::Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
-    startCrashReporting(databaseDirectory,
-                        handlerArguments,
-                        hangThreshold,
-                        !usesSignalsOnly,
-                        !withoutWindowsErrorReportingHelper);
+int runApp(const LaunchFlags& flags)
+{
+    if (!flags.eventKind.empty())
+        return reportEventNow(flags.eventKind);
 
-    if (!eventKind.empty())
-        return reportEventNow(eventKind);
-
-    if (!crashKind.empty())
-        return crashNow(crashKind, threadName, pausesHangDetection, killsHandler);
+    if (!flags.crashKind.empty())
+    {
+        return crashNow(flags.crashKind,
+                        flags.threadName,
+                        flags.pausesHangDetection,
+                        flags.killsHandler);
+    }
 
     return Graphics::runWindowedApp<FaultHost>(
         makeWindowOptions(), CrashReporting::getDatabase().getDirectory());
 }
+} // namespace SelfDestruct

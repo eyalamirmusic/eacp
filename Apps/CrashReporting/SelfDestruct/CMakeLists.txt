@@ -1,4 +1,4 @@
-eacp_add_app(SelfDestruct Main.cpp ReportWindow.cpp)
+eacp_add_app(SelfDestruct Main.cpp App.cpp CrashHandler.cpp ReportWindow.cpp)
 target_link_libraries(SelfDestruct PRIVATE eacp-crash-faults eacp-ui)
 
 if (APPLE)
