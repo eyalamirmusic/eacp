@@ -4,6 +4,7 @@
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/CrashReporting/CrashReporting.h>
 #include <eacp/CrashReporting/Faults/Faults.h>
 #include <eacp/CrashReporting/Faults/Matrix.h>
@@ -39,17 +40,19 @@ constexpr auto titleHeight = 40.f;
 constexpr auto titleFontSize = 26.f;
 constexpr auto lineHeight = 22.f;
 constexpr auto bodyFontSize = 13.f;
-constexpr auto gridColumns = 3;
+constexpr auto gridColumns = 2;
 constexpr auto cardGap = 12.f;
 constexpr auto cardPadding = 12.f;
 constexpr auto cardCornerRadius = 10.f;
-constexpr auto descriptionHeight = 22.f;
+constexpr auto wrappedLineHeight = 17.f;
+constexpr auto descriptionLines = 2;
+constexpr auto expectationLines = 3;
+constexpr auto buttonHeight = 28.f;
+constexpr auto buttonExpectationGap = 4.f;
 constexpr auto buttonGap = 8.f;
-constexpr auto buttonsPerCard = 2.f;
 constexpr auto handlerStatusRefreshHz = 2;
 constexpr auto windowWidth = 900;
 constexpr auto windowHeight = 960;
-constexpr auto expectationHeight = 34.f;
 constexpr auto dangerColour = UI::Color {0.86f, 0.27f, 0.25f};
 constexpr auto runningColour = UI::Color {0.42f, 0.8f, 0.5f};
 constexpr auto stoppedColour = UI::Color {1.f, 0.62f, 0.3f};
@@ -195,6 +198,62 @@ CardContent makeEncoderCardContent(BackgroundEncoder& encoder)
             [&encoder] { encoder.stall(); }};
 }
 
+// UI::Label draws one line; an expectation or a description can need three.
+struct WrappedLabel final : UI::Component
+{
+    explicit WrappedLabel(std::string textToUse)
+        : text(std::move(textToUse))
+    {
+    }
+
+    void paint(UI::Graphics& g) override
+    {
+        g.setColour(getHostTheme().get(UI::ThemeKeys::dimText));
+        auto lineArea = UI::Rect {0.f, 0.f, getLocalBounds().w, wrappedLineHeight};
+
+        for (const auto& line: breakIntoLines(g))
+        {
+            g.drawText(line, lineArea, UI::Justification::Centred);
+            lineArea.y += wrappedLineHeight;
+        }
+    }
+
+    Vector<std::string> breakIntoLines(const UI::Graphics& g) const
+    {
+        auto lines = Vector<std::string> {};
+        auto current = std::string {};
+
+        for (const auto& word: Strings::split(text, ' '))
+        {
+            auto candidate = current.empty() ? word : current + " " + word;
+
+            if (!current.empty() && g.measureText(candidate) > getLocalBounds().w)
+            {
+                lines.add(current);
+                current = word;
+            }
+            else
+            {
+                current = candidate;
+            }
+        }
+
+        if (!current.empty())
+            lines.add(current);
+
+        return lines;
+    }
+
+    std::string text;
+};
+
+constexpr auto descriptionHeight = wrappedLineHeight * descriptionLines;
+constexpr auto expectationHeight = wrappedLineHeight * expectationLines;
+constexpr auto buttonWithExpectationHeight =
+    buttonHeight + buttonExpectationGap + expectationHeight;
+constexpr auto cardHeight = cardPadding * 2 + lineHeight + descriptionHeight
+                            + (buttonGap + buttonWithExpectationHeight) * 2;
+
 struct ActionCard final : UI::Component
 {
     explicit ActionCard(const CardContent& content)
@@ -210,22 +269,14 @@ struct ActionCard final : UI::Component
 
         mainThreadButton.setAccentColour(content.accentColour);
         backgroundButton.setAccentColour(content.accentColour);
-        description.setThemeColour(UI::ThemeKeys::dimText);
         label.setJustification(UI::Justification::Centred);
-        description.setJustification(UI::Justification::Centred);
-
-        for (auto* expectation: {&mainThreadExpectation, &backgroundExpectation})
-        {
-            expectation->setThemeColour(UI::ThemeKeys::dimText);
-            expectation->setJustification(UI::Justification::Centred);
-        }
 
         addChildren({label,
+                     description,
                      mainThreadButton,
-                     backgroundButton,
                      mainThreadExpectation,
-                     backgroundExpectation,
-                     description});
+                     backgroundButton,
+                     backgroundExpectation});
     }
 
     void paint(UI::Graphics& g) override
@@ -238,23 +289,59 @@ struct ActionCard final : UI::Component
     {
         auto area = getLocalBounds().inset(cardPadding);
         label.setBounds(area.removeFromTop(lineHeight));
-        description.setBounds(area.removeFromBottom(descriptionHeight));
-        auto expectations = area.removeFromBottom(expectationHeight);
-        auto buttonWidth = (area.w - buttonGap) / buttonsPerCard;
-        mainThreadButton.setBounds(area.removeFromLeft(buttonWidth));
-        mainThreadExpectation.setBounds(expectations.removeFromLeft(buttonWidth));
-        area.removeFromLeft(buttonGap);
-        expectations.removeFromLeft(buttonGap);
-        backgroundButton.setBounds(area);
-        backgroundExpectation.setBounds(expectations);
+        description.setBounds(area.removeFromTop(descriptionHeight));
+        layOutButtonWithExpectation(area, mainThreadButton, mainThreadExpectation);
+        layOutButtonWithExpectation(area, backgroundButton, backgroundExpectation);
+    }
+
+    static void layOutButtonWithExpectation(UI::Rect& area,
+                                            UI::Button& button,
+                                            WrappedLabel& expectation)
+    {
+        area.removeFromTop(buttonGap);
+        button.setBounds(area.removeFromTop(buttonHeight));
+        area.removeFromTop(buttonExpectationGap);
+        expectation.setBounds(area.removeFromTop(expectationHeight));
     }
 
     UI::Label label;
     UI::Button mainThreadButton;
     UI::Button backgroundButton;
-    UI::Label mainThreadExpectation;
-    UI::Label backgroundExpectation;
-    UI::Label description;
+    WrappedLabel mainThreadExpectation;
+    WrappedLabel backgroundExpectation;
+    WrappedLabel description;
+};
+
+struct CardGrid final : UI::Component
+{
+    float getHeightFor(int cardCount) const
+    {
+        auto rowCount = (cardCount + gridColumns - 1) / gridColumns;
+        return rowCount * cardHeight + (rowCount - 1) * cardGap;
+    }
+
+    void layOutCards(float width)
+    {
+        setBounds({0.f, 0.f, width, getHeightFor(cards.size())});
+        auto cardWidth = (width - cardGap * (gridColumns - 1)) / gridColumns;
+
+        for (auto index = 0; index < cards.size(); ++index)
+        {
+            auto column = index % gridColumns;
+            auto row = index / gridColumns;
+            cards[index]->setBounds({column * (cardWidth + cardGap),
+                                     row * (cardHeight + cardGap),
+                                     cardWidth,
+                                     cardHeight});
+        }
+    }
+
+    void addCard(const CardContent& content)
+    {
+        addAndMakeVisible(cards.createNew(content));
+    }
+
+    OwnedVector<ActionCard> cards;
 };
 
 struct FaultButtons final : UI::Component
@@ -265,13 +352,16 @@ struct FaultButtons final : UI::Component
         title.setFontSize(titleFontSize);
         subtitle.setThemeColour(UI::ThemeKeys::dimText);
         database.setThemeColour(UI::ThemeKeys::dimText);
-        addChildren({title, subtitle, database, handlerStatus});
+        addChildren({title, subtitle, database, handlerStatus, cardViewport});
 
         for (const auto& fault: CrashReporting::Faults::listFaults())
-            addAndMakeVisible(cards.createNew(makeFaultCardContent(fault)));
+            grid.addCard(makeFaultCardContent(fault));
 
-        addAndMakeVisible(cards.createNew(makeEventCardContent()));
-        addAndMakeVisible(cards.createNew(makeEncoderCardContent(encoder)));
+        grid.addCard(makeEventCardContent());
+        grid.addCard(makeEncoderCardContent(encoder));
+
+        cardViewport.setScrollbarsShown(false, true);
+        cardViewport.setContent(grid);
 
         showHandlerStatus();
     }
@@ -296,24 +386,10 @@ struct FaultButtons final : UI::Component
         database.setBounds(area.removeFromBottom(lineHeight));
         area.removeFromTop(padding);
         area.removeFromBottom(padding);
-        layOutCards(area);
-    }
-
-    void layOutCards(UI::Rect area)
-    {
-        auto rowCount = (cards.size() + gridColumns - 1) / gridColumns;
-        auto cardWidth = (area.w - cardGap * (gridColumns - 1)) / gridColumns;
-        auto cardHeight = (area.h - cardGap * (rowCount - 1)) / rowCount;
-
-        for (auto index = 0; index < cards.size(); ++index)
-        {
-            auto column = index % gridColumns;
-            auto row = index / gridColumns;
-            cards[index]->setBounds({area.x + column * (cardWidth + cardGap),
-                                     area.y + row * (cardHeight + cardGap),
-                                     cardWidth,
-                                     cardHeight});
-        }
+        cardViewport.setBounds(area);
+        auto scrollbarWidth = cardViewport.getScrollbarStyle().thickness;
+        grid.layOutCards(area.w - scrollbarWidth);
+        cardViewport.contentResized();
     }
 
     UI::Label title {"SelfDestruct"};
@@ -322,7 +398,8 @@ struct FaultButtons final : UI::Component
     UI::Label database;
     UI::Label handlerStatus;
     BackgroundEncoder encoder;
-    OwnedVector<ActionCard> cards;
+    CardGrid grid;
+    UI::Viewport cardViewport;
     Threads::Timer statusTimer {[this] { showHandlerStatus(); },
                                 handlerStatusRefreshHz};
 };
