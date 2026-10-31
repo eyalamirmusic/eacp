@@ -15,9 +15,7 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <deque>
-#include <thread>
 
 using namespace nano;
 using namespace eacp;
@@ -25,8 +23,8 @@ using namespace eacp::CrashReporting;
 
 namespace
 {
-constexpr auto reportWaitLimit = std::chrono::seconds {10};
-constexpr auto reportPollInterval = std::chrono::milliseconds {20};
+constexpr auto reportWaitLimit = Time::MS {10000};
+constexpr auto reportPollInterval = Time::MS {20};
 constexpr auto testHangThresholdMilliseconds = "500";
 
 using Faults::ExpectedOutcome;
@@ -155,11 +153,10 @@ bool hasCompleteReport(const ReportDatabase& database)
 // report can land a moment after Processes::run returns.
 void waitForCompleteReport(const ReportDatabase& database)
 {
-    auto deadline = std::chrono::steady_clock::now() + reportWaitLimit;
+    auto deadline = Time::Deadline {reportWaitLimit};
 
-    while (!hasCompleteReport(database)
-           && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(reportPollInterval);
+    while (!hasCompleteReport(database) && !deadline.expired())
+        Time::sleep(reportPollInterval);
 }
 
 Processes::ProcessOptions
@@ -181,10 +178,13 @@ Processes::ProcessOptions
     return Tests::makeCrashingProcessOptions(arguments);
 }
 
-CrashReport crashTheCrashingProcess(std::string_view kind, FaultThread thread)
+// The report's files live in `database`, so they are read while it is held.
+CrashReport crashTheCrashingProcess(std::string_view kind,
+                                    FaultThread thread,
+                                    const TemporaryFile& database,
+                                    const Vector<std::string>& appArguments = {})
 {
-    auto database = TemporaryFile {};
-    auto options = makeCrashOptions(kind, thread, database.path());
+    auto options = makeCrashOptions(kind, thread, database.path(), appArguments);
 
     auto result = Processes::run(options);
     check(result.launched);
@@ -198,6 +198,12 @@ CrashReport crashTheCrashingProcess(std::string_view kind, FaultThread thread)
     check(reports.size() == 1);
 
     return reports.empty() ? CrashReport {} : reports[0];
+}
+
+CrashReport crashTheCrashingProcess(std::string_view kind, FaultThread thread)
+{
+    auto database = TemporaryFile {};
+    return crashTheCrashingProcess(kind, thread, database);
 }
 
 Processes::ProcessOptions
@@ -255,11 +261,11 @@ void checkHangReport(const CrashReport& report, std::string_view function)
 // not a test run that never ends.
 bool waitForExit(Processes::Process& process)
 {
-    constexpr auto exitWaitLimit = std::chrono::seconds {30};
-    auto deadline = std::chrono::steady_clock::now() + exitWaitLimit;
+    constexpr auto exitWaitLimit = Time::MS {30000};
+    auto deadline = Time::Deadline {exitWaitLimit};
 
-    while (process.isRunning() && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(reportPollInterval);
+    while (process.isRunning() && !deadline.expired())
+        Time::sleep(reportPollInterval);
 
     if (!process.isRunning())
         return true;
@@ -366,7 +372,11 @@ CrashReport checkCrashAgainstMatrix(std::string_view fault, FaultThread thread)
     return report;
 }
 
-// Never returns, so the report is waited for while the app still runs.
+constexpr auto backgroundWatchName = "fault background";
+
+// Never returns, so the report is waited for while the app still runs. A
+// main-thread deadlock's worker stops sending heartbeats up to one heartbeat after the main
+// thread, so it may be a second report of its own; the main one is returned.
 CrashReport waitForStallReport(std::string_view kind)
 {
     auto database = TemporaryFile {};
@@ -381,7 +391,13 @@ CrashReport waitForStallReport(std::string_view kind)
     process.wait();
 
     auto reports = reportDatabase.readPendingReports();
-    check(reports.size() == 1);
+    check(!reports.empty());
+
+    for (const auto& report: reports)
+    {
+        if (report.threadName == "main")
+            return report;
+    }
 
     return reports.empty() ? CrashReport {} : reports[0];
 }
@@ -392,27 +408,73 @@ bool isStallingFault(std::string_view fault)
     return found && found->get().stallsItsThread;
 }
 
-void checkStallAgainstMatrix(std::string_view fault, const ExpectedOutcome& expected)
+// Off the main thread the main thread keeps sending heartbeats and the app quits on its
+// own once the stall would have ended; the watched worker's silence is the one
+// report.
+CrashReport runBackgroundStall(std::string_view fault)
 {
-    auto report = CrashReport {};
+    auto reports = runHangFault(
+        {}, testHangThresholdMilliseconds, fault, FaultThread::background);
 
-    if (fault == "hang")
-    {
-        auto reports = runHangFault({}, testHangThresholdMilliseconds);
-        check(reports.size() == 1);
+    if (reports.size() != 1)
+        Console::printError(Strings::concat(reports.size(), " hang reports"));
 
-        if (reports.size() == 1)
-            report = reports[0];
-    }
+    check(reports.size() == 1);
+    return reports.empty() ? CrashReport {} : reports[0];
+}
+
+CrashReport runStall(std::string_view fault, FaultThread thread)
+{
+    if (thread == FaultThread::background)
+        return runBackgroundStall(fault);
+
+    if (fault != "hang")
+        return waitForStallReport(fault);
+
+    auto reports = runHangFault({}, testHangThresholdMilliseconds);
+    check(reports.size() == 1);
+    return reports.empty() ? CrashReport {} : reports[0];
+}
+
+// Two watched threads locked against each other on a background deadlock;
+// on the main thread, the main one and maybe its worker.
+void checkStalledThreads(const CrashReport& report,
+                         std::string_view fault,
+                         FaultThread thread)
+{
+    auto isBackground = thread == FaultThread::background;
+    auto expectedName = isBackground ? backgroundWatchName : "main";
+    auto count = report.stalledThreads.size();
+
+    check(report.threadName == expectedName);
+    check(report.crashingThread.name == expectedName);
+    check(report.message.starts_with(expectedName));
+    check(report.message.find(" unresponsive for ") != std::string::npos);
+
+    if (fault == "deadlock" && isBackground)
+        check(count == 2);
+    else if (fault == "deadlock")
+        check(count == 1 || count == 2);
     else
-    {
-        report = waitForStallReport(fault);
-    }
+        check(count == 1);
+
+    for (const auto& stalled: report.stalledThreads)
+        check(!stalled.frames.empty());
+
+    for (auto index = 1; index < count; ++index)
+        check(report.stalledThreads[index].name == backgroundWatchName);
+}
+
+void checkStallAgainstMatrix(std::string_view fault,
+                             FaultThread thread,
+                             const ExpectedOutcome& expected)
+{
+    auto report = runStall(fault, thread);
 
     checkReportAgainstMatrix(report, expected);
     check(report.kind == ReportKind::hang);
-    check(report.message.starts_with("main thread unresponsive for "));
     check(report.hangDurationMilliseconds >= 1000);
+    checkStalledThreads(report, fault, thread);
     checkReportMetadata(report);
 }
 
@@ -462,9 +524,9 @@ void runMatrixCell(std::string_view fault, FaultThread thread)
             break;
     }
 
-    if (isStallingFault(fault) && thread == FaultThread::main)
-        checkStallAgainstMatrix(fault, expected);
-    else if (!isStallingFault(fault))
+    if (isStallingFault(fault))
+        checkStallAgainstMatrix(fault, thread, expected);
+    else
         checkCrashAgainstMatrix(fault, thread);
 }
 
@@ -586,6 +648,118 @@ int countUnreportedExits(const FilePath& database)
     return count;
 }
 
+struct MachExceptionSignal
+{
+    std::string_view exception;
+    std::string_view signal;
+};
+
+// Without the exception port the kernel goes on to the signal, which is what
+// the signal path's report names.
+constexpr auto machExceptionSignals = std::to_array<MachExceptionSignal>({
+    {"EXC_BAD_ACCESS", "SIGSEGV"},
+    {"EXC_BREAKPOINT", "SIGTRAP"},
+    {"EXC_ARITHMETIC", "SIGFPE"},
+});
+
+std::string_view getSignalPathReason(std::string_view fault, FaultThread thread)
+{
+    auto reason = getExpectedOutcome(fault, thread).reason;
+
+    for (const auto& entry: machExceptionSignals)
+    {
+        if (entry.exception == reason)
+            return entry.signal;
+    }
+
+    return reason;
+}
+
+constexpr auto minidumpSignature = std::uint32_t {0x504D444D};
+constexpr auto minidumpHeaderSize = std::size_t {32};
+constexpr auto minidumpDirectoryEntrySize = std::size_t {12};
+constexpr auto minidumpStreamCountOffset = std::size_t {8};
+constexpr auto minidumpDirectoryOffset = std::size_t {12};
+
+std::uint32_t readLittleEndianU32(std::string_view bytes, std::size_t offset)
+{
+    auto value = std::uint32_t {0};
+
+    for (auto index = sizeof(value); index-- > 0;)
+        value = (value << 8) | static_cast<std::uint8_t>(bytes[offset + index]);
+
+    return value;
+}
+
+// The stream types the file's directory names, empty when its header is not
+// a minidump's.
+Vector<std::uint32_t> readMinidumpStreamTypes(const FilePath& path)
+{
+    auto streamTypes = Vector<std::uint32_t> {};
+    auto bytes = Files::readFile(path);
+
+    if (bytes.size() < minidumpHeaderSize
+        || readLittleEndianU32(bytes, 0) != minidumpSignature)
+        return streamTypes;
+
+    auto count = readLittleEndianU32(bytes, minidumpStreamCountOffset);
+    auto directory = readLittleEndianU32(bytes, minidumpDirectoryOffset);
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+    {
+        auto offset = directory + index * minidumpDirectoryEntrySize;
+
+        if (offset + minidumpDirectoryEntrySize > bytes.size())
+            return {};
+
+        streamTypes.add(readLittleEndianU32(bytes, offset));
+    }
+
+    return streamTypes;
+}
+
+int countOccurrences(std::string_view text, std::string_view needle)
+{
+    auto count = 0;
+
+    for (auto position = text.find(needle); position != std::string_view::npos;
+         position = text.find(needle, position + needle.size()))
+        ++count;
+
+    return count;
+}
+
+// lldb reads the minidump as a core file; it is part of every Xcode install,
+// so one that cannot be launched is a skip rather than a failure. Every
+// thread of the app is in it, the test binary's main thread beside the faulting
+// one at the least.
+void checkLldbNamesFaultFunction(const FilePath& minidump, std::string_view function)
+{
+    constexpr auto threadMarker = std::string_view {"thread #"};
+    constexpr auto minimumThreads = 2;
+    auto options = Processes::ProcessOptions {};
+    options.executable = "/usr/bin/lldb";
+    options.arguments = {"--no-lldbinit",
+                         "--batch",
+                         "--core",
+                         minidump.str(),
+                         "--one-line",
+                         "bt all"};
+    options.captureOutput = true;
+    options.mergeErrorOutput = true;
+
+    auto result = Processes::run(options);
+
+    if (!result.launched)
+        return;
+
+    if (result.output.find(function) == std::string::npos)
+        Console::printError(result.output);
+
+    check(result.output.find(function) != std::string::npos);
+    check(countOccurrences(result.output, threadMarker) >= minimumThreads);
+}
+
 // The handler is killed before the fault, so nothing reports the crash, and
 // the next launch finds its session marker.
 void checkUnreportedCrash(std::string_view kind, FaultThread thread)
@@ -656,12 +830,217 @@ auto tCrashReportThrowSite =
     }
 };
 
+// Thread list, module list, exception and system info, and a debugger that
+// names the fault from the file alone.
+auto tCrashReportMinidumpOpens = test("CrashReport/minidumpOpensInLldb") = []
+{
+    if (!Platform::isMac())
+        return;
+
+    constexpr auto requiredStreams = std::to_array<std::uint32_t>({3, 4, 6, 7});
+    auto database = TemporaryFile {};
+    auto report = crashTheCrashingProcess("nullptr", FaultThread::main, database);
+    auto streamTypes = readMinidumpStreamTypes(report.minidumpPath);
+
+    for (auto stream: requiredStreams)
+        check(streamTypes.contains(stream));
+
+    checkLldbNamesFaultFunction(report.minidumpPath, "dereferenceNullPointer");
+};
+
+constexpr auto signalsOnlyRunLimit = Time::MS {3000};
+
+// What a failed port handshake leaves: the signal path, and no wait
+// on a handshake that never comes.
+auto tCrashReportSignalsOnly = test("CrashReport/signalsOnly") = []
+{
+    if (!Platform::isMac())
+        return;
+
+    auto database = TemporaryFile {};
+    auto runLimit = Time::Deadline {signalsOnlyRunLimit};
+    auto report = crashTheCrashingProcess(
+        "nullptr", FaultThread::main, database, {"--signals-only"});
+
+    check(report.reason == getSignalPathReason("nullptr", FaultThread::main));
+    check(report.capturedBy == CaptureSource::handler);
+    check(report.minidumpPath.empty());
+    check(hasFrameInFunction(report, "dereferenceNullPointer"));
+    check(!runLimit.expired());
+};
+
 auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
 { check(runHangFault({}, "0").empty()); };
+
+// A crash soon after launch makes AppKit offer, on the next launch, to reopen
+// windows, in a modal alert run from the launch Apple event; a quit inside it
+// stopped the alert and left the app running. Each round crashes twice after
+// launch, then runs a main-thread hang, which must quit on its own.
+bool quitsWithin(Processes::Process& process, Time::MS limit)
+{
+    auto deadline = Time::Deadline {limit};
+
+    while (process.isRunning() && !deadline.expired())
+        Time::sleep(reportPollInterval);
+
+    auto quit = !process.isRunning();
+
+    if (!quit)
+        process.kill();
+
+    process.wait();
+    return quit;
+}
+
+auto tCrashReportHangQuitsAfterLaunchCrashes =
+    test("CrashReport/hangQuitsAfterLaunchCrashes") = []
+{
+    constexpr auto rounds = 10;
+    constexpr auto crashesPerRound = 2;
+    constexpr auto quitLimit = Time::MS {20000};
+
+    for (auto round = 0; round < rounds; ++round)
+    {
+        for (auto crash = 0; crash < crashesPerRound; ++crash)
+        {
+            auto database = TemporaryFile {};
+            Processes::run(makeCrashOptions(
+                "nullptr", FaultThread::background, database.path()));
+        }
+
+        auto database = TemporaryFile {};
+        auto process = Processes::Process {
+            makeHangOptions("hang", database.path(), testHangThresholdMilliseconds)};
+        check(process.launched());
+        check(quitsWithin(process, quitLimit));
+    }
+};
 
 auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 {
     check(runHangFault({"--pause-hang-detection"}, testHangThresholdMilliseconds)
+              .empty());
+};
+
+#if defined(_WIN32)
+// The crashing process adds the helper DLL's registry entry itself, through
+// Options; this removes it.
+constexpr auto werModuleFileName = "eacp-windows-error-reporting-helper.dll";
+
+FilePath getBuiltWerModulePath()
+{
+    return Files::executablePath().parentDirectory() / werModuleFileName;
+}
+
+void unlistWerModule(const FilePath& module)
+{
+    Processes::run("reg",
+                   {"delete",
+                    "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error "
+                    "Reporting\\RuntimeExceptionHelperModules",
+                    "/v",
+                    module.nativeString(),
+                    "/f"});
+}
+
+void unlistWerModule()
+{
+    unlistWerModule(getBuiltWerModulePath());
+}
+
+// The in-app handler catches abort and ends the app itself, so Windows Error
+// Reporting and the helper DLL never run.
+auto tCrashReportAbortWithWindowsErrorReportingHelper =
+    test("CrashReport/abortWithWindowsErrorReportingHelper") = []
+{
+    auto report = crashTheCrashingProcess("abort", FaultThread::main);
+    check(report.reason == "SIGABRT");
+    check(report.capturedBy == CaptureSource::handler);
+};
+
+CrashReport crashFastFailOnce(const Vector<std::string>& appArguments)
+{
+    auto database = TemporaryFile {};
+    auto options = makeCrashOptions(
+        "fastfail", FaultThread::main, database.path(), appArguments);
+    check(Processes::run(options).launched);
+
+    auto reportDatabase = ReportDatabase {database.path()};
+    waitForCompleteReport(reportDatabase);
+    auto reports = reportDatabase.readPendingReports();
+    check(reports.size() == 1);
+
+    if (reports.size() != 1)
+        return {};
+
+    return reports[0];
+}
+
+void checkFastFailReportedFromExitCode(const CrashReport& report)
+{
+    check(report.reason == "STATUS_STACK_BUFFER_OVERRUN");
+    check(report.capturedBy == CaptureSource::exitCode);
+    check(report.crashingThread.frames.empty());
+}
+
+auto tCrashReportFastFailWithoutWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithoutWindowsErrorReportingHelper") = []
+{
+    unlistWerModule();
+    checkFastFailReportedFromExitCode(
+        crashFastFailOnce({"--without-windows-error-reporting-helper"}));
+};
+
+// start() refuses a helper DLL of another protocol version, so the crash
+// falls back to the exit-code report.
+auto tCrashReportFastFailWithHelperOfAnotherProtocolVersion =
+    test("CrashReport/fastFailWithHelperOfAnotherProtocolVersion") = []
+{
+    constexpr auto versionNoHelperSpeaks = "999";
+    checkFastFailReportedFromExitCode(
+        crashFastFailOnce({"--required-windows-error-reporting-helper-version",
+                           versionNoHelperSpeaks}));
+    unlistWerModule();
+};
+
+// A helper copied away from the exe, as apps sharing one copy install it, still
+// gives a fast-fail a stack.
+auto tCrashReportFastFailWithSharedWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithSharedWindowsErrorReportingHelper") = []
+{
+    auto sharedFolder = TemporaryFile {};
+    auto sharedModule = sharedFolder.path() / werModuleFileName;
+    check(Files::createDirectories(sharedFolder.path()));
+    check(Files::copyFile(getBuiltWerModulePath(), sharedModule));
+
+    auto report = crashFastFailOnce(
+        {"--windows-error-reporting-helper-path", sharedModule.str()});
+    unlistWerModule(sharedModule);
+
+    checkReportAgainstMatrix(report,
+                             getExpectedOutcome("fastfail", FaultThread::main));
+    checkReportMetadata(report);
+};
+
+// A helper path to nothing registers nothing, so the crash falls back to the
+// exit-code report.
+auto tCrashReportFastFailWithMissingWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithMissingWindowsErrorReportingHelper") = []
+{
+    auto missingFolder = TemporaryFile {};
+    auto missingModule = missingFolder.path() / werModuleFileName;
+    checkFastFailReportedFromExitCode(crashFastFailOnce(
+        {"--windows-error-reporting-helper-path", missingModule.str()}));
+    unlistWerModule(missingModule);
+};
+#endif
+
+auto tCrashReportHangBackgroundPaused = test("CrashReport/hangBackgroundPaused") = []
+{
+    check(runHangFault({"--pause-hang-detection"},
+                       testHangThresholdMilliseconds,
+                       "hang",
+                       FaultThread::background)
               .empty());
 };
 

@@ -3,10 +3,12 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Threads/Thread.h>
 #include <eacp/Core/Utils/Singleton.h>
+#include <eacp/CrashReporting/CrashReporting.h>
 #include <eacp/CrashReporting/CrashReportingPlatform.h>
 
 #include <atomic>
 #include <mutex>
+#include <stdexcept>
 
 namespace eacp::CrashReporting::Faults
 {
@@ -30,6 +32,8 @@ struct BackgroundThreads
 };
 
 std::atomic<int> returnedBackgroundFaults {0};
+std::atomic<int> reportedFaultEvents {0};
+std::atomic<bool> pausesBackgroundWatch {false};
 
 std::optional<std::reference_wrapper<const Fault>>
     findAvailableFault(std::string_view name)
@@ -47,15 +51,37 @@ std::optional<std::reference_wrapper<const Fault>>
 // and counting afterwards so the call is not a tail call that drops it.
 EACP_FAULT_NO_INLINE void runFaultOnBackgroundThread(const Fault& fault)
 {
+    auto pauses = pausesBackgroundWatch.load();
+
+    if (pauses)
+        pauseHangDetection();
+
     fault.trigger();
+
+    if (pauses)
+        resumeHangDetection();
+
     returnedBackgroundFaults.fetch_add(1);
 }
 
+// Named, and alive once, so a stall on it is reported under that name.
 void startBackgroundThread(const Callback& body)
 {
+    auto watchedBody = [body]
+    {
+        Detail::setCurrentThreadName(backgroundWatchName);
+        sendHeartbeat();
+        body();
+    };
+
     auto& registry = Singleton::getImmortal<BackgroundThreads>();
     auto lock = std::lock_guard {registry.mutex};
-    registry.threads.createNew(body);
+    registry.threads.createNew(watchedBody);
+}
+
+void setPausesBackgroundWatch(bool shouldPause)
+{
+    pausesBackgroundWatch = shouldPause;
 }
 
 std::string_view getThreadChoiceName(ThreadChoice choice)
@@ -122,6 +148,29 @@ bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay)
     Threads::callAfter(delay,
                        [faultName, thread] { triggerFault(faultName, thread); });
     return true;
+}
+
+// Outside the anonymous namespace, never inlined and counting afterwards, so
+// the event's stack names them.
+EACP_FAULT_NO_INLINE std::string reportMessageEvent()
+{
+    auto id = captureMessage(faultEventMessage, Level::warning);
+    reportedFaultEvents.fetch_add(1);
+    return id;
+}
+
+EACP_FAULT_NO_INLINE std::string reportCaughtException()
+{
+    try
+    {
+        throw std::runtime_error {std::string {faultEventMessage}};
+    }
+    catch (const std::exception& error)
+    {
+        auto id = captureException(error);
+        reportedFaultEvents.fetch_add(1);
+        return id;
+    }
 }
 
 void killHandlerProcess()

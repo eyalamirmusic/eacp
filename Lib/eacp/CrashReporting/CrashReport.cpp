@@ -23,7 +23,9 @@ struct CaptureSourceName
 
 constexpr auto captureSourceNames = std::to_array<CaptureSourceName>({
     {CaptureSource::handler, "handler"},
+    {CaptureSource::handlerMach, "handler-mach"},
     {CaptureSource::exitCode, "exit-code"},
+    {CaptureSource::app, "app"},
     {CaptureSource::incomplete, "incomplete"},
 });
 
@@ -36,6 +38,7 @@ struct ReportKindName
 constexpr auto reportKindNames = std::to_array<ReportKindName>({
     {ReportKind::crash, "crash"},
     {ReportKind::hang, "hang"},
+    {ReportKind::event, "event"},
 });
 
 struct LevelName
@@ -143,7 +146,7 @@ void StackFrame::reflect(Miro::Reflector& ref)
 void CrashedThread::reflect(Miro::Reflector& ref)
 {
     reflectHexAddress(ref, "threadId", threadId);
-    MIRO_FIELDS(ref, frames)
+    MIRO_FIELDS(ref, name, frames)
 }
 
 void Breadcrumb::reflect(Miro::Reflector& ref)
@@ -161,6 +164,7 @@ void CrashReport::reflect(Miro::Reflector& ref)
 {
     auto kindName = std::string {getReportKindName(kind)};
     auto capturedByName = std::string {getCaptureSourceName(capturedBy)};
+    auto levelName = std::string {getLevelName(level)};
     auto attachmentPaths = Vector<std::string> {};
 
     for (const auto& attachment: attachments)
@@ -168,10 +172,12 @@ void CrashReport::reflect(Miro::Reflector& ref)
 
     MIRO_FIELDS(ref, id)
     ref["kind"](kindName);
+    ref["level"](levelName);
     MIRO_FIELDS(ref, timestamp, reason, message)
     reflectHexAddress(ref, "faultAddress", faultAddress);
     MIRO_FIELDS(ref, crashingThread, terminateFrames)
     ref["hangDuration"](hangDurationMilliseconds);
+    MIRO_FIELDS(ref, threadName, stalledThreads)
     reflectPath(ref, "minidumpPath", minidumpPath);
     MIRO_FIELDS(ref, metadata, tags, extra, user, breadcrumbs)
     ref["attachments"](attachmentPaths);
@@ -182,6 +188,7 @@ void CrashReport::reflect(Miro::Reflector& ref)
         return;
 
     kind = findReportKind(kindName).value_or(ReportKind::crash);
+    level = findLevel(levelName).value_or(Level::fatal);
     capturedBy = findCaptureSource(capturedByName).value_or(CaptureSource::handler);
     attachments.clear();
 

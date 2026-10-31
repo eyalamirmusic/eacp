@@ -38,6 +38,10 @@ struct CrashReportingSession
     Options options;
     std::optional<std::reference_wrapper<Detail::SharedState>> sharedState;
     std::atomic<bool> heartbeatRunning {false};
+
+    // Set once sharedState is, for the lock-free reads a heartbeat makes.
+    std::atomic<bool> threadsWatched {false};
+    std::atomic<bool> workerThreadsWatched {false};
 };
 
 CrashReportingSession& getSession()
@@ -209,28 +213,29 @@ void clearSessionMarkerAtExit()
 
 std::string describeUnavailableHandler(const Detail::HandlerLaunch& launch)
 {
-    return "the handler process " + launch.executable.str()
-           + " did not start within " + std::to_string(launch.startTimeout.count())
-           + " ms";
+    return Strings::concat("the handler process ",
+                           launch.executable.str(),
+                           " did not start within ",
+                           launch.startTimeout.count,
+                           " ms");
+}
+
+Detail::SharedWatchedThread& getMainThreadWatch(Detail::SharedHangInfo& hang)
+{
+    return hang.threads[Detail::mainThreadSlot];
 }
 
 void writeHeartbeat(Detail::SharedHangInfo& hang)
 {
-    hang.heartbeatMilliseconds.store(Detail::getSteadyMilliseconds(),
-                                     std::memory_order_release);
+    Detail::sendWatchedThreadHeartbeat(getMainThreadWatch(hang));
 }
 
-std::uint64_t countMilliseconds(std::chrono::milliseconds duration)
-{
-    return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count(), 0));
-}
-
-// Each beat posts the next through callAfter rather than a Timer: Windows
+// Each heartbeat posts the next through callAfter rather than a Timer: Windows
 // delays WM_TIMER behind every other message and coalesces it by up to a
 // second, which an idle loop would be reported as a hang for.
 void scheduleHeartbeat(CrashReportingSession& session, Detail::SharedHangInfo& hang)
 {
-    auto interval = Time::MS {session.options.heartbeatInterval.count()};
+    auto interval = session.options.heartbeatInterval;
 
     Threads::callAfter(interval,
                        [&session, &hang]
@@ -248,20 +253,39 @@ void scheduleHeartbeat(CrashReportingSession& session, Detail::SharedHangInfo& h
 void writeHangSettings(Detail::SharedState& state, const Options& options)
 {
     auto& hang = state.hang;
-    hang.thresholdMilliseconds = countMilliseconds(options.hangThreshold);
-    hang.pollIntervalMilliseconds = countMilliseconds(options.heartbeatInterval);
-    hang.mainThreadId = Detail::getCurrentThreadId();
+    hang.thresholdMilliseconds = Detail::countMilliseconds(options.hangThreshold);
+    hang.pollIntervalMilliseconds =
+        Detail::countMilliseconds(options.heartbeatInterval);
+
+    if (options.hangDetection == HangDetection::off)
+        return;
+
+    Detail::watchMainThread(hang, Detail::getCurrentThreadId());
+    Detail::recordThreadForSampling(getMainThreadWatch(hang));
+    Detail::useMainSlotOnCurrentThread();
 }
 
 void armHangDetection(CrashReportingSession& session, Detail::SharedState& state)
 {
     auto& hang = state.hang;
 
-    if (hang.thresholdMilliseconds == 0 || hang.pollIntervalMilliseconds == 0)
+    auto isOff = session.options.hangDetection == HangDetection::off;
+
+    if (isOff || hang.thresholdMilliseconds == 0
+        || hang.pollIntervalMilliseconds == 0)
         return;
 
+    session.threadsWatched = true;
     session.heartbeatRunning = true;
     scheduleHeartbeat(session, hang);
+
+    if (session.options.hangDetection
+        == HangDetection::mainThreadAndThreadsThatSendHeartbeats)
+    {
+        session.workerThreadsWatched = true;
+        Detail::setReleasesWatchOnThreadEnd(true);
+    }
+
     Detail::startHangWatchdog(state);
 }
 
@@ -280,6 +304,10 @@ Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
         launch.channelName = createDefaultChannelName();
     launch.handlerArguments = options.handlerArguments;
     launch.startTimeout = options.handlerStartTimeout;
+    launch.captureMachExceptions = options.captureMachExceptions;
+    launch.shouldListCrashHelperWithWindowsErrorReporting =
+        options.registerCrashHelperWithWindowsErrorReporting;
+    launch.windowsErrorReportingHelperPath = options.windowsErrorReportingHelperPath;
 
     return launch;
 }
@@ -349,6 +377,7 @@ bool start(const Options& options)
     }
 
     auto launched = Detail::launchHandlerProcess(launch, state);
+
     Detail::installCrashHandlers(state);
     installStackOverflowReporting(options.stackOverflowReporting);
 
@@ -392,6 +421,9 @@ void stop()
 
     Detail::stopHangWatchdog();
     session.heartbeatRunning = false;
+    session.workerThreadsWatched = false;
+    Detail::setReleasesWatchOnThreadEnd(false);
+    session.threadsWatched = false;
     Detail::uninstallCrashHandlers();
     Detail::setStackOverflowStackOnNewThreads(false);
     Detail::stopHandlerProcess(session.sharedState->get());
@@ -449,27 +481,62 @@ void addBreadcrumb(const Breadcrumb& breadcrumb)
         });
 }
 
-void pauseHangDetection()
+namespace
 {
-    writeToSharedState([](Detail::SharedState& state)
-                       { state.hang.pauseDepth.fetch_add(1); });
+void deliverEvent(const CrashReport& report)
+{
+    try
+    {
+        createRegisteredCrashHandler()->reportWritten(report);
+    }
+    catch (const std::exception& error)
+    {
+        Console::printError(std::string {"reportWritten threw: "} + error.what());
+    }
+}
+} // namespace
+
+std::string captureEvent(const Event& event)
+{
+    constexpr auto framesOfCaptureEvent = 1;
+    auto frames = Detail::captureCurrentStack(framesOfCaptureEvent);
+    auto database = getDatabase();
+
+    auto report = writeToSharedState(
+        [&](Detail::SharedState& state)
+        {
+            auto written =
+                Detail::beginHandlerReport(database, state, CaptureSource::app);
+            written.kind = ReportKind::event;
+            written.level = event.level;
+            written.reason = event.reason;
+            written.message = event.message;
+            written.faultAddress = 0;
+            written.crashingThread.threadId = Detail::getCurrentThreadId();
+            written.crashingThread.frames = frames;
+
+            if (!Detail::finishHandlerReport(database, written, state))
+                return std::optional<CrashReport> {};
+
+            return std::optional {written};
+        });
+
+    if (!report)
+        return {};
+
+    deliverEvent(*report);
+    return report->id;
 }
 
-void resumeHangDetection()
+std::string captureMessage(std::string_view message, Level level)
 {
-    writeToSharedState(
-        [](Detail::SharedState& state)
-        {
-            auto& hang = state.hang;
+    return captureEvent({messageEventReason, std::string {message}, level});
+}
 
-            if (hang.pauseDepth.load() == 0)
-                return;
-
-            if (hang.heartbeatMilliseconds.load() != 0)
-                writeHeartbeat(hang);
-
-            hang.pauseDepth.fetch_sub(1);
-        });
+std::string captureException(const std::exception& exception)
+{
+    auto message = Detail::getTypeName(typeid(exception)) + ": " + exception.what();
+    return captureEvent({exceptionEventReason, message, Level::error});
 }
 
 bool crashedLastRun()
@@ -494,3 +561,26 @@ ReportDatabase getDatabase()
     return ReportDatabase {getSession().options.databaseDirectory};
 }
 } // namespace eacp::CrashReporting
+
+namespace eacp::CrashReporting::Detail
+{
+std::uint64_t countMilliseconds(Time::MS duration)
+{
+    return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count, 0));
+}
+
+std::optional<std::reference_wrapper<SharedHangInfo>> findWatchedHangInfo()
+{
+    auto& session = getSession();
+
+    if (!session.threadsWatched.load(std::memory_order_acquire))
+        return std::nullopt;
+
+    return session.sharedState->get().hang;
+}
+
+bool isWatchingWorkerThreads()
+{
+    return getSession().workerThreadsWatched.load(std::memory_order_acquire);
+}
+} // namespace eacp::CrashReporting::Detail

@@ -7,13 +7,13 @@ namespace
 CrashHandlerFactory& getCrashHandlerFactory()
 {
     static auto factory =
-        CrashHandlerFactory {[] { return std::make_unique<CrashHandler>(); }};
+        CrashHandlerFactory {[] { return makeOwned<CrashHandler>(); }};
 
     return factory;
 }
 } // namespace
 
-std::unique_ptr<CrashHandler> createRegisteredCrashHandler()
+OwningPointer<CrashHandler> createRegisteredCrashHandler()
 {
     return getCrashHandlerFactory()();
 }

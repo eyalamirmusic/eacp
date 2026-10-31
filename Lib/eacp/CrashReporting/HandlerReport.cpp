@@ -2,7 +2,11 @@
 #include "CrashReportingPlatform.h"
 
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Utils/Format.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Time.h>
+
+#include <algorithm>
 
 #include <exception>
 
@@ -59,37 +63,71 @@ bool finishHandlerReport(const ReportDatabase& database,
     return database.writeReport(report);
 }
 
-CrashReport beginHangReport(const ReportDatabase& database, const SharedState& state)
+namespace
+{
+std::string formatTenthsOfSeconds(std::uint64_t milliseconds)
 {
     constexpr auto millisecondsPerSecond = std::uint64_t {1000};
     constexpr auto millisecondsPerTenth = std::uint64_t {100};
+
+    return Strings::format("{}.{}",
+                           milliseconds / millisecondsPerSecond,
+                           milliseconds % millisecondsPerSecond
+                               / millisecondsPerTenth);
+}
+
+std::string describeStalledThreads(const Vector<CrashedThread>& threads)
+{
+    auto names = EA::Vectors::transform(
+        threads, [](const CrashedThread& thread) { return thread.name; });
+
+    auto noun = threads.size() == 1 ? " thread" : " threads";
+    return Strings::join(names, ", ") + noun;
+}
+} // namespace
+
+CrashReport beginHangReport(const ReportDatabase& database, const SharedState& state)
+{
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
-    auto duration = state.hang.durationMilliseconds;
-    auto seconds =
-        std::to_string(duration / millisecondsPerSecond) + "."
-        + std::to_string(duration % millisecondsPerSecond / millisecondsPerTenth);
+    const auto& hang = state.hang;
+    auto count =
+        std::min(static_cast<std::size_t>(hang.stalledCount), maxWatchedThreads);
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+    {
+        auto thread = CrashedThread {};
+        thread.threadId = hang.stalled[index].threadId;
+        thread.name = std::string {readBoundedText(hang.stalled[index].name)};
+        report.stalledThreads.add(thread);
+    }
+
+    auto duration = count > 0 ? hang.stalled[0].durationMilliseconds : 0;
 
     report.kind = ReportKind::hang;
     report.reason = hangReason;
-    report.message = "main thread unresponsive for " + seconds + " s";
+    report.message = describeStalledThreads(report.stalledThreads)
+                     + " unresponsive for " + formatTenthsOfSeconds(duration) + " s";
     report.faultAddress = 0;
-    report.crashingThread.threadId = state.hang.mainThreadId;
-    report.hangDurationMilliseconds =
-        static_cast<std::int64_t>(state.hang.durationMilliseconds);
+    report.hangDurationMilliseconds = static_cast<std::int64_t>(duration);
+    finishHangReportThreads(report);
 
     return report;
+}
+
+void finishHangReportThreads(CrashReport& report)
+{
+    if (report.stalledThreads.empty())
+        return;
+
+    report.crashingThread = report.stalledThreads.front();
+    report.threadName = report.crashingThread.name;
 }
 
 int deliverReportInHandler(const CrashReport& report)
 {
     try
     {
-        auto handler = createRegisteredCrashHandler();
-
-        if (report.kind == ReportKind::hang)
-            handler->hangReported(report);
-        else
-            handler->crashReported(report);
+        createRegisteredCrashHandler()->reportWritten(report);
 
         return 0;
     }

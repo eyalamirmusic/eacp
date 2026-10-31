@@ -21,16 +21,23 @@ target_sources(eacp-crash-reporting PRIVATE
         CrashHandler.cpp
         CrashReporting.cpp
         HandlerReport.cpp
-        SharedState.cpp)
+        SharedState.cpp
+        ThreadHeartbeats.cpp)
 
 if (APPLE)
     target_sources(eacp-crash-reporting PRIVATE
             CrashClient-macOS.cpp
-            StackOverflowStack-macOS.cpp
+            ThreadHooks-macOS.cpp
             CrashHandlerProcess-macOS.cpp
+            EventStack-macOS.cpp
             HangWatchdog-macOS.cpp
             LoadedLibrarySymbolReader-macOS.cpp
+            MachExceptionMessage-macOS.cpp
             MachImages-macOS.cpp
+            Minidump-macOS.cpp
+            SymbolNames-macOS.cpp
+            TaskCapture-macOS.cpp
+            TaskPortHandshake-macOS.cpp
             ThrowSites-macOS.cpp
             UncaughtExceptions-macOS.mm)
     target_link_libraries(eacp-crash-reporting PRIVATE "-framework Foundation")
@@ -39,9 +46,12 @@ elseif (WIN32)
             CrashClient-Windows.cpp
             CppExceptions-Windows.cpp
             CrashHandlerProcess-Windows.cpp
+            EventStack-Windows.cpp
             ExceptionNames-Windows.cpp
-            StackOverflowStack-Windows.cpp)
+            ThreadHooks-Windows.cpp
+            SymbolNames-Windows.cpp)
     target_link_libraries(eacp-crash-reporting PRIVATE dbghelp)
+    add_subdirectory(WindowsErrorReporting)
 endif ()
 
 set_default_target_setting(eacp-crash-reporting)

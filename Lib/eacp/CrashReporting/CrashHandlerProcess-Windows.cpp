@@ -1,6 +1,7 @@
 #include "CrashChannel-Windows.h"
 #include "CrashReportingPlatform.h"
 #include "ExceptionNames-Windows.h"
+#include "SymbolNames-Windows.h"
 
 #include <eacp/Core/Utils/WinInclude.h>
 
@@ -14,7 +15,6 @@ namespace eacp::CrashReporting::Detail
 {
 namespace
 {
-constexpr auto maxSymbolNameLength = std::size_t {1024};
 constexpr auto minidumpFileName = "minidump.dmp";
 constexpr auto errorSeverityMask = DWORD {0xC0000000};
 constexpr auto handlerFailedExitCode = 1;
@@ -50,13 +50,6 @@ enum class AppEvent
     crash,
     appExited,
     hangCheckDue
-};
-
-// What the handler remembers between hang checks: the heartbeat a reported
-// hang was silent from, so each episode is reported once.
-struct HangWatch
-{
-    std::uint64_t reportedHeartbeat = 0;
 };
 
 HANDLE openChannelEvent(std::string_view channel, std::string_view suffix)
@@ -213,79 +206,6 @@ STACKFRAME64 makeFirstStackFrame(const CONTEXT& context)
     return frame;
 }
 
-std::string findSymbolName(HANDLE process, std::uint64_t address)
-{
-    auto buffer =
-        std::array<std::byte,
-                   sizeof(SYMBOL_INFOW) + maxSymbolNameLength * sizeof(wchar_t)> {};
-    auto& symbol = *reinterpret_cast<SYMBOL_INFOW*>(buffer.data());
-    symbol.SizeOfStruct = sizeof(SYMBOL_INFOW);
-    symbol.MaxNameLen = static_cast<ULONG>(maxSymbolNameLength);
-    auto displacement = DWORD64 {0};
-
-    if (!::SymFromAddrW(process, address, &displacement, &symbol))
-        return {};
-
-    auto name = Strings::narrow(std::wstring_view {symbol.Name, symbol.NameLen});
-    return name + " + " + std::to_string(displacement);
-}
-
-bool hasPdbSignature(const IMAGEHLP_MODULEW64& module)
-{
-    return module.PdbSig70 != GUID {};
-}
-
-// The PDB's CodeView GUID and age: lower-case 8-4-4-4-12
-// followed by -<age hex>.
-std::string formatDebugId(const GUID& guid, DWORD age)
-{
-    constexpr auto debugIdLength = std::size_t {64};
-    auto text = std::array<char, debugIdLength> {};
-    std::snprintf(text.data(),
-                  text.size(),
-                  "%08lx-%04hx-%04hx-%02x%02x-%02x%02x%02x%02x%02x%02x-%lx",
-                  guid.Data1,
-                  guid.Data2,
-                  guid.Data3,
-                  guid.Data4[0],
-                  guid.Data4[1],
-                  guid.Data4[2],
-                  guid.Data4[3],
-                  guid.Data4[4],
-                  guid.Data4[5],
-                  guid.Data4[6],
-                  guid.Data4[7],
-                  age);
-
-    return text.data();
-}
-
-StackFrame
-    makeReportFrame(HANDLE process, std::uint64_t address, bool isReturnAddress)
-{
-    auto frame = StackFrame {};
-
-    // Symbols first: with deferred loads the PDB, and so its signature, is
-    // only read once something asks for a symbol in the module.
-    auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
-    frame.symbol = findSymbolName(process, address - lookupBackoff);
-
-    auto module = IMAGEHLP_MODULEW64 {};
-    module.SizeOfStruct = sizeof(module);
-
-    if (::SymGetModuleInfoW64(process, address, &module))
-    {
-        frame.modulePath = Strings::narrow(module.LoadedImageName);
-        frame.moduleBase = module.BaseOfImage;
-
-        if (hasPdbSignature(module))
-            frame.moduleUuid = formatDebugId(module.PdbSig70, module.PdbAge);
-    }
-
-    frame.offset = address - frame.moduleBase;
-    return frame;
-}
-
 // Within SymInitializeW, which the walk's function-table lookups need.
 Vector<std::uint64_t>
     walkThreadAddresses(HANDLE process, HANDLE thread, CONTEXT context)
@@ -372,6 +292,39 @@ void initialiseSymbols(HANDLE process)
     ::SymInitializeW(process, nullptr, TRUE);
 }
 
+#if defined(_M_ARM64)
+// The registers Windows Error Reporting hands over for a heap-corruption crash
+// have no link register or frame pointer, so StackWalk64 stops at its first
+// frame; the thread itself, stopped at
+// the fault, still has the frame-pointer chain.
+Vector<std::uint64_t> walkLiveThreadContext(HANDLE process, HANDLE thread)
+{
+    auto context = CONTEXT {};
+    context.ContextFlags = CONTEXT_FULL;
+
+    if (!::GetThreadContext(thread, &context))
+        return {};
+
+    return walkFramePointerChain(process, context);
+}
+#endif
+
+Vector<std::uint64_t>
+    walkCrashedThreadAddresses(HANDLE process, HANDLE thread, const CONTEXT& context)
+{
+    auto addresses = walkThreadAddresses(process, thread, context);
+#if defined(_M_ARM64)
+    if (addresses.size() <= 1)
+    {
+        auto liveAddresses = walkLiveThreadContext(process, thread);
+
+        if (liveAddresses.size() > addresses.size())
+            return liveAddresses;
+    }
+#endif
+    return addresses;
+}
+
 Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& crash)
 {
     auto frames = Vector<StackFrame> {};
@@ -383,24 +336,24 @@ Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& cras
         return frames;
 
     initialiseSymbols(process);
-    frames =
-        makeReportFrames(process, walkThreadAddresses(process, thread, *context));
+    frames = makeReportFrames(process,
+                              walkCrashedThreadAddresses(process, thread, *context));
     ::SymCleanup(process);
     ::CloseHandle(thread);
     return frames;
 }
 
-// The main thread stopped where it is: suspended only for the walk, then
+// A watched thread stopped where it is: suspended only for the walk, then
 // named once it runs again, since loading symbols can take seconds.
-Vector<StackFrame> sampleMainThread(HANDLE process, const SharedHangInfo& hang)
+std::optional<Vector<StackFrame>> sampleWatchedThread(HANDLE process,
+                                                      std::uint64_t threadId)
 {
     constexpr auto access =
         THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION;
-    auto frames = Vector<StackFrame> {};
-    auto thread = ::OpenThread(access, FALSE, static_cast<DWORD>(hang.mainThreadId));
+    auto thread = ::OpenThread(access, FALSE, static_cast<DWORD>(threadId));
 
     if (thread == nullptr)
-        return frames;
+        return std::nullopt;
 
     initialiseSymbols(process);
     auto addresses = Vector<std::uint64_t> {};
@@ -416,16 +369,29 @@ Vector<StackFrame> sampleMainThread(HANDLE process, const SharedHangInfo& hang)
         ::ResumeThread(thread);
     }
 
-    frames = makeReportFrames(process, addresses);
+    auto frames = makeReportFrames(process, addresses);
     ::SymCleanup(process);
     ::CloseHandle(thread);
     return frames;
+}
+
+std::string describeExitCode(DWORD exitCode)
+{
+    if (auto name = findExceptionName(exitCode))
+        return std::string {*name};
+
+    return formatHexAddress(exitCode);
 }
 
 int handleCrash(const ReportDatabase& database, const AppConnection& connection)
 {
     const auto& state = connection.state->get();
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
+
+    // The Windows Error Reporting helper writes only the exception code, so the
+    // reason is named from it here.
+    if (report.reason.empty())
+        report.reason = describeExitCode(static_cast<DWORD>(state.crash.code));
     auto minidumpPath = report.folder / minidumpFileName;
 
     if (writeMinidump(connection.appProcess, state, minidumpPath, true))
@@ -452,23 +418,42 @@ bool isDebuggerAttachedTo(HANDLE process)
 // handler goes back to waiting.
 void checkForHang(const ReportDatabase& database,
                   const AppConnection& connection,
-                  HangWatch& watch)
+                  StallTracker& tracker)
 {
-    auto& state = connection.state->get();
-    auto duration = findHangDuration(state.hang, getSteadyMilliseconds());
-    auto heartbeat =
-        state.hang.heartbeatMilliseconds.load(std::memory_order_acquire);
+    auto& hang = connection.state->get().hang;
+    auto stalls = takeNewStalls(hang, tracker, getSteadyMilliseconds());
 
-    if (duration == 0 || heartbeat == watch.reportedHeartbeat
-        || isDebuggerAttachedTo(connection.appProcess))
+    if (stalls.empty() || isDebuggerAttachedTo(connection.appProcess))
         return;
 
-    watch.reportedHeartbeat = heartbeat;
-    state.hang.durationMilliseconds = duration;
+    auto sampledFrames = Vector<Vector<StackFrame>> {};
 
-    auto frames = sampleMainThread(connection.appProcess, state.hang);
+    for (const auto& stall: stalls)
+    {
+        const auto& thread = hang.threads[stall.slot];
+        auto frames = sampleWatchedThread(connection.appProcess, thread.threadId);
+
+        if (!frames || !isSameWatchedThread(thread, stall))
+            continue;
+
+        auto& stalled = hang.stalled[static_cast<std::size_t>(sampledFrames.size())];
+        stalled.threadId = thread.threadId;
+        stalled.name = thread.name;
+        stalled.durationMilliseconds = stall.durationMilliseconds;
+        sampledFrames.add(std::move(*frames));
+    }
+
+    if (sampledFrames.empty())
+        return;
+
+    hang.stalledCount = static_cast<std::uint32_t>(sampledFrames.size());
+    const auto& state = connection.state->get();
     auto report = beginHangReport(database, state);
-    report.crashingThread.frames = frames;
+
+    for (auto index = 0; index < report.stalledThreads.size(); ++index)
+        report.stalledThreads[index].frames = sampledFrames[index];
+
+    finishHangReportThreads(report);
     auto minidumpPath = report.folder / minidumpFileName;
 
     if (writeMinidump(connection.appProcess, state, minidumpPath, false))
@@ -481,14 +466,6 @@ void checkForHang(const ReportDatabase& database,
 bool isCrashExitCode(DWORD exitCode)
 {
     return (exitCode & errorSeverityMask) == errorSeverityMask;
-}
-
-std::string describeExitCode(DWORD exitCode)
-{
-    if (auto name = findExceptionName(exitCode))
-        return std::string {*name};
-
-    return formatHexAddress(exitCode);
 }
 
 // The app ended without telling us: a clean exit, or a crash nothing in it
@@ -519,7 +496,7 @@ int runHandlerProcess(const HandlerArguments& arguments)
 
     signalHandlerReady(arguments.channel);
     auto database = ReportDatabase {arguments.databaseDirectory};
-    auto watch = HangWatch {};
+    auto tracker = StallTracker {};
 
     while (true)
     {
@@ -530,7 +507,7 @@ int runHandlerProcess(const HandlerArguments& arguments)
 
         if (event == AppEvent::hangCheckDue)
         {
-            checkForHang(database, connection, watch);
+            checkForHang(database, connection, tracker);
             continue;
         }
 

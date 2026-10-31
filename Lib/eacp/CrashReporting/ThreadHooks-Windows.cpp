@@ -11,14 +11,19 @@ namespace
 constexpr auto stackOverflowReserveBytes = ULONG {64 * 1024};
 
 std::atomic<bool> shouldInstallOnNewThreads {false};
+std::atomic<bool> shouldReleaseWatchOnThreadEnd {false};
 
 // The loader calls every module's TLS callbacks on each thread's start, before
-// its start routine, whichever module or thread pool created it.
-void NTAPI reserveStackOnThreadAttach(PVOID, DWORD reason, PVOID)
+// its start routine, and on its end, whichever module or thread pool created it.
+void NTAPI handleThreadAttachAndDetach(PVOID, DWORD reason, PVOID)
 {
     if (reason == DLL_THREAD_ATTACH
         && shouldInstallOnNewThreads.load(std::memory_order_relaxed))
         installStackOverflowStackOnCurrentThread();
+
+    if (reason == DLL_THREAD_DETACH
+        && shouldReleaseWatchOnThreadEnd.load(std::memory_order_relaxed))
+        releaseWatchOfThread(::GetCurrentThreadId());
 }
 } // namespace
 
@@ -39,14 +44,19 @@ void setStackOverflowStackOnNewThreads(bool shouldInstall)
 {
     shouldInstallOnNewThreads.store(shouldInstall);
 }
+
+void setReleasesWatchOnThreadEnd(bool shouldRelease)
+{
+    shouldReleaseWatchOnThreadEnd.store(shouldRelease);
+}
 } // namespace eacp::CrashReporting::Detail
 
 // A static library's object is linked only for its symbols, so the linker is
 // told to keep both the TLS directory and this callback in the image.
 #pragma comment(linker, "/INCLUDE:_tls_used")
-#pragma comment(linker, "/INCLUDE:eacpReserveStackOnThreadAttach")
+#pragma comment(linker, "/INCLUDE:eacpHandleThreadAttachAndDetach")
 #pragma section(".CRT$XLE", long, read)
 
 extern "C" __declspec(allocate(".CRT$XLE"))
-const PIMAGE_TLS_CALLBACK eacpReserveStackOnThreadAttach =
-    &eacp::CrashReporting::Detail::reserveStackOnThreadAttach;
+const PIMAGE_TLS_CALLBACK eacpHandleThreadAttachAndDetach =
+    &eacp::CrashReporting::Detail::handleThreadAttachAndDetach;

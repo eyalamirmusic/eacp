@@ -6,8 +6,7 @@ namespace
 {
 using namespace std::string_view_literals;
 
-constexpr auto werModulePullRequest = 180;
-constexpr auto threadWatchPullRequest = 0;
+constexpr auto threadWatchPullRequest = 184;
 
 struct LaneName
 {
@@ -58,6 +57,15 @@ ExpectedOutcome reported(Lane lane, std::string_view reason)
     return outcome;
 }
 
+// macOS: the handler read it from the Mach exception, with a minidump.
+ExpectedOutcome reportedThroughMach(Lane lane, std::string_view reason)
+{
+    auto outcome = reported(lane, reason);
+    outcome.capturedBy = CaptureSource::handlerMach;
+    outcome.hasMinidump = true;
+    return outcome;
+}
+
 ExpectedOutcome withLimit(ExpectedOutcome outcome, std::string_view note)
 {
     outcome.status = OutcomeStatus::reportedWithLimits;
@@ -88,23 +96,6 @@ ExpectedOutcome pending(std::string_view note, int pullRequest)
     return outcome;
 }
 
-// Windows sees these only in the app's exit code, after the app is gone.
-ExpectedOutcome reportedFromExitCode(std::string_view reason, ThreadChoice thread)
-{
-    auto outcome = ExpectedOutcome {};
-    outcome.status = OutcomeStatus::reportedWithLimits;
-    outcome.reason = reason;
-    outcome.capturedBy = CaptureSource::exitCode;
-    outcome.pullRequest = werModulePullRequest;
-    outcome.note = "from the exit code: no stack, no minidump";
-
-    if (isBackground(thread))
-        outcome.note = "from the exit code: no stack, no minidump, and the "
-                       "report names no crashing thread";
-
-    return outcome;
-}
-
 ExpectedOutcome expectDivide(Lane lane)
 {
     if (lane == Lane::macOSArm64)
@@ -114,7 +105,7 @@ ExpectedOutcome expectDivide(Lane lane)
         return notAvailable("clang-cl emits no divide-by-zero check on ARM64");
 
     if (isMac(lane))
-        return reported(lane, "SIGFPE");
+        return reportedThroughMach(lane, "EXC_ARITHMETIC");
 
     return reported(lane, "EXCEPTION_INT_DIVIDE_BY_ZERO");
 }
@@ -125,11 +116,11 @@ ExpectedOutcome expectStackOverflow(Lane lane, ThreadChoice thread)
         return reported(lane, "EXCEPTION_STACK_OVERFLOW");
 
     if (!isBackground(thread))
-        return reported(lane, "SIGSEGV");
+        return reportedThroughMach(lane, "EXC_BAD_ACCESS");
 
-    return withLimit(reported(lane, "SIGBUS"),
-                     "a secondary thread's guard page is a protection fault, "
-                     "so SIGBUS; every frame is the recursion");
+    return withLimit(reportedThroughMach(lane, "EXC_BAD_ACCESS"),
+                     "every frame is the recursion, so the thread's entry is "
+                     "not reached");
 }
 
 ExpectedOutcome expectSoftwareCrash(Lane lane,
@@ -137,7 +128,7 @@ ExpectedOutcome expectSoftwareCrash(Lane lane,
                                     std::string_view windowsReason)
 {
     if (isMac(lane))
-        return reported(lane, "SIGABRT");
+        return reportedThroughMach(lane, "SIGABRT");
 
     auto outcome = reported(lane, windowsReason);
 
@@ -152,7 +143,7 @@ ExpectedOutcome expectSoftwareCrash(Lane lane,
 ExpectedOutcome expectTerminate(Lane lane, ThreadChoice thread)
 {
     if (isMac(lane))
-        return reported(lane, "std::terminate");
+        return reportedThroughMach(lane, "std::terminate");
 
     if (isClangCl(lane) && isBackground(thread))
     {
@@ -173,26 +164,53 @@ ExpectedOutcome expectTerminate(Lane lane, ThreadChoice thread)
 
 ExpectedOutcome expectHeapCorruption(Lane lane, ThreadChoice thread)
 {
+    if (isArm64Windows(lane))
+        return withShortStack(reported(lane, "STATUS_HEAP_CORRUPTION"),
+                              "through the Windows Error Reporting helper; the "
+                              "registers Windows hands it on the CI runners "
+                              "have no frame chain, so the stack stops in ntdll");
+
     if (!isMac(lane))
-        return reportedFromExitCode("STATUS_HEAP_CORRUPTION", thread);
+        return reported(lane, "STATUS_HEAP_CORRUPTION");
 
     if (!isBackground(thread))
-        return reported(lane, "SIGTRAP");
+        return reportedThroughMach(lane, "EXC_BREAKPOINT");
 
-    auto outcome = withLimit(reported(lane, "SIGABRT"),
-                             "another thread's blocks go through the zone "
-                             "allocator, which aborts; some runs trap instead");
-    outcome.alternativeReason = "SIGTRAP";
+    auto outcome = withShortStack(reportedThroughMach(lane, "SIGABRT"),
+                                  "another thread's blocks go through the zone "
+                                  "allocator, which aborts; some runs trap "
+                                  "instead, in whichever thread allocates next");
+    outcome.alternativeReason = "EXC_BREAKPOINT";
+    return outcome;
+}
+
+ExpectedOutcome expectHeapSmash(Lane lane, ThreadChoice thread)
+{
+    if (!isMac(lane))
+        return notAvailable("only macOS captures from outside the app, which "
+                            "is what lets the report survive the heap");
+
+    if (!isBackground(thread))
+        return reportedThroughMach(lane, "EXC_BAD_ACCESS");
+
+    auto outcome = withShortStack(reportedThroughMach(lane, "EXC_BAD_ACCESS"),
+                                  "the main thread's own allocations can meet "
+                                  "the wrecked heap first, and that thread is "
+                                  "the one reported, trapping in malloc");
+    outcome.alternativeReason = "EXC_BREAKPOINT";
     return outcome;
 }
 
 ExpectedOutcome expectStall(Lane lane, ThreadChoice thread)
 {
-    if (isBackground(thread))
-        return pending("only the main thread is watched for hangs",
-                       threadWatchPullRequest);
-
     auto outcome = reported(lane, hangReason);
+
+    if (isBackground(thread))
+    {
+        outcome.pullRequest = threadWatchPullRequest;
+        outcome.note =
+            "the background fault thread sends a heartbeat before it stalls";
+    }
 
     if (isArm64Windows(lane))
         return withShortStack(outcome,
@@ -202,12 +220,89 @@ ExpectedOutcome expectStall(Lane lane, ThreadChoice thread)
     return outcome;
 }
 
-ExpectedOutcome expectFastFail(Lane lane, ThreadChoice thread)
+ExpectedOutcome expectFastFail(Lane lane)
 {
     if (isMac(lane))
         return notAvailable("__fastfail is Windows-only");
 
-    return reportedFromExitCode("STATUS_STACK_BUFFER_OVERRUN", thread);
+    return reported(lane, "STATUS_STACK_BUFFER_OVERRUN");
+}
+
+ExpectedOutcome expectIllegalInstruction(Lane lane)
+{
+    if (isMac(lane))
+        return reportedThroughMach(lane, "EXC_BAD_INSTRUCTION");
+
+    return reported(lane, "EXCEPTION_ILLEGAL_INSTRUCTION");
+}
+
+ExpectedOutcome expectPrivilegedInstruction(Lane lane)
+{
+    if (isMac(lane))
+        return notAvailable("the fault halts from user mode on Windows x64 only");
+
+    if (isArm64Windows(lane))
+        return notAvailable("ARM64 has no privileged-instruction trap of its own: "
+                            "such an instruction is an illegal one");
+
+    return reported(lane, "EXCEPTION_PRIV_INSTRUCTION");
+}
+
+ExpectedOutcome expectFloatingPoint(Lane lane)
+{
+    if (lane == Lane::macOSArm64 || isArm64Windows(lane))
+        return notAvailable("ARM64 cores do not implement floating-point traps");
+
+    if (isMac(lane))
+        return reportedThroughMach(lane, "EXC_ARITHMETIC");
+
+    return reported(lane, "EXCEPTION_FLT_DIVIDE_BY_ZERO");
+}
+
+ExpectedOutcome expectExecuteProtection(Lane lane)
+{
+    if (isMac(lane))
+        return reportedThroughMach(lane, "EXC_BAD_ACCESS");
+
+    return reported(lane, "EXCEPTION_ACCESS_VIOLATION");
+}
+
+ExpectedOutcome expectWindowsOnly(Lane lane, std::string_view reason)
+{
+    if (isMac(lane))
+        return notAvailable("a Windows memory-manager exception");
+
+    return reported(lane, reason);
+}
+
+// Raised through RaiseException, which the ARM64 walk may not get past.
+ExpectedOutcome expectInPageError(Lane lane)
+{
+    auto outcome = expectWindowsOnly(lane, "EXCEPTION_IN_PAGE_ERROR");
+
+    if (isArm64Windows(lane))
+        return withShortStack(outcome,
+                              "StackWalk64 stops at RaiseException, one frame, "
+                              "on the CI runners; the minidump has the thread");
+
+    return outcome;
+}
+
+ExpectedOutcome expectMacOnly(Lane lane, std::string_view reason)
+{
+    if (!isMac(lane))
+        return notAvailable("no such trap on Windows");
+
+    return reportedThroughMach(lane, reason);
+}
+
+// The kernel raises a signal, which reaches the handler as EXC_CRASH.
+ExpectedOutcome expectBadSystemCall(Lane lane)
+{
+    if (!isMac(lane))
+        return notAvailable("no such signal on Windows");
+
+    return reportedThroughMach(lane, "SIGSYS");
 }
 
 ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane lane)
@@ -218,7 +313,7 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
     if (fault == "nullptr")
     {
         if (isMac(lane))
-            return reported(lane, "SIGSEGV");
+            return reportedThroughMach(lane, "EXC_BAD_ACCESS");
 
         return reported(lane, "EXCEPTION_ACCESS_VIOLATION");
     }
@@ -241,11 +336,41 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
     if (fault == "heapcorruption")
         return expectHeapCorruption(lane, thread);
 
+    if (fault == "heapsmash")
+        return expectHeapSmash(lane, thread);
+
     if (fault == "hang" || fault == "spin" || fault == "deadlock")
         return expectStall(lane, thread);
 
     if (fault == "fastfail")
-        return expectFastFail(lane, thread);
+        return expectFastFail(lane);
+
+    if (fault == "illegalinstruction")
+        return expectIllegalInstruction(lane);
+
+    if (fault == "privilegedinstruction")
+        return expectPrivilegedInstruction(lane);
+
+    if (fault == "floatingpoint")
+        return expectFloatingPoint(lane);
+
+    if (fault == "executenx")
+        return expectExecuteProtection(lane);
+
+    if (fault == "guardpage")
+        return expectWindowsOnly(lane, "STATUS_GUARD_PAGE_VIOLATION");
+
+    if (fault == "inpageerror")
+        return expectInPageError(lane);
+
+    if (fault == "buserror")
+        return expectMacOnly(lane, "EXC_BAD_ACCESS");
+
+    if (fault == "guardedfd")
+        return expectMacOnly(lane, "EXC_GUARD");
+
+    if (fault == "sigsys")
+        return expectBadSystemCall(lane);
 
     return notAvailable("not in the matrix");
 }
@@ -258,10 +383,20 @@ constexpr auto matrixFaults = Array {
     "purevirtual"sv,
     "terminate"sv,
     "heapcorruption"sv,
+    "heapsmash"sv,
     "hang"sv,
     "spin"sv,
     "deadlock"sv,
     "fastfail"sv,
+    "illegalinstruction"sv,
+    "privilegedinstruction"sv,
+    "floatingpoint"sv,
+    "executenx"sv,
+    "guardpage"sv,
+    "inpageerror"sv,
+    "buserror"sv,
+    "guardedfd"sv,
+    "sigsys"sv,
 };
 
 Vector<MatrixCell> makeCrashMatrix()

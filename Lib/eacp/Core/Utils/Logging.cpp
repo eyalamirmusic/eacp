@@ -89,4 +89,10 @@ void setLogFile(std::string_view path)
     state().file.open(state().filePath, std::ios::app);
 }
 
+std::string getLogFile()
+{
+    auto guard = std::lock_guard {state().mutex};
+    return state().filePath;
+}
+
 } // namespace eacp

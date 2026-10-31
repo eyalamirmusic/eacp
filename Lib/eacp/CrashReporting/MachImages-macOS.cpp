@@ -1,5 +1,8 @@
 #include "MachImages-macOS.h"
 
+#include <eacp/Core/Utils/Format.h>
+#include <ea_data_structures/Utilities/VectorUtilities.h>
+
 #include <mach-o/dyld_images.h>
 #include <mach/mach.h>
 
@@ -16,20 +19,16 @@ constexpr auto textSegmentName = std::string_view {SEG_TEXT};
 constexpr auto userAddressMask = std::uint64_t {0x00007FFFFFFFFFFF};
 constexpr auto uuidGroupEnds = std::to_array<std::size_t>({4, 6, 8, 10});
 
-std::string formatUuid(const std::uint8_t (&bytes)[16])
+std::string formatUuid(const ImageUuid& bytes)
 {
-    constexpr auto hexDigits = std::string_view {"0123456789ABCDEF"};
-    constexpr auto nibbleBits = 4;
-    constexpr auto lowNibbleMask = 0xF;
     auto text = std::string {};
 
-    for (auto index = std::size_t {0}; index < std::size(bytes); ++index)
+    for (auto index = std::size_t {0}; index < bytes.size(); ++index)
     {
-        if (std::ranges::find(uuidGroupEnds, index) != uuidGroupEnds.end())
+        if (EA::Vectors::contains(uuidGroupEnds, index))
             text += '-';
 
-        text += hexDigits[bytes[index] >> nibbleBits];
-        text += hexDigits[bytes[index] & lowNibbleMask];
+        text += Strings::format("{:02X}", bytes[index]);
     }
 
     return text;
@@ -75,33 +74,51 @@ std::uint64_t getTextSegmentSize(const mach_header_64& header,
     return 0;
 }
 
-std::string getImageUuid(const mach_header_64& header)
+std::optional<ImageUuid> findImageUuid(const mach_header_64& header,
+                                       std::size_t availableBytes)
 {
     if (header.magic != MH_MAGIC_64)
-        return {};
+        return std::nullopt;
 
     const auto* start = reinterpret_cast<const std::uint8_t*>(&header);
     auto offset = sizeof(mach_header_64);
 
     for (auto index = 0u; index < header.ncmds; ++index)
     {
+        if (offset + sizeof(load_command) > availableBytes)
+            return std::nullopt;
+
         auto command = load_command {};
         std::memcpy(&command, start + offset, sizeof(command));
 
-        if (command.cmd == LC_UUID)
+        if (command.cmd == LC_UUID
+            && offset + sizeof(uuid_command) <= availableBytes)
         {
             auto uuidCommand = uuid_command {};
             std::memcpy(&uuidCommand, start + offset, sizeof(uuidCommand));
-            return formatUuid(uuidCommand.uuid);
+            auto uuid = ImageUuid {};
+            std::copy_n(uuidCommand.uuid, uuid.size(), uuid.begin());
+            return uuid;
         }
 
         if (command.cmdsize == 0)
-            return {};
+            return std::nullopt;
 
         offset += command.cmdsize;
     }
 
-    return {};
+    return std::nullopt;
+}
+
+std::string getImageUuid(const mach_header_64& header)
+{
+    auto commandBytes = sizeof(mach_header_64) + header.sizeofcmds;
+    auto uuid = findImageUuid(header, commandBytes);
+
+    if (!uuid)
+        return {};
+
+    return formatUuid(*uuid);
 }
 
 std::optional<DynamicLinkerImage> findDynamicLinkerImage()

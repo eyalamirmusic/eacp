@@ -38,18 +38,26 @@ struct StackFrame
 struct CrashedThread
 {
     std::uint64_t threadId = 0;
+
+    // A watched thread's name, for a hang; empty for a crash.
+    std::string name;
     Vector<StackFrame> frames;
 
     void reflect(Miro::Reflector& ref);
 };
 
 // Who wrote the report: the handler process reading the crashed one from
-// outside, the handler again after the app was gone with only its exit code to go on,
-// or nobody, for a folder a crash left without its report.json.
+// outside, the handler on macOS from the kernel's Mach exception message with
+// the app suspended, the handler again after the app was gone with only its
+// exit code to go on, the app itself for a handled event (captureMessage,
+// captureException), or nobody, for a folder a crash left without its
+// report.json.
 enum class CaptureSource
 {
     handler,
+    handlerMach,
     exitCode,
+    app,
     incomplete
 };
 
@@ -59,12 +67,18 @@ std::optional<CaptureSource> findCaptureSource(std::string_view name);
 constexpr auto incompleteReason = "incomplete";
 constexpr auto hangReason = "Hang";
 
-// A crash ended the app; a hang is a main thread that stopped answering, and
-// the app was left running.
+constexpr auto messageEventReason = "Message";
+constexpr auto exceptionEventReason = "Exception";
+
+// A crash ended the app. A hang is a watched thread (the main one, or one that
+// has called sendHeartbeat) that stopped sending heartbeats. An event is one the
+// app reported itself (captureMessage, captureException). After a hang or an
+// event the app is still running.
 enum class ReportKind
 {
     crash,
-    hang
+    hang,
+    event
 };
 
 std::string_view getReportKindName(ReportKind kind);
@@ -111,6 +125,9 @@ struct CrashReport
 
     ReportKind kind = ReportKind::crash;
 
+    // An event's own level; fatal for a crash or a hang.
+    Level level = Level::fatal;
+
     // Milliseconds since the Unix epoch, UTC.
     std::int64_t timestamp = 0;
 
@@ -124,7 +141,7 @@ struct CrashReport
 
     std::uint64_t faultAddress = 0;
 
-    // For a hang, the main thread; its frames are where it was stuck. For an
+    // For a hang, the first stalled thread; its frames are where it was stuck. For an
     // uncaught C++ exception whose throw was recorded, the throw site.
     CrashedThread crashingThread;
 
@@ -132,11 +149,22 @@ struct CrashReport
     // throw site instead. Empty otherwise.
     Vector<StackFrame> terminateFrames;
 
-    // How long the main thread had been silent when it was sampled, for a
-    // hang. 0 for a crash.
+    // How long the first stalled thread had been silent when it was sampled,
+    // for a hang. 0 for a crash.
     std::int64_t hangDurationMilliseconds = 0;
 
-    // Empty where no minidump was written (macOS has no writer yet).
+    // For a hang, the stalled thread's name as the OS knows it ("main" for the
+    // main thread). Empty for a crash.
+    std::string threadName;
+
+    // In a hang report, every watched thread that had stopped sending heartbeats
+    // when the hang was detected, each with its stack; the first is also
+    // crashingThread. Two threads deadlocked on each other appear here together.
+    Vector<CrashedThread> stalledThreads;
+
+    // Empty for an event, for a macOS crash caught only by the in-app signal
+    // handler (captureMachExceptions off or its handshake failed), and when
+    // writing the minidump failed.
     FilePath minidumpPath;
 
     // The module's own keys: appName, appVersion, os, release, environment,

@@ -8,7 +8,9 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Plugins/DynamicLibrary.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/CrashReporting/CrashHandler.h>
 #include <eacp/CrashReporting/CrashReporting.h>
+#include <eacp/CrashReporting/CrashReportingPlatform.h>
 #include <eacp/CrashReporting/Faults/Faults.h>
 
 #include <algorithm>
@@ -22,7 +24,7 @@ namespace
 {
 using Faults::ThreadChoice;
 
-constexpr auto hangBeyondThreshold = std::chrono::milliseconds {2000};
+constexpr auto hangBeyondThreshold = Time::MS {2000};
 constexpr auto testEnvironment = "test";
 constexpr auto testUserId = "crash-test-user";
 constexpr auto testUserEmail = "user@example.com";
@@ -52,17 +54,60 @@ std::optional<StackOverflowReporting> findReporting(std::string_view name)
     return std::nullopt;
 }
 
+struct CrashingProcessCrashHandler final : CrashHandler
+{
+    void reportWritten(const CrashReport& report) override
+    {
+        if (report.kind != ReportKind::event)
+            return;
+
+        Console::print(std::string {crashingProcessEventLine} + report.id + " ("
+                       + report.reason + ": " + report.message + ")");
+    }
+};
+
+EACP_REGISTER_CRASH_HANDLER(CrashingProcessCrashHandler);
+
+int printEventOutcome(const std::string& id)
+{
+    Console::print(std::string {crashingProcessStillRunningLine} + id);
+
+    if (id.empty())
+        return 1;
+
+    return 0;
+}
+
+int reportEventNow(std::string_view kind)
+{
+    if (kind == "message")
+        return printEventOutcome(Faults::reportMessageEvent());
+
+    if (kind == "exception")
+        return printEventOutcome(Faults::reportCaughtException());
+
+    Console::printError("no event called " + std::string {kind});
+    return Args::badArguments;
+}
+
 struct CrashingProcessSettings
 {
     std::string fault;
     std::string threadName = "main";
     FilePath databaseDirectory;
-    std::int64_t hangThresholdMilliseconds = Options {}.hangThreshold.count();
+    std::int64_t hangThresholdMilliseconds = Options {}.hangThreshold.count;
     std::string stackOverflowReporting = "everyThread";
     bool pausesHangDetection = false;
     bool killsHandler = false;
     bool skipsCrashReporting = false;
+    bool signalsOnly = false;
+    bool withoutWindowsErrorReportingHelper = false;
+    std::int64_t requiredWindowsErrorReportingHelperVersion = 0;
+    FilePath windowsErrorReportingHelperPath;
+    bool withoutWorkerHangDetection = false;
+    std::string workerBehaviour;
     std::string probe;
+    std::string eventKind;
     std::string libraryFunction;
 };
 
@@ -82,9 +127,25 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
         return false;
 
     auto options = Options {};
-    options.hangThreshold =
-        std::chrono::milliseconds {settings.hangThresholdMilliseconds};
+    options.hangThreshold = Time::MS {settings.hangThresholdMilliseconds};
     options.stackOverflowReporting = *reporting;
+    options.captureMachExceptions = !settings.signalsOnly;
+    options.registerCrashHelperWithWindowsErrorReporting =
+        !settings.withoutWindowsErrorReportingHelper;
+
+    options.windowsErrorReportingHelperPath =
+        settings.windowsErrorReportingHelperPath;
+
+#if defined(_WIN32)
+    if (settings.requiredWindowsErrorReportingHelperVersion != 0)
+    {
+        auto requiredVersion = static_cast<std::uint32_t>(
+            settings.requiredWindowsErrorReportingHelperVersion);
+        Detail::requireWindowsErrorReportingHelperVersion(requiredVersion);
+    }
+#endif
+    if (settings.withoutWorkerHangDetection)
+        options.hangDetection = HangDetection::mainThreadOnly;
     options.environment = testEnvironment;
     options.attachments = {writeSessionLog()};
 
@@ -100,11 +161,10 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
     return true;
 }
 
-// Nothing is watched for a hang until the loop has beaten a few times.
+// Nothing is watched for a hang until the loop has sent a few heartbeats.
 Time::MS getDelayBeforeStalling()
 {
-    auto delay = Options {}.heartbeatInterval * heartbeatsBeforeStalling;
-    return Time::MS {delay.count()};
+    return Options {}.heartbeatInterval * heartbeatsBeforeStalling;
 }
 
 // A main-thread stall quits once the fault returns; a background one leaves
@@ -113,6 +173,8 @@ void runStallingFault(std::string_view name,
                       ThreadChoice thread,
                       bool pausesHangDetection)
 {
+    Faults::setPausesBackgroundWatch(pausesHangDetection);
+
     if (pausesHangDetection)
         pauseHangDetection();
 
@@ -130,7 +192,7 @@ void runStallingFault(std::string_view name,
     }
 
     auto stall = Faults::getHangDuration();
-    Threads::callAfter(Time::MS {stall.count()}, [] { Apps::quit(); });
+    Threads::callAfter(stall, [] { Apps::quit(); });
 }
 
 struct FaultApp
@@ -175,6 +237,54 @@ int crashNow(const CrashingProcessSettings& settings)
 
     return Apps::run<FaultApp>(fault->get(), *thread, settings.pausesHangDetection);
 }
+
+// Each sends one heartbeat and ends, more of them than there are slots, so the
+// stalling worker after them gets one only if each was freed.
+void runFinishedWorkers()
+{
+    constexpr auto finishedWorkerCount = Detail::maxWatchedThreads * 2;
+
+    for (auto index = std::size_t {0}; index < finishedWorkerCount; ++index)
+    {
+        auto worker = std::thread {[] { sendHeartbeat(); }};
+        worker.join();
+    }
+}
+
+void runWorker(std::string_view behaviour)
+{
+    constexpr auto heartbeatsBeforeStalling = 3;
+    Detail::setCurrentThreadName(crashingProcessWorkerName);
+
+    if (behaviour != "silent")
+    {
+        for (auto index = 0; index < heartbeatsBeforeStalling; ++index)
+        {
+            sendHeartbeat();
+            Time::sleep(Options {}.heartbeatInterval);
+        }
+    }
+
+    Time::sleep(Faults::getHangDuration());
+    Threads::callAsync([] { Apps::quit(); });
+}
+
+// A plain std::thread, so nothing but start() and sendHeartbeat() watches it;
+// it quits the app once its stall is over.
+struct WorkerApp
+{
+    explicit WorkerApp(const std::string& behaviour)
+    {
+        if (behaviour == "stall-after-finished-workers")
+            runFinishedWorkers();
+
+        worker = std::thread {[behaviour] { runWorker(behaviour); }};
+    }
+
+    ~WorkerApp() { worker.join(); }
+
+    std::thread worker;
+};
 
 // The library stays loaded for the rest of the process, which is short.
 int crashInLoadedLibrary(const CrashingProcessSettings& settings)
@@ -245,6 +355,30 @@ int runCrashingProcess()
     cli.flag("--pause-hang-detection",
              settings.pausesHangDetection,
              "pause hang detection around a hang or spin fault");
+    cli.flag("--signals-only",
+             settings.signalsOnly,
+             "macOS: no Mach exception capture, only the in-app signal handler");
+    cli.option(
+        "--event", settings.eventKind, "message or exception: report it, no crash");
+    cli.flag("--without-windows-error-reporting-helper",
+             settings.withoutWindowsErrorReportingHelper,
+             "Windows: skip the Windows Error Reporting helper, so fast-fail "
+             "and heap-corruption crashes get no stack");
+    cli.option("--required-windows-error-reporting-helper-version",
+               settings.requiredWindowsErrorReportingHelperVersion,
+               "Windows: the helper protocol version start() requires, 0 for "
+               "this build's own");
+    cli.option("--windows-error-reporting-helper-path",
+               settings.windowsErrorReportingHelperPath,
+               "Windows: the helper DLL to register instead of the one next to "
+               "the exe");
+    cli.option("--worker",
+               settings.workerBehaviour,
+               "stall (heartbeats, then stalls), silent (stalls with no "
+               "heartbeat) or stall-after-finished-workers");
+    cli.flag("--without-worker-hang-detection",
+             settings.withoutWorkerHangDetection,
+             "Options::hangDetection mainThreadOnly");
     cli.flag("--kill-handler",
              settings.killsHandler,
              "end the handler process first, so the crash goes unreported");
@@ -263,8 +397,7 @@ int runCrashingProcess()
     if (auto code = cli.exitCodeFor(cli.parse()))
         return *code;
 
-    auto hangThreshold =
-        std::chrono::milliseconds {settings.hangThresholdMilliseconds};
+    auto hangThreshold = Time::MS {settings.hangThresholdMilliseconds};
     Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
 
     if (!settings.skipsCrashReporting && !startCrashReporting(settings))
@@ -273,8 +406,14 @@ int runCrashingProcess()
     if (auto code = runThreadStackProbe(settings.probe))
         return *code;
 
+    if (!settings.eventKind.empty())
+        return reportEventNow(settings.eventKind);
+
     if (!settings.libraryFunction.empty())
         return crashInLoadedLibrary(settings);
+
+    if (!settings.workerBehaviour.empty())
+        return Apps::run<WorkerApp>(settings.workerBehaviour);
 
     return crashNow(settings);
 }

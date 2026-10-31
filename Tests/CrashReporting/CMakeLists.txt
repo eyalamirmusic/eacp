@@ -13,6 +13,7 @@ nano_add_executable(CrashReportingTests
         SOURCES TestMain.cpp CrashingProcess.cpp ThreadStackProbe.cpp
                 PendingReportsTests.cpp FaultReportTests.cpp FaultsTests.cpp
                 StackOverflowTests.cpp LoadedLibraryTests.cpp
+                EventTests.cpp WorkerHangTests.cpp
         TARGETS eacp-crash-faults)
 eacp_enable_crash_reporting(CrashReportingTests)
 
@@ -29,3 +30,17 @@ add_subdirectory(CrashingLibrary)
 target_compile_definitions(CrashReportingTests PRIVATE
         EACP_CRASHING_LIBRARY="$<TARGET_FILE:CrashingLibrary>")
 add_dependencies(CrashReportingTests CrashingLibrary)
+
+# Every crashing process adds the same HKCU registry entry for the Windows
+# Error Reporting helper DLL beside this binary, and some groups remove it, so
+# those groups run one at a time: else one removes it while another crashes.
+if (WIN32)
+    set(wer_lock_file "${CMAKE_CURRENT_BINARY_DIR}/WerSerialisation.cmake")
+
+    file(WRITE "${wer_lock_file}"
+            "set_tests_properties(CrashReport CrashReporting PROPERTIES\n"
+            "        RESOURCE_LOCK eacp-wer-module-listing)\n")
+
+    set_property(DIRECTORY APPEND PROPERTY
+            TEST_INCLUDE_FILES "${wer_lock_file}")
+endif ()

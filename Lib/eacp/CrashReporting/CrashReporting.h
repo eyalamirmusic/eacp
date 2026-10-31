@@ -5,8 +5,10 @@
 #include "ReportDatabase.h"
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Time.h>
 
-#include <chrono>
+#include <cstdint>
+#include <exception>
 #include <optional>
 #include <string_view>
 
@@ -29,6 +31,9 @@ namespace eacp::CrashReporting
 // report needs a separate one set up on the thread beforehand: an alternate
 // signal stack on macOS, a SetThreadStackGuarantee reserve on Windows. Each
 // stack is reserved address space, not resident memory, until a crash uses it.
+// With Options::captureMachExceptions on, the macOS default, the report is read
+// from outside the app and nothing runs on the crashing thread, so on macOS
+// this matters only with it off.
 enum class StackOverflowReporting
 {
     // The thread that calls start(), usually the main thread.
@@ -52,6 +57,15 @@ FilePath getDefaultDatabaseDirectory();
 // named objects a session makes where the platform names them (Windows).
 std::string createDefaultChannelName();
 
+// The main thread is watched once its event loop runs; any other thread from
+// its first sendHeartbeat() on.
+enum class HangDetection
+{
+    off,
+    mainThreadOnly,
+    mainThreadAndThreadsThatSendHeartbeats,
+};
+
 struct Options
 {
     FilePath databaseDirectory = getDefaultDatabaseDirectory();
@@ -64,7 +78,7 @@ struct Options
 
     // How long start() waits for the handler to come up before going on
     // without it, in which case a crash goes unreported.
-    std::chrono::milliseconds handlerStartTimeout {5000};
+    Time::MS handlerStartTimeout {5000};
 
     // Empty is createDefaultChannelName().
     std::string channelName;
@@ -83,13 +97,28 @@ struct Options
     Vector<FilePath> attachments;
 
     // How often the main thread's heartbeat is written, from a timer on the
-    // event loop, and how long it may go silent before that is reported as a
-    // hang. A zero threshold turns hang detection off.
-    std::chrono::milliseconds heartbeatInterval {500};
-    std::chrono::milliseconds hangThreshold {10000};
+    // event loop, and how long any watched thread may go silent before that
+    // is reported as a hang. A zero threshold turns hang detection off.
+    Time::MS heartbeatInterval {500};
+    Time::MS hangThreshold {10000};
+
+    HangDetection hangDetection =
+        HangDetection::mainThreadAndThreadsThatSendHeartbeats;
 
     StackOverflowReporting stackOverflowReporting =
-        StackOverflowReporting::startingThread;
+        StackOverflowReporting::everyThread;
+
+    // macOS: faults reach the handler as Mach exceptions, read from outside
+    // the app with a minidump. Off leaves only the in-app signal handler.
+    bool captureMachExceptions = true;
+    // Windows: heap corruption and the security checks that end a program on the
+    // spot ("fast fail") skip every crash handler in the app. With this on,
+    // Windows Error Reporting hands those crashes to eacp, so they are reported
+    // with a stack like any other. It registers eacp's helper for the current
+    // user; an installer can register it for all users in HKEY_LOCAL_MACHINE.
+    bool registerCrashHelperWithWindowsErrorReporting = true;
+    // Windows: the helper DLL, empty for next to the exe; apps sharing one set it.
+    FilePath windowsErrorReportingHelperPath;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command
@@ -134,14 +163,42 @@ bool setUser(const User& user);
 void clearUser();
 bool addAttachment(const FilePath& path);
 
-// For main-thread work that is meant to take longer than the hang threshold.
-// Nests; the silence is measured afresh from resumeHangDetection.
+// Marks the calling thread alive. A thread is watched for hangs from its first
+// call, so one that waits without ever calling it is never reported. Its watch
+// is freed when it ends. Up to Detail::maxWatchedThreads - 1 threads beside the
+// main one; a thread that finds every slot taken stays unwatched. Lock-free.
+void sendHeartbeat();
+
+// For work on the calling thread that is meant to take longer than the hang
+// threshold. Nests; the silence is measured afresh from resumeHangDetection.
 void pauseHangDetection();
 void resumeHangDetection();
 
 // Kept in a ring of the newest Detail::maxBreadcrumbs, timestamped now. A
 // category longer than 63 bytes or a message longer than 511 is cut.
 void addBreadcrumb(const Breadcrumb& breadcrumb);
+
+// Something the app reports about itself without crashing.
+struct Event
+{
+    std::string reason = messageEventReason;
+    std::string message;
+    Level level = Level::error;
+};
+
+// sentry-native's handled events. Its crash-time screenshot and release-health
+// sessions are left out on purpose: the second needs a service, not a report.
+//
+// Writes a report of kind event, with the calling thread's stack and
+// everything a crash report carries but a minidump, into pending/, and hands
+// it to reportWritten on the calling thread. The app keeps running and the
+// handler process is not involved. The report's id; empty before start() or
+// when the report could not be written.
+std::string captureEvent(const Event& event);
+std::string captureMessage(std::string_view message, Level level = Level::info);
+
+// The exception's type and what() as the message, at level error.
+std::string captureException(const std::exception& exception);
 
 // Whether the last run wrote a report, as start() found the database. Stays
 // true on later launches until clearCrashedLastRun().
