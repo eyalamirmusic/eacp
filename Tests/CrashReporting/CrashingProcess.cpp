@@ -144,7 +144,8 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
         Detail::requireWindowsErrorReportingHelperVersion(requiredVersion);
     }
 #endif
-    options.detectWorkerThreadHangs = !settings.withoutWorkerHangDetection;
+    if (settings.withoutWorkerHangDetection)
+        options.hangDetection = HangDetection::mainThreadOnly;
     options.environment = testEnvironment;
     options.attachments = {writeSessionLog()};
 
@@ -377,7 +378,7 @@ int runCrashingProcess()
                "heartbeat) or stall-after-finished-workers");
     cli.flag("--without-worker-hang-detection",
              settings.withoutWorkerHangDetection,
-             "Options::detectWorkerThreadHangs off");
+             "Options::hangDetection mainThreadOnly");
     cli.flag("--kill-handler",
              settings.killsHandler,
              "end the handler process first, so the crash goes unreported");

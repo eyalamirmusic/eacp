@@ -57,6 +57,15 @@ FilePath getDefaultDatabaseDirectory();
 // named objects a session makes where the platform names them (Windows).
 std::string createDefaultChannelName();
 
+// The main thread is watched once its event loop runs; any other thread from
+// its first sendHeartbeat() on.
+enum class HangDetection
+{
+    off,
+    mainThreadOnly,
+    mainThreadAndThreadsThatSendHeartbeats,
+};
+
 struct Options
 {
     FilePath databaseDirectory = getDefaultDatabaseDirectory();
@@ -93,11 +102,8 @@ struct Options
     Time::MS heartbeatInterval {500};
     Time::MS hangThreshold {10000};
 
-    // The main thread, from start() on.
-    bool detectMainThreadHangs = true;
-
-    // Every other thread, from its first sendHeartbeat() on.
-    bool detectWorkerThreadHangs = true;
+    HangDetection hangDetection =
+        HangDetection::mainThreadAndThreadsThatSendHeartbeats;
 
     StackOverflowReporting stackOverflowReporting =
         StackOverflowReporting::everyThread;

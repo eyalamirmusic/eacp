@@ -257,7 +257,7 @@ void writeHangSettings(Detail::SharedState& state, const Options& options)
     hang.pollIntervalMilliseconds =
         Detail::countMilliseconds(options.heartbeatInterval);
 
-    if (!options.detectMainThreadHangs)
+    if (options.hangDetection == HangDetection::off)
         return;
 
     Detail::watchMainThread(hang, Detail::getCurrentThreadId());
@@ -269,18 +269,18 @@ void armHangDetection(CrashReportingSession& session, Detail::SharedState& state
 {
     auto& hang = state.hang;
 
-    if (hang.thresholdMilliseconds == 0 || hang.pollIntervalMilliseconds == 0)
+    auto isOff = session.options.hangDetection == HangDetection::off;
+
+    if (isOff || hang.thresholdMilliseconds == 0
+        || hang.pollIntervalMilliseconds == 0)
         return;
 
     session.threadsWatched = true;
+    session.heartbeatRunning = true;
+    scheduleHeartbeat(session, hang);
 
-    if (session.options.detectMainThreadHangs)
-    {
-        session.heartbeatRunning = true;
-        scheduleHeartbeat(session, hang);
-    }
-
-    if (session.options.detectWorkerThreadHangs)
+    if (session.options.hangDetection
+        == HangDetection::mainThreadAndThreadsThatSendHeartbeats)
     {
         session.workerThreadsWatched = true;
         Detail::setReleasesWatchOnThreadEnd(true);
