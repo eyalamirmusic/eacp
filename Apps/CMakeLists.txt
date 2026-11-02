@@ -41,11 +41,6 @@ if (EACP_HAS_TEXT)
         add_subdirectory(Video)
     endif ()
 
-    # A window whose buttons crash it, and the report its handler shows.
-    if (TARGET eacp-crash-reporting)
-        add_subdirectory(CrashReporting)
-    endif ()
-
     if (EACP_HAS_WEBVIEW)
         add_subdirectory(WebView)
         add_subdirectory(Mixed)
