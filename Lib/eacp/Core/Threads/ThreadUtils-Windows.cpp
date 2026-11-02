@@ -19,6 +19,7 @@ namespace eacp::Threads
 struct MainThreadState
 {
     std::atomic<DWORD> mainThreadId {GetCurrentThreadId()};
+    std::atomic<bool> keepsWindowsErrorReportingOn {false};
 };
 
 static MainThreadState& getMainThreadState()
@@ -35,6 +36,23 @@ void setCurrentThreadAsMainFallback()
     getMainThreadState().mainThreadId = GetCurrentThreadId();
 }
 
+UINT getMainThreadErrorMode()
+{
+    constexpr auto quietMode =
+        UINT {SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX};
+
+    if (getMainThreadState().keepsWindowsErrorReportingOn.load())
+        return quietMode;
+
+    return quietMode | SEM_NOGPFAULTERRORBOX;
+}
+
+void keepWindowsErrorReportingOn()
+{
+    getMainThreadState().keepsWindowsErrorReportingOn.store(true);
+    SetErrorMode(GetErrorMode() & ~UINT {SEM_NOGPFAULTERRORBOX});
+}
+
 void initMainThread()
 {
     // Suppress Windows Error Reporting + the JIT-debugger pop-up that otherwise
@@ -42,8 +60,7 @@ void initMainThread()
     // during DLL detach at shutdown. Lives here — the loop owner's bootstrap —
     // rather than at static init, so merely dlopen-loading an eacp plugin doesn't
     // overwrite the host process's error mode.
-    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
-                 | SEM_NOOPENFILEERRORBOX);
+    SetErrorMode(getMainThreadErrorMode());
 
     // A failed assert() is the same problem one layer down: the debug CRT
     // answers it with a modal dialog, so a test binary that trips one stops
