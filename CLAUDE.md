@@ -1153,32 +1153,6 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `FileWriter` and `Files::writeFile`, so UTF-8 paths take the same route as
   everything else. `Apps/Console/Zip` is the worked example.
 
-### Crash reporting (`Lib/eacp/CrashReporting`)
-
-The report types and `ReportDatabase` are `eacp-crash-report`, built on every
-platform so a Linux service reads the apps' reports with the same struct;
-`eacp-crash-reporting` (macOS and Windows; `eacp_enable_crash_reporting(<exe>)`
-in `CMake/CrashReporting.cmake` links it, `eacp-core` does not) relaunches the
-app's own executable as a handler process at `start()`; `main()` begins with
-`runHandlerIfRequested`. The app and handler share one fixed-size block
-(`SharedState.h`: metadata, attachments, the crash). On macOS the app captures
-in its signal handler (`backtrace()` on an alternate stack, the dyld image
-list) and the handler symbolises with `dladdr`; on Windows the handler writes a
-minidump and walks the stack with DbgHelp. Reports land in
-`pending/<id>/report.json` and reach the app's `CrashHandler`
-(`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
-itself and says on each button what the report will be; `CrashReportingTests`
-relaunches itself with `--crashing-process` to raise every fault on the main
-and a background thread, one case per cell of `Faults/Matrix.h`; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
-`Options::stackOverflowReporting` gives the starting thread (the default), every
-thread or none a stack to report an overflow from (an alternate signal stack on
-macOS, through `pthread_introspection_hook_install`; a `SetThreadStackGuarantee`
-reserve on Windows, from a TLS callback), macOS records
-throw sites through its own `__cxa_throw`. With the handler gone a crash goes
-unreported; `start()` then returns false and calls `handlerUnavailable`, and a
-`session.active` marker that a clean exit removes lets the next `start()` call
-`unreportedExit` for a run that ended with no report.
-
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 
 `UI::GPUComponent` is a `GPUView`'s `render(Frame&)`/`update(FrameTime)` as a
