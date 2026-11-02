@@ -11,6 +11,7 @@ set(core_test_sources
         # Runs ConsoleHarness as a child: runConsole's exit codes and streams.
         ConsoleTests.cpp
         DynamicLibraryTests.cpp
+        EnvironmentTests.cpp
         EventLoopTests.cpp
         FileLocationsTests.cpp
         FilePathNamesTests.cpp
