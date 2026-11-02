@@ -37,6 +37,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `LOGF(pattern, args...)` — timestamped log line through `Strings::format`
 - `logMessage(text)` — log one already-built line
 - `setLogFile(path)` — also write the log to a file
+- `getLogFile()` — the path `setLogFile` stored, empty when none
 - `Console::print(line)` / `Console::printError(line)` — plain stdout/stderr line
 
 ## Files — `Core/Utils/Files.h` (`eacp::Files`)
@@ -90,7 +91,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 
 ## Time — `Core/Utils/Time.h` (`eacp::Time`)
 
-- `MS` — a millisecond count, the unit every eacp API takes
+- `MS` — a millisecond count, the unit every eacp API takes; `MS + MS`, `MS * int64`
 - `sleep(MS)` / `sleepMS(int)` — block the calling thread
 - `Deadline(timeout)` — `expired()`, `remaining()`
 - In #177, pending: `sinceEpoch()`, `formatIso8601(MS)`
@@ -151,6 +152,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `Async<T>` / `AsyncPromise<T>` — `then(onValue, onError)`, `resolve`, `reject`
 - `runEventLoopFor(MS)` / `runEventLoopUntil(predicate, ...)` — pump the loop
 - `BinarySemaphore` / `TaskSemaphore` (`TaskSemaphore.h`) — wait with timeout
+- `keepWindowsErrorReportingOn()` (`ThreadUtils-Windows.h`) — stop eacp hiding crashes from Windows Error Reporting
 
 ## Plugins — `Core/Plugins/`
 
