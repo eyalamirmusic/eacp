@@ -246,8 +246,8 @@ namespace Detail
 template <typename T, typename... Args>
 AppFactory makeAppFactory(Args&&... args)
 {
-    return [... args = std::forward<Args>(args)]
-    { getGlobalApp().template create<App<T>>(args...); };
+    return [... capturedArgs = std::forward<Args>(args)]
+    { getGlobalApp().template create<App<T>>(capturedArgs...); };
 }
 } // namespace Detail
 
