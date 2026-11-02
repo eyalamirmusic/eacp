@@ -33,13 +33,17 @@ add_dependencies(CrashReportingTests CrashingLibrary)
 
 # Every crashing process adds the same HKCU registry entry for the Windows
 # Error Reporting helper DLL beside this binary, and some groups remove it, so
-# those groups run one at a time: else one removes it while another crashes.
+# every group that starts one runs one at a time: else one removes it while
+# another crashes. The timeout makes a stuck child a failure with its output
+# rather than a job that runs until CI cancels it.
 if (WIN32)
     set(wer_lock_file "${CMAKE_CURRENT_BINARY_DIR}/WerSerialisation.cmake")
+    set(crash_group_timeout_seconds 600)
 
     file(WRITE "${wer_lock_file}"
-            "set_tests_properties(CrashReport CrashReporting PROPERTIES\n"
-            "        RESOURCE_LOCK eacp-wer-module-listing)\n")
+            "set_tests_properties(CrashReport CrashReporting CrashEvent StackOverflow\n"
+            "        PROPERTIES RESOURCE_LOCK eacp-wer-module-listing\n"
+            "        TIMEOUT ${crash_group_timeout_seconds})\n")
 
     set_property(DIRECTORY APPEND PROPERTY
             TEST_INCLUDE_FILES "${wer_lock_file}")
