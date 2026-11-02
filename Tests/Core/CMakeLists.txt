@@ -8,6 +8,7 @@ set(core_test_sources
         # Touches the real system clipboard, and restores whatever was there.
         ClipboardTests.cpp
         DynamicLibraryTests.cpp
+        EnvironmentTests.cpp
         EventLoopTests.cpp
         FileLocationsTests.cpp
         FilePathNamesTests.cpp

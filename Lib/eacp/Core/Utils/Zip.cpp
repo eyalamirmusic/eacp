@@ -80,6 +80,9 @@ void appendFrom(Bytes& bytes, Scratch& scratch, std::size_t count)
 
 void appendVia(Bytes& bytes, Scratch& scratch, const void* data, std::size_t count)
 {
+    if (count == 0)
+        return;
+
     if (scratch.size() < count)
         scratch.resize(count);
 
