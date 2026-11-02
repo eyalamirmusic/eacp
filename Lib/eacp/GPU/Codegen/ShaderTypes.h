@@ -63,9 +63,26 @@ constexpr int matrixOrder(ValueType type)
             return 3;
         case ValueType::Float4x4:
             return 4;
-        default:
+        case ValueType::Float:
+        case ValueType::Float2:
+        case ValueType::Float3:
+        case ValueType::Float4:
+        case ValueType::UInt:
+        case ValueType::UInt2:
+        case ValueType::UInt3:
+        case ValueType::UInt4:
+        case ValueType::Int:
+        case ValueType::Int2:
+        case ValueType::Int3:
+        case ValueType::Int4:
+        case ValueType::Bool:
+        case ValueType::Bool2:
+        case ValueType::Bool3:
+        case ValueType::Bool4:
             return 0;
     }
+
+    return 0;
 }
 
 constexpr int componentCount(ValueType type)
