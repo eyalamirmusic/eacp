@@ -145,7 +145,7 @@ Sha256Digest Sha256::finish()
 {
     auto totalBits = totalBytes * bitsPerByte;
     auto padding = std::vector<std::uint8_t> {paddingStartByte};
-    auto lengthOffset = sha256BlockSize - lengthFieldSize;
+    auto lengthOffset = std::size_t {sha256BlockSize - lengthFieldSize};
 
     while ((pendingSize + padding.size()) % sha256BlockSize != lengthOffset)
         padding.push_back(0);
