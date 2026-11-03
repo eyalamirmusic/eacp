@@ -187,7 +187,7 @@ auto tRelativeToWalksUpAndDown =
     check(FilePath {"/a/b/c"}.relativeTo("/a") == FilePath {"b/c"});
     check(FilePath {"/a/d"}.relativeTo("/a/b") == FilePath {"../d"});
     check(FilePath {"/a"}.relativeTo("/a") == FilePath {"."});
-    check(FilePath {"/a"}.relativeTo("b").empty());
+    check(FilePath {"a"}.relativeTo("/b").empty());
 };
 
 auto tCurrentDirectoryIsAbsolute =
