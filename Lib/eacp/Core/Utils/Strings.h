@@ -49,6 +49,9 @@ int hexCharToInt(char c);
 // text: nullopt for empty text, any other character, or a value past 64 bits.
 std::optional<std::uint64_t> parseHex(std::string_view text);
 
+// Two lowercase hex digits per byte, in order: {0x0a, 0xff} is "0aff".
+std::string toHex(Span<const std::uint8_t> bytes);
+
 // UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
 // (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the
 // framework crosses that boundary - every Win32 -W call, Media Foundation URL

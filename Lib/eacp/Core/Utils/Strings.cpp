@@ -398,6 +398,24 @@ std::optional<std::uint64_t> parseHex(std::string_view text)
     return value;
 }
 
+std::string toHex(Span<const std::uint8_t> bytes)
+{
+    constexpr auto hexDigits = std::string_view {"0123456789abcdef"};
+    constexpr auto nibbleBits = 4;
+    constexpr auto nibbleMask = 0xf;
+
+    auto hex = std::string {};
+    hex.reserve(bytes.getSize() * 2);
+
+    for (auto byte: bytes)
+    {
+        hex.push_back(hexDigits[byte >> nibbleBits]);
+        hex.push_back(hexDigits[byte & nibbleMask]);
+    }
+
+    return hex;
+}
+
 std::optional<float> tryParseFloat(const std::string& s)
 {
     try

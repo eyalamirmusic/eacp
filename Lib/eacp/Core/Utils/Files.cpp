@@ -157,6 +157,12 @@ void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes)
         throw abandon("cannot replace");
 }
 
+void writeFileAtomically(const FilePath& path, std::string_view text)
+{
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(text.data());
+    writeFileAtomically(path, Span<const std::uint8_t> {bytes, text.size()});
+}
+
 bool createDirectories(const FilePath& directory)
 {
     auto error = std::error_code {};
@@ -383,6 +389,37 @@ bool moveFile(const FilePath& from, const FilePath& to)
     }
 
     return removeAll(from);
+}
+
+bool isSameFile(const FilePath& a, const FilePath& b)
+{
+    auto ec = std::error_code {};
+    return std::filesystem::equivalent(toStdPath(a), toStdPath(b), ec) && !ec;
+}
+
+bool setExecutable(const FilePath& path)
+{
+    if constexpr (Platform::isWindows())
+        return true;
+
+    constexpr auto executeForEveryone = std::filesystem::perms::owner_exec
+                                        | std::filesystem::perms::group_exec
+                                        | std::filesystem::perms::others_exec;
+    auto ec = std::error_code {};
+    std::filesystem::permissions(
+        toStdPath(path), executeForEveryone, std::filesystem::perm_options::add, ec);
+    return !ec;
+}
+
+FilePath readSymlink(const FilePath& path)
+{
+    auto ec = std::error_code {};
+    auto target = std::filesystem::read_symlink(toStdPath(path), ec);
+
+    if (ec)
+        return {};
+
+    return FilePath {target};
 }
 
 bool removeFile(const FilePath& path)

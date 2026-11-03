@@ -51,6 +51,7 @@ target_sources(eacp-core PRIVATE
         Utils/MemoryMappedFile.cpp
         Utils/Random.cpp
         Utils/SourceWatcher.cpp
+        Utils/Sha256.cpp
         Utils/Strings.cpp
         Utils/TemporaryFile.cpp
         Utils/Time.cpp

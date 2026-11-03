@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Strings.h>
 
+#include <array>
 #include <clocale>
 
 using namespace nano;
@@ -395,4 +396,13 @@ auto tFormatPadsToAWidthGivenAtRunTime =
 {
     constexpr auto columnWidth = 6;
     check(eacp::Strings::format("{:<{}}|", "#1", columnWidth) == "#1    |");
+};
+
+auto tToHexWritesLowercasePairs = test("Strings/toHex writes two digits a byte") = []
+{
+    const auto bytes = std::array<std::uint8_t, 4> {0x00, 0x0a, 0xab, 0xff};
+
+    check(eacp::Strings::toHex(bytes) == "000aabff");
+    check(eacp::Strings::toHex({}).empty());
+    check(eacp::Strings::parseHex(eacp::Strings::toHex(bytes)) == 0x000aabffu);
 };
