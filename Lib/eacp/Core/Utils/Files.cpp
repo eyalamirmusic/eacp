@@ -400,15 +400,21 @@ bool isSameFile(const FilePath& a, const FilePath& b)
 bool setExecutable(const FilePath& path)
 {
     if constexpr (Platform::isWindows())
+    {
         return true;
-
-    constexpr auto executeForEveryone = std::filesystem::perms::owner_exec
-                                        | std::filesystem::perms::group_exec
-                                        | std::filesystem::perms::others_exec;
-    auto ec = std::error_code {};
-    std::filesystem::permissions(
-        toStdPath(path), executeForEveryone, std::filesystem::perm_options::add, ec);
-    return !ec;
+    }
+    else
+    {
+        constexpr auto executeForEveryone = std::filesystem::perms::owner_exec
+                                            | std::filesystem::perms::group_exec
+                                            | std::filesystem::perms::others_exec;
+        auto ec = std::error_code {};
+        std::filesystem::permissions(toStdPath(path),
+                                     executeForEveryone,
+                                     std::filesystem::perm_options::add,
+                                     ec);
+        return !ec;
+    }
 }
 
 FilePath readSymlink(const FilePath& path)
