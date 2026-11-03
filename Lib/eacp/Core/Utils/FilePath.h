@@ -53,6 +53,9 @@ public:
     static FilePath desktopDirectory();
     static FilePath tempDirectory();
 
+    // The process's working directory. Empty when it cannot be read.
+    static FilePath currentDirectory();
+
     // Per-user application data and cache roots: Application Support and
     // Caches on Apple platforms, Roaming and Local AppData on Windows, the
     // XDG data and cache homes on Linux.
@@ -112,8 +115,9 @@ public:
     // str(). fromNative() parses it back.
     std::string nativeString() const;
 
-    // The path as a wide string, for native APIs and std::filesystem on
-    // Windows. Never throws: bytes that are not valid UTF-8 decode to U+FFFD.
+    // nativeString() as a wide string, for native APIs and std::filesystem on
+    // Windows, so a "\\?\" long path reaches CreateFileW intact. Never
+    // throws: bytes that are not valid UTF-8 decode to U+FFFD.
     std::wstring wide() const;
 
     // ".png" for "dir/image.png"; empty for dotfiles and extension-less
@@ -142,6 +146,20 @@ public:
 
     // A path beside this one: parentDirectory() / name.
     FilePath sibling(std::string_view name) const;
+
+    // The same path with suffix added to the end of the file name, so
+    // "a/b.tar" with ".lock" is "a/b.tar.lock".
+    FilePath withSuffix(std::string_view suffix) const;
+
+    // This path with "." and ".." resolved and repeated separators collapsed,
+    // as std::filesystem::path::lexically_normal does. Pure text.
+    FilePath lexicallyNormal() const;
+
+    // This path written relative to base: "b/c" for "a/b/c" against "a",
+    // "../d" for "a/d" against "a/b". Pure text, like
+    // std::filesystem::path::lexically_relative; empty when no relative path
+    // joins them, such as two different roots.
+    FilePath relativeTo(const FilePath& base) const;
 
     // Rooted at '/', or on Windows at a drive letter ("C:") or a UNC share.
     bool isAbsolute() const;

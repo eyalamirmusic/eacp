@@ -26,7 +26,7 @@ auto tNativeStringInvertsWideConversion =
     {
         auto path = FilePath {std::filesystem::path {native}};
         check(path.str().find('\\') == std::string::npos);
-        check(path.wide().find(L'\\') == std::wstring::npos);
+        check(path.wide() == native);
         check(FilePath {path.nativeString()}.wide() == native);
         check(FilePath::fromNative(path.nativeString()) == path);
     }
@@ -39,4 +39,28 @@ auto tLoneSurrogateNeverThrows =
     auto path = FilePath {std::filesystem::path {name}};
 
     check(path.str() == "bad\xEF\xBF\xBDname.wav");
+};
+
+auto tLongPathOpensThroughWide =
+    test("FilePath/a long path with the \\\\?\\ prefix writes and reads") = []
+{
+    constexpr auto longNameLength = 120;
+    constexpr auto directoryDepth = 3;
+    constexpr auto windowsMaxPath = std::size_t {260};
+
+    auto dir = scratchDirectory("filepath-long");
+    auto prefixedDirectory = std::filesystem::path {L"\\\\?\\" + dir.wstring()};
+    auto longPath = prefixedDirectory;
+
+    for (auto level = 0; level < directoryDepth; ++level)
+        longPath /= std::wstring(longNameLength, L'd');
+
+    auto file = FilePath {longPath / L"file.txt"};
+    check(file.str().size() > windowsMaxPath);
+
+    eacp::Files::writeFile(file, std::string_view {"long"});
+    check(eacp::Files::readFile(file) == "long");
+    check(eacp::MemoryMappedFile {file}.text() == "long");
+
+    std::filesystem::remove_all(prefixedDirectory);
 };
