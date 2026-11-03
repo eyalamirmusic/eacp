@@ -364,6 +364,183 @@ vectors included, crosses uninterpolated — the emitter writes `flat`,
 `nointerpolation` or `[[flat]]` for it on its own, since every dialect requires
 that of an integer.
 
+## Compiling shaders at build time
+
+Every shader is recorded and emitted at run time, and by default compiled there
+too. The text the emitter produces depends only on the graph, so the compile can
+move to the build: `eacp-shader-compiler` (`ShaderCompiler/ShaderCompiler.h`,
+device-free and built wherever `eacp-gpu-codegen` is) emits each graph an app
+lists, compiles it for every target it will meet, and writes one blob per
+target for ResEmbed to embed under the category `EacpShaders`.
+
+An app lists its shaders in its shader translation units with
+`EACP_SHADER_SET()` (`Codegen/ShaderSets.h`), as many as it likes, unnamed:
+
+```cpp
+EACP_SHADER_SET()
+{
+    visit<RotatingShader>();
+    visit<GainKernel, BlurKernel, SumKernel>();
+    visit<SpriteShader>(TextureSampling::nearest); // a variant built with arguments
+    UI::LayerRenderer::forEachShaderGraph(visitor()); // a module's own shaders
+}
+```
+
+The braces are the body of `define() const` on a `ShaderSetDefinition` the
+macro declares in an anonymous namespace, named from `__COUNTER__`, and one
+instance of it registers itself with `ShaderSets::registerSet` before `main()`.
+`visit<Shaders...>()` builds each type with no arguments (a `static_assert`
+says so when one cannot be, pointing at the next form), `visit<Shader>(args...)`
+builds one type in place from its constructor's arguments, so a set never
+names `graph()`, and for a module hook `visit(graph)` takes a `ShaderGraph` and
+`visitor()` is the `ShaderGraphVisitor` itself for a function that takes one. The registry lives in
+`eacp-gpu-codegen`, so a shader TU compiled into the app by mistake still
+links. The build makes a host executable from `CMake/ShaderHostMain.cpp.in`,
+whose `main` is `ShaderCompiler::runMain(argc, argv)` over every registered set
+— and a run that finds none fails, naming the macro and `SOURCES`.
+`eacp_add_precompiled_shaders` (`CMake/PrecompiledShaders.cmake`) generates,
+builds and runs it, and embeds what it writes:
+
+```cmake
+eacp_add_precompiled_shaders(MyApp
+        SOURCES Shaders.cpp            # the shader TUs; no main()
+        [LINK <targets>...]            # what they link beyond eacp-gpu
+        [BACKENDS <metal|dxbc|spirv>...] # default: the platform's own
+        [METAL_SDKS <sdk>...]          # default macosx
+        [METAL_MIN_OS <ver|sdk=ver>...]) # default macosx=CMAKE_OSX_DEPLOYMENT_TARGET
+```
+
+It builds `MyApp-shaders`, a plain console executable of the generated main and
+`SOURCES` linking `eacp-shader-compiler`, `eacp-gpu` and `LINK`, excluded from
+`all` and built because a custom command depends on it. That command runs it
+into `<binary dir>/MyApp-PrecompiledShaders` with its manifest beside the
+blobs, and `res_embed_add(MyApp MANIFEST ... NAMESPACE EacpShaders CATEGORY
+EacpShaders)` embeds what the manifest lists. The tool's binary depends on the
+shader sources, so editing one rebuilds the tool, reruns it — compiling only
+the graphs whose text changed, and deleting the blobs of the text that is gone
+so the directory always mirrors the manifest — and re-embeds; a build with
+nothing changed runs none of it. A shader type is typically moved into a header both the app
+and `Shaders.cpp` include, so the set constructs exactly the programs the app
+draws with; one whose constructor takes arguments is visited once per variant
+the app uses, `visit<Shader>(args...)` for each. `Apps/GPU/RotatingTriangle` and `Apps/GPU/Compute` are the
+examples, each logging at startup whether its shaders came precompiled and how
+many blobs it embeds.
+
+The backends are decided at configure time, and by default an app gets only
+the one its platform reads: `metal` on Apple, `dxbc` on Windows, `spirv` on
+Linux and Android. `BACKENDS` names others for one app, and the cache variable
+`EACP_PRECOMPILE_SHADER_BACKENDS` (empty by default) overrides every call's
+`BACKENDS` at once — `-DEACP_PRECOMPILE_SHADER_BACKENDS=spirv` is how a Mac
+built with `EACP_BUILD_SPIRV=ON` exercises the SPIR-V path, the blobs it
+embeds then being ones Metal never reads, so every library logs the metallib
+it did not find. A requested backend the host cannot compile is dropped with a
+`STATUS` line saying why: Metal needs Xcode's Metal Toolchain component
+(`xcrun -sdk macosx metal --version` is probed once per build directory into
+the cached `EACP_METAL_TOOLCHAIN_FOUND`; install it with `xcodebuild
+-downloadComponent MetalToolchain` and reconfigure with
+`-UEACP_METAL_TOOLCHAIN_FOUND`), DXBC a Windows host and SPIR-V `eacp-spirv`.
+With nothing left — a Mac without the toolchain, say — no tool is made and the
+app compiles at run time, as it does under `-DEACP_PRECOMPILE_SHADERS=OFF`. A
+cross-compile (iOS, Android) skips it too for now: the tool would have to be
+built for the host, not the target.
+
+A blob is named by its key, `Hashing::toHex(Hashing::fnv1a64(text))`
+(`Core/Utils/Hash.h`, spelled once as `Precompiled::keyFor` in
+`Shader/PrecompiledNames.h`, whose suffixes and `spirvResourceName` the tool
+writes by and the runtime looks up by) of exactly the text `ShaderBuilder::build()` hands the
+runtime in that dialect — `buildShader(graph, backend)` is `build()` for any
+backend, and `build()` is it for the platform's own — so the runtime finds a
+blob by hashing the source it was about to compile, and a stale blob can never
+be found:
+
+| Backend | Blobs | Compiled by |
+| --- | --- | --- |
+| Metal | `<key>.metallib` (macosx), `<key>.ios.metallib` (iphoneos), `<key>.iossim.metallib` (iphonesimulator): one library per shader, holding `vertexMain` and `fragmentMain`, or `computeMain` | `xcrun -sdk <sdk> metal -std=<std> -m<platform>-version-min=<os>`, fast math on as at run time |
+| D3D12 | `<key>.vs.dxbc` and `<key>.ps.dxbc`, or `<key>.cs.dxbc` | `D3DCompile` in process with the runtime's profiles (`vs_5_0`, `ps_5_0`, `cs_5_0`) and `D3DCOMPILE_ENABLE_STRICTNESS`; Windows hosts only |
+| Vulkan | `<key>.<target>.vert.spv` and `.frag.spv`, or `.comp.spv`, for each of `vk11spv13`, `vk11spv14` and `vk13spv16` | `Spirv::compileGlsl` in process; wherever `eacp-spirv` is built |
+
+A blob already in the output directory is current — its name is the hash of
+the source it came from — so it is never compiled again, and a second build
+with no shader changed compiles nothing.
+
+The Metal language follows the oldest OS a library must load on: macOS 11 and
+iOS 15 by default (the floors in `CMake/AppleSetup.cmake`), giving
+`macos-metal2.3` and `ios-metal2.4`, and `metal3.0` and above from macOS 13 and
+iOS 16 (`metal3.2` at 15 and 18, `metal4.0` at 26, `metal4.1` at 27 — the
+availability of `MTLLanguageVersion` in the SDK's `MTLLibrary.h`). The
+compiler takes only the platform-prefixed names below 3.0 and only the bare
+ones from it, and the language decides the AIR target: a `-std` above the floor
+silently raises the OS in the library's triple past the
+`-m<platform>-version-min` it was given, which is why the language is pinned to
+the floor rather than left at the compiler's newest. The one invocation
+compiles and links (`metal -cc1`, then `air-lld`), and the simulator's
+`-mios-simulator-version-min` is what selects its `-simulator` triple. A
+shader that declares bfloat SIMD-group matrices is compiled at
+`metal3.1` for macOS 14 or iOS 17 whatever the floor, since nothing older
+compiles it; an older device answers `supportsBFloat16SimdMatrix` false and
+never asks for that library, which is one per shader so no other is affected.
+`isMetalToolchainAvailable(sdk)` runs `xcrun -sdk <sdk> metal --version`
+because an Xcode without its Metal Toolchain component still answers
+`xcrun --find metal`; with no compiler the tool fails and says to install it
+(`xcodebuild -downloadComponent MetalToolchain`) or to pass `--no-metal`.
+
+The host's command line:
+
+```text
+--out <dir>                      the directory the blobs go in (required)
+--manifest <file>                every blob produced or found, absolute, one per line
+--metal-sdk <sdk>                macosx, iphoneos or iphonesimulator; repeatable
+--metal-min-os <ver>|<sdk>=<ver> the oldest OS a metallib loads on; repeatable
+--no-metal --no-dxbc --no-spirv  skip a backend
+--verbose                        print every blob
+```
+
+The tool's own defaults are everything the host can compile — a macOS
+metallib on a Mac, DXBC on Windows, SPIR-V wherever `eacp-spirv` was built —
+and `eacp_add_precompiled_shaders` passes `--no-*` for each backend it did not
+choose. The manifest is rewritten whole on every successful run, for
+`res_embed_add(<app> MANIFEST <file> BASE_DIRECTORY <dir>)`, and the run then
+deletes every file in `--out` named like a blob (a 16-digit lowercase key, a
+`.metallib`, `.dxbc` or `.spv` ending) that the manifest does not list, so a
+shader edited away leaves nothing behind. A failed run removes the manifest,
+deletes no blob and exits non-zero with a message naming the shader (its set
+and position in it), the target and the compiler's log.
+`ShaderCompiler::compile(options)` is the same without a process, over the
+registered sets, returning a `Report` of the blobs found, compiled and removed;
+`compile`, `run` and `runMain` each also take an explicit `Vector<ShaderSet>`
+(`std::function<void(const ShaderGraphVisitor&)>`) in place of the registry,
+which is how `Tests/GPU/ShaderCompilerTests.cpp` drives them beside its one
+`EACP_SHADER_SET()`.
+
+### Precompiled shaders
+
+This is the runtime half; everything above is the build's. Every
+`ShaderLibrary` constructor (`Shader/PrecompiledShaders.h`, namespace
+`GPU::Precompiled`) hashes the source it was handed with `keyFor` and asks
+`find` for the blobs its backend needs under `EacpShaders`: the platform's one
+metallib (`.metallib`, `.ios.metallib` or `.iossim.metallib` by
+`TARGET_OS_SIMULATOR`/`TARGET_OS_IPHONE`), `.vs.dxbc` with `.ps.dxbc` (both,
+unless the source is vertex-only) or `.cs.dxbc`, and on Vulkan the stages for
+the one SPIR-V target the device was given (`spirvResourceName`, spelled by
+`Spirv::targetName`). A hit is loaded with no compile: Metal through
+`newLibraryWithData:` over the embedded bytes uncopied, D3D12 copied into an
+`ID3DBlob`, Vulkan copied into words (an embedded array is not 4-byte aligned)
+and through the same `vkCreateShaderModule` and texture-binding reflection the
+source compile ends in. `isPrecompiled()` says which happened. A miss, or a
+blob that will not load — Metal refusing it, no DXBC header or a size that
+disagrees with it, no SPIR-V magic — falls back to the source compile exactly
+as before, logged once per blob name when anything is embedded at all (an app
+that embeds nothing misses silently, every time). With
+`EACP_REQUIRE_PRECOMPILED_SHADERS=1` it does not: the library is invalid and
+the log says which blob was missing or bad, which is how a CI lane proves its
+build embedded every shader it draws with. `setForTesting`,
+`setRequiredForTesting` and `clearForTesting` inject blobs and the flag without
+touching the environment; `Tests/GPU/PrecompiledShaderTests.cpp` compiles its
+blobs in process through `PrecompiledTestBlobs.h`, one file per platform
+beside it (`xcrun metal`, FXC, glslang — the Metal cases self-skip on a Mac
+without the Metal Toolchain) and covers a hit that draws or dispatches, the
+fall back from a corrupt blob, and both refusals under the flag.
+
 ## Pipeline state
 
 `prepare(sampleCount)` covers the common settings positionally. Everything else

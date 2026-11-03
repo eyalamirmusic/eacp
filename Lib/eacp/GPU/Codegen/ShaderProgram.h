@@ -286,6 +286,11 @@ public:
     void prepare(RenderPipelineDescriptor descriptor);
 
     const RenderPipeline& pipeline() const;
+
+    // Whether prepare() loaded the shader from a blob compiled at build time
+    // rather than compiling its source. False before prepare().
+    bool isPrecompiled() const;
+
     const Buffer& vertices() const;
     constexpr int vertexCount() const { return vertexCountValue; }
 

@@ -29,6 +29,10 @@ public:
 
     bool isValid() const;
 
+    // True when the library was loaded from a binary compiled ahead of time
+    // (PrecompiledShaders.h) rather than compiled from its source at runtime.
+    bool isPrecompiled() const;
+
     // Opaque native handle for cross-translation-unit use by the pipeline.
     void* nativeLibrary() const;
 

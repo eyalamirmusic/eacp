@@ -259,6 +259,11 @@ bool ComputeProgram::isValid() const
     return pipelineState.has_value() && pipelineState->isValid();
 }
 
+bool ComputeProgram::isPrecompiled() const
+{
+    return shaderLibrary.has_value() && shaderLibrary->isPrecompiled();
+}
+
 void ComputeProgram::bindResources(ComputePass& pass)
 {
     auto bindVisitor = ComputeBindVisitor {pass};

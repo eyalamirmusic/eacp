@@ -122,6 +122,7 @@ include(TargetSetup)
 include(EacpSchema)
 include(EacpPlugin)
 include(EacpPch)
+include(PrecompiledShaders)
 
 option(EACP_HIDDEN_VISIBILITY "Compile eacp with hidden symbol visibility" ON)
 
