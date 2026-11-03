@@ -2,6 +2,8 @@
 
 #include <eacp/Core/Utils/StdPath.h>
 #include <eacp/Core/Utils/Zip.h>
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 
@@ -601,6 +603,23 @@ auto tZipCompressEmpty = test("Zip/compress/empty") = []
 
     check(!stream.empty());
     check(decompressText(stream) == "");
+};
+
+auto tZipGzipMatchesKnownVector = test("Zip/gzip/headerCrcAndSize") = []
+{
+    constexpr auto gzipMagicAndDeflate =
+        std::array<std::uint8_t, 3> {0x1f, 0x8b, 0x08};
+    constexpr auto helloCrc32AndSize =
+        std::array<std::uint8_t, 8> {0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00};
+
+    const auto member = gzip("hello");
+    const auto trailerStart = member.getSize() - helloCrc32AndSize.size();
+
+    check(std::equal(
+        gzipMagicAndDeflate.begin(), gzipMagicAndDeflate.end(), member.begin()));
+    check(std::equal(helloCrc32AndSize.begin(),
+                     helloCrc32AndSize.end(),
+                     member.begin() + static_cast<std::ptrdiff_t>(trailerStart)));
 };
 
 auto tZipDecompressRejectsGarbage = test("Zip/decompress/rejectsGarbage") = []
