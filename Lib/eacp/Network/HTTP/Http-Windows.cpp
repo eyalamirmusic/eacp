@@ -1,4 +1,5 @@
 #include <eacp/Core/Utils/Strings.h>
+#include <eacp/Core/Utils/File.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "Http.h"
@@ -472,7 +473,55 @@ constexpr auto uploadSliceSize = std::size_t {64 * 1024};
 
 bool sendsBodyInSlices(const Request& req)
 {
+    if (!req.bodyFilePath.empty())
+        return true;
+
     return req.idleTimeout.count > 0 && req.body.size() > uploadSliceSize;
+}
+
+// WinHttpSendRequest takes the total length as a DWORD.
+DWORD getBodyFileSize(const Request& req)
+{
+    auto file = File(FilePath(req.bodyFilePath));
+
+    if (!file.isRegularFile())
+        throw std::runtime_error("Cannot read the body file " + req.bodyFilePath);
+
+    auto size = file.size();
+
+    if (size > std::numeric_limits<DWORD>::max())
+        throw std::runtime_error("Body files of 4 GiB or more are not supported");
+
+    return static_cast<DWORD>(size);
+}
+
+void writeBodyFromFile(const Request& req, TimedRequestHandle& request)
+{
+    auto file = File(FilePath(req.bodyFilePath));
+    auto slice = std::vector<std::uint8_t>(uploadSliceSize);
+    auto offset = std::uint64_t {0};
+
+    while (true)
+    {
+        auto readCount = file.read(offset, Span<std::uint8_t>(slice));
+
+        if (readCount <= 0)
+            return;
+
+        auto written = DWORD {0};
+
+        if (!WinHttpWriteData(request.get(),
+                              slice.data(),
+                              static_cast<DWORD>(readCount),
+                              &written))
+        {
+            request.throwIfCutShort();
+            throwLastError("Sending the request");
+        }
+
+        offset += written;
+        request.noteActivity();
+    }
 }
 
 void writeBody(const Request& req, TimedRequestHandle& request)
@@ -566,7 +615,8 @@ void sendRequest(const Request& req, OpenedRequest& opened)
                                  static_cast<DWORD>(headerBlock.size()),
                                  WINHTTP_ADDREQ_FLAG_ADD);
 
-    auto bodySize = static_cast<DWORD>(req.body.size());
+    auto bodySize = req.bodyFilePath.empty() ? static_cast<DWORD>(req.body.size())
+                                             : getBodyFileSize(req);
     auto sliced = sendsBodyInSlices(req);
     auto* bodyData = sliced || req.body.empty() ? WINHTTP_NO_REQUEST_DATA
                                                 : const_cast<char*>(req.body.data());
@@ -585,7 +635,9 @@ void sendRequest(const Request& req, OpenedRequest& opened)
 
     opened.request.noteActivity();
 
-    if (sliced)
+    if (!req.bodyFilePath.empty())
+        writeBodyFromFile(req, opened.request);
+    else if (sliced)
         writeBody(req, opened.request);
 
     if (!WinHttpReceiveResponse(opened.request.get(), nullptr))

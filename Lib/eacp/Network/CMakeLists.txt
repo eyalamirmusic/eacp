@@ -7,6 +7,7 @@ target_sources(eacp-network PRIVATE
         HTTPServer/HttpServer.cpp
         HTTPServer/HttpServerDispatcher.cpp
         HTTPServer/ResponseBuilders.cpp
+        HTTPServer/StreamingBody.cpp
         IPC/Channel.cpp
         IPC/Lock.cpp
         IPC/Messenger.cpp
