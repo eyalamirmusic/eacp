@@ -77,6 +77,7 @@ target_sources(eacp-gpu PRIVATE
         Texture/MipChain.cpp
         Texture/Sampler.cpp
         Texture/TextureShape.cpp
+        View/ContinuousRenderSwitch.cpp
         View/GPUView.cpp)
 
 if (APPLE)
