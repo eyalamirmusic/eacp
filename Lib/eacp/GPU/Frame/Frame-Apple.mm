@@ -309,6 +309,37 @@ Graphics::Point Frame::nativePixelSize() const
     return {(float) target.width, (float) target.height};
 }
 
+namespace
+{
+// A layer that presents with the transaction needs its buffer scheduled before
+// the present, or the transaction shows the drawable before anything is in it.
+// The wait is bounded because the compositor never schedules work for a window
+// it is not showing, and an unbounded waitUntilScheduled hung the main thread.
+constexpr auto maximumScheduleWait = 100 * NSEC_PER_MSEC;
+
+void presentInTransaction(id<MTLCommandBuffer> buffer, id<CAMetalDrawable> drawable)
+{
+    auto scheduled = dispatch_semaphore_create(0);
+
+    [buffer addScheduledHandler:^(id<MTLCommandBuffer>) {
+      dispatch_semaphore_signal(scheduled);
+    }];
+    [buffer commit];
+
+    const auto deadline = dispatch_time(DISPATCH_TIME_NOW, maximumScheduleWait);
+    dispatch_semaphore_wait(scheduled, deadline);
+    dispatch_release(scheduled);
+
+    [drawable present];
+}
+
+void presentAsynchronously(id<MTLCommandBuffer> buffer, id<CAMetalDrawable> drawable)
+{
+    [buffer presentDrawable:drawable];
+    [buffer commit];
+}
+} // namespace
+
 Frame::~Frame()
 {
     auto buffer = impl->commandBuffer.get();
@@ -332,11 +363,12 @@ Frame::~Frame()
 
     if (target != nil)
     {
-        // The layer presents with transaction, so commit, wait for the buffer to
-        // be scheduled, then present the drawable inside the CATransaction.
-        [buffer commit];
-        [buffer waitUntilScheduled];
-        [(id<CAMetalDrawable>) target present];
+        auto drawable = (id<CAMetalDrawable>) target;
+
+        if (((CAMetalLayer*) drawable.layer).presentsWithTransaction)
+            presentInTransaction(buffer, drawable);
+        else
+            presentAsynchronously(buffer, drawable);
     }
     else
     {

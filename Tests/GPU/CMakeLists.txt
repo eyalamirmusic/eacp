@@ -44,6 +44,7 @@ set(gpu_test_sources
         ComputeBufferRangeTests.cpp
         ComputeBufferSlotTests.cpp
         ConcurrentPassTests.cpp
+        ContinuousRenderSwitchTests.cpp
         CoordinateSpaceTests.cpp
         CubeTextureTests.cpp
         CullModeTests.cpp
@@ -127,6 +128,10 @@ set(gpu_test_sources
 # Metal-only Objective-C++.
 if (APPLE)
     list(APPEND gpu_test_sources TextureInteropTests.mm MetalErrorsTests.mm)
+
+    if (NOT IOS)
+        list(APPEND gpu_test_sources HiddenWindowTests-macOS.mm)
+    endif ()
 endif ()
 
 # PrecompiledShaderTests' build played in-process: each platform compiles a
@@ -175,6 +180,10 @@ endif ()
 
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")
+endif ()
+
+if (APPLE AND NOT IOS)
+    target_link_libraries(GPUTests PRIVATE "-framework Cocoa")
 endif ()
 
 # The present cases open a window each, and on the X11 lane they share the
