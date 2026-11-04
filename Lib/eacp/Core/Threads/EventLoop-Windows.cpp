@@ -266,8 +266,11 @@ void initLoopThread()
     // Dev convenience only, never in a signed/shipped build (see the watchdog's
     // note): quit when the process that launched us exits, so an IDE "Stop" that
     // kills its launcher helper rather than the app still takes the app down.
+    // runFor re-enters here on every pass of a nested pump; one watchdog is enough.
+    static auto parentDeathWatchdogInstalled = std::once_flag {};
+
     if (!Apps::isDistributionSigned())
-        installParentDeathWatchdog();
+        std::call_once(parentDeathWatchdogInstalled, installParentDeathWatchdog);
 
     // Any callbacks queued before the loop existed will have been buffered
     // in PendingCallbacks; nudge the pump to drain them on the next

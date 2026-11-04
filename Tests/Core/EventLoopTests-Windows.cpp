@@ -7,6 +7,8 @@
 
 #include <eacp/Core/Utils/WinInclude.h>
 
+#include <tlhelp32.h>
+
 using namespace nano;
 
 namespace EventLoopWindowsTests
@@ -19,6 +21,32 @@ constexpr auto runPendingMessage = UINT {WM_APP + 0x42E1};
 constexpr auto otherCopyClassName = L"EACPEventLoopTestOtherCopyWindow";
 
 auto runPendingReceived = 0;
+
+constexpr auto repeatedRunForPasses = 20;
+
+int countThreadsInThisProcess()
+{
+    auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return -1;
+
+    auto entry = THREADENTRY32 {};
+    entry.dwSize = sizeof(entry);
+    auto self = GetCurrentProcessId();
+    auto threadCount = 0;
+
+    if (Thread32First(snapshot, &entry))
+    {
+        do
+        {
+            if (entry.th32OwnerProcessID == self)
+                ++threadCount;
+        } while (Thread32Next(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+    return threadCount;
+}
 
 LRESULT CALLBACK otherCopyWindowProc(HWND hwnd,
                                      UINT message,
@@ -95,5 +123,17 @@ auto tRunPendingForAnotherWindowIsDispatched =
 
     check(ownCallbackRan);
     check(runPendingReceived == 1);
+};
+
+auto tRepeatedRunForInstallsOneParentDeathWatchdog =
+    test("EventLoop/Windows/repeatedRunForStartsNoNewThreads") = []
+{
+    eacp::Threads::getEventLoop().runFor(eacp::Time::MS {0});
+    auto threadsAfterFirstPass = countThreadsInThisProcess();
+
+    for (auto pass = 0; pass < repeatedRunForPasses; ++pass)
+        eacp::Threads::getEventLoop().runFor(eacp::Time::MS {0});
+
+    check(countThreadsInThisProcess() == threadsAfterFirstPass);
 };
 } // namespace EventLoopWindowsTests
