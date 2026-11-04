@@ -1,5 +1,8 @@
 #include "Common.h"
 
+#include <eacp/GPU/Timing/PassShares.h>
+
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -13,10 +16,9 @@
 //
 // The durations themselves are a measurement, so the assertions about them are
 // bounds - non-negative, not absurd, the frame at least as long as the passes
-// inside it - and one ordering, between passes a thousand times apart in cost
-// that the GPU has to run in turn. That one is a fact about this code rather
-// than about the scheduler: it is what fails when a pass is charged for the
-// passes still running before it.
+// inside it. How overlapping passes are charged is arithmetic, so it is tested
+// on synthetic intervals through sharePassTimes, where a loaded GPU cannot move
+// the numbers.
 //
 // Every frame here is an off-screen one through View::renderToImage, so there
 // is no window and this runs in CI. Off-screen frames block until the GPU has
@@ -352,44 +354,18 @@ struct WorkView final : GPUView
     Vector<std::unique_ptr<LoopShader>> shaders;
 };
 
-// Whether a frame's shares account for it: together nearly the whole frame, and
-// the one heavy pass charged far more than any of the light ones. Every pass is
-// labelled, so what the shares leave out is only what the command buffer does
-// around them - the read-back and the gaps at either end.
-bool sharesAccountForTheFrame(const FrameTimings& timings, int heavyPass)
-{
-    auto total = 0.0;
-
-    for (const auto& pass: timings.passes)
-        total += pass.milliseconds;
-
-    if (total < timings.milliseconds * 0.75 - 0.05)
-        return false;
-
-    const auto heavy = timings.passes[heavyPass].milliseconds;
-
-    for (auto index = 0; index < timings.passes.size(); ++index)
-        if (index != heavyPass && timings.passes[index].milliseconds >= heavy * 0.5)
-            return false;
-
-    return true;
-}
 } // namespace
 
-// The figure that adds up. A heavy pass between light ones, and light ones after
-// it, which is the case the shares exist for: on a tile-based GPU each later
-// pass's span reaches back to the heavy one, so spans added up to many frames.
-//
-// The bounds hold on every frame. The accounting is asked of the best of a few,
-// because the GPU is shared: another process's work landing inside one light
-// pass makes that pass genuinely slow, and that is not this code being wrong.
-auto tSharesSumToTheFrame = test("FrameTiming/sharesSumToTheFrame") = []
+// Six real passes, one heavy, each sampling the last: on a tile-based GPU the
+// later passes' spans reach back over the heavy one, and the shares must still
+// fit inside the frame.
+auto tSharesStayInsideTheFrame = test("FrameTiming/sharesStayInsideTheFrame") = []
 {
     if (!Device::shared().isValid())
         return;
 
-    constexpr auto heavyPass = 2;
-    constexpr auto attempts = 4;
+    constexpr auto passCount = 6;
+    constexpr auto frameTolerance = 0.05;
 
     auto view = WorkView {{lightIterations,
                            lightIterations,
@@ -400,37 +376,121 @@ auto tSharesSumToTheFrame = test("FrameTiming/sharesSumToTheFrame") = []
 
     view.setBounds({0.f, 0.f, 64.f, 64.f});
     view.renderToImage(1.f);
+    view.renderToImage(1.f);
 
-    auto accounted = false;
+    const auto& timings = Device::shared().lastFrameTimings();
 
-    for (auto attempt = 0; attempt < attempts && !accounted; ++attempt)
+    if (!canTimePasses())
+        return;
+
+    check(timings.passes.size() == passCount);
+
+    auto total = 0.0;
+
+    for (const auto& pass: timings.passes)
     {
-        view.renderToImage(1.f);
-
-        const auto& timings = Device::shared().lastFrameTimings();
-
-        if (!canTimePasses())
-            return;
-
-        check(timings.passes.size() == 6);
-
-        if (timings.passes.size() != 6)
-            return;
-
-        auto total = 0.0;
-
-        for (const auto& pass: timings.passes)
-        {
-            check(pass.milliseconds >= 0.0);
-            check(pass.milliseconds <= timings.milliseconds + 0.05);
-            total += pass.milliseconds;
-        }
-
-        check(total <= timings.milliseconds + 0.05);
-
-        accounted = sharesAccountForTheFrame(timings, heavyPass);
+        check(pass.milliseconds >= 0.0);
+        check(pass.milliseconds <= timings.milliseconds + frameTolerance);
+        total += pass.milliseconds;
     }
 
-    check(accounted);
+    check(total <= timings.milliseconds + frameTolerance);
 };
 } // namespace FrameTimingTests
+
+namespace PassShareTests
+{
+namespace
+{
+constexpr auto maxPasses = 4;
+constexpr auto exactTolerance = 1e-9;
+
+struct SharedPassTimes
+{
+    double shares[maxPasses] = {};
+    double spans[maxPasses] = {};
+};
+
+SharedPassTimes sharePassTimesOf(const PassActivity* activity, int passCount)
+{
+    auto result = SharedPassTimes {};
+    sharePassTimes<maxPasses>(activity, passCount, result.shares, result.spans);
+    return result;
+}
+
+bool isNear(double actual, double expected)
+{
+    return std::abs(actual - expected) < exactTolerance;
+}
+} // namespace
+
+auto tPassesInTurnAreChargedTheirOwnTime =
+    test("PassShares/passesInTurnAreChargedTheirOwnTime") = []
+{
+    PassActivity activity[2] = {};
+    activity[0].add(0.0, 2.0);
+    activity[1].add(3.0, 7.0);
+
+    const auto times = sharePassTimesOf(activity, 2);
+
+    check(isNear(times.shares[0], 2.0));
+    check(isNear(times.shares[1], 4.0));
+    check(isNear(times.spans[0], 2.0));
+    check(isNear(times.spans[1], 4.0));
+};
+
+auto tLightPassesQueuedBehindAHeavyOneAreNotChargedForIt =
+    test("PassShares/lightPassesQueuedBehindAHeavyOneAreNotChargedForIt") = []
+{
+    constexpr auto heavyBegin = 1.0;
+    constexpr auto heavyEnd = 11.0;
+    constexpr auto lightVertexBegin = 2.0;
+    constexpr auto lightVertexEnd = 2.5;
+    constexpr auto lightFragmentLength = 0.5;
+
+    PassActivity activity[3] = {};
+    activity[0].add(0.0, heavyBegin);
+    activity[1].add(heavyBegin, heavyEnd);
+
+    activity[2].add(lightVertexBegin, lightVertexEnd);
+    activity[2].add(heavyEnd, heavyEnd + lightFragmentLength);
+
+    const auto times = sharePassTimesOf(activity, 3);
+    const auto overlap = lightVertexEnd - lightVertexBegin;
+
+    check(isNear(times.spans[2], heavyEnd + lightFragmentLength - lightVertexBegin));
+    check(isNear(times.shares[2], overlap / 2.0 + lightFragmentLength));
+    check(isNear(times.shares[1], heavyEnd - heavyBegin - overlap / 2.0));
+
+    const auto total = times.shares[0] + times.shares[1] + times.shares[2];
+    check(isNear(total, heavyEnd + lightFragmentLength));
+};
+
+auto tAPassOverlappingItselfIsOnePass =
+    test("PassShares/aPassOverlappingItselfIsOnePass") = []
+{
+    PassActivity activity[2] = {};
+    activity[0].add(0.0, 4.0);
+    activity[0].add(1.0, 3.0);
+    activity[1].add(2.0, 6.0);
+
+    const auto times = sharePassTimesOf(activity, 2);
+
+    check(isNear(times.shares[0], 3.0));
+    check(isNear(times.shares[1], 3.0));
+    check(isNear(times.spans[0], 4.0));
+};
+
+auto tAPassWithNoSamplesIsChargedNothing =
+    test("PassShares/aPassWithNoSamplesIsChargedNothing") = []
+{
+    PassActivity activity[2] = {};
+    activity[1].add(1.0, 2.0);
+
+    const auto times = sharePassTimesOf(activity, 2);
+
+    check(times.shares[0] == 0.0);
+    check(times.spans[0] == 0.0);
+    check(isNear(times.shares[1], 1.0));
+};
+} // namespace PassShareTests
