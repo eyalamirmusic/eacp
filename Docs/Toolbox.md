@@ -183,7 +183,12 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `URL` — `parse`, `addParameter`, `getParameter`, `query`, `toString`
 - `urlEncode` / `urlDecode` / `parseQueryString` / `parseQueryParameters`
 - `setDefaultUserAgent` / `eacpUserAgent`
-- `Server` — `get`, `post`, `put`, `del`, `addRoute`, `listen`, `boundPort`
+- `Server` — `get`, `post`, `put`, `del`, `addRoute`, `listen`, `boundPort`;
+  a path ending in `/*` matches every path under it
+- `Server::addStreamingRoute` / `RequestBodyReader` — handler pulls the body
+  (Content-Length or chunked) and can answer before reading it
+- `Request::bodyFilePath` — upload a file without loading it;
+  `Response::contentFilePath` — serve a file in slices
 - `Json::Server` / `Json::makeHandler` / `Json::setJson` — reflected JSON routes
 - `throwError(message, status)` / `makePlainTextResponse` — error responses
 - `Rpc::Server` / `Rpc::Client` (`HTTPRpc/`) — RPC over HTTP

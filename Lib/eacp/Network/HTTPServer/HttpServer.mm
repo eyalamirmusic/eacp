@@ -6,11 +6,19 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <fcntl.h>
+
+#include <mutex>
+#include <set>
+#include <thread>
+
 namespace eacp::HTTP
 {
 
 namespace
 {
+
+constexpr auto streamingBodyReadChunk = 64 * 1024;
 
 struct Connection
 {
@@ -19,6 +27,15 @@ struct Connection
     RequestParser parser;
     std::string remoteAddr;
     int remotePort = -1;
+    bool hasLookedForStreamingRoute = false;
+};
+
+// A streaming request's thread, kept until it has finished so stop() can wait
+// for it and the next streaming request can join it.
+struct StreamingThread
+{
+    std::thread thread;
+    std::shared_ptr<std::atomic<bool>> hasFinished;
 };
 
 void ignoreSigPipe()
@@ -31,7 +48,7 @@ void ignoreSigPipe()
     (void) once;
 }
 
-void sendAll(int fd, const std::string& payload)
+void sendAll(int fd, std::string_view payload)
 {
     auto total = (int) payload.size();
     auto sent = 0;
@@ -49,7 +66,25 @@ void sendAll(int fd, const std::string& payload)
 
 void writeResponseToFd(int fd, const Response& res)
 {
-    sendAll(fd, serializeResponse(res));
+    sendResponse(res, [fd](std::string_view bytes) { sendAll(fd, bytes); });
+}
+
+std::string receiveFromFd(int fd)
+{
+    auto received = std::string(streamingBodyReadChunk, '\0');
+    auto n = ::recv(fd, received.data(), received.size(), 0);
+
+    if (n <= 0)
+        return {};
+
+    received.resize((std::size_t) n);
+    return received;
+}
+
+void makeBlocking(int fd)
+{
+    auto flags = ::fcntl(fd, F_GETFL, 0);
+    ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 }
 
 void readPeerEndpoint(int fd, std::string& addr, int& port)
@@ -82,7 +117,7 @@ struct Server::Impl
 
     ~Impl();
 
-    bool start(int port, RequestHandler h);
+    bool start(int port, RequestHandler h, StreamingRouteFinder finder);
     void stop();
 
     void onAccept(CFSocketNativeHandle clientFd);
@@ -92,6 +127,17 @@ struct Server::Impl
     void detachKeepingFdOpen(Connection& conn);
     void detachClosingFd(Connection& conn);
     void dispatchRequest(int fd, Request request);
+    bool startStreamingIfRouted(Connection& conn, int fd);
+    void startStreamingThread(int fd,
+                              Request head,
+                              std::string bytesAfterHeaders,
+                              StreamingRequestHandler streamingHandler);
+    void serveStreamingFd(int fd,
+                          const Request& head,
+                          std::string bytesAfterHeaders,
+                          const StreamingRequestHandler& streamingHandler);
+    void joinFinishedStreamingThreads();
+    void stopStreaming();
 
     static void acceptCallback(CFSocketRef, CFSocketCallBackType, CFDataRef,
                                const void* data, void* info)
@@ -111,7 +157,12 @@ struct Server::Impl
     CFSocketRef listenSocket = nullptr;
     CFRunLoopSourceRef listenSource = nullptr;
     RequestHandler handler;
+    StreamingRouteFinder findStreamingRoute;
     int boundPort = -1;
+
+    std::mutex streamingMutex;
+    std::set<int> streamingFds;
+    Vector<StreamingThread> streamingThreads;
     std::map<CFSocketRef, OwningPointer<Connection>> connections;
 };
 
@@ -122,9 +173,11 @@ Server::Server(ServerOptions options)
 
 Server::~Server() = default;
 
-bool Server::listen(int port, RequestHandler handler)
+bool Server::startListening(int port,
+                            RequestHandler handler,
+                            StreamingRouteFinder findStreamingRoute)
 {
-    return impl->start(port, std::move(handler));
+    return impl->start(port, std::move(handler), std::move(findStreamingRoute));
 }
 
 void Server::stop()
@@ -142,7 +195,7 @@ Server::Impl::~Impl()
     stop();
 }
 
-bool Server::Impl::start(int port, RequestHandler h)
+bool Server::Impl::start(int port, RequestHandler h, StreamingRouteFinder finder)
 {
     if (listenSocket)
         return false;
@@ -150,6 +203,7 @@ bool Server::Impl::start(int port, RequestHandler h)
     ignoreSigPipe();
 
     handler = std::move(h);
+    findStreamingRoute = std::move(finder);
 
     auto context = CFSocketContext{0, this, nullptr, nullptr, nullptr};
     listenSocket = CFSocketCreate(kCFAllocatorDefault,
@@ -201,6 +255,8 @@ void Server::Impl::stop()
 {
     if (dispatcher)
         dispatcher->shutdown();
+
+    stopStreaming();
 
     for (auto& [cf, conn]: connections)
         detachClosingFd(*conn);
@@ -322,6 +378,12 @@ void Server::Impl::onClientReadable(CFSocketRef cf)
         return;
     }
 
+    if (startStreamingIfRouted(conn, fd))
+    {
+        connections.erase(it);
+        return;
+    }
+
     if (state != RequestParser::State::Ready)
         return;
 
@@ -343,6 +405,115 @@ void Server::Impl::closeConnection(CFSocketRef cf)
 
     detachClosingFd(*it->second);
     connections.erase(it);
+}
+
+// A streaming route blocks on its socket while the body arrives, which the
+// main run loop these sockets live on cannot do, so the request moves to a
+// thread of its own as soon as its headers are in.
+bool Server::Impl::startStreamingIfRouted(Connection& conn, int fd)
+{
+    if (!conn.parser.hasHeaders() || conn.hasLookedForStreamingRoute)
+        return false;
+
+    conn.hasLookedForStreamingRoute = true;
+    auto streamingHandler = findStreamingRoute(conn.parser.request());
+
+    if (!streamingHandler.has_value())
+        return false;
+
+    auto head = std::move(conn.parser.request());
+    head.body.clear();
+    head.remoteAddr = conn.remoteAddr;
+    head.remotePort = conn.remotePort;
+    auto bytesAfterHeaders = conn.parser.takeBytesAfterHeaders();
+
+    detachKeepingFdOpen(conn);
+    startStreamingThread(
+        fd, std::move(head), std::move(bytesAfterHeaders), std::move(*streamingHandler));
+    return true;
+}
+
+void Server::Impl::startStreamingThread(int fd,
+                                        Request head,
+                                        std::string bytesAfterHeaders,
+                                        StreamingRequestHandler streamingHandler)
+{
+    joinFinishedStreamingThreads();
+    makeBlocking(fd);
+
+    auto hasFinished = std::make_shared<std::atomic<bool>>(false);
+    auto lock = std::lock_guard(streamingMutex);
+    streamingFds.insert(fd);
+
+    auto thread = std::thread(
+        [this,
+         fd,
+         hasFinished,
+         head = std::move(head),
+         bytesAfterHeaders = std::move(bytesAfterHeaders),
+         streamingHandler = std::move(streamingHandler)]() mutable
+        {
+            serveStreamingFd(fd, head, std::move(bytesAfterHeaders), streamingHandler);
+            *hasFinished = true;
+        });
+
+    streamingThreads.add(StreamingThread {std::move(thread), hasFinished});
+}
+
+void Server::Impl::serveStreamingFd(int fd,
+                                    const Request& head,
+                                    std::string bytesAfterHeaders,
+                                    const StreamingRequestHandler& streamingHandler)
+{
+    auto peer = PeerStream();
+    peer.alreadyReceived = std::move(bytesAfterHeaders);
+    peer.receiveMore = [fd] { return receiveFromFd(fd); };
+    peer.send = [fd](std::string_view bytes) { sendAll(fd, bytes); };
+
+    auto response = serveStreamingRequest(streamingHandler, head, std::move(peer));
+    writeResponseToFd(fd, response);
+
+    auto lock = std::lock_guard(streamingMutex);
+    streamingFds.erase(fd);
+    ::close(fd);
+}
+
+void Server::Impl::joinFinishedStreamingThreads()
+{
+    auto finished = Vector<StreamingThread>();
+    {
+        auto lock = std::lock_guard(streamingMutex);
+        auto isFinished = [](const StreamingThread& t) { return t.hasFinished->load(); };
+
+        for (auto& t: streamingThreads)
+            if (isFinished(t))
+                finished.add(std::move(t));
+
+        streamingThreads.eraseIf([](const StreamingThread& t)
+                                 { return !t.thread.joinable(); });
+    }
+
+    for (auto& t: finished)
+        t.thread.join();
+}
+
+// Shutting a socket down wakes the recv its thread is blocked in, which then
+// reads the body as ended early and replies to nobody.
+void Server::Impl::stopStreaming()
+{
+    auto threadsToJoin = Vector<StreamingThread>();
+    {
+        auto lock = std::lock_guard(streamingMutex);
+
+        for (auto fd: streamingFds)
+            ::shutdown(fd, SHUT_RDWR);
+
+        threadsToJoin = std::move(streamingThreads);
+        streamingThreads.clear();
+    }
+
+    for (auto& t: threadsToJoin)
+        t.thread.join();
 }
 
 } // namespace eacp::HTTP

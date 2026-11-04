@@ -498,6 +498,18 @@ Request& RequestParser::request()
     return parsed;
 }
 
+bool RequestParser::hasHeaders() const
+{
+    return headersParsed;
+}
+
+std::string RequestParser::takeBytesAfterHeaders()
+{
+    auto bytes = buffer.substr((std::size_t) bodyStart);
+    buffer.resize((std::size_t) bodyStart);
+    return bytes;
+}
+
 RequestParser::State RequestParser::feed(const char* data, int length)
 {
     buffer.append(data, (std::size_t) length);
