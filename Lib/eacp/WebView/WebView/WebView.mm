@@ -6,6 +6,7 @@
 #else
 #import <AppKit/AppKit.h>
 #endif
+#include "MessageOrigin.h"
 #include "Snapshot-Apple.h"
 #include "WebView.h"
 #include "WebViewPlatform-Apple.h"
@@ -102,6 +103,10 @@ struct WebViewDelegateState
     std::weak_ptr<eacp::Graphics::WebView::Native> nativeWeak;
     MessageHandlerMap* messageHandlers = nullptr;
 
+    // Owned by the Native beside messageHandlers and cut with it.
+    eacp::Graphics::detail::MessageOriginPolicy* originPolicy = nullptr;
+    WKWebView* ownWebView = nil;
+
     // Where each in-flight WKDownload was told to write, keyed by the
     // download object. Recorded when the destination is chosen, erased when
     // the download finishes or fails. Main thread only.
@@ -160,16 +165,19 @@ struct WebView::PopupInit
     WKWebViewConfiguration* configuration = nil;
     bool inspectable = false;
     bool promptForMediaCapture = false;
+    detail::MessageOriginPolicy originPolicy;
 };
 
 struct WebView::Native
 {
     Native(WebView& ownerToUse, Options options)
         : owner(ownerToUse)
+        , originPolicy(options)
     {
         delegate = createWebViewDelegate();
         getWebViewDelegateState(delegate.get())->messageHandlers =
             &messageHandlers;
+        getWebViewDelegateState(delegate.get())->originPolicy = &originPolicy;
 
         config = [[WKWebViewConfiguration alloc] init];
 
@@ -213,6 +221,8 @@ struct WebView::Native
               .defaultContextMenu = options.defaultContextMenu
             }
         );
+        getWebViewDelegateState(delegate.get())->ownWebView = webView.get();
+
         if (options.transparentBackground)
         {
 #if TARGET_OS_IPHONE
@@ -253,15 +263,18 @@ struct WebView::Native
 
     Native(WebView& ownerToUse, WebView::PopupInit init)
         : owner(ownerToUse)
+        , originPolicy(std::move(init.originPolicy))
     {
         delegate = createWebViewDelegate();
         getWebViewDelegateState(delegate.get())->messageHandlers =
             &messageHandlers;
+        getWebViewDelegateState(delegate.get())->originPolicy = &originPolicy;
 
         config = ObjC::Ptr {init.configuration, ObjC::RetainMode {}};
 
         auto rect = CGRectMake(0, 0, 100, 100);
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
+        getWebViewDelegateState(delegate.get())->ownWebView = webView.get();
         webView.get().navigationDelegate =
             (id<WKNavigationDelegate>) delegate.get();
         webView.get().UIDelegate = (id<WKUIDelegate>) delegate.get();
@@ -292,6 +305,8 @@ struct WebView::Native
         // pointer so that hop finds nothing to call rather than reading a map
         // that is about to be freed.
         getWebViewDelegateState(delegate.get())->messageHandlers = nullptr;
+        getWebViewDelegateState(delegate.get())->originPolicy = nullptr;
+        getWebViewDelegateState(delegate.get())->ownWebView = nil;
 
         if (observingTitle)
             [webView.get() removeObserver:delegate.get() forKeyPath:@"title"];
@@ -319,6 +334,7 @@ struct WebView::Native
     Vector<ObjC::Ptr<NSObject>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
+    detail::MessageOriginPolicy originPolicy;
 #if !TARGET_OS_IPHONE
     EmbedderKeyForwarder keyForwarder {owner};
 #endif
@@ -333,10 +349,13 @@ struct WebViewNativeAccess
     static OwningPointer<WebView>
         makePopup(WKWebViewConfiguration* configuration,
                   bool inspectable,
-                  bool promptForMediaCapture)
+                  bool promptForMediaCapture,
+                  detail::MessageOriginPolicy originPolicy)
     {
-        auto init = WebView::PopupInit {
-            configuration, inspectable, promptForMediaCapture};
+        auto init = WebView::PopupInit {configuration,
+                                        inspectable,
+                                        promptForMediaCapture,
+                                        std::move(originPolicy)};
         return OwningPointer<WebView> {new WebView {init}};
     }
 
@@ -440,7 +459,10 @@ WKWebView* webViewDelegateCreateWebView(id self,
         return nil;
 
     auto popup = eacp::Graphics::WebViewNativeAccess::makePopup(
-        configuration, inspectable, native->promptForMediaCapture);
+        configuration,
+        inspectable,
+        native->promptForMediaCapture,
+        native->originPolicy.forPopup());
     auto* popupWKWebView = eacp::Graphics::WebViewNativeAccess::wkWebViewOf(*popup);
 
     if (native->owner.onNewWindowRequested(std::move(popup), url))
@@ -695,14 +717,45 @@ void webViewDelegateRequestUserMediaSPI(id self,
 }
 #endif
 
+std::string senderOriginOf(WKFrameInfo* frame)
+{
+    auto* origin = frame.securityOrigin;
+    return eacp::Graphics::detail::makeOrigin(safeString(origin.protocol.UTF8String),
+                                              safeString(origin.host.UTF8String),
+                                              (int) origin.port);
+}
+
+// loadHTMLString with no base URL: WebKit reports this view's own main frame at
+// about:blank with an opaque origin (empty protocol and host). A frame inside
+// it (srcdoc, data:) is not the main frame, and a page that navigated itself
+// to about:blank keeps the origin it came from.
+bool isInlineDocument(WKScriptMessage* message, WKWebView* ownWebView)
+{
+    auto* frame = message.frameInfo;
+    auto url = safeString(frame.request.URL.absoluteString.UTF8String);
+
+    return frame.isMainFrame && message.webView == ownWebView
+           && url == "about:blank" && frame.securityOrigin.protocol.length == 0;
+}
+
+bool isFromTrustedSender(WebViewDelegateState& state, WKScriptMessage* message)
+{
+    if (state.originPolicy == nullptr)
+        return false;
+
+    return state.originPolicy->admit(senderOriginOf(message.frameInfo),
+                                     isInlineDocument(message, state.ownWebView));
+}
+
 void webViewDelegateDidReceiveScriptMessage(id self,
                                             SEL,
                                             WKUserContentController*,
                                             WKScriptMessage* message)
 {
-    auto* messageHandlers = getWebViewDelegateState(self)->messageHandlers;
+    auto* state = getWebViewDelegateState(self);
+    auto* messageHandlers = state->messageHandlers;
 
-    if (messageHandlers)
+    if (messageHandlers && isFromTrustedSender(*state, message))
     {
         auto name = std::string([message.name UTF8String]);
         auto it = messageHandlers->find(name);
@@ -1127,6 +1180,10 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
     {
         nsBaseURL =
             [NSURL URLWithString:[NSString stringWithUTF8String:baseURL.c_str()]];
+    }
+    else
+    {
+        impl->originPolicy.trustInlineDocument();
     }
     [impl->webView.get() loadHTMLString:nsHtml baseURL:nsBaseURL];
 }

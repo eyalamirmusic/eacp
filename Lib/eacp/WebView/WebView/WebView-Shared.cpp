@@ -451,6 +451,9 @@ WebView::WebView(Options options)
     if (options.embedded.enabled && !useDevServer)
         registerEmbeddedScheme(options);
 
+    if (useDevServer)
+        options.trustedOrigins.add(options.embedded.devServerURL);
+
     auto embedded = options.embedded;
     initNative(std::move(options));
 
