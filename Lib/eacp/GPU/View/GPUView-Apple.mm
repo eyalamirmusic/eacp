@@ -32,6 +32,25 @@ Class getImmediateMetalLayerClass()
         "EacpImmediateMetalLayer");
     return cls;
 }
+
+// Holds a view's rendering latch for one frame and lets it go however the frame
+// ends, so a draw that throws (the Frame still commits and presents as it
+// unwinds) leaves the view able to render the next one.
+struct RenderingLatch
+{
+    explicit RenderingLatch(bool& latchToUse)
+        : latch(latchToUse)
+    {
+        latch = true;
+    }
+
+    ~RenderingLatch() { latch = false; }
+
+    RenderingLatch(const RenderingLatch&) = delete;
+    RenderingLatch& operator=(const RenderingLatch&) = delete;
+
+    bool& latch;
+};
 } // namespace
 
 struct GPUView::Native
@@ -436,18 +455,14 @@ bool GPUView::renderFrame(const std::function<void(Frame&)>& draw)
         if (drawable == nil)
             return false;
 
-        impl->rendering = true;
+        auto latch = RenderingLatch {impl->rendering};
 
-        {
-            auto frame = Frame(Device::shared(),
-                               (__bridge void*) drawable,
-                               (__bridge void*) impl->msaaTexture.get(),
-                               (__bridge void*) impl->depthTexture.get(),
-                               backingScale());
-            draw(frame);
-        }
-
-        impl->rendering = false;
+        auto frame = Frame(Device::shared(),
+                           (__bridge void*) drawable,
+                           (__bridge void*) impl->msaaTexture.get(),
+                           (__bridge void*) impl->depthTexture.get(),
+                           backingScale());
+        draw(frame);
     }
 
     return true;

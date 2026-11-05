@@ -469,6 +469,39 @@ struct GPUView::Native : DeviceResourceHolder
         render([this](Frame& frame) { view.render(frame); });
     }
 
+    // Holds the view's rendering latch for one frame and settles that frame's
+    // bookkeeping however it ends. A draw that throws still unwinds through
+    // ~Frame, which submits what was recorded and presents it, so the frame did
+    // take this back buffer and the frame-latency credit waited for: the
+    // buffer's fence is recorded as for any other frame, and DXGI returns the
+    // credit when that present retires, as it does for every frame. Handing the
+    // credit back here instead would let the CPU run one frame further ahead
+    // than the swapchain allows, and leaving the fence stale would let the next
+    // frame on this buffer start without waiting for the thrown one.
+    struct FrameInFlight
+    {
+        FrameInFlight(Native& nativeToUse, D3D12Context& contextToUse, UINT index)
+            : native(nativeToUse)
+            , context(contextToUse)
+            , bufferIndex(index)
+        {
+            native.rendering = true;
+        }
+
+        ~FrameInFlight()
+        {
+            native.frameFences[bufferIndex] = context.lastSubmitted();
+            native.rendering = false;
+        }
+
+        FrameInFlight(const FrameInFlight&) = delete;
+        FrameInFlight& operator=(const FrameInFlight&) = delete;
+
+        Native& native;
+        D3D12Context& context;
+        UINT bufferIndex;
+    };
+
     // Not re-entrant on one view: a frame nested in this view's own would wait
     // on the back buffer it is still drawing.
     bool render(const std::function<void(Frame&)>& draw)
@@ -518,9 +551,9 @@ struct GPUView::Native : DeviceResourceHolder
             depth.stencil = stencilEnabled;
         }
 
-        rendering = true;
-
         {
+            auto inFlight = FrameInFlight {*this, context, index};
+
             auto frame = Frame(Device::shared(),
                                &drawable,
                                useMsaa ? &msaa : nullptr,
@@ -529,9 +562,6 @@ struct GPUView::Native : DeviceResourceHolder
             draw(frame);
         }
 
-        rendering = false;
-
-        frameFences[index] = context.lastSubmitted();
         checkDeviceRemoved();
         return true;
     }
