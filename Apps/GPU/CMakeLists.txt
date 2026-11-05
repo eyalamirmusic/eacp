@@ -14,6 +14,10 @@ add_subdirectory(ComputeParticles)
 # via threadPosition() and TextureDescriptor::computeWrite.
 add_subdirectory(ComputeImage)
 
+# A fragment-only fractal: a loop with a break in the shader EDSL, zooming
+# forever into a self-similar point.
+add_subdirectory(Mandelbrot)
+
 # Non-blocking submission: CommandBuffer::commitAsync overlapping GPU work with
 # the CPU, measured against the blocking commit.
 add_subdirectory(AsyncCompute)
