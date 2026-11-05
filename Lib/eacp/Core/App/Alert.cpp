@@ -32,22 +32,6 @@ struct WaitingAlert
     AlertCallback onDismissed;
 };
 
-// Main thread only. `abandon` answers the alert a presenter holds as
-// unanswered, and `heldBy` is the presenter generation it was handed to.
-struct AlertQueue
-{
-    std::deque<WaitingAlert> waiting;
-    bool showing = false;
-    Callback abandon;
-    int heldBy = -1;
-};
-
-AlertQueue& alertQueue()
-{
-    static auto queue = AlertQueue {};
-    return queue;
-}
-
 std::atomic<int>& pendingAlerts()
 {
     static auto count = std::atomic<int> {0};
@@ -67,37 +51,84 @@ void runOnMainThread(const Callback& func)
         Threads::callAsync(func);
 }
 
+void finishAlert(const AlertCallback& onDismissed, int button);
+
+// Behind every AlertCallback a dialog or a presenter is handed: the first
+// answer only, from any thread, reaching the caller on the main thread. When
+// the last copy of the answer goes without anyone having answered (a UIKit
+// alert dismissed by the app, a presenter that dropped it), it answers
+// unanswered, posted to the loop rather than run inside whatever destructor
+// let it go.
+struct AnswerState
+{
+    AnswerState(AlertCallback onDismissedToUse, int unansweredToUse)
+        : onDismissed(std::move(onDismissedToUse))
+        , unanswered(unansweredToUse)
+    {
+    }
+
+    ~AnswerState()
+    {
+        if (answered.exchange(true))
+            return;
+
+        Threads::callAsync(
+            [onDismissed = std::move(onDismissed), button = unanswered]
+            { finishAlert(onDismissed, button); });
+    }
+
+    AnswerState(const AnswerState&) = delete;
+    AnswerState& operator=(const AnswerState&) = delete;
+
+    void answer(int button)
+    {
+        if (answered.exchange(true))
+            return;
+
+        runOnMainThread([onDismissed = onDismissed, button]
+                        { finishAlert(onDismissed, button); });
+    }
+
+    AlertCallback onDismissed;
+    int unanswered;
+    std::atomic<bool> answered {false};
+};
+
+// Main thread only. `held` is the alert a presenter holds, weakly, so the
+// presenter's copies alone keep it alive; `heldBy` is the presenter generation
+// it was handed to.
+struct AlertQueue
+{
+    std::deque<WaitingAlert> waiting;
+    bool showing = false;
+    std::weak_ptr<AnswerState> held;
+    int heldBy = -1;
+};
+
+AlertQueue& alertQueue()
+{
+    static auto queue = AlertQueue {};
+    return queue;
+}
+
 void showNextAlert();
 
+// The next alert is let in before the caller hears the answer, so a callback
+// that throws, or pumps the loop waiting on an alert queued behind this one,
+// cannot hold the queue. It still comes up on a later turn.
 void finishAlert(const AlertCallback& onDismissed, int button)
 {
     auto& queue = alertQueue();
     queue.showing = false;
-    queue.abandon = {};
+    queue.held.reset();
     queue.heldBy = -1;
 
     --pendingAlerts();
 
+    Threads::callAsync(showNextAlert);
+
     if (onDismissed)
         onDismissed(button);
-
-    Threads::callAsync(showNextAlert);
-}
-
-// What a dialog or a presenter is handed: the first answer only, from any
-// thread, reaching the caller on the main thread and then letting the next
-// alert in.
-AlertCallback answerOnce(AlertCallback onDismissed)
-{
-    auto answered = std::make_shared<std::atomic<bool>>(false);
-
-    return [answered, onDismissed = std::move(onDismissed)](int button)
-    {
-        if (answered->exchange(true))
-            return;
-
-        runOnMainThread([onDismissed, button] { finishAlert(onDismissed, button); });
-    };
 }
 
 std::pair<AlertPresenter, int> currentPresenter()
@@ -118,30 +149,32 @@ void showNextAlert()
     queue.waiting.pop_front();
     queue.showing = true;
 
-    auto answer = answerOnce(std::move(next.onDismissed));
+    auto state = std::make_shared<AnswerState>(
+        std::move(next.onDismissed), Detail::unansweredButton(next.options));
+    auto weakState = std::weak_ptr<AnswerState>(state);
+    auto answer = AlertCallback {[state = std::move(state)](int button)
+                                 { state->answer(button); }};
+
     auto [presenter, generation] = currentPresenter();
 
     if (presenter)
     {
+        queue.held = weakState;
         queue.heldBy = generation;
-        queue.abandon = [answer, options = next.options]
-        { answer(Detail::unansweredButton(options)); };
-
-        presenter(next.options, answer);
+        presenter(next.options, std::move(answer));
     }
     else if (getAppEnvironment().headless)
         Detail::answerUnshownAlert(next.options, answer);
     else
-        Detail::showNativeAlert(next.options, answer);
+        Detail::showNativeAlert(next.options, std::move(answer));
 }
 
-// An eacp copy inside a plugin cannot see its host's loop, so it trusts the
-// host to run one, and only the main thread can tell whether a loop is running
-// (Windows keeps that per thread), so any other thread trusts the main one.
+// A copy inside a plugin cannot see its host's loop, so it trusts the host to
+// run one. isEventLoopRunning() answers for the whole process, so a worker
+// sees the main thread's loop too.
 bool canDeferAlerts()
 {
-    return Platform::isDLL() || !Threads::isMainThread()
-           || Threads::isEventLoopRunning();
+    return Platform::isDLL() || Threads::isEventLoopRunning();
 }
 } // namespace
 
@@ -198,6 +231,8 @@ const char* boxLabel(Detail::MessageBoxButtons buttons, int position)
             return position == 0 ? "OK" : "Cancel";
         case Buttons::yesNo:
             return position == 0 ? "Yes" : "No";
+        case Buttons::abortRetryIgnore:
+            return position == 0 ? "Abort" : position == 1 ? "Retry" : "Ignore";
         case Buttons::yesNoCancel:
             break;
     }
@@ -242,8 +277,8 @@ Detail::MessageBoxPlan Detail::planMessageBox(const AlertOptions& options)
     }
     else
     {
-        plan.buttons =
-            count == 2 ? MessageBoxButtons::yesNo : MessageBoxButtons::yesNoCancel;
+        plan.buttons = count == 2 ? MessageBoxButtons::yesNo
+                                  : MessageBoxButtons::abortRetryIgnore;
         plan.answers = buttonsOtherThan(options, -1);
     }
 
@@ -313,6 +348,12 @@ int Detail::answerForMessageBox(const AlertOptions& options,
                        : id == WindowsIds::cancel ? 2
                                                   : -1;
             break;
+        case MessageBoxButtons::abortRetryIgnore:
+            position = id == WindowsIds::abort    ? 0
+                       : id == WindowsIds::retry  ? 1
+                       : id == WindowsIds::ignore ? 2
+                                                  : -1;
+            break;
     }
 
     if (position < 0 || position >= plan.answers.size())
@@ -355,14 +396,17 @@ void showAlert(const AlertOptions& options, AlertCallback onDismissed)
         });
 }
 
+// The old presenter is destroyed after the lock is released, since what it
+// captures may call back in here from its destructor.
 void setAlertPresenter(AlertPresenter presenter)
 {
     auto replaced = 0;
+    auto old = AlertPresenter {};
 
     {
         auto& slot = presenterSlot();
         auto lock = std::lock_guard(slot.mutex);
-        slot.presenter = std::move(presenter);
+        old = std::exchange(slot.presenter, std::move(presenter));
         replaced = slot.generation++;
     }
 
@@ -371,11 +415,11 @@ void setAlertPresenter(AlertPresenter presenter)
         {
             auto& queue = alertQueue();
 
-            if (queue.abandon && queue.heldBy <= replaced)
-            {
-                auto abandon = queue.abandon;
-                abandon();
-            }
+            if (queue.heldBy > replaced)
+                return;
+
+            if (auto held = queue.held.lock())
+                held->answer(held->unanswered);
         });
 }
 } // namespace eacp::Apps

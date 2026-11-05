@@ -791,17 +791,20 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
 - Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
   message, `AlertIcon`, buttons, default and cancel button; returns at once
-  from any thread, queues the alert so they come up one at a time in call
-  order, and answers the pressed button's index on the main thread exactly
-  once. `NSAlert`'s `runModal` on macOS (a quit that ends the modal is put to
-  the root loop again through `Threads/EventLoop-macOS.h`),
-  `TaskDialogIndirect` on Windows (comctl32 v6 through shell32's manifest as
-  an activation context, `MessageBoxW` only when the function cannot be found;
-  the thread's other top-level windows are disabled while it is up),
-  `UIAlertController` on iOS (retried on later turns while nothing can present
-  it). Nobody choosing — a quit, a failed or dismissed dialog, headless, Linux
-  and Android (which never show one), a standalone app's main thread with no
-  loop running —
+  from any thread, queues the alert (per eacp copy) so they come up one at a
+  time in call order, the next let in before the callback runs, and answers
+  the pressed button's index on the main thread exactly once. `NSAlert`'s
+  `runModal` on macOS (a quit that ends the modal is put to the root loop
+  again, and alerts queued behind it are not shown while it is pending,
+  through `Threads/EventLoop-macOS.h`), `TaskDialogIndirect` on Windows
+  (comctl32 v6 through shell32's manifest as an activation context,
+  `MessageBoxW` only when the function cannot be found; the thread's other
+  top-level windows are disabled while it is up), `UIAlertController` on iOS
+  (retried on later turns while nothing can present it). Nobody choosing — a
+  quit, a failed or dismissed dialog, an answer dropped unanswered (the last
+  copy of the answer going answers it), headless, Linux and Android (which
+  never show one), a standalone app with no loop running (answered at once on
+  the calling thread; `isEventLoopRunning` answers for the whole process) —
   answers `Detail::unansweredButton`: the cancel button, else the default.
   The platforms' id-to-button mappings are `Detail::` functions in
   `Alert.cpp` so every lane tests them. `setAlertPresenter` replaces the

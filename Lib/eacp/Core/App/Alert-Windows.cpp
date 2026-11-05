@@ -13,6 +13,9 @@ namespace eacp::Apps
 {
 static_assert(Detail::WindowsIds::ok == IDOK);
 static_assert(Detail::WindowsIds::cancel == IDCANCEL);
+static_assert(Detail::WindowsIds::abort == IDABORT);
+static_assert(Detail::WindowsIds::retry == IDRETRY);
+static_assert(Detail::WindowsIds::ignore == IDIGNORE);
 static_assert(Detail::WindowsIds::yes == IDYES);
 static_assert(Detail::WindowsIds::no == IDNO);
 
@@ -186,6 +189,8 @@ UINT messageBoxButtonsFor(Detail::MessageBoxButtons buttons)
             return MB_YESNO;
         case Detail::MessageBoxButtons::yesNoCancel:
             return MB_YESNOCANCEL;
+        case Detail::MessageBoxButtons::abortRetryIgnore:
+            return MB_ABORTRETRYIGNORE;
         case Detail::MessageBoxButtons::ok:
             break;
     }
@@ -272,19 +277,26 @@ int showMessageBox(HWND owner, const AlertOptions& options)
 
     return Detail::answerForMessageBox(options, plan, id);
 }
-} // namespace
 
-// Modal over the whole app from the event loop, as JUCE's showMessageBoxAsync
-// is: owned by the active window (or the thread's topmost one), with the
-// thread's other top-level windows disabled until it is answered.
-void Detail::showNativeAlert(const AlertOptions& options, AlertCallback onDismissed)
+int runAlertDialog(const AlertOptions& options)
 {
     auto owner = alertOwner();
     auto othersDisabled = OtherWindowsDisabled {owner};
 
     if (auto pressed = showTaskDialog(owner, options))
-        onDismissed(*pressed);
-    else
-        onDismissed(showMessageBox(owner, options));
+        return *pressed;
+
+    return showMessageBox(owner, options);
+}
+} // namespace
+
+// Modal over the whole app from the event loop, as JUCE's showMessageBoxAsync
+// is: owned by the active window (or the thread's topmost one), with the
+// thread's other top-level windows disabled until it is answered, and enabled
+// again before the caller hears the answer.
+void Detail::showNativeAlert(const AlertOptions& options, AlertCallback onDismissed)
+{
+    auto pressed = runAlertDialog(options);
+    onDismissed(pressed);
 }
 } // namespace eacp::Apps

@@ -6,9 +6,10 @@ using namespace eacp;
 using namespace Graphics;
 
 // Apps::showAlert, one button per kind of alert: each icon, a choice with a
-// cancel button, more buttons than a message box has, and one raised from a
-// worker thread. The button pressed is written under them, so Return, Escape
-// and the mouse can each be checked against what the options asked for.
+// cancel button, more buttons than a message box has, one raised from a worker
+// thread, and two raised at once. The button pressed is written beside them,
+// so Return, Escape and the mouse can each be checked against what the options
+// asked for.
 
 struct Button final : View
 {
@@ -63,6 +64,7 @@ struct Demo
     std::string label;
     Apps::AlertOptions options;
     bool fromWorkerThread = false;
+    int count = 1;
 };
 
 Apps::AlertOptions alertOptions(std::string title,
@@ -131,6 +133,17 @@ Vector<Demo> demos()
                       "thread all the same.",
                       AlertIcon::info),
          true},
+        {"Two in a row",
+         alertOptions("One of two",
+                      "Two alerts raised at once come up one after the other. Quit "
+                      "(Cmd+Q) while this one is up: both are answered with the "
+                      "cancel button, 0, and the app quits.",
+                      AlertIcon::warning,
+                      {"Keep", "Delete"},
+                      1,
+                      0),
+         false,
+         2},
     };
 }
 
@@ -182,7 +195,9 @@ private:
 
         if (!demo.fromWorkerThread)
         {
-            Apps::showAlert(demo.options, onDismissed);
+            for (auto shown = 0; shown < demo.count; ++shown)
+                Apps::showAlert(demo.options, onDismissed);
+
             return;
         }
 
@@ -205,7 +220,7 @@ struct AlertDemoApp
 
         options.title = "Alert Demo";
         options.width = 760;
-        options.height = 380;
+        options.height = 420;
         options.backgroundColor = Color {0.11f, 0.12f, 0.15f, 1.f};
 
         return options;

@@ -47,8 +47,14 @@ using AlertCallback = std::function<void(int button)>;
 // Returns at once, from any thread. The alert comes up on a later turn of the
 // event loop, and `onDismissed` is called on the main thread, exactly once.
 // Alerts are shown one at a time, in the order showAlert was called: the next
-// comes up only once the one before it has been answered, so an alert raised
-// from another's callback follows it rather than stacking over it.
+// comes up on a later turn once the one before it has been answered, so an
+// alert raised from another's callback follows it rather than stacking over it.
+// The next is let in before the callback runs, so a callback that throws, or
+// pumps the loop waiting on an alert queued behind it, does not hold the queue.
+//
+// The queue belongs to this eacp copy: a host and a plugin, or two plugins,
+// each with eacp inside, keep their own and can still show alerts over each
+// other's.
 //
 // The dialog blocks the main thread while it is up: macOS runs NSAlert's
 // runModal and Windows the dialog's own modal loop, as JUCE's
@@ -62,14 +68,17 @@ using AlertCallback = std::function<void(int button)>;
 // Unanswered: when nobody chose a button the answer is
 // Detail::unansweredButton(), the cancel button if there is one and otherwise
 // the default button. That is the answer when the app quits while the alert is
-// up, when the dialog fails or is dismissed without a button, when nothing can
-// be shown (headless, Linux, Android, iOS with no view controller to present
-// from), and when no event loop is running. That last case is a standalone
-// app's alert raised on the main thread before Apps::run or after its loop has
-// ended: it is logged and answered at once, since no later turn of the loop is
-// coming. Other threads cannot tell whether the main thread is running a loop,
-// so their alerts are always deferred to it, and a copy inside a plugin always
-// defers to the host's loop.
+// up (and for every alert still queued behind it), when the dialog fails or is
+// dismissed without a button, when whatever was handed the answer drops it
+// without answering, when nothing can be shown (headless, Linux, Android, iOS
+// with no view controller to present from), and when no event loop is running.
+//
+// That last case is a standalone app's alert raised before Apps::run or after
+// its loop has ended, from any thread: it is logged and answered at once, on
+// the calling thread, since no later turn of the loop is coming. A copy inside
+// a plugin always defers to the host's loop. On macOS a quit is put to the
+// root loop again after a modal only when this copy asked for it; one from
+// another eacp copy in the process, or the host's own, is used up by the modal.
 void showAlert(const AlertOptions& options, AlertCallback onDismissed = {});
 
 // Shows each alert in place of the platform's dialog, and in place of the
@@ -77,7 +86,8 @@ void showAlert(const AlertOptions& options, AlertCallback onDismissed = {});
 // it. It is handed the options as the platform would be (see
 // Detail::resolveAlertOptions) on the main thread and may answer `onDismissed`
 // from any thread, at any time; the answer reaches the caller's callback on the
-// main thread, and calls after the first are ignored.
+// main thread, and calls after the first are ignored. A presenter that lets go
+// of every copy of `onDismissed` without calling it has answered unanswered.
 //
 // The presenter is chosen when an alert's turn comes, not when showAlert was
 // called, and the alert holds the queue until the presenter answers it. Setting
@@ -122,6 +132,9 @@ namespace WindowsIds
 {
 constexpr int ok = 1;
 constexpr int cancel = 2;
+constexpr int abort = 3;
+constexpr int retry = 4;
+constexpr int ignore = 5;
 constexpr int yes = 6;
 constexpr int no = 7;
 
@@ -141,15 +154,17 @@ enum class MessageBoxButtons
     ok,
     okCancel,
     yesNo,
-    yesNoCancel
+    yesNoCancel,
+    abortRetryIgnore
 };
 
 struct MessageBoxPlan
 {
     MessageBoxButtons buttons = MessageBoxButtons::ok;
 
-    // The alert's button each box button stands for, in the box's order (OK or
-    // Yes, then No, then Cancel). Empty when the alert's buttons cannot be
+    // The alert's button each box button stands for, in the box's order (OK,
+    // Yes or Abort, then No or Retry, then Cancel or Ignore). Empty when the
+    // alert's buttons cannot be
     // represented, more than three of them: then any answer is unanswered.
     Vector<int> answers;
 
@@ -163,7 +178,8 @@ struct MessageBoxPlan
 
 // One button is OK; two with a cancel button OK and Cancel, Cancel standing for
 // the cancel button; two without one Yes and No, which cannot be escaped; three
-// Yes, No and Cancel, Cancel standing for the cancel button or else the third.
+// with a cancel button Yes, No and Cancel, Cancel standing for it; three
+// without one Abort, Retry and Ignore, which cannot be escaped either.
 MessageBoxPlan planMessageBox(const AlertOptions& options);
 
 // The message with the real labels added when the plan needs them.

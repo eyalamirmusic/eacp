@@ -75,9 +75,17 @@ static id watchEscape(NSAlert* alert, const AlertOptions& options)
 // view may have no window of its own to hang one off. A quit that arrives while
 // it is up ends the modal session instead of the loop, so runModal answers
 // NSModalResponseStop: that is no button, so unanswered, and the quit is put to
-// the loop again.
+// the loop again. Alerts queued behind it come up while that quit is pending,
+// and are answered unanswered without a dialog, so none of them can hold the
+// quit up or use it up a second time.
 void Detail::showNativeAlert(const AlertOptions& options, AlertCallback onDismissed)
 {
+    if (Threads::Detail::isRootQuitPending())
+    {
+        answerUnshownAlert(options, onDismissed);
+        return;
+    }
+
     auto alert = ObjC::Ptr<NSAlert>([[NSAlert alloc] init]);
 
     alert.get().messageText = alertText(options.title);
@@ -95,8 +103,7 @@ void Detail::showNativeAlert(const AlertOptions& options, AlertCallback onDismis
     if (escapeMonitor != nil)
         [NSEvent removeMonitor:escapeMonitor];
 
-    if (response == NSModalResponseStop)
-        Threads::Detail::resumeQuitAfterModal();
+    Threads::Detail::resumeQuitAfterModal();
 
     onDismissed(answerForButton(options, (long) (response - NSAlertFirstButtonReturn)));
 }

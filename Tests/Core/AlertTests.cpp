@@ -2,6 +2,9 @@
 
 #include <eacp/Core/App/Alert.h>
 
+#include <memory>
+#include <stdexcept>
+
 // Apps::showAlert without a dialog: the options as a presenter is handed them,
 // the answer it gives, the queue that shows one alert at a time, the
 // unanswered rule, and the platforms' id-to-button mappings. The native dialogs
@@ -62,10 +65,13 @@ struct AlertIsolation
         Apps::setAlertPresenter(std::move(presenter));
     }
 
+    // A queue that does not drain fails the case that stranded it, rather than
+    // a later one its callbacks would write into.
     ~AlertIsolation()
     {
         Apps::setAlertPresenter(nullptr);
         pumpUntil([] { return Apps::Detail::pendingAlertCount() == 0; });
+        check(Apps::Detail::pendingAlertCount() == 0);
         Apps::getAppEnvironment().headless = previous;
     }
 
@@ -346,6 +352,29 @@ auto tMessageBoxThree = test("Alert/messageBoxThreeButtonsAreYesNoCancel") = []
     check(Apps::Detail::answerForMessageBox(options, plan, Ids::cancel) == 0);
 };
 
+auto tMessageBoxThreeNoCancel =
+    test("Alert/messageBoxThreeButtonsWithoutCancelCannotBeEscaped") = []
+{
+    auto options = withButtons({"Save", "Discard", "Delete all"}, 0);
+    auto plan = Apps::Detail::planMessageBox(options);
+
+    check(plan.buttons == MessageBoxButtons::abortRetryIgnore);
+    check(plan.answers.size() == 3 && plan.answers[0] == 0 && plan.answers[1] == 1
+          && plan.answers[2] == 2);
+    check(plan.defaultBoxButton == 0);
+    check(plan.labelsInText);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::abort) == 0);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::retry) == 1);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::ignore) == 2);
+
+    // Escape and the close box: nothing the box can send, so never the third.
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::cancel) == 0);
+
+    auto text = Apps::Detail::messageBoxText(options, plan);
+    check(text.find("Abort = Save") != std::string::npos);
+    check(text.find("Ignore = Delete all") != std::string::npos);
+};
+
 auto tMessageBoxTooMany = test("Alert/messageBoxCannotOfferFiveButtons") = []
 {
     auto options = withButtons({"One", "Two", "Three", "Four", "Five"}, 2, 4);
@@ -574,8 +603,13 @@ auto tSilentPresenter =
 {
     auto presented = 0;
     auto answers = Vector<int> {};
-    auto isolation = AlertIsolation {[&](const AlertOptions&, Apps::AlertCallback)
-                                     { ++presented; }};
+    auto held = Vector<Apps::AlertCallback> {};
+    auto isolation =
+        AlertIsolation {[&](const AlertOptions&, Apps::AlertCallback done)
+                        {
+                            ++presented;
+                            held.add(std::move(done));
+                        }};
 
     check(runLoopUntil(
         [&]
@@ -741,5 +775,193 @@ auto tNoLoop = test("Alert/withNoEventLoopRunningItIsAnsweredAtOnce") = []
 
     check(answer == 2);
     check(Apps::Detail::pendingAlertCount() == 0);
+};
+
+auto tWorkerNoLoop =
+    test("Alert/aWorkersAlertWithNoLoopRunningIsAnsweredOnTheWorker") = []
+{
+    if (Threads::isEventLoopRunning())
+        return;
+
+    auto answer = std::atomic<int> {-1};
+    auto answeredOnWorker = std::atomic<int> {-1};
+    auto isolation = AlertIsolation {};
+
+    auto worker = std::thread(
+        [&]
+        {
+            auto workerId = std::this_thread::get_id();
+            Apps::showAlert(saveChanges(),
+                            [&, workerId](int button)
+                            {
+                                answer = button;
+                                answeredOnWorker =
+                                    std::this_thread::get_id() == workerId ? 1 : 0;
+                            });
+        });
+
+    worker.join();
+
+    check(answer == 2);
+    check(answeredOnWorker == 1);
+    check(Apps::Detail::pendingAlertCount() == 0);
+};
+
+// What lets the next alert in, and what an answer nobody gives becomes
+
+auto tThrowingCallback =
+    test("Alert/aCallbackThatThrowsStillLetsTheNextAlertIn") = []
+{
+    auto shown = Shown {};
+    auto caught = false;
+    auto secondAnswered = false;
+    auto isolation = AlertIsolation {recordInto(shown)};
+
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(saveChanges(),
+                            [](int) { throw std::runtime_error("first"); });
+            Apps::showAlert(saveChanges(), [&](int) { secondAnswered = true; });
+        },
+        [&] { return shown.alerts.size() == 1; }));
+
+    if (shown.answers.size() != 1)
+        return;
+
+    try
+    {
+        shown.answers[0](0);
+    }
+    catch (const std::runtime_error&)
+    {
+        caught = true;
+    }
+
+    check(caught);
+    check(pumpUntil([&] { return shown.alerts.size() == 2; }));
+
+    if (shown.answers.size() == 2)
+        shown.answers[1](0);
+
+    check(secondAnswered);
+};
+
+auto tNestedWait = test("Alert/aCallbackPumpingForTheNextAlertSeesItAnswered") = []
+{
+    auto secondAnswered = false;
+    auto sawSecond = -1;
+    auto isolation =
+        AlertIsolation {[](const AlertOptions&, Apps::AlertCallback done)
+                        { Threads::callAfter(Time::MS {10}, [done] { done(0); }); }};
+
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(saveChanges(),
+                            [&](int)
+                            {
+                                for (auto slice = 0; slice < 75 && !secondAnswered;
+                                     ++slice)
+                                    Threads::runEventLoopFor(Time::MS {20});
+
+                                sawSecond = secondAnswered ? 1 : 0;
+                            });
+            Apps::showAlert(saveChanges(), [&](int) { secondAnswered = true; });
+        },
+        [&] { return sawSecond != -1; }));
+
+    check(sawSecond == 1);
+};
+
+auto tDroppedAnswer =
+    test("Alert/anAnswerDroppedUnansweredAnswersTheUnansweredButton") = []
+{
+    auto answers = Vector<int> {};
+    auto isolation =
+        AlertIsolation {[](const AlertOptions&, Apps::AlertCallback) {}};
+
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(saveChanges(), [&](int button) { answers.add(button); });
+            Apps::showAlert(withoutCancel(),
+                            [&](int button) { answers.add(button); });
+        },
+        [&] { return answers.size() == 2; }));
+
+    check(answers.size() == 2 && answers[0] == 2 && answers[1] == 1);
+};
+
+auto tGeneration =
+    test("Alert/replacingThePresenterSparesTheAlertTheNewOneHolds") = []
+{
+    auto first = Shown {};
+    auto second = Shown {};
+    auto answers = Vector<std::string> {};
+    auto isolation = AlertIsolation {recordInto(first)};
+
+    check(runLoopUntil(
+        [&]
+        {
+            for (auto name: {"A", "B"})
+            {
+                auto options = AlertOptions {};
+                options.title = name;
+                Apps::showAlert(options,
+                                [&answers, name](int) { answers.add(name); });
+            }
+        },
+        [&] { return first.answers.size() == 1; }));
+
+    if (first.answers.size() != 1)
+        return;
+
+    // A's answer posts the next alert's turn; the worker's replacement posts its
+    // abandon check behind it, so B reaches the new presenter first and the
+    // check must leave it be.
+    first.answers[0](0);
+
+    auto worker = std::thread([&] { Apps::setAlertPresenter(recordInto(second)); });
+    worker.join();
+
+    check(pumpUntil([&] { return second.alerts.size() == 1; }));
+    pumpBriefly();
+
+    check(second.alerts.size() == 1 && second.alerts[0].title == "B");
+    check(answers.size() == 1 && answers[0] == "A");
+};
+
+struct UnregistersOnDestruction
+{
+    explicit UnregistersOnDestruction(bool& doneToUse)
+        : done(doneToUse)
+    {
+    }
+
+    ~UnregistersOnDestruction()
+    {
+        Apps::setAlertPresenter(nullptr);
+        done = true;
+    }
+
+    bool& done;
+};
+
+auto tPresenterDestructor =
+    test("Alert/aPresenterWhoseDestructorUnregistersDoesNotDeadlock") = []
+{
+    auto unregistered = false;
+    auto isolation = AlertIsolation {};
+
+    {
+        auto owner = std::make_shared<UnregistersOnDestruction>(unregistered);
+        Apps::setAlertPresenter(
+            [owner](const AlertOptions&, Apps::AlertCallback) {});
+    }
+
+    Apps::setAlertPresenter(nullptr);
+
+    check(unregistered);
 };
 } // namespace AlertTests
