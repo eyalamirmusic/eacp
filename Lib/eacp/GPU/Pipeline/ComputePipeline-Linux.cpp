@@ -6,6 +6,49 @@
 
 namespace eacp::GPU
 {
+namespace
+{
+// A group past the device's limits is a pipeline the driver may refuse or
+// build wrong, so it is refused here with the numbers that decided it.
+bool fitsWorkGroupLimits(const ThreadGroupShape& shape)
+{
+    if (!shape.isSet())
+        return true;
+
+    const auto& limits = getVulkanShared().getProperties().limits;
+    const auto& size = limits.maxComputeWorkGroupSize;
+
+    const auto fits = static_cast<std::uint32_t>(shape.threadCount())
+                          <= limits.maxComputeWorkGroupInvocations
+                      && static_cast<std::uint32_t>(shape.x) <= size[0]
+                      && static_cast<std::uint32_t>(shape.y) <= size[1]
+                      && static_cast<std::uint32_t>(shape.z) <= size[2];
+
+    if (!fits)
+        LOG("Vulkan: no compute pipeline for a ",
+            shape.x,
+            "x",
+            shape.y,
+            "x",
+            shape.z,
+            " thread group (",
+            shape.threadCount(),
+            " threads) - ",
+            getVulkanShared().getAdapterName(),
+            " allows ",
+            limits.maxComputeWorkGroupInvocations,
+            " threads and ",
+            size[0],
+            "x",
+            size[1],
+            "x",
+            size[2],
+            " per group");
+
+    return fits;
+}
+} // namespace
+
 struct ComputePipeline::Native
 {
     Native(Device& device, const ShaderLibrary& library)
@@ -18,6 +61,9 @@ struct ComputePipeline::Native
         auto* program = static_cast<VulkanShaderProgram*>(library.nativeLibrary());
 
         if (program == nullptr || program->compute == VK_NULL_HANDLE)
+            return;
+
+        if (!fitsWorkGroupLimits(library.threadGroupShape()))
             return;
 
         state.textures = program->textures;
