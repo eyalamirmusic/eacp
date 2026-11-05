@@ -69,7 +69,8 @@ endif ()
 target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
         WebView/DevServerProbe.cpp
-        WebView/MenuHelpers.cpp)
+        WebView/MenuHelpers.cpp
+        WebView/MessageOrigin.cpp)
 
 # Page-side scripts, embedded for ResEmbed::get("<name>.js", "EacpWebView").
 res_embed_add(eacp-webview
