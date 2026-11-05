@@ -158,6 +158,12 @@ if (WIN32)
     list(APPEND gpu_test_sources TransparentViewTests-Windows.cpp)
 endif ()
 
+# The opt-in DXC compile, and EACP_D3D12_DXC=1 in TestMain.cpp, which runs the
+# whole suite under it.
+if (WIN32)
+    list(APPEND gpu_test_sources DxcTests-Windows.cpp)
+endif ()
+
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
 # that draw it, so it cannot be checked without one of them. SpriteBatchTests
@@ -171,6 +177,10 @@ nano_add_executable(GPUTests
         TARGETS eacp-sprites eacp-gpu eacp-cpu-compute)
 
 eacp_enable_glsl_compile_checks(GPUTests)
+
+if (WIN32)
+    target_link_libraries(GPUTests PRIVATE eacp-gpu-dxc)
+endif ()
 
 # TextureSettleTests reads VulkanContext::submissionCount, so this one test
 # target sees the backend eacp-gpu otherwise keeps to itself.

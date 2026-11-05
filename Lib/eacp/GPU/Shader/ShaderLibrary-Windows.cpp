@@ -4,6 +4,7 @@
 
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
+#include "DxcCompiler-Windows.h"
 #include "PrecompiledShaders.h"
 #include "ShaderSource.h"
 
@@ -21,14 +22,28 @@
 // valid input for D3D12 pipelines, which keeps the hand-written HLSL in tests
 // and examples working unchanged. A precompiled library is the same DXBC,
 // compiled by the same FXC call at build time and copied into a blob here.
+// With Dxc::Options::enabled the source goes to DXC instead, as SM 6.0 DXIL in
+// the same blobs (Dxc.h).
 
 namespace eacp::GPU
 {
 namespace
 {
-winrt::com_ptr<ID3DBlob> compileStage(const std::string& source,
-                                      const std::string& entry,
-                                      const char* target)
+using DxcCompiler = std::shared_ptr<const Dxc::Detail::Compiler>;
+
+struct StageTarget
+{
+    const char* fxc;
+    const char* dxc;
+};
+
+constexpr auto vertexTarget = StageTarget {"vs_5_0", "vs_6_0"};
+constexpr auto pixelTarget = StageTarget {"ps_5_0", "ps_6_0"};
+constexpr auto computeTarget = StageTarget {"cs_5_0", "cs_6_0"};
+
+winrt::com_ptr<ID3DBlob> compileWithFxc(const std::string& source,
+                                        const std::string& entry,
+                                        const char* target)
 {
     winrt::com_ptr<ID3DBlob> code;
     winrt::com_ptr<ID3DBlob> errors;
@@ -54,6 +69,17 @@ winrt::com_ptr<ID3DBlob> compileStage(const std::string& source,
     }
 
     return code;
+}
+
+winrt::com_ptr<ID3DBlob> compileStage(const DxcCompiler& dxc,
+                                      const std::string& source,
+                                      const std::string& entry,
+                                      const StageTarget& target)
+{
+    if (dxc != nullptr)
+        return Dxc::Detail::compile(*dxc, source, entry, target.dxc);
+
+    return compileWithFxc(source, entry, target.fxc);
 }
 
 // "DXBC", a 16-byte checksum, a version, then the container's own total size,
@@ -116,19 +142,22 @@ struct ShaderLibrary::Native
         if (!loadPrecompiledOrNeedSource(source))
             return;
 
+        const auto dxc = Dxc::Detail::compilerFor(
+            static_cast<ID3D12Device*>(device.nativeDevice()));
+
         if (source.isCompute())
         {
             program.computeBytecode =
-                compileStage(source.source, source.computeEntry, "cs_5_0");
+                compileStage(dxc, source.source, source.computeEntry, computeTarget);
         }
         else
         {
             program.vertexBytecode =
-                compileStage(source.source, source.vertexEntry, "vs_5_0");
+                compileStage(dxc, source.source, source.vertexEntry, vertexTarget);
 
             if (source.hasFragment())
-                program.pixelBytecode =
-                    compileStage(source.source, source.fragmentEntry, "ps_5_0");
+                program.pixelBytecode = compileStage(
+                    dxc, source.source, source.fragmentEntry, pixelTarget);
         }
     }
 

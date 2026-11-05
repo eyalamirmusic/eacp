@@ -95,6 +95,7 @@ if (APPLE)
             Frame/RenderPass-Apple.mm
             Pipeline/ComputePipeline-Apple.mm
             Pipeline/RenderPipeline-Apple.mm
+            Shader/Dxc-Default.cpp
             Shader/ShaderLibrary-Apple.mm
             Texture/Texture-Apple.mm
             Timing/GpuTimestamps-Apple.mm
@@ -124,6 +125,7 @@ elseif (WIN32)
             Frame/RenderPass-Windows.cpp
             Pipeline/ComputePipeline-Windows.cpp
             Pipeline/RenderPipeline-Windows.cpp
+            Shader/Dxc-Windows.cpp
             Shader/ShaderLibrary-Windows.cpp
             Texture/Texture-Windows.cpp
             Timing/GpuTimestamps-Windows.cpp
@@ -162,6 +164,7 @@ else ()
             Frame/RenderPass-Linux.cpp
             Pipeline/ComputePipeline-Linux.cpp
             Pipeline/RenderPipeline-Linux.cpp
+            Shader/Dxc-Default.cpp
             Shader/ShaderLibrary-Linux.cpp
             Texture/Texture-Linux.cpp
             Timing/GpuTimestamps-Linux.cpp
@@ -183,3 +186,8 @@ endif ()
 set_default_target_setting(eacp-gpu)
 eacp_enable_unity_build(eacp-gpu)
 add_ide_sources(eacp-gpu)
+
+# Dxc::Options::locateLibrary's default answer, fetching the official DXC
+# release through OnlineResource. Its own target so eacp-gpu stays free of
+# eacp-network, and an app that never opts in links nothing for it.
+add_subdirectory(Dxc)
