@@ -65,9 +65,11 @@ using AlertCallback = std::function<void(int button)>;
 // up, when the dialog fails or is dismissed without a button, when nothing can
 // be shown (headless, Linux, Android, iOS with no view controller to present
 // from), and when no event loop is running. That last case is a standalone
-// app's alert raised before Apps::run or after its loop has ended: it is
-// logged and answered at once, on the calling thread, since no later turn of
-// the loop is coming. A copy inside a plugin always defers to the host's loop.
+// app's alert raised on the main thread before Apps::run or after its loop has
+// ended: it is logged and answered at once, since no later turn of the loop is
+// coming. Other threads cannot tell whether the main thread is running a loop,
+// so their alerts are always deferred to it, and a copy inside a plugin always
+// defers to the host's loop.
 void showAlert(const AlertOptions& options, AlertCallback onDismissed = {});
 
 // Shows each alert in place of the platform's dialog, and in place of the

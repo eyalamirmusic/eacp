@@ -136,10 +136,12 @@ void showNextAlert()
 }
 
 // An eacp copy inside a plugin cannot see its host's loop, so it trusts the
-// host to run one.
+// host to run one, and only the main thread can tell whether a loop is running
+// (Windows keeps that per thread), so any other thread trusts the main one.
 bool canDeferAlerts()
 {
-    return Platform::isDLL() || Threads::isEventLoopRunning();
+    return Platform::isDLL() || !Threads::isMainThread()
+           || Threads::isEventLoopRunning();
 }
 } // namespace
 

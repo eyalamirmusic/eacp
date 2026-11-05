@@ -800,7 +800,8 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   the thread's other top-level windows are disabled while it is up),
   `UIAlertController` on iOS (retried on later turns while nothing can present
   it). Nobody choosing — a quit, a failed or dismissed dialog, headless, Linux
-  and Android (which never show one), no loop running in a standalone app —
+  and Android (which never show one), a standalone app's main thread with no
+  loop running —
   answers `Detail::unansweredButton`: the cancel button, else the default.
   The platforms' id-to-button mappings are `Detail::` functions in
   `Alert.cpp` so every lane tests them. `setAlertPresenter` replaces the
