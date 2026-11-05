@@ -791,15 +791,23 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
 - Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
   message, `AlertIcon`, buttons, default and cancel button; returns at once
-  from any thread, shows the alert on the next loop turn and answers the
-  pressed button's index on the main thread exactly once. `NSAlert` run
-  app-modally on macOS, `TaskDialogIndirect` on Windows (comctl32 v6 through
-  shell32's manifest as an activation context, `MessageBoxW` if that fails),
-  `UIAlertController` on iOS; Linux and Android, headless, and iOS with no
-  view controller log it and answer the default button.
-  `setAlertPresenter` replaces the dialog (and the headless answer), which is
-  how `Tests/Core/AlertTests.cpp` and an app's own tests see and answer
-  alerts; `Apps/Graphics/AlertDemo` is the hand check of the native dialogs
+  from any thread, queues the alert so they come up one at a time in call
+  order, and answers the pressed button's index on the main thread exactly
+  once. `NSAlert`'s `runModal` on macOS (a quit that ends the modal is put to
+  the root loop again through `Threads/EventLoop-macOS.h`),
+  `TaskDialogIndirect` on Windows (comctl32 v6 through shell32's manifest as
+  an activation context, `MessageBoxW` only when the function cannot be found;
+  the thread's other top-level windows are disabled while it is up),
+  `UIAlertController` on iOS (retried on later turns while nothing can present
+  it). Nobody choosing — a quit, a failed or dismissed dialog, headless, Linux
+  and Android (which never show one), no loop running in a standalone app —
+  answers `Detail::unansweredButton`: the cancel button, else the default.
+  The platforms' id-to-button mappings are `Detail::` functions in
+  `Alert.cpp` so every lane tests them. `setAlertPresenter` replaces the
+  dialog (and the headless answer) at each alert's turn, which is how
+  `Tests/Core/AlertTests.cpp` and an app's own tests see and answer alerts;
+  replacing it answers the alert the old one held as unanswered.
+  `Apps/Graphics/AlertDemo` is the hand check of the native dialogs.
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations, backed by Core Graphics on

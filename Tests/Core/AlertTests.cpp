@@ -3,11 +3,16 @@
 #include <eacp/Core/App/Alert.h>
 
 // Apps::showAlert without a dialog: the options as a presenter is handed them,
-// the answer it gives, and the headless answer. The native dialogs are checked
-// by hand with Apps/Graphics/AlertDemo.
+// the answer it gives, the queue that shows one alert at a time, the
+// unanswered rule, and the platforms' id-to-button mappings. The native dialogs
+// are checked by hand with Apps/Graphics/AlertDemo.
 //
-// Every case installs a presenter or turns headless on, so no case can put a
-// real dialog in front of a test run on a desktop.
+// Every case runs inside an AlertIsolation: headless for its whole length, and
+// on the way out it clears the presenter and pumps until every alert it raised
+// has been answered, still headless. A case that fails half way can therefore
+// never leave an alert queued for a later, non-headless turn to put in front
+// of a desktop test run. Each case declares what its callbacks capture before
+// the isolation, so the drain runs while those are still alive.
 
 using namespace nano;
 using namespace eacp;
@@ -16,26 +21,53 @@ namespace AlertTests
 {
 using Apps::AlertIcon;
 using Apps::AlertOptions;
+using Apps::Detail::MessageBoxButtons;
+namespace Ids = Apps::Detail::WindowsIds;
 
-struct PresenterGuard
+// One continuous pump, so isEventLoopRunning() holds from `body` until `ready`:
+// a worker's showAlert must never land between two pumps, where it would be
+// answered at once as an alert with no loop.
+template <typename Ready>
+bool runLoopUntil(const Callback& body, Ready ready)
 {
-    explicit PresenterGuard(Apps::AlertPresenter presenter)
-    {
-        Apps::setAlertPresenter(std::move(presenter));
-    }
+    auto poll = Threads::Timer(
+        [&]
+        {
+            if (ready())
+                Threads::stopEventLoop();
+        },
+        Time::MS {5});
 
-    ~PresenterGuard() { Apps::setAlertPresenter(nullptr); }
-};
+    Threads::runEventLoopFor(Time::MS {2000}, body);
+    return ready();
+}
 
-struct HeadlessGuard
+template <typename Ready>
+bool pumpUntil(Ready ready)
 {
-    HeadlessGuard()
+    return runLoopUntil([] {}, ready);
+}
+
+void pumpBriefly()
+{
+    Threads::runEventLoopFor(Time::MS {50});
+}
+
+struct AlertIsolation
+{
+    explicit AlertIsolation(Apps::AlertPresenter presenter = {})
         : previous(Apps::getAppEnvironment().headless)
     {
         Apps::getAppEnvironment().headless = true;
+        Apps::setAlertPresenter(std::move(presenter));
     }
 
-    ~HeadlessGuard() { Apps::getAppEnvironment().headless = previous; }
+    ~AlertIsolation()
+    {
+        Apps::setAlertPresenter(nullptr);
+        pumpUntil([] { return Apps::Detail::pendingAlertCount() == 0; });
+        Apps::getAppEnvironment().headless = previous;
+    }
 
     bool previous;
 };
@@ -55,17 +87,6 @@ Apps::AlertPresenter recordInto(Shown& shown)
     };
 }
 
-template <typename Predicate>
-bool pumpUntil(Predicate ready)
-{
-    return Threads::runEventLoopUntil(ready, Time::MS {2000});
-}
-
-void pumpBriefly()
-{
-    Threads::runEventLoopFor(Time::MS {50});
-}
-
 AlertOptions saveChanges()
 {
     auto options = AlertOptions {};
@@ -78,14 +99,34 @@ AlertOptions saveChanges()
     return options;
 }
 
+AlertOptions withButtons(Vector<std::string> buttons,
+                         int defaultButton = 0,
+                         std::optional<int> cancelButton = {})
+{
+    auto options = AlertOptions {};
+    options.buttons = std::move(buttons);
+    options.defaultButton = defaultButton;
+    options.cancelButton = cancelButton;
+    return Apps::Detail::resolveAlertOptions(options);
+}
+
+AlertOptions withoutCancel()
+{
+    auto options = saveChanges();
+    options.cancelButton.reset();
+    options.defaultButton = 1;
+    return options;
+}
+
+// Options and resolution
+
 auto tPresenterGetsTheOptions = test("Alert/presenterIsHandedTheOptionsAsGiven") = []
 {
     auto shown = Shown {};
-    auto guard = PresenterGuard {recordInto(shown)};
+    auto isolation = AlertIsolation {recordInto(shown)};
 
-    Apps::showAlert(saveChanges());
-
-    check(pumpUntil([&] { return shown.alerts.size() == 1; }));
+    check(runLoopUntil([] { Apps::showAlert(saveChanges()); },
+                       [&] { return shown.alerts.size() == 1; }));
 
     if (shown.alerts.size() != 1)
         return;
@@ -100,21 +141,31 @@ auto tPresenterGetsTheOptions = test("Alert/presenterIsHandedTheOptionsAsGiven")
     check(alert.buttons[2] == "Cancel");
     check(alert.defaultButton == 0);
     check(alert.cancelButton == 2);
+
+    shown.answers[0](0);
 };
 
 auto tEachIconArrives = test("Alert/eachIconReachesThePresenter") = []
 {
     auto shown = Shown {};
-    auto guard = PresenterGuard {recordInto(shown)};
+    auto isolation = AlertIsolation {
+        [&shown](const AlertOptions& options, Apps::AlertCallback onDismissed)
+        {
+            shown.alerts.add(options);
+            onDismissed(0);
+        }};
 
-    for (auto icon: {AlertIcon::info, AlertIcon::warning, AlertIcon::error})
-    {
-        auto options = AlertOptions {};
-        options.icon = icon;
-        Apps::showAlert(options);
-    }
-
-    check(pumpUntil([&] { return shown.alerts.size() == 3; }));
+    check(runLoopUntil(
+        []
+        {
+            for (auto icon: {AlertIcon::info, AlertIcon::warning, AlertIcon::error})
+            {
+                auto options = AlertOptions {};
+                options.icon = icon;
+                Apps::showAlert(options);
+            }
+        },
+        [&] { return shown.alerts.size() == 3; }));
 
     if (shown.alerts.size() != 3)
         return;
@@ -129,7 +180,6 @@ auto tDefaultsAreInfoAndOk = test("Alert/defaultOptionsAreOneOkInfoAlert") = []
     auto options = Apps::Detail::resolveAlertOptions({});
 
     check(options.icon == AlertIcon::info);
-    check(options.buttons.size() == 1);
     check(options.buttons.size() == 1 && options.buttons[0] == "OK");
     check(options.defaultButton == 0);
     check(!options.cancelButton.has_value());
@@ -138,65 +188,202 @@ auto tDefaultsAreInfoAndOk = test("Alert/defaultOptionsAreOneOkInfoAlert") = []
 auto tNoButtonsIsOk = test("Alert/noButtonsReachesThePresenterAsOneOk") = []
 {
     auto shown = Shown {};
-    auto guard = PresenterGuard {recordInto(shown)};
+    auto isolation = AlertIsolation {recordInto(shown)};
 
-    auto options = AlertOptions {};
-    options.title = "Saved";
-    Apps::showAlert(options);
+    check(runLoopUntil(
+        []
+        {
+            auto options = AlertOptions {};
+            options.title = "Saved";
+            Apps::showAlert(options);
+        },
+        [&] { return shown.alerts.size() == 1; }));
 
-    check(pumpUntil([&] { return shown.alerts.size() == 1; }));
     check(shown.alerts.size() == 1 && shown.alerts[0].buttons.size() == 1
           && shown.alerts[0].buttons[0] == "OK");
+
+    if (shown.answers.size() == 1)
+        shown.answers[0](0);
 };
 
 auto tOutOfRangeDefault = test("Alert/outOfRangeDefaultIsTheFirstButton") = []
 {
     for (auto index: {-1, 2, 99})
-    {
-        auto options = AlertOptions {};
-        options.buttons = {"Yes", "No"};
-        options.defaultButton = index;
+        check(withButtons({"Yes", "No"}, index).defaultButton == 0);
 
-        check(Apps::Detail::resolveAlertOptions(options).defaultButton == 0);
-    }
-
-    auto options = AlertOptions {};
-    options.buttons = {"Yes", "No"};
-    options.defaultButton = 1;
-    check(Apps::Detail::resolveAlertOptions(options).defaultButton == 1);
+    check(withButtons({"Yes", "No"}, 1).defaultButton == 1);
 };
 
 auto tOutOfRangeCancel = test("Alert/outOfRangeCancelIsNoCancelButton") = []
 {
     for (auto index: {-1, 2, 99})
-    {
-        auto options = AlertOptions {};
-        options.buttons = {"Yes", "No"};
-        options.cancelButton = index;
+        check(!withButtons({"Yes", "No"}, 0, index).cancelButton);
 
-        check(!Apps::Detail::resolveAlertOptions(options).cancelButton);
-    }
-
-    auto options = AlertOptions {};
-    options.buttons = {"Yes", "No"};
-    options.cancelButton = 1;
-    check(Apps::Detail::resolveAlertOptions(options).cancelButton == 1);
-
-    auto onlyOk = AlertOptions {};
-    onlyOk.cancelButton = 0;
-    check(Apps::Detail::resolveAlertOptions(onlyOk).cancelButton == 0);
+    check(withButtons({"Yes", "No"}, 0, 1).cancelButton == 1);
+    check(withButtons({}, 0, 0).cancelButton == 0);
 };
+
+// The unanswered rule
+
+auto tUnansweredIsCancel =
+    test("Alert/unansweredIsTheCancelButtonWhenThereIsOne") = []
+{
+    check(Apps::Detail::unansweredButton(withButtons({"Keep", "Delete"}, 1, 0))
+          == 0);
+    check(Apps::Detail::unansweredButton(saveChanges()) == 2);
+};
+
+auto tUnansweredIsDefault =
+    test("Alert/unansweredIsTheDefaultButtonWithoutCancel") = []
+{
+    check(Apps::Detail::unansweredButton(withButtons({"Keep", "Delete"}, 1)) == 1);
+    check(Apps::Detail::unansweredButton(withButtons({})) == 0);
+};
+
+auto tAnswerForButton = test("Alert/aResponseThatIsNoButtonIsUnanswered") = []
+{
+    auto options = withButtons({"Keep", "Delete"}, 1, 0);
+
+    check(Apps::Detail::answerForButton(options, 0) == 0);
+    check(Apps::Detail::answerForButton(options, 1) == 1);
+
+    // NSModalResponseStop (-1000) less NSAlertFirstButtonReturn (1000): a quit.
+    check(Apps::Detail::answerForButton(options, -2000) == 0);
+    check(Apps::Detail::answerForButton(options, 2) == 0);
+
+    auto noCancel = withButtons({"Keep", "Delete"}, 1);
+    check(Apps::Detail::answerForButton(noCancel, -2000) == 1);
+};
+
+// Windows' mappings
+
+auto tTaskDialogButtons = test("Alert/taskDialogButtonIdsAreTheirIndexes") = []
+{
+    auto options = saveChanges();
+
+    check(Apps::Detail::answerForTaskDialog(options, Ids::firstTaskDialogButton)
+          == 0);
+    check(Apps::Detail::answerForTaskDialog(options, Ids::firstTaskDialogButton + 1)
+          == 1);
+    check(Apps::Detail::answerForTaskDialog(options, Ids::firstTaskDialogButton + 2)
+          == 2);
+};
+
+auto tTaskDialogCancel = test("Alert/taskDialogCancelIsTheCancelButton") = []
+{
+    check(Apps::Detail::answerForTaskDialog(withButtons({"Cancel", "Delete"}, 1, 0),
+                                            Ids::cancel)
+          == 0);
+    check(Apps::Detail::answerForTaskDialog(withButtons({"Keep", "Delete"}, 1),
+                                            Ids::cancel)
+          == 1);
+};
+
+auto tTaskDialogOther = test("Alert/taskDialogIdsThatAreNoButtonAreUnanswered") = []
+{
+    auto options = withButtons({"Keep", "Delete"}, 1, 0);
+
+    for (auto id: {0, Ids::ok, Ids::yes, Ids::firstTaskDialogButton + 2, -1})
+        check(Apps::Detail::answerForTaskDialog(options, id) == 0);
+};
+
+auto tMessageBoxOne = test("Alert/messageBoxOneButtonIsOk") = []
+{
+    auto options = withButtons({});
+    auto plan = Apps::Detail::planMessageBox(options);
+
+    check(plan.buttons == MessageBoxButtons::ok);
+    check(plan.answers.size() == 1 && plan.answers[0] == 0);
+    check(!plan.labelsInText);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::ok) == 0);
+    check(Apps::Detail::messageBoxText(options, plan) == options.message);
+};
+
+auto tMessageBoxCancelStandsForCancel =
+    test("Alert/messageBoxCancelStandsForTheCancelButton") = []
+{
+    auto options = withButtons({"Cancel", "Delete"}, 1, 0);
+    auto plan = Apps::Detail::planMessageBox(options);
+
+    check(plan.buttons == MessageBoxButtons::okCancel);
+    check(plan.answers.size() == 2 && plan.answers[0] == 1 && plan.answers[1] == 0);
+    check(plan.defaultBoxButton == 0);
+    check(plan.labelsInText);
+
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::cancel) == 0);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::ok) == 1);
+
+    auto text = Apps::Detail::messageBoxText(options, plan);
+    check(text.find("OK = Delete") != std::string::npos);
+    check(text.find("Cancel = Cancel") != std::string::npos);
+};
+
+auto tMessageBoxYesNo = test("Alert/messageBoxTwoButtonsWithoutCancelAreYesNo") = []
+{
+    auto options = withButtons({"Yes", "No"}, 1);
+    auto plan = Apps::Detail::planMessageBox(options);
+
+    check(plan.buttons == MessageBoxButtons::yesNo);
+    check(plan.defaultBoxButton == 1);
+    check(!plan.labelsInText);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::yes) == 0);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::no) == 1);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::cancel) == 1);
+};
+
+auto tMessageBoxThree = test("Alert/messageBoxThreeButtonsAreYesNoCancel") = []
+{
+    auto options = withButtons({"Cancel", "Save", "Don't Save"}, 1, 0);
+    auto plan = Apps::Detail::planMessageBox(options);
+
+    check(plan.buttons == MessageBoxButtons::yesNoCancel);
+    check(plan.answers.size() == 3 && plan.answers[0] == 1 && plan.answers[1] == 2
+          && plan.answers[2] == 0);
+    check(plan.defaultBoxButton == 0);
+    check(plan.labelsInText);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::yes) == 1);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::no) == 2);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::cancel) == 0);
+};
+
+auto tMessageBoxTooMany = test("Alert/messageBoxCannotOfferFiveButtons") = []
+{
+    auto options = withButtons({"One", "Two", "Three", "Four", "Five"}, 2, 4);
+    auto plan = Apps::Detail::planMessageBox(options);
+
+    check(plan.answers.empty());
+    check(plan.labelsInText);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::ok) == 4);
+
+    auto text = Apps::Detail::messageBoxText(options, plan);
+    check(text.find("Five") != std::string::npos);
+};
+
+auto tMessageBoxUnknownId =
+    test("Alert/messageBoxIdsThatAreNoButtonAreUnanswered") = []
+{
+    auto options = withButtons({"Cancel", "Delete"}, 1, 0);
+    auto plan = Apps::Detail::planMessageBox(options);
+
+    check(Apps::Detail::answerForMessageBox(options, plan, 0) == 0);
+    check(Apps::Detail::answerForMessageBox(options, plan, Ids::yes) == 0);
+};
+
+// Answers
 
 auto tCallbackGetsTheAnswer =
     test("Alert/callbackGetsTheButtonThePresenterAnswers") = []
 {
     auto shown = Shown {};
-    auto guard = PresenterGuard {recordInto(shown)};
     auto answers = Vector<int> {};
+    auto isolation = AlertIsolation {recordInto(shown)};
 
-    Apps::showAlert(saveChanges(), [&](int button) { answers.add(button); });
-
-    check(pumpUntil([&] { return shown.answers.size() == 1; }));
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(saveChanges(), [&](int button) { answers.add(button); });
+        },
+        [&] { return shown.answers.size() == 1; }));
 
     if (shown.answers.size() != 1)
         return;
@@ -209,12 +396,15 @@ auto tCallbackGetsTheAnswer =
 auto tAnswerOnlyOnce = test("Alert/callbackFiresOnceHoweverOftenItIsAnswered") = []
 {
     auto shown = Shown {};
-    auto guard = PresenterGuard {recordInto(shown)};
     auto answers = Vector<int> {};
+    auto isolation = AlertIsolation {recordInto(shown)};
 
-    Apps::showAlert(saveChanges(), [&](int button) { answers.add(button); });
-
-    check(pumpUntil([&] { return shown.answers.size() == 1; }));
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(saveChanges(), [&](int button) { answers.add(button); });
+        },
+        [&] { return shown.answers.size() == 1; }));
 
     if (shown.answers.size() != 1)
         return;
@@ -230,18 +420,23 @@ auto tNeverBeforeReturn = test("Alert/showAlertReturnsBeforeAnythingIsShown") = 
 {
     auto presented = 0;
     auto answers = 0;
-    auto guard = PresenterGuard {[&](const AlertOptions&, Apps::AlertCallback done)
-                                 {
-                                     ++presented;
-                                     done(0);
-                                 }};
+    auto returnedBeforeAnything = false;
+    auto isolation =
+        AlertIsolation {[&](const AlertOptions&, Apps::AlertCallback done)
+                        {
+                            ++presented;
+                            done(0);
+                        }};
 
-    Apps::showAlert({}, [&](int) { ++answers; });
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert({}, [&](int) { ++answers; });
+            returnedBeforeAnything = presented == 0 && answers == 0;
+        },
+        [&] { return answers == 1; }));
 
-    check(presented == 0);
-    check(answers == 0);
-
-    check(pumpUntil([&] { return answers == 1; }));
+    check(returnedBeforeAnything);
     check(presented == 1);
 };
 
@@ -250,146 +445,301 @@ auto tPresenterOnMainThread =
 {
     auto presentedOnMain = std::atomic<int> {-1};
     auto answeredOnMain = std::atomic<int> {-1};
+    auto worker = std::thread();
+    auto isolation =
+        AlertIsolation {[&](const AlertOptions&, Apps::AlertCallback done)
+                        {
+                            presentedOnMain = Threads::isMainThread() ? 1 : 0;
+                            done(0);
+                        }};
 
-    auto guard = PresenterGuard {[&](const AlertOptions&, Apps::AlertCallback done)
-                                 {
-                                     presentedOnMain =
-                                         Threads::isMainThread() ? 1 : 0;
-                                     done(0);
-                                 }};
-
-    auto worker = std::thread(
+    check(runLoopUntil(
         [&]
         {
-            Apps::showAlert(
-                {}, [&](int) { answeredOnMain = Threads::isMainThread() ? 1 : 0; });
-        });
+            worker = std::thread(
+                [&]
+                {
+                    Apps::showAlert(
+                        {},
+                        [&](int)
+                        { answeredOnMain = Threads::isMainThread() ? 1 : 0; });
+                });
+        },
+        [&] { return answeredOnMain != -1; }));
 
-    worker.join();
+    if (worker.joinable())
+        worker.join();
 
-    check(pumpUntil([&] { return answeredOnMain != -1; }));
     check(presentedOnMain == 1);
     check(answeredOnMain == 1);
 };
 
-auto tHeadlessAnswersDefault = test("Alert/headlessAnswersTheDefaultButton") = []
+auto tWorkerAnswerReachesMain =
+    test("Alert/aPresenterAnsweringFromAWorkerIsHeardOnTheMainThread") = []
 {
-    auto guard = HeadlessGuard {};
+    auto answeredOnMain = std::atomic<int> {-1};
+    auto answer = std::atomic<int> {-1};
+    auto answerer = std::thread();
+    auto isolation =
+        AlertIsolation {[&](const AlertOptions&, Apps::AlertCallback done)
+                        { answerer = std::thread([done] { done(1); }); }};
+
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(saveChanges(),
+                            [&](int button)
+                            {
+                                answer = button;
+                                answeredOnMain = Threads::isMainThread() ? 1 : 0;
+                            });
+        },
+        [&] { return answeredOnMain != -1; }));
+
+    if (answerer.joinable())
+        answerer.join();
+
+    check(answeredOnMain == 1);
+    check(answer == 1);
+};
+
+// The queue
+
+auto tOneAtATime = test("Alert/theNextAlertWaitsForTheOneBeforeItsAnswer") = []
+{
+    auto shown = Shown {};
+    auto order = Vector<std::string> {};
+    auto isolation = AlertIsolation {recordInto(shown)};
+
+    check(runLoopUntil(
+        [&]
+        {
+            for (auto name: {"first", "second"})
+            {
+                auto options = AlertOptions {};
+                options.title = name;
+                Apps::showAlert(options, [&order, name](int) { order.add(name); });
+            }
+        },
+        [&] { return shown.alerts.size() == 1; }));
+
+    pumpBriefly();
+    check(shown.alerts.size() == 1);
+    check(Apps::Detail::pendingAlertCount() == 2);
+
+    if (shown.answers.size() != 1)
+        return;
+
+    shown.answers[0](0);
+
+    check(pumpUntil([&] { return shown.alerts.size() == 2; }));
+    check(shown.alerts.size() == 2 && shown.alerts[1].title == "second");
+
+    if (shown.answers.size() == 2)
+        shown.answers[1](0);
+
+    check(order.size() == 2 && order[0] == "first" && order[1] == "second");
+};
+
+auto tAlertFromCallback =
+    test("Alert/anAlertRaisedFromAnAlertsCallbackFollowsIt") = []
+{
+    auto order = Vector<std::string> {};
+    auto isolation = AlertIsolation {};
+
+    check(runLoopUntil(
+        [&]
+        {
+            auto first = AlertOptions {};
+            first.title = "first";
+
+            Apps::showAlert(first,
+                            [&](int)
+                            {
+                                order.add("first");
+
+                                auto second = AlertOptions {};
+                                second.title = "second";
+                                Apps::showAlert(second,
+                                                [&](int) { order.add("second"); });
+                            });
+        },
+        [&] { return order.size() == 2; }));
+
+    check(order.size() == 2 && order[0] == "first" && order[1] == "second");
+};
+
+auto tSilentPresenter =
+    test("Alert/aPresenterThatNeverAnswersHoldsTheQueueUntilReplaced") = []
+{
+    auto presented = 0;
     auto answers = Vector<int> {};
+    auto isolation = AlertIsolation {[&](const AlertOptions&, Apps::AlertCallback)
+                                     { ++presented; }};
 
-    auto options = saveChanges();
-    options.defaultButton = 1;
-    Apps::showAlert(options, [&](int button) { answers.add(button); });
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(withButtons({"Keep", "Delete"}, 1, 0),
+                            [&](int button) { answers.add(button); });
+            Apps::showAlert(withButtons({"Keep", "Delete"}, 1),
+                            [&](int button) { answers.add(button); });
+        },
+        [&] { return presented == 1; }));
 
+    pumpBriefly();
+    check(presented == 1);
     check(answers.empty());
-    check(pumpUntil([&] { return !answers.empty(); }));
+
+    Apps::setAlertPresenter(nullptr);
+
+    check(pumpUntil([&] { return answers.size() == 2; }));
+    check(answers.size() == 2 && answers[0] == 0 && answers[1] == 1);
+};
+
+// Headless and no loop
+
+auto tHeadlessIsUnanswered = test("Alert/headlessAnswersTheUnansweredButton") = []
+{
+    auto answers = Vector<int> {};
+    auto isolation = AlertIsolation {};
+
+    check(runLoopUntil(
+        [&]
+        {
+            Apps::showAlert(saveChanges(), [&](int button) { answers.add(button); });
+            Apps::showAlert(withoutCancel(),
+                            [&](int button) { answers.add(button); });
+        },
+        [&] { return answers.size() == 2; }));
 
     pumpBriefly();
 
-    check(answers.size() == 1 && answers[0] == 1);
+    check(answers.size() == 2 && answers[0] == 2 && answers[1] == 1);
 };
 
-auto tHeadlessOutOfRange =
-    test("Alert/headlessAnswersTheFirstForAnOutOfRangeDefault") = []
+auto tHeadlessOutOfRange = test("Alert/headlessOutOfRangeDefaultIsTheFirst") = []
 {
-    auto guard = HeadlessGuard {};
     auto answer = -1;
+    auto isolation = AlertIsolation {};
 
-    auto options = saveChanges();
-    options.defaultButton = 7;
-    Apps::showAlert(options, [&](int button) { answer = button; });
+    check(runLoopUntil(
+        [&]
+        {
+            auto options = withoutCancel();
+            options.defaultButton = 7;
+            Apps::showAlert(options, [&](int button) { answer = button; });
+        },
+        [&] { return answer != -1; }));
 
-    check(pumpUntil([&] { return answer != -1; }));
     check(answer == 0);
 };
 
 auto tHeadlessOnMainThread = test("Alert/headlessAnswerIsOnTheMainThread") = []
 {
-    auto guard = HeadlessGuard {};
     auto answeredOnMain = std::atomic<int> {-1};
+    auto worker = std::thread();
+    auto isolation = AlertIsolation {};
 
-    auto worker = std::thread(
+    check(runLoopUntil(
         [&]
         {
-            Apps::showAlert(saveChanges(),
-                            [&](int)
-                            { answeredOnMain = Threads::isMainThread() ? 1 : 0; });
-        });
+            worker = std::thread(
+                [&]
+                {
+                    Apps::showAlert(
+                        saveChanges(),
+                        [&](int)
+                        { answeredOnMain = Threads::isMainThread() ? 1 : 0; });
+                });
+        },
+        [&] { return answeredOnMain != -1; }));
 
-    worker.join();
+    if (worker.joinable())
+        worker.join();
 
-    check(pumpUntil([&] { return answeredOnMain != -1; }));
     check(answeredOnMain == 1);
 };
 
 auto tHeadlessInOrder = test("Alert/headlessAlertsAreAnsweredInTheOrderShown") = []
 {
-    auto guard = HeadlessGuard {};
     auto order = Vector<std::string> {};
+    auto isolation = AlertIsolation {};
 
-    for (auto name: {"first", "second", "third"})
-    {
-        auto options = AlertOptions {};
-        options.title = name;
-        Apps::showAlert(options, [&order, name](int) { order.add(name); });
-    }
+    check(runLoopUntil(
+        [&]
+        {
+            for (auto name: {"first", "second", "third"})
+            {
+                auto options = AlertOptions {};
+                options.title = name;
+                Apps::showAlert(options, [&order, name](int) { order.add(name); });
+            }
+        },
+        [&] { return order.size() == 3; }));
 
-    check(pumpUntil([&] { return order.size() == 3; }));
     check(order.size() == 3 && order[0] == "first" && order[1] == "second"
           && order[2] == "third");
 };
 
-auto tNoCallback = test("Alert/anAlertNeedsNoCallback") = []
+auto tNoCallback = test("Alert/anAlertWithNoCallbackIsStillAnswered") = []
 {
-    {
-        auto guard = HeadlessGuard {};
-        Apps::showAlert(saveChanges());
-        pumpBriefly();
-    }
+    auto isolation = AlertIsolation {};
 
-    auto shown = Shown {};
-    auto guard = PresenterGuard {recordInto(shown)};
-
-    Apps::showAlert(saveChanges());
-
-    check(pumpUntil([&] { return shown.answers.size() == 1; }));
-
-    if (shown.answers.size() == 1)
-        shown.answers[0](1);
+    check(runLoopUntil([] { Apps::showAlert(saveChanges()); },
+                       [] { return Apps::Detail::pendingAlertCount() == 0; }));
 };
 
 auto tPresenterBeatsHeadless = test("Alert/aPresenterIsAskedEvenWhenHeadless") = []
 {
-    auto headless = HeadlessGuard {};
     auto shown = Shown {};
-    auto guard = PresenterGuard {recordInto(shown)};
     auto answer = -1;
+    auto isolation = AlertIsolation {recordInto(shown)};
 
-    Apps::showAlert(saveChanges(), [&](int button) { answer = button; });
+    check(runLoopUntil(
+        [&]
+        { Apps::showAlert(saveChanges(), [&](int button) { answer = button; }); },
+        [&] { return shown.answers.size() == 1; }));
 
-    check(pumpUntil([&] { return shown.answers.size() == 1; }));
     pumpBriefly();
     check(answer == -1);
 
     if (shown.answers.size() == 1)
-        shown.answers[0](2);
+        shown.answers[0](1);
 
-    check(answer == 2);
+    check(pumpUntil([&] { return answer != -1; }));
+    check(answer == 1);
 };
 
 auto tClearedPresenter = test("Alert/clearingThePresenterRestoresThePlatform") = []
 {
     auto shown = Shown {};
-    Apps::setAlertPresenter(recordInto(shown));
+    auto answer = -1;
+    auto isolation = AlertIsolation {recordInto(shown)};
+
     Apps::setAlertPresenter(nullptr);
 
-    auto headless = HeadlessGuard {};
+    check(runLoopUntil(
+        [&]
+        { Apps::showAlert(saveChanges(), [&](int button) { answer = button; }); },
+        [&] { return answer != -1; }));
+
+    check(answer == 2);
+    check(shown.alerts.empty());
+};
+
+auto tNoLoop = test("Alert/withNoEventLoopRunningItIsAnsweredAtOnce") = []
+{
+    // A copy some other case attached as a hosted loop always has a loop.
+    if (Threads::isEventLoopRunning())
+        return;
+
     auto answer = -1;
+    auto isolation = AlertIsolation {};
 
     Apps::showAlert(saveChanges(), [&](int button) { answer = button; });
 
-    check(pumpUntil([&] { return answer != -1; }));
-    check(answer == 0);
-    check(shown.alerts.empty());
+    check(answer == 2);
+    check(Apps::Detail::pendingAlertCount() == 0);
 };
 } // namespace AlertTests

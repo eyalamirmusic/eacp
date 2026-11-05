@@ -1,4 +1,5 @@
 #include "EventLoop.h"
+#include "EventLoop-macOS.h"
 #include "../App/App.h"
 #include "../ObjC/ObjC.h"
 #include "../ObjC/RuntimeClass.h"
@@ -218,6 +219,15 @@ void EventLoop::quit()
         [getApp() stop:nil];
 
     [getApp() postEvent:makeWakeEvent() atStart:YES];
+}
+
+void Detail::resumeQuitAfterModal()
+{
+    if (s_quitRequested && s_nestedDepth == 0 && s_inRootRunLoop)
+    {
+        [getApp() stop:nil];
+        [getApp() postEvent:makeWakeEvent() atStart:YES];
+    }
 }
 
 bool isEventLoopRunning()

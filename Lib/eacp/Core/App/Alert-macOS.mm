@@ -3,6 +3,7 @@
 #include "Alert.h"
 #include "../ObjC/ObjC.h"
 #include "../ObjC/Strings.h"
+#include "../Threads/EventLoop-macOS.h"
 
 namespace eacp::Apps
 {
@@ -28,8 +29,15 @@ static NSString* alertText(const std::string& text)
     return string != nil ? string : @"";
 }
 
+static bool escapeNeedsMonitor(const AlertOptions& options)
+{
+    return options.cancelButton == options.defaultButton;
+}
+
 // NSAlert gives its first button Return and a button titled "Cancel" Escape;
-// the options say which ones instead.
+// the options say which ones instead. A button has one key equivalent, so a
+// cancel button that is also the default keeps Return, and Escape reaches it
+// through watchEscape.
 static void assignKeys(NSAlert* alert, const AlertOptions& options)
 {
     auto* buttons = alert.buttons;
@@ -37,24 +45,37 @@ static void assignKeys(NSAlert* alert, const AlertOptions& options)
     for (NSButton* button in buttons)
         button.keyEquivalent = @"";
 
-    if (options.cancelButton)
+    if (options.cancelButton && !escapeNeedsMonitor(options))
         buttons[(NSUInteger) *options.cancelButton].keyEquivalent = @"\033";
 
     buttons[(NSUInteger) options.defaultButton].keyEquivalent = @"\r";
 }
 
-static int pressedButton(NSModalResponse response, const AlertOptions& options)
+static id watchEscape(NSAlert* alert, const AlertOptions& options)
 {
-    auto index = (int) (response - NSAlertFirstButtonReturn);
+    if (!options.cancelButton || !escapeNeedsMonitor(options))
+        return nil;
 
-    if (index >= 0 && index < options.buttons.size())
-        return index;
+    auto response = NSAlertFirstButtonReturn + *options.cancelButton;
+    constexpr auto escapeKeyCode = 53;
 
-    return options.defaultButton;
+    return [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                     handler:^NSEvent*(NSEvent* event) {
+                                       if (event.keyCode != escapeKeyCode
+                                           || event.window != alert.window)
+                                           return event;
+
+                                       [NSApp stopModalWithCode:response];
+                                       return nil;
+                                     }];
 }
 
-// App-modal through runModal, as JUCE's showMessageBoxAsync is, rather than a
-// sheet: a plugin's view may have no window of its own to hang one off.
+// runModal, as JUCE's showMessageBoxAsync is, rather than a sheet: a plugin's
+// view may have no window of its own to hang one off. A quit that arrives while
+// it is up ends the modal session instead of the loop, so runModal answers
+// NSModalResponseStop: that is no button, so unanswered, and the quit is put to
+// the loop again.
 void Detail::showNativeAlert(const AlertOptions& options, AlertCallback onDismissed)
 {
     auto alert = ObjC::Ptr<NSAlert>([[NSAlert alloc] init]);
@@ -68,6 +89,15 @@ void Detail::showNativeAlert(const AlertOptions& options, AlertCallback onDismis
 
     assignKeys(alert.get(), options);
 
-    onDismissed(pressedButton([alert.get() runModal], options));
+    id escapeMonitor = watchEscape(alert.get(), options);
+    auto response = [alert.get() runModal];
+
+    if (escapeMonitor != nil)
+        [NSEvent removeMonitor:escapeMonitor];
+
+    if (response == NSModalResponseStop)
+        Threads::Detail::resumeQuitAfterModal();
+
+    onDismissed(answerForButton(options, (long) (response - NSAlertFirstButtonReturn)));
 }
 } // namespace eacp::Apps

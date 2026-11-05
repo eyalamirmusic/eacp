@@ -110,6 +110,14 @@ Vector<Demo> demos()
                       AlertIcon::warning,
                       {"Delete", "Keep"},
                       1)},
+        {"Default is also cancel",
+         alertOptions("Discard the recording?",
+                      "Keep is both the default and the cancel button: Return and "
+                      "Escape both answer 1.",
+                      AlertIcon::warning,
+                      {"Discard", "Keep"},
+                      1,
+                      1)},
         {"Five buttons",
          alertOptions("Pick one",
                       "More buttons than a message box has.",
@@ -197,7 +205,7 @@ struct AlertDemoApp
 
         options.title = "Alert Demo";
         options.width = 760;
-        options.height = 320;
+        options.height = 380;
         options.backgroundColor = Color {0.11f, 0.12f, 0.15f, 1.f};
 
         return options;
