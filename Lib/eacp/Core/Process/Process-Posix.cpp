@@ -24,15 +24,29 @@ void ignoreSigPipeOnce()
     std::call_once(flag, [] { std::signal(SIGPIPE, SIG_IGN); });
 }
 
-// Copies the parent environment and applies overrides (replaced by name, else
-// appended). Built in the parent: posix_spawn execs without running arbitrary
-// code in the child, so there is no fork/setenv-in-child deadlock hazard.
-Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& overrides)
+bool isRemovedEntry(std::string_view entry, const Vector<std::string>& removed)
+{
+    auto name = entry.substr(0, entry.find('='));
+
+    for (const auto& candidate: removed)
+        if (candidate == name)
+            return true;
+
+    return false;
+}
+
+// Copies the parent environment without the removed names and applies
+// overrides (replaced by name, else appended). Built in the parent:
+// posix_spawn execs without running arbitrary code in the child, so there is
+// no fork/setenv-in-child deadlock hazard.
+Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& overrides,
+                                     const Vector<std::string>& removed)
 {
     auto entries = Vector<std::string> {};
 
     for (auto entry = environ; *entry != nullptr; ++entry)
-        entries.push_back(*entry);
+        if (!isRemovedEntry(*entry, removed))
+            entries.push_back(*entry);
 
     for (const auto& var: overrides)
     {
@@ -206,7 +220,7 @@ private:
         }
 
         const auto executable = argStrings.front();
-        auto envStrings = buildEnvironment(options.environment);
+        auto envStrings = makeChildEnvironment(options);
 
         auto argv = toCArray(argStrings);
         auto envp = toCArray(envStrings);
@@ -216,8 +230,10 @@ private:
         int errPipe[2] = {-1, -1};
 
         const auto merge = options.mergeErrorOutput;
+        const auto inheritError = options.inheritErrorOutput && !merge;
 
-        if (options.captureOutput && !createPipes(inPipe, outPipe, errPipe, !merge))
+        if (options.captureOutput
+            && !createPipes(inPipe, outPipe, errPipe, !merge && !inheritError))
             return;
 
         auto actions = posix_spawn_file_actions_t {};
@@ -227,8 +243,9 @@ private:
         {
             posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO);
             posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
-            posix_spawn_file_actions_adddup2(
-                &actions, merge ? outPipe[1] : errPipe[1], STDERR_FILENO);
+            if (!inheritError)
+                posix_spawn_file_actions_adddup2(
+                    &actions, merge ? outPipe[1] : errPipe[1], STDERR_FILENO);
 
             for (auto fd: {inPipe[0],
                            inPipe[1],
@@ -485,5 +502,10 @@ std::string Process::output() const
 std::string Process::errorOutput() const
 {
     return impl->errorOutput();
+}
+
+Vector<std::string> makeChildEnvironment(const ProcessOptions& options)
+{
+    return buildEnvironment(options.environment, options.removedEnvironment);
 }
 } // namespace eacp::Processes

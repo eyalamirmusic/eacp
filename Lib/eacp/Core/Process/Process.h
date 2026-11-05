@@ -21,6 +21,13 @@ struct ProcessOptions
     std::string workingDirectory;
     Vector<EnvironmentVariable> environment;
 
+    // Names of the launcher's environment variables the child must not see
+    // ("CLAUDECODE"), removed from the copy of the parent's environment before
+    // `environment` is applied, so a name in both lists ends up with the
+    // override's value. On Windows names compare case-insensitively, as the
+    // environment does there.
+    Vector<std::string> removedEnvironment;
+
     // A whole command line, used in place of executable and arguments when
     // non-empty. On Windows it is handed to CreateProcessW unchanged (no
     // application name, no quoting), the way JUCE's ChildProcess::start(String)
@@ -40,6 +47,13 @@ struct ProcessOptions
     // output() holds both streams interleaved in the order the child wrote
     // them and errorOutput() stays empty. Only applies with captureOutput.
     bool mergeErrorOutput = false;
+
+    // When true the child's stderr is the launcher's own stderr while stdout
+    // (and stdin) stay captured, so errorOutput() stays empty and the child's
+    // errors reach the terminal or log as they are written. For a child whose
+    // stdout is a protocol and whose stderr is for people. Only applies with
+    // captureOutput; mergeErrorOutput takes precedence.
+    bool inheritErrorOutput = false;
 
     // Called with each chunk of stdout (stdout and stderr when
     // mergeErrorOutput is set) as it arrives, on the background reader thread,
@@ -116,6 +130,12 @@ private:
 // alone is then unquoted (one leading and one trailing ' or " removed). This
 // is what ProcessOptions::commandLine runs on POSIX.
 Vector<std::string> tokeniseCommandLine(std::string_view line);
+
+// The environment a child launched with `options` gets, as NAME=value
+// entries: this process's own, without options.removedEnvironment, with
+// options.environment applied. For launchers that start children themselves
+// (a pseudo-terminal host's forkpty and execve) and must match Process.
+Vector<std::string> makeChildEnvironment(const ProcessOptions& options);
 
 // Convenience: launch, block until the child exits, and return everything it
 // produced. The child's stdin is closed first, so a child that reads it sees

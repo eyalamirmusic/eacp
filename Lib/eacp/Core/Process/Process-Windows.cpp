@@ -93,13 +93,23 @@ std::wstring upper(std::wstring text)
     return text;
 }
 
-// Windows needs the full environment block, so merge any overrides on top of
-// the current process environment. Returns empty to mean "inherit unchanged".
-std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
+bool isRemovedEntry(const std::wstring& entry, const Vector<std::string>& removed)
 {
-    if (overrides.empty())
-        return {};
+    auto key = upper(nameOf(entry));
 
+    for (const auto& candidate: removed)
+        if (upper(Strings::widen(candidate)) == key)
+            return true;
+
+    return false;
+}
+
+// The current process environment without the removed names, with the
+// overrides merged on top (replaced by case-insensitive name, else appended).
+Vector<std::wstring>
+    collectEnvironmentEntries(const Vector<EnvironmentVariable>& overrides,
+                              const Vector<std::string>& removed)
+{
     auto entries = Vector<std::wstring> {};
 
     if (auto existing = GetEnvironmentStringsW())
@@ -107,7 +117,10 @@ std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
         for (auto p = existing; *p;)
         {
             auto entry = std::wstring {p};
-            entries.push_back(entry);
+
+            if (!isRemovedEntry(entry, removed))
+                entries.push_back(entry);
+
             p += entry.size() + 1;
         }
 
@@ -134,6 +147,18 @@ std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
             entries.push_back(combined);
     }
 
+    return entries;
+}
+
+// Windows needs the full environment block. Returns empty to mean "inherit
+// unchanged".
+std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides,
+                                   const Vector<std::string>& removed)
+{
+    if (overrides.empty() && removed.empty())
+        return {};
+
+    auto entries = collectEnvironmentEntries(overrides, removed);
     auto block = std::wstring {};
 
     for (const auto& entry: entries)
@@ -285,10 +310,26 @@ private:
             return;
         }
 
-        // Merged stderr shares the stdout pipe, so there is no error pipe.
+        // Merged stderr shares the stdout pipe, and an inherited stderr is the
+        // launcher's own, so neither has an error pipe.
         const auto merge = options.mergeErrorOutput;
+        const auto inheritError = options.inheritErrorOutput && !merge;
+        auto inheritedError = HANDLE {nullptr};
 
-        if (!merge && !CreatePipe(&errRead, &errWrite, &inherit, 0))
+        if (inheritError)
+        {
+            auto original = GetStdHandle(STD_ERROR_HANDLE);
+
+            if (original != nullptr && original != INVALID_HANDLE_VALUE)
+                DuplicateHandle(GetCurrentProcess(),
+                                original,
+                                GetCurrentProcess(),
+                                &inheritedError,
+                                0,
+                                TRUE,
+                                DUPLICATE_SAME_ACCESS);
+        }
+        else if (!merge && !CreatePipe(&errRead, &errWrite, &inherit, 0))
         {
             CloseHandle(inRead);
             CloseHandle(inWrite);
@@ -301,7 +342,7 @@ private:
         SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
 
-        if (!merge)
+        if (errRead != nullptr)
             SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
 
         STARTUPINFOW startup {};
@@ -311,10 +352,14 @@ private:
         startup.hStdOutput = outWrite;
         startup.hStdError = merge ? outWrite : errWrite;
 
+        if (inheritError)
+            startup.hStdError = inheritedError;
+
         auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
+        auto environment =
+            buildEnvironmentBlock(options.environment, options.removedEnvironment);
 
         PROCESS_INFORMATION info {};
         auto created = CreateProcessW(
@@ -334,6 +379,9 @@ private:
 
         if (errWrite != nullptr)
             CloseHandle(errWrite);
+
+        if (inheritedError != nullptr)
+            CloseHandle(inheritedError);
 
         if (!created)
         {
@@ -393,7 +441,8 @@ private:
         auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
+        auto environment =
+            buildEnvironmentBlock(options.environment, options.removedEnvironment);
 
         PROCESS_INFORMATION info {};
         auto created = CreateProcessW(
@@ -428,7 +477,8 @@ private:
         auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
+        auto environment =
+            buildEnvironmentBlock(options.environment, options.removedEnvironment);
 
         // DETACHED_PROCESS: no inherited console, so the child survives the
         // launcher's console/job the way a setsid'd POSIX child survives its
@@ -596,5 +646,16 @@ std::string Process::output() const
 std::string Process::errorOutput() const
 {
     return impl->errorOutput();
+}
+
+Vector<std::string> makeChildEnvironment(const ProcessOptions& options)
+{
+    auto entries = Vector<std::string> {};
+
+    for (const auto& entry:
+         collectEnvironmentEntries(options.environment, options.removedEnvironment))
+        entries.push_back(Strings::narrow(entry));
+
+    return entries;
 }
 } // namespace eacp::Processes

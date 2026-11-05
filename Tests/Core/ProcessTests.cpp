@@ -264,3 +264,78 @@ auto tBlankCommandLineDoesNotLaunch =
 
     check(!result.launched);
 };
+
+// HOME and PATH are set in any environment the tests run in; the tests read
+// them rather than set variables of their own.
+auto tRemovedEnvironment = test("Process/run/removedEnvironment") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.executable = "/bin/sh";
+    options.arguments = {"-c", "printf '%s|%s' \"${HOME-unset}\" \"${PATH:+kept}\""};
+    options.removedEnvironment = {"HOME"};
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.output == "unset|kept");
+};
+
+auto tRemovedThenOverridden = test("Process/run/removedThenOverridden") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.executable = "/bin/sh";
+    options.arguments = {"-c", "printf %s \"$HOME\""};
+    options.removedEnvironment = {"HOME"};
+    options.environment = {{"HOME", "override"}};
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.output == "override");
+};
+
+auto tInheritErrorOutput = test("Process/run/inheritErrorOutput") = []
+{
+    int errorPipe[2] = {-1, -1};
+    check(::pipe(errorPipe) == 0);
+
+    auto savedError = ::dup(STDERR_FILENO);
+    ::dup2(errorPipe[1], STDERR_FILENO);
+    ::close(errorPipe[1]);
+
+    auto options = Proc::ProcessOptions {};
+    options.executable = "/bin/sh";
+    options.arguments = {"-c", "echo out; echo err 1>&2"};
+    options.inheritErrorOutput = true;
+
+    auto result = Proc::run(std::move(options));
+
+    ::dup2(savedError, STDERR_FILENO);
+    ::close(savedError);
+
+    char buffer[16] = {};
+    auto count = ::read(errorPipe[0], buffer, sizeof buffer);
+    ::close(errorPipe[0]);
+
+    check(result.output == "out\n");
+    check(result.errorOutput.empty());
+    check(count > 0 && std::string(buffer, (size_t) count) == "err\n");
+};
+
+auto tMakeChildEnvironment = test("Process/makeChildEnvironment") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.removedEnvironment = {"HOME"};
+    options.environment = {{"EACP_CHILD_ONLY", "1"}};
+
+    auto entries = Proc::makeChildEnvironment(options);
+    auto hasHome = false;
+    auto hasOverride = false;
+
+    for (const auto& entry: entries)
+    {
+        hasHome = hasHome || entry.starts_with("HOME=");
+        hasOverride = hasOverride || entry == "EACP_CHILD_ONLY=1";
+    }
+
+    check(!hasHome);
+    check(hasOverride);
+};
