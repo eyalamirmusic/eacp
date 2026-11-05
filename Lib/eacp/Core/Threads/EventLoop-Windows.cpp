@@ -216,7 +216,7 @@ static DWORD getParentProcessId()
     return parent;
 }
 
-static void installParentDeathWatchdog()
+static void startParentDeathWatchdog()
 {
     auto parentPid = getParentProcessId();
     if (parentPid == 0)
@@ -246,6 +246,13 @@ static void installParentDeathWatchdog()
             callAsync([] { getEventLoop().quit(); });
         })
         .detach();
+}
+
+// runFor re-enters initLoopThread on every pass of a nested pump; one watchdog is enough.
+static void installParentDeathWatchdog()
+{
+    static auto parentDeathWatchdogInstalled = std::once_flag {};
+    std::call_once(parentDeathWatchdogInstalled, startParentDeathWatchdog);
 }
 
 namespace
