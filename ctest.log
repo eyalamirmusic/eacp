@@ -1,0 +1,17 @@
+Test project /Users/jamiepond/projects/eacp-crash-thread-watch/build
+    Start 72: CrashReportJSON
+1/6 Test #72: CrashReportJSON ..................   Passed    0.01 sec
+    Start 73: CrashReportDatabase
+2/6 Test #73: CrashReportDatabase ..............   Passed    0.01 sec
+    Start 74: CrashReport
+3/6 Test #74: CrashReport ......................   Passed   58.92 sec
+    Start 75: CrashReporting
+4/6 Test #75: CrashReporting ...................   Passed   22.74 sec
+    Start 76: CrashMatrix
+5/6 Test #76: CrashMatrix ......................   Passed    0.01 sec
+    Start 77: CrashFaults
+6/6 Test #77: CrashFaults ......................   Passed    0.01 sec
+
+100% tests passed out of 6
+
+Total Test time (real) =  81.70 sec
