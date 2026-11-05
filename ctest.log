@@ -1,0 +1,19 @@
+Test project /Users/jamiepond/projects/eacp-crash-parity/build
+    Start 72: CrashReportJSON
+1/7 Test #72: CrashReportJSON ..................   Passed    0.06 sec
+    Start 73: CrashReportDatabase
+2/7 Test #73: CrashReportDatabase ..............   Passed    0.06 sec
+    Start 74: CrashReport
+3/7 Test #74: CrashReport ......................   Passed   52.26 sec
+    Start 75: CrashReporting
+4/7 Test #75: CrashReporting ...................   Passed   31.84 sec
+    Start 76: CrashMatrix
+5/7 Test #76: CrashMatrix ......................   Passed    0.03 sec
+    Start 77: CrashFaults
+6/7 Test #77: CrashFaults ......................   Passed    0.02 sec
+    Start 79: CrashEvent
+7/7 Test #79: CrashEvent .......................   Passed    1.11 sec
+
+100% tests passed out of 7
+
+Total Test time (real) =  85.46 sec
