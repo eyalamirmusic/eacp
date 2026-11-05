@@ -1241,6 +1241,26 @@ allocates, locks, logs or makes a syscall. Semantics, the undefined-case table
 and the realtime contract: `Lib/eacp/GPU/README.md`, "Running a kernel on the
 CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
 
+### DXC at run time (`Lib/eacp/GPU/Shader/Dxc.h`)
+
+On D3D12, `GPU::Dxc::setOptions({.enabled = true, .locateLibrary = ...})` makes
+every run-time `ShaderLibrary` compile through `dxcompiler.dll` (SM 6.0 DXIL,
+`-O1` by default through `Options::arguments`) instead of FXC; the DLL is
+loaded by path through `Plugins::DynamicLibrary`, lazily on the first compile
+or by `Dxc::load()`, and nothing links it. An unloadable compiler or a device
+with no Shader Model 6.0 logs once and falls back to FXC (`Dxc::status()` says
+why); a shader DXC rejects leaves the library invalid, with no FXC retry.
+Precompiled blobs and the backend's internal shaders are untouched, and off
+Windows the options change nothing (`Dxc-Default.cpp`). The default locator is
+the separate `eacp-gpu-dxc` target (`GPU/Dxc/DxcResource.h`,
+`Dxc::enableFromOnlineResource()`), which fetches the official release through
+`OnlineResource` into `<cache root>/eacp/DXC` so `eacp-gpu` never links
+`eacp-network`; `Apps/GPU/Teapot` uses it. `Tests/GPU/DxcTests-Windows.cpp`
+needs `EACP_TEST_DXC=1` for its download cases, and `EACP_D3D12_DXC=1` runs all
+of `GPUTests` under DXC. "Compiling with DXC at run time" in
+`Lib/eacp/GPU/README.md` is the account, including the three WARP failures
+(DXIL `Htan`/`Hsin`/`Hcos`) and why `-O1`.
+
 ### ML (`Lib/eacp/ML`)
 
 Two targets. `eacp-ml-graph` (every platform but iOS; links `eacp-core` and

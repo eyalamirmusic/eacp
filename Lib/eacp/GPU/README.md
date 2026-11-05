@@ -43,6 +43,7 @@ with it, before the backend device. It is safe to ask for from any thread.
 | `Codegen/` | The shader EDSL and the MSL / HLSL / GLSL emitters, plus `ComputeKernel`, the device-free half of a `ComputeProgram` |
 | `CpuCompute/` | `eacp-cpu-compute`: the interpreter that runs a recorded compute kernel on the CPU, allocation-free, on the calling thread |
 | `Spirv/` | `eacp-spirv`: glslang wrapped as a GLSL-to-SPIR-V compiler, built where the Vulkan backend ships it |
+| `Dxc/` | `eacp-gpu-dxc`: the official DXC release fetched through `OnlineResource`, for the opt-in run-time DXIL compile on D3D12 ("Compiling with DXC at run time") |
 | `Vulkan/` | The Linux backend — see "Linux" below |
 
 ## A shader
@@ -540,6 +541,103 @@ blobs in process through `PrecompiledTestBlobs.h`, one file per platform
 beside it (`xcrun metal`, FXC, glslang — the Metal cases self-skip on a Mac
 without the Metal Toolchain) and covers a hit that draws or dispatches, the
 fall back from a corrupt blob, and both refusals under the flag.
+
+## Compiling with DXC at run time
+
+On D3D12 a source is compiled at run time by FXC (`D3DCompile`, Shader Model
+5.0 DXBC) unless an app opts into the DirectX Shader Compiler, which compiles
+the same HLSL to Shader Model 6.0 DXIL. Nothing else changes: the bytes land in
+the same `ID3DBlob`s, eacp builds its own root signatures so no reflection is
+read, and a precompiled blob still loads as before. The backend's two internal
+shaders (the depth-resolve fallback and mip generation) stay on FXC.
+
+The switch and the hook are in `eacp-gpu` (`Shader/Dxc.h`, namespace
+`GPU::Dxc`):
+
+```cpp
+Dxc::setOptions({.enabled = true,
+                 .locateLibrary = [] { return FilePath {"C:/Tools/dxc/bin/x64"}; }});
+```
+
+`locateLibrary` answers the directory holding `dxcompiler.dll` (and the
+`dxil.dll` an older release needs beside it, which is mapped first by its full
+path, since the compiler finds it by name). It is called once, lazily, on the
+thread that compiles the first shader after the options were set — or at once
+by `Dxc::load()` — and may block; other threads compiling meanwhile wait for it,
+and a compile reached from inside it (the locator pumping the event loop into a
+view that builds a pipeline) goes to FXC rather than deadlock. The DLL is opened
+through `Plugins::DynamicLibrary` and reached only through `DxcCreateInstance`,
+so nothing links `dxcompiler.lib` and a machine without the compiler runs the
+same binary. Each stage is compiled with `-E <entry> -T vs_6_0|ps_6_0|cs_6_0
+-Ges` followed by `Options::arguments`, `{"-O1"}` by default. That is FXC's own
+default level, and the one the suite runs clean at under WARP: the x64 WARP,
+run under emulation on an ARM64 machine, access-violates executing DXC's
+default `-O3` output for the blocked SIMD-matrix kernels
+(`SimdMatrix/blockedProduct*`), while `-O1`, `-O2` and `-O3 -Gfp` all run them.
+Output is checked to be signed, since D3D12 refuses DXIL a validator has not
+signed. Setting options again drops the loaded compiler, so the next compile
+locates it anew.
+
+`Dxc::status()` reports the `State` (`disabled`, `notLoaded`, `loading`,
+`loaded`, `failed`, or `unsupported` off Windows, where the options are kept and
+change nothing), the compiler's `IDxcVersionInfo` version, the directory, the
+error, and how many stages DXC has compiled in this process. What happens when
+something goes wrong depends on where:
+
+- The compiler cannot be had — the locator answers an empty path or throws, the
+  DLL will not load — or the device reports no Shader Model 6.0
+  (`D3D12_FEATURE_SHADER_MODEL`, asked of the device of every library DXC
+  would compile, so one device without it is never handed DXIL; the Parallels
+  vGPU has none, WARP does): one log line says why, the state is `failed` with
+  that reason, and every shader goes on compiling through FXC.
+- DXC rejects a shader: the library is invalid and the diagnostics are logged,
+  exactly as an FXC error is. There is no FXC retry, because surfacing what the
+  emitter writes that DXC will not take is the point of opting in.
+
+The default locator lives in its own target, `eacp-gpu-dxc`
+(`Dxc/DxcResource.h`, linking `eacp-gpu` and `eacp-network`), so `eacp-gpu`
+never links the network — the same split as `eacp-ui-network`. It fetches the
+official release zip (`releaseInfo()`: `v1.9.2609`, about 32 MB) through
+`OnlineResource::fetch` with `Freshness::trust`, so a copy on disk is used
+without asking the server, and answers `binaryDirectory()`, its
+`bin/<architectureFolder()>`. The copy lives in `defaultDirectory()`,
+`<per-user cache root>/eacp/DXC`, rather than in an app's own resource
+directory: it is a cache of a public download, safe for the OS to clear, and one
+copy serves every eacp app — and test binary — of the user. An app opts in with
+one line before its first pipeline:
+
+```cpp
+Dxc::enableFromOnlineResource();
+```
+
+`OnlineResource::fetch` pumps the event loop and is main-thread only, so the
+first compile has to happen on the main thread (or `Dxc::load()` be called
+there first); from another thread the locator throws, and the status says so.
+The first launch on a machine blocks until the download is done. Off Windows the
+locator answers nothing and the call compiles everywhere. `Apps/GPU/Teapot` opts
+in this way and logs which compiler built its shaders.
+
+`Tests/GPU/DxcTests-Windows.cpp` covers the fallbacks with no network and no
+DLL, and — under `EACP_TEST_DXC=1`, which also makes a compiler that will not
+load a failure rather than a skip — the real release compiling a kernel whose
+numbers are checked and a pipeline whose pixels are, a shader DXC rejects, and
+`Options::arguments` reaching the compile. `EACP_D3D12_DXC=1` makes
+`GPUTests`' `main` enable the release before any case runs, so the whole suite
+compiles through DXC, and fails the run if DXC is not loaded at the end; that is
+how the emitter is checked against DXC:
+
+```powershell
+$env:EACP_D3D12_WARP='1'; $env:EACP_D3D12_DXC='1'; $env:EACP_TEST_DXC='1'
+build\Tests\GPU\GPUTests.exe
+```
+
+Under WARP every case passes but three: `Intrinsics/computesTheHyperbolics`,
+`Intrinsics/saturatingTanhAnswersTheTails` and
+`Intrinsics/appliesComponentwiseToAVector`. The emitter writes the native
+`tanh`, `sinh` and `cosh`, which DXC lowers to DXIL's `Htan`, `Hsin` and
+`Hcos` operations, and WARP's are wrong well past any tolerance — `tanh(6)`
+comes back 1.0157, `cosh(6)` 5.6 short. FXC has no such instructions and expands
+them through `exp`, which is why the FXC suite passes.
 
 ## Pipeline state
 
