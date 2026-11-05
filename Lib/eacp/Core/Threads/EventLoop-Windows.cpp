@@ -53,6 +53,10 @@ static EventLoopState& getEventLoopState()
 
 static thread_local int runForDepth = 0;
 
+// runForDepth across every thread, so isEventLoopRunning() asked on a worker
+// sees the loop thread's nested pumps, which are what its callAsync reaches.
+static std::atomic<int> runForDepthInProcess {0};
+
 struct PendingCallbacks
 {
     void run()
@@ -331,7 +335,13 @@ bool EventLoop::runFor(Time::MS timeout)
     initLoopThread();
 
     runForDepth++;
-    auto popDepth = std::shared_ptr<void> {nullptr, [](void*) { runForDepth--; }};
+    runForDepthInProcess++;
+    auto popDepth = std::shared_ptr<void> {nullptr,
+                                           [](void*)
+                                           {
+                                               runForDepth--;
+                                               runForDepthInProcess--;
+                                           }};
 
     auto deadline = Time::Deadline {timeout};
     auto timedOut = false;
@@ -402,7 +412,8 @@ void EventLoop::quit()
 
 bool isEventLoopRunning()
 {
-    return runForDepth > 0 || getEnvValue("EACP_ROOT_LOOP") == "1";
+    return runForDepth > 0 || runForDepthInProcess > 0
+           || getEnvValue("EACP_ROOT_LOOP") == "1";
 }
 
 void stopProcessRootLoop()

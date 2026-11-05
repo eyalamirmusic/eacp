@@ -1,4 +1,5 @@
 #include "EventLoop.h"
+#include "EventLoop-macOS.h"
 #include "../App/App.h"
 #include "../ObjC/ObjC.h"
 #include "../ObjC/RuntimeClass.h"
@@ -6,12 +7,15 @@
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
+#include <atomic>
+
 namespace eacp::Threads
 {
 namespace
 {
-bool s_inRootRunLoop = false;
-int s_nestedDepth = 0;
+// Atomic because isEventLoopRunning() is asked from any thread.
+std::atomic<bool> s_inRootRunLoop = false;
+std::atomic<int> s_nestedDepth = 0;
 bool s_quitRequested = false;
 
 // terminate: (Cmd+Q, Dock ▸ Quit, quit Apple Events) calls exit() without
@@ -218,6 +222,20 @@ void EventLoop::quit()
         [getApp() stop:nil];
 
     [getApp() postEvent:makeWakeEvent() atStart:YES];
+}
+
+bool Detail::isRootQuitPending()
+{
+    return s_quitRequested && s_nestedDepth == 0 && s_inRootRunLoop;
+}
+
+void Detail::resumeQuitAfterModal()
+{
+    if (isRootQuitPending())
+    {
+        [getApp() stop:nil];
+        [getApp() postEvent:makeWakeEvent() atStart:YES];
+    }
 }
 
 bool isEventLoopRunning()

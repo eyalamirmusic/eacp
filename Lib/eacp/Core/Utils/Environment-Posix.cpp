@@ -4,7 +4,10 @@
 #include <cstdlib>
 #include <mutex>
 
-extern char** environ;
+// A C variable, so declared with C linkage: <unistd.h> declares it that way on
+// Android and glibc, and a C++-linkage declaration ahead of it (two files sharing
+// a unity batch) is an error. Apple's unistd.h does not declare it at all.
+extern "C" char** environ;
 
 namespace eacp
 {
