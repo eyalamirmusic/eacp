@@ -789,6 +789,17 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Core/ArgsTests.cpp`; `parse()` reads the stored command line, so a
   body needs no argc/argv), and `Console::print`/`printError`
   (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
+- Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
+  message, `AlertIcon`, buttons, default and cancel button; returns at once
+  from any thread, shows the alert on the next loop turn and answers the
+  pressed button's index on the main thread exactly once. `NSAlert` run
+  app-modally on macOS, `TaskDialogIndirect` on Windows (comctl32 v6 through
+  shell32's manifest as an activation context, `MessageBoxW` if that fails),
+  `UIAlertController` on iOS; Linux and Android, headless, and iOS with no
+  view controller log it and answer the default button.
+  `setAlertPresenter` replaces the dialog (and the headless answer), which is
+  how `Tests/Core/AlertTests.cpp` and an app's own tests see and answer
+  alerts; `Apps/Graphics/AlertDemo` is the hand check of the native dialogs
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations, backed by Core Graphics on

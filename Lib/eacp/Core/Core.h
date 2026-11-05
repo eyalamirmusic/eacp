@@ -1,5 +1,6 @@
 #pragma once
 
+#include "App/Alert.h"
 #include "App/App.h"
 #include "App/Clipboard.h"
 #include "App/LoginItem.h"

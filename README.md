@@ -115,7 +115,8 @@ explains how a frame is built.
 ## Everything else
 
 - **Application lifecycle** — a struct is the app; one view in one window
-  needs no struct at all.
+  needs no struct at all. Native alerts with your own buttons, answered
+  asynchronously.
 - **Command-line tools** — a console runner, an argument parser that binds
   options to your variables and writes the help, and plain stdout lines.
 - **Event loop and threads** — the loop, timers, deferred and delayed calls,
