@@ -65,6 +65,12 @@ WebView::Options servingScheme(const std::string& scheme, const std::string& htm
         response.data.assign(html.begin(), html.end());
         return std::optional {response};
     };
+
+    // WebView2 fails any environment that shares a user-data folder with one
+    // registering a different set of custom schemes (ERROR_INVALID_STATE), and
+    // the plain views the other cases create use the shared folder, so this
+    // one needs its own (see StreamingPumpTests).
+    options.userDataFolderSuffix = "messageorigin-" + scheme;
     return options;
 }
 
