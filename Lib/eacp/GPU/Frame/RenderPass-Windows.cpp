@@ -3,16 +3,12 @@
 #include "RenderPass.h"
 
 #include "IndirectDrawPlan.h"
+#include "RenderPassBindings-Windows.h"
+#include "RenderPassRegions.h"
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
-#include "../Shader/ShaderSource.h"
-#include "../Texture/Sampler.h"
-#include "../Texture/Texture.h"
 #include "../Windows/D3D12Types.h"
-
-#include <algorithm>
-#include <cmath>
 
 // Windows/D3D12 backend. Records draw commands onto the frame's recording via
 // the D3D12Encoder. The encoder is owned here so it is freed when the pass
@@ -40,6 +36,31 @@ struct RenderPass::Native
     // compilation failed has a null state; drawing without one is flagged by the
     // D3D12 debug layer, so draws are skipped when false.
     bool pipelineBound = false;
+
+    bool canSetTargetState() const
+    {
+        return encoder && hasTargetArea(targetWidth, targetHeight);
+    }
+
+    bool canDraw() const { return encoder && pipelineBound; }
+
+    bool hasCommands() const { return encoder && encoder->commands != nullptr; }
+
+    ID3D12GraphicsCommandList* list() const { return encoder->commands->list.get(); }
+
+    void recordIndexedIndirectDraws(const IndexRange& indexRange,
+                                    const Buffer& arguments,
+                                    const IndirectDrawPlan& plan,
+                                    IndirectDrawCount count)
+    {
+        if (!canDraw())
+            return;
+
+        auto& commands = *encoder->commands;
+
+        if (bindIndexRange(commands, indexRange.indices, indexRange.format))
+            executeIndexedIndirectDraws(commands, plan, arguments, count);
+    }
 };
 
 RenderPass::RenderPass(void* encoder,
@@ -58,31 +79,23 @@ RenderPass::~RenderPass()
 
 void RenderPass::setScissorRect(const Graphics::Rect& rect)
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
-    // Round outward before clamping: rounding a scrolled region's edge inward
-    // would shave a column of glyph coverage off the boundary.
-    const auto left =
-        std::clamp(static_cast<int>(std::floor(rect.x)), 0, impl->targetWidth);
-    const auto top =
-        std::clamp(static_cast<int>(std::floor(rect.y)), 0, impl->targetHeight);
-    const auto right = std::clamp(
-        static_cast<int>(std::ceil(rect.x + rect.w)), left, impl->targetWidth);
-    const auto bottom = std::clamp(
-        static_cast<int>(std::ceil(rect.y + rect.h)), top, impl->targetHeight);
+    const auto pixels =
+        calculateScissorPixels(rect, impl->targetWidth, impl->targetHeight);
 
-    const D3D12_RECT scissor {static_cast<LONG>(left),
-                              static_cast<LONG>(top),
-                              static_cast<LONG>(right),
-                              static_cast<LONG>(bottom)};
+    const D3D12_RECT scissor {static_cast<LONG>(pixels.left),
+                              static_cast<LONG>(pixels.top),
+                              static_cast<LONG>(pixels.right),
+                              static_cast<LONG>(pixels.bottom)};
 
-    impl->encoder->commands->list->RSSetScissorRects(1, &scissor);
+    impl->list()->RSSetScissorRects(1, &scissor);
 }
 
 void RenderPass::clearScissorRect()
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
     const D3D12_RECT scissor {0,
@@ -90,21 +103,17 @@ void RenderPass::clearScissorRect()
                               static_cast<LONG>(impl->targetWidth),
                               static_cast<LONG>(impl->targetHeight)};
 
-    impl->encoder->commands->list->RSSetScissorRects(1, &scissor);
+    impl->list()->RSSetScissorRects(1, &scissor);
 }
 
 void RenderPass::setViewport(const Graphics::Rect& rect,
                              float nearDepth,
                              float farDepth)
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
-    // No rounding, unlike the scissor: a viewport is a float rectangle in both
-    // APIs, and rounding it would move the mapping rather than the clip.
-    if (rect.w <= 0.f || rect.h <= 0.f || rect.x < 0.f || rect.y < 0.f
-        || rect.x + rect.w > static_cast<float>(impl->targetWidth)
-        || rect.y + rect.h > static_cast<float>(impl->targetHeight))
+    if (!isViewportInsideTarget(rect, impl->targetWidth, impl->targetHeight))
         return;
 
     D3D12_VIEWPORT viewport = {};
@@ -115,12 +124,12 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
     viewport.MinDepth = nearDepth;
     viewport.MaxDepth = farDepth;
 
-    impl->encoder->commands->list->RSSetViewports(1, &viewport);
+    impl->list()->RSSetViewports(1, &viewport);
 }
 
 void RenderPass::clearViewport()
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
     D3D12_VIEWPORT viewport = {};
@@ -128,7 +137,7 @@ void RenderPass::clearViewport()
     viewport.Height = static_cast<float>(impl->targetHeight);
     viewport.MaxDepth = 1.0f;
 
-    impl->encoder->commands->list->RSSetViewports(1, &viewport);
+    impl->list()->RSSetViewports(1, &viewport);
 }
 
 int RenderPass::targetWidth() const
@@ -153,7 +162,7 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     if (!impl->pipelineBound)
         return;
 
-    auto* list = impl->encoder->commands->list.get();
+    auto* list = impl->list();
     list->SetPipelineState(state->state.get());
     list->IASetPrimitiveTopology(state->topology);
 
@@ -165,7 +174,7 @@ void RenderPass::setStencilReference(unsigned int value)
     if (!impl->encoder)
         return;
 
-    impl->encoder->commands->list->OMSetStencilRef(static_cast<UINT>(value));
+    impl->list()->OMSetStencilRef(static_cast<UINT>(value));
 }
 
 void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
@@ -175,159 +184,22 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
 
 void RenderPass::setVertexBuffer(const BufferRange& range, int index)
 {
-    if (!impl->encoder || range.buffer == nullptr || range.offset < 0)
-        return;
-
-    auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
-
-    if (data == nullptr || data->resource == nullptr
-        || (UINT64) range.offset >= data->size)
-        return;
-
-    auto& commands = *impl->encoder->commands;
-    transitionForUse(
-        commands, *data, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-
-    // A view starting part-way into the resource: the address moves up by the
-    // offset and the size comes down by it, so the view still ends where the
-    // buffer does and vertex zero is the byte at the offset.
-    D3D12_VERTEX_BUFFER_VIEW view = {};
-    view.BufferLocation =
-        data->resource->GetGPUVirtualAddress() + (UINT64) range.offset;
-    view.SizeInBytes = static_cast<UINT>(data->size - (UINT64) range.offset);
-    view.StrideInBytes = strideForSlot(impl->encoder->strides, index);
-
-    commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
+    if (impl->encoder)
+        bindVertexBufferRange(*impl->encoder, range, index);
 }
-
-namespace
-{
-const auto anyShaderRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
-                           | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-
-// A vertex read needs NON_PIXEL_SHADER_RESOURCE, and asks for both read states
-// so that a fragment bind of the same texture in the same draw finds its own
-// already there rather than barriering the vertex one away.
-bool hasReadState(D3D12_RESOURCE_STATES state, D3D12_RESOURCE_STATES wanted)
-{
-    return (state & wanted) == wanted;
-}
-
-D3D12_RESOURCE_STATES readStateFor(ShaderStage stage)
-{
-    return stage == ShaderStage::Vertex ? anyShaderRead
-                                        : D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-}
-
-void bindStageTexture(D3D12Encoder* encoder,
-                      ShaderStage stage,
-                      const Texture& texture,
-                      int slot)
-{
-    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
-        return;
-
-    auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
-
-    if (data == nullptr || data->srv.gpu.ptr == 0)
-        return;
-
-    auto* list = encoder->commands->list.get();
-
-    // A render target an earlier pass on this frame drew into is still in
-    // RENDER_TARGET, and this is where it goes back. A plain texture is already
-    // in the state this asks for and the helper records nothing.
-    if (!hasReadState(data->state, readStateFor(stage)))
-        transitionTextureForUse(list, *data, readStateFor(stage));
-
-    // Only the SRV: the sampler is a static sampler in the root signature, chosen
-    // by the register the shader's sampler was emitted at. See TextureSampling.
-    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
-}
-
-void bindStageDepthTexture(D3D12Encoder* encoder,
-                           ShaderStage stage,
-                           const Texture& renderTarget,
-                           int slot)
-{
-    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
-        return;
-
-    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
-
-    if (data == nullptr || !data->hasSampleableDepth()
-        || data->depthSrv.gpu.ptr == 0)
-        return;
-
-    auto* list = encoder->commands->list.get();
-
-    // The depth resource rests in DEPTH_WRITE, which is where the pass that drew
-    // it left it and where the next pass to attach it expects to find it - so
-    // this is the outward half of the pair, and Frame::beginPass records the
-    // return. The two states are two views of one resource, which is why they
-    // are one tracked value rather than a flag per view.
-    if (!hasReadState(data->depthState, readStateFor(stage)))
-        transitionDepthForUse(list, *data, readStateFor(stage));
-
-    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
-                                         data->depthSrv.gpu);
-}
-
-// The same transition, through one slice's view rather than the whole plane's.
-void bindStageDepthSlice(D3D12Encoder* encoder,
-                         ShaderStage stage,
-                         const Texture& renderTarget,
-                         int slice,
-                         int slot)
-{
-    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
-        return;
-
-    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
-
-    if (data == nullptr || !data->hasSampleableDepth())
-        return;
-
-    const auto view = data->depthSliceView(slice);
-
-    if (view.ptr == 0)
-        return;
-
-    auto* list = encoder->commands->list.get();
-
-    if (!hasReadState(data->depthState, readStateFor(stage)))
-        transitionDepthForUse(list, *data, readStateFor(stage));
-
-    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), view);
-}
-
-void bindPerBindSampler(D3D12Encoder* encoder, int slot, const Sampler& sampler)
-{
-    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
-        return;
-
-    const auto descriptor = perBindSamplerDescriptor(sampler);
-
-    if (descriptor.ptr == 0)
-        return;
-
-    encoder->commands->list->SetGraphicsRootDescriptorTable(renderSamplerParam(slot),
-                                                            descriptor);
-}
-} // namespace
 
 void RenderPass::setFragmentTexture(const Texture& texture,
                                     int slot,
                                     TextureSampling)
 {
-    bindStageTexture(impl->encoder.get(), ShaderStage::Fragment, texture, slot);
+    bindStageTexture(impl->encoder.get(), {ShaderStage::Fragment, slot}, texture);
 }
 
 void RenderPass::setFragmentTexture(const Texture& texture,
                                     int slot,
                                     const Sampler& sampler)
 {
-    bindStageTexture(impl->encoder.get(), ShaderStage::Fragment, texture, slot);
+    setFragmentTexture(texture, slot, TextureSampling {});
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
@@ -336,15 +208,14 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          TextureSampling)
 {
     bindStageDepthTexture(
-        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slot);
+        impl->encoder.get(), {ShaderStage::Fragment, slot}, renderTarget);
 }
 
 void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          int slot,
                                          const Sampler& sampler)
 {
-    bindStageDepthTexture(
-        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slot);
+    setFragmentDepthTexture(renderTarget, slot, TextureSampling {});
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
@@ -354,7 +225,7 @@ void RenderPass::setFragmentDepthTextureSlice(const Texture& renderTarget,
                                               TextureSampling)
 {
     bindStageDepthSlice(
-        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slice, slot);
+        impl->encoder.get(), {ShaderStage::Fragment, slot}, renderTarget, slice);
 }
 
 void RenderPass::setFragmentDepthTextureSlice(const Texture& renderTarget,
@@ -362,8 +233,7 @@ void RenderPass::setFragmentDepthTextureSlice(const Texture& renderTarget,
                                               int slot,
                                               const Sampler& sampler)
 {
-    bindStageDepthSlice(
-        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slice, slot);
+    setFragmentDepthTextureSlice(renderTarget, slice, slot, TextureSampling {});
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
@@ -373,7 +243,7 @@ void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
                                             TextureSampling)
 {
     bindStageDepthSlice(
-        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slice, slot);
+        impl->encoder.get(), {ShaderStage::Vertex, slot}, renderTarget, slice);
 }
 
 void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
@@ -381,8 +251,7 @@ void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
                                             int slot,
                                             const Sampler& sampler)
 {
-    bindStageDepthSlice(
-        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slice, slot);
+    setVertexDepthTextureSlice(renderTarget, slice, slot, TextureSampling {});
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
@@ -390,14 +259,14 @@ void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
 // bind the same root parameters the fragment calls do.
 void RenderPass::setVertexTexture(const Texture& texture, int slot, TextureSampling)
 {
-    bindStageTexture(impl->encoder.get(), ShaderStage::Vertex, texture, slot);
+    bindStageTexture(impl->encoder.get(), {ShaderStage::Vertex, slot}, texture);
 }
 
 void RenderPass::setVertexTexture(const Texture& texture,
                                   int slot,
                                   const Sampler& sampler)
 {
-    bindStageTexture(impl->encoder.get(), ShaderStage::Vertex, texture, slot);
+    setVertexTexture(texture, slot, TextureSampling {});
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
@@ -406,48 +275,21 @@ void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
                                        TextureSampling)
 {
     bindStageDepthTexture(
-        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slot);
+        impl->encoder.get(), {ShaderStage::Vertex, slot}, renderTarget);
 }
 
 void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
                                        int slot,
                                        const Sampler& sampler)
 {
-    bindStageDepthTexture(
-        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slot);
+    setVertexDepthTexture(renderTarget, slot, TextureSampling {});
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
-namespace
+static bool isRenderPassSlotInRange(int slot, int slotCount)
 {
-// The address a stage's root SRV binds to, with the buffer moved into the state
-// a shader read needs. A kernel that wrote this buffer left it in
-// UNORDERED_ACCESS; the barrier here is what orders the draw behind that write.
-// Zero when there is nothing to bind - no buffer, no resource, or an offset
-// outside it - and the shader's element zero is the element at the offset.
-D3D12_GPU_VIRTUAL_ADDRESS storageBufferAddress(CommandContext& commands,
-                                               const BufferRange& range)
-{
-    if (range.buffer == nullptr || range.offset < 0)
-        return 0;
-
-    auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
-
-    if (data == nullptr || data->resource == nullptr
-        || (UINT64) range.offset >= data->size)
-        return 0;
-
-    // The union of the two read states rather than one: the same buffer may be
-    // bound to both stages, and asking for each in turn would barrier it back
-    // and forth between two states that are both just "a shader is reading it".
-    transitionForUse(commands,
-                     *data,
-                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
-                         | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-    return data->resource->GetGPUVirtualAddress() + (UINT64) range.offset;
+    return slot >= 0 && slot < slotCount;
 }
-} // namespace
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
 {
@@ -456,7 +298,7 @@ void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
 
 void RenderPass::setVertexStorageBuffer(const BufferRange& range, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+    if (!impl->encoder || !isRenderPassSlotInRange(slot, maxBufferSlots))
         return;
 
     auto& commands = *impl->encoder->commands;
@@ -473,7 +315,7 @@ void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
 
 void RenderPass::setFragmentStorageBuffer(const BufferRange& range, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+    if (!impl->encoder || !isRenderPassSlotInRange(slot, maxBufferSlots))
         return;
 
     auto& commands = *impl->encoder->commands;
@@ -485,39 +327,19 @@ void RenderPass::setFragmentStorageBuffer(const BufferRange& range, int slot)
 
 void RenderPass::setVertexBytes(const void* data, int bytes, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
-        return;
-
-    auto& commands = *impl->encoder->commands;
-    auto address =
-        commands.context->uploadConstants(commands, data, (std::size_t) bytes);
-
-    if (address != 0)
-        commands.list->SetGraphicsRootConstantBufferView(renderVertexCBVParam(slot),
-                                                         address);
+    if (impl->encoder && isRenderPassSlotInRange(slot, maxUniformSlots))
+        bindConstantBytes(*impl->encoder, renderVertexCBVParam(slot), data, bytes);
 }
 
 void RenderPass::setFragmentBytes(const void* data, int bytes, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
-        return;
-
-    auto& commands = *impl->encoder->commands;
-    auto address =
-        commands.context->uploadConstants(commands, data, (std::size_t) bytes);
-
-    if (address != 0)
-        commands.list->SetGraphicsRootConstantBufferView(renderPixelCBVParam(slot),
-                                                         address);
+    if (impl->encoder && isRenderPassSlotInRange(slot, maxUniformSlots))
+        bindConstantBytes(*impl->encoder, renderPixelCBVParam(slot), data, bytes);
 }
 
 void RenderPass::draw(int vertexCount, int firstVertex)
 {
-    if (!impl->encoder || !impl->pipelineBound)
-        return;
-
-    impl->encoder->commands->list->DrawInstanced(
-        static_cast<UINT>(vertexCount), 1, static_cast<UINT>(firstVertex), 0);
+    drawInstanced(vertexCount, 1, firstVertex, 0);
 }
 
 void RenderPass::drawInstanced(int vertexCount,
@@ -525,92 +347,14 @@ void RenderPass::drawInstanced(int vertexCount,
                                int firstVertex,
                                int firstInstance)
 {
-    if (!impl->encoder || !impl->pipelineBound)
+    if (!impl->canDraw())
         return;
 
-    impl->encoder->commands->list->DrawInstanced(static_cast<UINT>(vertexCount),
-                                                 static_cast<UINT>(instanceCount),
-                                                 static_cast<UINT>(firstVertex),
-                                                 static_cast<UINT>(firstInstance));
+    impl->list()->DrawInstanced(static_cast<UINT>(vertexCount),
+                                static_cast<UINT>(instanceCount),
+                                static_cast<UINT>(firstVertex),
+                                static_cast<UINT>(firstInstance));
 }
-
-namespace
-{
-// The index buffer view for a slice, bound, with the resource moved into the
-// state an index read needs. False when there is nothing to bind - no buffer,
-// no resource, or an offset past the end of it - so the draw that follows can
-// be skipped rather than issued over nothing. The view starts at the slice
-// and runs to the buffer's end, the same shape the vertex bind takes, so
-// firstIndex counts on from the slice's own index zero.
-bool bindIndexRange(CommandContext& commands,
-                    const BufferRange& indices,
-                    IndexFormat format)
-{
-    if (indices.buffer == nullptr || indices.offset < 0)
-        return false;
-
-    auto* data = static_cast<D3D12BufferData*>(indices.buffer->nativeBuffer());
-
-    if (data == nullptr || data->resource == nullptr
-        || (UINT64) indices.offset >= data->size)
-        return false;
-
-    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
-
-    D3D12_INDEX_BUFFER_VIEW view = {};
-    view.BufferLocation =
-        data->resource->GetGPUVirtualAddress() + (UINT64) indices.offset;
-    view.SizeInBytes = static_cast<UINT>(data->size - (UINT64) indices.offset);
-    view.Format =
-        format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
-
-    commands.list->IASetIndexBuffer(&view);
-
-    return true;
-}
-} // namespace
-
-namespace
-{
-D3D12BufferData* indirectArgumentsOf(CommandContext& commands, const Buffer& buffer)
-{
-    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
-
-    if (data == nullptr || data->resource == nullptr)
-        return nullptr;
-
-    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
-    return data;
-}
-
-// One ExecuteIndirect for the whole run: the stride is the signature's, and
-// the count buffer, where there is one, caps the run at the GPU's own number.
-void executeIndirectDraws(CommandContext& commands,
-                          bool indexed,
-                          const IndirectDrawPlan& plan,
-                          const Buffer& arguments,
-                          const Buffer* count,
-                          std::int64_t countOffset)
-{
-    auto* signature =
-        commands.context->getDrawSignature(indexed, static_cast<UINT>(plan.stride));
-    auto* data = indirectArgumentsOf(commands, arguments);
-    auto* countData =
-        count != nullptr ? indirectArgumentsOf(commands, *count) : nullptr;
-
-    if (signature == nullptr || data == nullptr
-        || (count != nullptr && countData == nullptr))
-        return;
-
-    commands.list->ExecuteIndirect(signature,
-                                   static_cast<UINT>(plan.drawCount),
-                                   data->resource.get(),
-                                   static_cast<UINT64>(plan.offset),
-                                   countData != nullptr ? countData->resource.get()
-                                                        : nullptr,
-                                   static_cast<UINT64>(countOffset));
-}
-} // namespace
 
 void RenderPass::drawIndirect(const Buffer& arguments,
                               std::int64_t offset,
@@ -620,11 +364,8 @@ void RenderPass::drawIndirect(const Buffer& arguments,
     const auto plan = planIndirectDraws(
         arguments, offset, drawCount, stride, sizeof(DrawArguments));
 
-    if (!plan || !impl->encoder || !impl->pipelineBound)
-        return;
-
-    executeIndirectDraws(
-        *impl->encoder->commands, false, *plan, arguments, nullptr, 0);
+    if (plan && impl->canDraw())
+        executeIndirectDraws(*impl->encoder->commands, *plan, arguments, {});
 }
 
 void RenderPass::drawIndirectCount(const Buffer& arguments,
@@ -637,12 +378,12 @@ void RenderPass::drawIndirectCount(const Buffer& arguments,
     const auto plan = planIndirectDraws(
         arguments, offset, maxDrawCount, stride, sizeof(DrawArguments));
 
-    if (!plan || !isValidDrawCountBuffer(count, countOffset) || !impl->encoder
-        || !impl->pipelineBound)
+    if (!plan || !isValidDrawCountBuffer(count, countOffset))
         return;
 
-    executeIndirectDraws(
-        *impl->encoder->commands, false, *plan, arguments, &count, countOffset);
+    if (impl->canDraw())
+        executeIndirectDraws(
+            *impl->encoder->commands, *plan, arguments, {&count, countOffset});
 }
 
 void RenderPass::drawIndexedIndirect(const BufferRange& indices,
@@ -655,15 +396,8 @@ void RenderPass::drawIndexedIndirect(const BufferRange& indices,
     const auto plan = planIndirectDraws(
         arguments, offset, drawCount, stride, sizeof(DrawIndexedArguments));
 
-    if (!plan || !impl->encoder || !impl->pipelineBound)
-        return;
-
-    auto& commands = *impl->encoder->commands;
-
-    if (!bindIndexRange(commands, indices, format))
-        return;
-
-    executeIndirectDraws(commands, true, *plan, arguments, nullptr, 0);
+    if (plan)
+        impl->recordIndexedIndirectDraws({indices, format}, arguments, *plan, {});
 }
 
 void RenderPass::drawIndexedIndirectCount(const BufferRange& indices,
@@ -678,16 +412,9 @@ void RenderPass::drawIndexedIndirectCount(const BufferRange& indices,
     const auto plan = planIndirectDraws(
         arguments, offset, maxDrawCount, stride, sizeof(DrawIndexedArguments));
 
-    if (!plan || !isValidDrawCountBuffer(count, countOffset) || !impl->encoder
-        || !impl->pipelineBound)
-        return;
-
-    auto& commands = *impl->encoder->commands;
-
-    if (!bindIndexRange(commands, indices, format))
-        return;
-
-    executeIndirectDraws(commands, true, *plan, arguments, &count, countOffset);
+    if (plan && isValidDrawCountBuffer(count, countOffset))
+        impl->recordIndexedIndirectDraws(
+            {indices, format}, arguments, *plan, {&count, countOffset});
 }
 
 void RenderPass::drawIndexed(const Buffer& indices,
@@ -706,19 +433,7 @@ void RenderPass::drawIndexed(const BufferRange& indices,
                              int firstIndex,
                              int baseVertex)
 {
-    if (!impl->encoder || !impl->pipelineBound)
-        return;
-
-    auto& commands = *impl->encoder->commands;
-
-    if (!bindIndexRange(commands, indices, format))
-        return;
-
-    commands.list->DrawIndexedInstanced(static_cast<UINT>(indexCount),
-                                        1,
-                                        static_cast<UINT>(firstIndex),
-                                        static_cast<INT>(baseVertex),
-                                        0);
+    drawIndexedInstanced(indices, indexCount, 1, format, firstIndex, 0, baseVertex);
 }
 
 void RenderPass::drawIndexedInstanced(const Buffer& indices,
@@ -746,7 +461,7 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
                                       int firstInstance,
                                       int baseVertex)
 {
-    if (!impl->encoder || !impl->pipelineBound)
+    if (!impl->canDraw())
         return;
 
     auto& commands = *impl->encoder->commands;
@@ -761,68 +476,6 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
                                         static_cast<UINT>(firstInstance));
 }
 
-// The depth resolve drawn rather than asked for: the multisampled plane goes
-// to PIXEL_SHADER_RESOURCE to be loaded from, the resolved buffer to
-// DEPTH_WRITE to be written through its own DSV, and one triangle carries every
-// pixel's furthest sample across. The pass that just ended has already bound
-// its own root state, targets and viewport, and the next one binds its own
-// again, so nothing set here has to be put back.
-//
-// The attachment returns to DEPTH_WRITE on the way out, as the API resolve
-// leaves it; the resolved buffer stays in DEPTH_WRITE with depthState saying
-// so, and whatever samples it next moves it from there.
-void resolveDepthWithShader(CommandContext& commands, D3D12TextureData& texture)
-{
-    auto* list = commands.list.get();
-    auto* context = commands.context;
-
-    if (list == nullptr || context == nullptr || texture.msaaDepthSrv.gpu.ptr == 0
-        || texture.resolvedDsv.ptr == 0)
-        return;
-
-    const auto& shader =
-        getD3D12Shared().getDepthResolveShader(texture.depthHasStencil);
-
-    if (!shader.isValid())
-        return;
-
-    transition(list,
-               texture.depthResource.get(),
-               texture.msaaDepthState,
-               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    texture.msaaDepthState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-
-    transitionDepthForUse(list, texture, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-
-    const auto desc = texture.resolvedDepthResource->GetDesc();
-
-    D3D12_VIEWPORT viewport = {};
-    viewport.Width = static_cast<float>(desc.Width);
-    viewport.Height = static_cast<float>(desc.Height);
-    viewport.MaxDepth = 1.f;
-
-    const D3D12_RECT scissor = {
-        0, 0, static_cast<LONG>(desc.Width), static_cast<LONG>(desc.Height)};
-
-    ID3D12DescriptorHeap* heaps[] = {context->getTextureHeap(),
-                                     context->getSamplerHeap()};
-    list->SetDescriptorHeaps(2, heaps);
-    list->SetGraphicsRootSignature(shader.rootSignature.get());
-    list->SetGraphicsRootDescriptorTable(0, texture.msaaDepthSrv.gpu);
-    list->SetPipelineState(shader.state.get());
-    list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    list->OMSetRenderTargets(0, nullptr, FALSE, &texture.resolvedDsv);
-    list->RSSetViewports(1, &viewport);
-    list->RSSetScissorRects(1, &scissor);
-    list->DrawInstanced(3, 1, 0, 0);
-
-    transition(list,
-               texture.depthResource.get(),
-               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-               D3D12_RESOURCE_STATE_DEPTH_WRITE);
-    texture.msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-}
-
 // OCCLUSION counts samples and BINARY_OCCLUSION says whether any passed, both
 // out of the one OCCLUSION heap the set owns.
 static D3D12_QUERY_TYPE d3d12OcclusionType(OcclusionMode mode)
@@ -835,8 +488,8 @@ void RenderPass::nativeBeginOcclusionQuery(int index, OcclusionMode mode)
 {
     auto* heap = static_cast<ID3D12QueryHeap*>(occlusionQueries->nativeQueries());
 
-    if (impl->encoder && impl->encoder->commands != nullptr && heap != nullptr)
-        impl->encoder->commands->list->BeginQuery(
+    if (impl->hasCommands() && heap != nullptr)
+        impl->list()->BeginQuery(
             heap, d3d12OcclusionType(mode), static_cast<UINT>(index));
 }
 
@@ -844,8 +497,8 @@ void RenderPass::nativeEndOcclusionQuery(int index, OcclusionMode mode)
 {
     auto* heap = static_cast<ID3D12QueryHeap*>(occlusionQueries->nativeQueries());
 
-    if (impl->encoder && impl->encoder->commands != nullptr && heap != nullptr)
-        impl->encoder->commands->list->EndQuery(
+    if (impl->hasCommands() && heap != nullptr)
+        impl->list()->EndQuery(
             heap, d3d12OcclusionType(mode), static_cast<UINT>(index));
 }
 
@@ -855,8 +508,7 @@ void RenderPass::nativeEndOcclusionQuery(int index, OcclusionMode mode)
 // frame resolved for it.
 void RenderPass::resolveOcclusionQueries()
 {
-    if (occlusionQueries == nullptr || !impl->encoder
-        || impl->encoder->commands == nullptr)
+    if (occlusionQueries == nullptr || !impl->hasCommands())
         return;
 
     auto* heap = static_cast<ID3D12QueryHeap*>(occlusionQueries->nativeQueries());
@@ -866,13 +518,13 @@ void RenderPass::resolveOcclusionQueries()
         return;
 
     for (const auto& used: usedQueries)
-        impl->encoder->commands->list->ResolveQueryData(
-            heap,
-            d3d12OcclusionType(used.mode),
-            static_cast<UINT>(used.index),
-            1,
-            readback,
-            static_cast<UINT64>(used.index) * sizeof(std::uint64_t));
+        impl->list()->ResolveQueryData(heap,
+                                       d3d12OcclusionType(used.mode),
+                                       static_cast<UINT>(used.index),
+                                       1,
+                                       readback,
+                                       static_cast<UINT64>(used.index)
+                                           * sizeof(std::uint64_t));
 }
 
 void RenderPass::end()
@@ -895,7 +547,7 @@ void RenderPass::end()
     // work: it belongs to the target rather than to what was drawn. Metal spells
     // this as a store action on the attachment and records nothing at all here -
     // see resolveMultisampledTarget for why it happens per pass on both.
-    if (impl->encoder && impl->encoder->commands != nullptr)
+    if (impl->hasCommands())
         for (auto* target: impl->encoder->resolveTargets)
             resolveMultisampledTarget(*impl->encoder->commands, *target);
 

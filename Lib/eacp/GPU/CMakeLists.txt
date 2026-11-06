@@ -77,6 +77,7 @@ target_sources(eacp-gpu PRIVATE
         Frame/IndirectDrawPlan.cpp
         Frame/OcclusionQueries.cpp
         Frame/RenderPass.cpp
+        Frame/RenderPassRegions.cpp
         Pipeline/RenderPipeline.cpp
         Shader/PrecompiledShaders.cpp
         Shader/ShaderLibrary.cpp
@@ -131,6 +132,8 @@ elseif (WIN32)
             Frame/Frame-Windows.cpp
             Frame/OcclusionQueries-Windows.cpp
             Frame/RenderPass-Windows.cpp
+            Frame/RenderPassBindings-Windows.cpp
+            Frame/DepthResolve-Windows.cpp
             Pipeline/ComputePipeline-Windows.cpp
             Pipeline/RenderPipeline-Windows.cpp
             Shader/Dxc-Windows.cpp
