@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Generates the agent-facing markdown API docs for eacp from Doxygen XML.
 
+Every X.md is also rendered to X.html beside it, with links between pages
+pointing at the .html; that needs Python-Markdown (Scripts/llm-docs-requirements.txt).
+
 Usage: Scripts/generate-llm-docs.py [--out build/llm-docs] [--html [--html-out DIR] [--open]]
 """
 
@@ -69,6 +72,23 @@ OPERATOR_FAMILY_COLLAPSE_THRESHOLD = 4
 GITHUB_BLOB_URL = "https://github.com/eyalamirmusic/eacp/blob/develop/"
 EXTERNAL_REPOSITORIES = {"Miro": "https://github.com/eyalamirmusic/Miro"}
 DOC_COMMENT_WRAP_WIDTH = 80
+
+PAGE_STYLE = """
+body { max-width: 60rem; margin: 0 auto; padding: 1.5rem; color: #1f2328;
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+a { color: #0969da; text-decoration: none; } a:hover { text-decoration: underline; }
+h1, h2, h3 { line-height: 1.25; } h2 { border-bottom: 1px solid #d1d9e0; padding-bottom: .3em; }
+code { font: 0.875em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: #eff1f3; padding: .1em .3em; border-radius: 4px; }
+pre { background: #f6f8fa; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; display: block; overflow-x: auto; margin: 1rem 0; }
+th, td { border: 1px solid #d1d9e0; padding: .4rem .7rem; text-align: left; vertical-align: top; }
+tr:nth-child(even) td { background: #f6f8fa; }
+nav, footer { font-size: .875rem; color: #59636e; }
+footer { margin-top: 3rem; border-top: 1px solid #d1d9e0; padding-top: 1rem; }
+"""
+INTERNAL_MARKDOWN_LINK = re.compile(r'href="(?![a-z]+:)([^"#]*)\.md(#[^"]*)?"')
 
 HTML_OVERRIDES = {"GENERATE_HTML": "YES", "GENERATE_XML": "NO",
                   "SOURCE_BROWSER": "YES", "HTML_OUTPUT": "."}
@@ -1119,12 +1139,49 @@ def replace_directory_atomically(staging_dir, out_dir):
         shutil.rmtree(retired_dir)
 
 
+def link_markdown_pages_as_html(html):
+    return INTERNAL_MARKDOWN_LINK.sub(
+        lambda match: f'href="{match.group(1)}.html{match.group(2) or ""}"', html)
+
+
+def get_page_title(markdown_text, fallback):
+    for line in markdown_text.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip().strip("`")
+    return fallback
+
+
+def render_page_as_html(markdown_module, markdown_text, page_path):
+    import html as html_escaping
+    body = markdown_module.markdown(markdown_text,
+                                    extensions=["tables", "fenced_code", "sane_lists"])
+    root = "../" * (len(page_path.parts) - 1)
+    title = html_escaping.escape(get_page_title(markdown_text, page_path.stem))
+    return (f"<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n"
+            f"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+            f"<title>{title} - eacp</title><style>{PAGE_STYLE}</style></head><body>\n"
+            f"<nav><a href=\"{root}index.html\">eacp docs</a> &middot; "
+            f"<a href=\"{page_path.name}\">markdown</a></nav>\n"
+            f"{link_markdown_pages_as_html(body)}\n"
+            f"<footer><a href=\"{root}index.html\">Index</a></footer>\n"
+            f"</body></html>\n")
+
+
+def render_markdown_pages_as_html(out_dir):
+    import markdown as markdown_module
+    for markdown_path in out_dir.rglob("*.md"):
+        page_path = markdown_path.relative_to(out_dir)
+        markdown_path.with_suffix(".html").write_text(render_page_as_html(
+            markdown_module, markdown_path.read_text(), page_path))
+
+
 def generate_markdown_atomically(headers, module_preambles_by_directory, out_dir):
     # Built beside the output and swapped in, so a reader never sees half a tree.
     staging_dir = out_dir.with_name(out_dir.name + ".building")
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
     generate_markdown(headers, module_preambles_by_directory, staging_dir)
+    render_markdown_pages_as_html(staging_dir)
     replace_directory_atomically(staging_dir, out_dir)
 
 

@@ -22,7 +22,9 @@ jobs:
         run: Scripts/install-doxygen.sh
 
       - name: Generate docs
-        run: python3 Scripts/generate-llm-docs.py --html
+        run: |
+          python3 -m pip install -r Scripts/llm-docs-requirements.txt
+          python3 Scripts/generate-llm-docs.py
 
       - uses: google-github-actions/auth@v2
         with:
