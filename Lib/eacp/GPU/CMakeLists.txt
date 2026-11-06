@@ -17,7 +17,16 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/PackedScalars.cpp
         Codegen/PackedVertex.cpp
         Codegen/ShaderBuilder.cpp
+        Codegen/ShaderComputeEmitter.cpp
+        Codegen/ShaderDeclarations.cpp
+        Codegen/ShaderDialect.cpp
         Codegen/ShaderEmitter.cpp
+        Codegen/ShaderExpressionPrinter.cpp
+        Codegen/ShaderGraphAnalysis.cpp
+        Codegen/ShaderGroupSpelling.cpp
+        Codegen/ShaderHelpers.cpp
+        Codegen/ShaderStageEmitter.cpp
+        Codegen/ShaderStageEmitterGroups.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderMembers.cpp
         Codegen/ShaderSets.cpp

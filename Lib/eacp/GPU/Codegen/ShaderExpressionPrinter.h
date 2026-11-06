@@ -1,0 +1,68 @@
+#pragma once
+
+#include "ShaderDialect.h"
+
+namespace eacp::GPU::ShaderEmission
+{
+// Prints one stage's expressions. Nodes the stage plan named as locals print
+// as tN references; everything else prints inline. print() spells out a node's
+// own expression (used for both inline nodes and local definitions), ref() is
+// what children and outputs go through, so shared subtrees collapse to a name.
+struct ExprPrinter
+{
+    std::string ref(int node) const;
+    std::string print(int node) const;
+
+    const ShaderGraph& graph;
+    Backend backend;
+    const Vector<int>& locals; // node id -> local index, -1 = inline
+    Vector<int> attributeVaryings; // attribute slot -> varying, -1 = read direct
+
+private:
+    int carryingVarying(int slot) const;
+    ValueType broadcastType(const Expr& call) const;
+    std::string widened(int node, ValueType wide) const;
+    std::string joinArguments(const Expr& expr, ValueType wide) const;
+
+    std::string metalLayer(int node) const;
+    std::string floatLayer(int layer) const;
+    std::string layeredCoordinate(int uv, int layer) const;
+    std::string layerSample(const Expr& expr,
+                            const std::string& name,
+                            const std::string& sampler) const;
+    std::string compareSample(const Expr& expr,
+                              const std::string& name,
+                              const std::string& sampler) const;
+
+    std::string printInput(const Expr& expr) const;
+    std::string printVarying(const Expr& expr) const;
+    std::string printUniform(const Expr& expr) const;
+    std::string printSwizzle(const Expr& expr) const;
+    std::string printVarRead(const Expr& expr) const;
+    std::string printThreadId(const Expr& expr) const;
+    std::string printLocalId(const Expr& expr) const;
+    std::string printGroupId(const Expr& expr) const;
+    std::string printBuiltInNode(const Expr& expr) const;
+    std::string printConstant(const Expr& expr) const;
+    std::string printConstruct(const Expr& expr) const;
+    std::string printCall(const Expr& expr) const;
+    std::string printUnary(const Expr& expr) const;
+    std::string printBinary(const Expr& expr) const;
+    std::string printCompare(const Expr& expr) const;
+    std::string printSelect(const Expr& expr) const;
+    std::string printMul(const Expr& expr) const;
+    std::string printSample(const Expr& expr) const;
+    std::string printPlainSample(const Expr& expr,
+                                 const std::string& name,
+                                 const std::string& sampler) const;
+    std::string printFetch(const Expr& expr) const;
+    std::string printBufferRead(const Expr& expr) const;
+    std::string printBufferVectorRead(const Expr& expr) const;
+    std::string printAtomicLoad(const Expr& expr) const;
+    std::string printArrayRead(const Expr& expr) const;
+    std::string printGridExtent(const Expr& expr) const;
+    std::string printSharedRead(const Expr& expr) const;
+    std::string printSimdGroupIndex(const Expr& expr) const;
+    std::string printBuiltIn(ShaderBuiltIn which) const;
+};
+} // namespace eacp::GPU::ShaderEmission
