@@ -233,10 +233,10 @@ std::string widenToFour(const std::string& value,
 
 bool usesStorageQuery(TextureAccess access, Backend backend)
 {
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
         return isStorageAccess(access);
 
-    return backend == Backend::Vulkan
+    return isDialect(backend, Backend::Vulkan)
            && (access == TextureAccess::Write || access == TextureAccess::ReadWrite);
 }
 
@@ -254,7 +254,7 @@ constexpr auto queriedTextureKinds =
 
 std::string getTextureQueryHelpers(const ShaderGraph& graph, Backend backend)
 {
-    if (backend != Backend::DirectX)
+    if (!isDialect(backend, Backend::DirectX))
         return {};
 
     auto definitions = std::string {};
@@ -274,7 +274,7 @@ std::string getTextureQueryHelpers(const ShaderGraph& graph, Backend backend)
 std::string
     ExprPrinter::printStorageAddress(int slot, int coordinates, int layer) const
 {
-    const auto unsignedAddress = backend != Backend::Vulkan;
+    const auto unsignedAddress = !isDialect(backend, Backend::Vulkan);
     const auto scalar = unsignedAddress ? ValueType::UInt : ValueType::Int;
     const auto pair = unsignedAddress ? ValueType::UInt2 : ValueType::Int2;
     const auto triple = unsignedAddress ? ValueType::UInt3 : ValueType::Int3;
@@ -289,7 +289,7 @@ std::string
 
     const auto index = printConverted(layer, scalar);
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format("{}, {}", texel, index);
 
     return Strings::format(
@@ -303,10 +303,10 @@ std::string ExprPrinter::printStorageLoad(const Expr& expr) const
     const auto address =
         printStorageAddress(expr.index, expr.args[0], layered ? expr.args[1] : -1);
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format("{}.read({})", name, address);
 
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return Strings::format("imageLoad({}, {})", name, address);
 
     return widenToFour(Strings::format("{}[{}]", name, address),
@@ -320,7 +320,7 @@ std::string ExprPrinter::printStorageQuery(const Expr& expr) const
     const auto name = textureNameOf(expr);
     const auto volume = graph.textureKind(expr.index) == TextureKind::Texture3D;
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
     {
         const auto size =
             Strings::format("{}({})", getHlslStorageSizeName(expr.index), name);
@@ -351,10 +351,10 @@ std::string ExprPrinter::printConverted(int node, ValueType type) const
 
 std::string ExprPrinter::printTextureFunction(const Expr& expr) const
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return printMetalTextureFunction(expr);
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
         return printHlslTextureFunction(expr);
 
     return printGlslTextureFunction(expr);
@@ -623,7 +623,7 @@ std::string ExprPrinter::printTexelLoad(const Expr& expr) const
     const auto level = textureExtra(graph, expr, 0);
     const auto layered = isLayered(kind);
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
     {
         const auto coordinates = printConverted(
             expr.args[0], volume ? ValueType::UInt3 : ValueType::UInt2);
@@ -643,7 +643,7 @@ std::string ExprPrinter::printTexelLoad(const Expr& expr) const
     const auto layer =
         layered ? printConverted(expr.args[1], ValueType::Int) + ", " : "";
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
     {
         const auto packed = volume || layered ? ValueType::Int4 : ValueType::Int3;
 
@@ -676,7 +676,7 @@ std::string ExprPrinter::printTextureQuery(const Expr& expr) const
     const auto volume = kind == TextureKind::Texture3D;
     const auto hasLevel = expr.args.size() > 0;
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
     {
         if (expr.text == "levels")
             return name + ".get_num_mip_levels()";
@@ -697,7 +697,7 @@ std::string ExprPrinter::printTextureQuery(const Expr& expr) const
             "uint2({0}.get_width({1}), {0}.get_height({1}))", name, level);
     }
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
     {
         const auto level =
             hasLevel ? printConverted(expr.args[0], ValueType::UInt) : "0u";

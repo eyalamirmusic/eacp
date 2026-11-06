@@ -331,7 +331,7 @@ struct UniformPadding
 
 std::string formatUniformBlockOpening(Backend backend, int binding)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return Strings::format(
             "layout(std140, set = 0, binding = {}) uniform Uniforms\n{{\n", binding);
 
@@ -340,10 +340,10 @@ std::string formatUniformBlockOpening(Backend backend, int binding)
 
 std::string_view formatUniformBlockClosing(Backend backend)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return "} uniforms;\n\n";
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
         return "};\n\ncbuffer UniformsCB : register(b0)\n{\n"
                "    Uniforms uniforms;\n};\n\n";
 
@@ -406,16 +406,16 @@ std::string formatUniformBlock(Backend backend,
 {
     auto source = formatUniformBlockOpening(backend, binding);
     auto offsets = uniformOffsets(types);
-    auto padding = UniformPadding {backend == Backend::Vulkan};
+    auto padding = UniformPadding {isDialect(backend, Backend::Vulkan)};
 
     for (auto i = 0; i < types.size(); ++i)
     {
         auto type = types[i];
 
-        if (backend != Backend::Metal)
+        if (!isDialect(backend, Backend::Metal))
             source += padding.formatPaddingTo(offsets[i], type);
 
-        if (backend == Backend::Metal && isMetalWidenedUniform(type))
+        if (isDialect(backend, Backend::Metal) && isMetalWidenedUniform(type))
         {
             source += Strings::format(
                 "    float4 {}[{}];\n", names[i], matrixColumns(type));

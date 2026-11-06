@@ -16,12 +16,30 @@ enum class Backend
     Vulkan
 };
 
+constexpr bool isDialectLinked(Backend dialect)
+{
+    return EACP_ALL_SHADER_DIALECTS || dialect == Backend::EACP_HOST_SHADER_DIALECT;
+}
+
+// With one dialect linked every backend is that one, so a branch on it folds at
+// compile time and the other dialects' code never reaches the binary.
+constexpr Backend getEmittedDialect(Backend backend)
+{
+    return EACP_ALL_SHADER_DIALECTS ? backend : Backend::EACP_HOST_SHADER_DIALECT;
+}
+
+constexpr bool isDialect(Backend backend, Backend dialect)
+{
+    return getEmittedDialect(backend) == dialect;
+}
+
 constexpr std::string_view getDialectTypeName(Backend backend, ValueType type)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return glslTypeName(type);
 
-    return backend == Backend::DirectX ? hlslTypeName(type) : typeName(type);
+    return isDialect(backend, Backend::DirectX) ? hlslTypeName(type)
+                                                : typeName(type);
 }
 std::string formatShaderFloatLiteral(float value);
 
@@ -30,10 +48,10 @@ std::string formatShaderFloatLiteral(float value);
 // and the literal is already a value a half holds.
 constexpr std::string_view getHalfLiteralSuffix(Backend backend)
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return "h";
 
-    return backend == Backend::Vulkan ? "hf" : "";
+    return isDialect(backend, Backend::Vulkan) ? "hf" : "";
 }
 
 // MSL's interpolation attribute, written after the member name; nothing for
@@ -61,7 +79,7 @@ constexpr std::string_view getInterpolationTypeQualifier(Backend backend,
                                                          InterpolationType type)
 {
     if (type == InterpolationType::Flat)
-        return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
+        return isDialect(backend, Backend::Vulkan) ? "flat " : "nointerpolation ";
 
     return type == InterpolationType::Linear ? "noperspective " : "";
 }
@@ -76,10 +94,10 @@ constexpr std::string_view getSamplingQualifier(InterpolationSampling sampling)
 
 inline std::string getAttributeSemantic(Backend backend, int index)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return {};
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format(" [[attribute({})]]", index);
 
     return Strings::format(" : TEXCOORD{}", index);
@@ -89,10 +107,10 @@ inline std::string getAttributeSemantic(Backend backend, int index)
 inline std::string
     getVaryingSemantic(Backend backend, int index, Interpolation interpolation)
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return std::string {getMetalInterpolation(interpolation)};
 
-    if (backend != Backend::DirectX)
+    if (!isDialect(backend, Backend::DirectX))
         return {};
 
     return Strings::format(" : TEXCOORD{}", index);
@@ -100,10 +118,10 @@ inline std::string
 
 constexpr std::string_view getPositionSemantic(Backend backend)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return {};
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return " [[position]]";
 
     return " : SV_Position";
@@ -114,7 +132,7 @@ constexpr std::string_view getPositionSemantic(Backend backend)
 inline std::string getInterpolationQualifier(Backend backend,
                                              Interpolation interpolation)
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return {};
 
     return std::string {getInterpolationTypeQualifier(backend, interpolation.type)}
@@ -129,7 +147,7 @@ inline std::string getLocationLayout(int index)
 // GLSL names stage I/O attrN and varyN: aN and vN are taken by other locals.
 inline std::string getAttributeName(Backend backend, int slot)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return Strings::format("attr{}", slot);
 
     return Strings::format("input.a{}", slot);
@@ -137,7 +155,7 @@ inline std::string getAttributeName(Backend backend, int slot)
 
 inline std::string getVaryingName(Backend backend, int index)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return Strings::format("vary{}", index);
 
     return Strings::format("input.v{}", index);

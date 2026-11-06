@@ -1,64 +1,91 @@
 add_subdirectory(Spirv)
 
 # The shader codegen layer is pure portable C++ (string generation only), so it
-# is its own target and builds on every platform. eacp-gpu links it publicly.
-add_library(eacp-gpu-codegen STATIC)
-
-target_link_libraries(eacp-gpu-codegen PUBLIC eacp-core)
-
-# The EACP_SHADER reflection macro engine uses __VA_OPT__, which MSVC only
-# supports under its conforming preprocessor. The macro lives in a public header,
-# so the flag is PUBLIC to reach consumers. Mirrors Miro's MIRO_REFLECT setup.
-target_compile_options(eacp-gpu-codegen PUBLIC
-        $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
-
-target_sources(eacp-gpu-codegen PRIVATE
-        Codegen/ComputeKernel.cpp
-        Codegen/OverrideValues.cpp
-        Codegen/PackedScalars.cpp
-        Codegen/PackedVertex.cpp
-        Codegen/Samplers.cpp
-        Codegen/ShaderBuilder.cpp
-        Codegen/ShaderComputeEmitter.cpp
-        Codegen/ShaderDeclarations.cpp
-        Codegen/ShaderDialect.cpp
-        Codegen/ShaderEmitter.cpp
-        Codegen/ShaderExpressionPrinter.cpp
-        Codegen/ShaderFunctionEmission.cpp
-        Codegen/ShaderFunctionInlining.cpp
-        Codegen/ShaderGraphAnalysis.cpp
-        Codegen/ShaderHelpers.cpp
-        Codegen/ShaderStageEmitter.cpp
-        Codegen/ShaderStageEmitterGroups.cpp
-        Codegen/ShaderGraph.cpp
-        Codegen/ShaderMembers.cpp
-        Codegen/ShaderOverrideEmission.cpp
-        Codegen/ShaderReflection.cpp
-        Codegen/ShaderSets.cpp
-        Codegen/ShaderStruct.cpp
-        Codegen/ShaderStructEmission.cpp
-        Codegen/ShaderTexturePrinter.cpp
-        Codegen/ShaderValue.cpp
-        Codegen/TextureFunctions.cpp
-        Codegen/UniformLayout.cpp
-        Pipeline/VertexLayout.cpp
-        Shader/CompilationInfo.cpp
-        Shader/PipelineConstants.cpp
-        Shader/ShaderSource.cpp
-        Texture/Texture.cpp)
-
-# Which dialect build() calls the native one: selection only, no backend.
+# builds on every platform. It is built twice: eacp-gpu-codegen-host emits the
+# host's dialect alone, so a shipping app carries no other emitter, and
+# eacp-gpu-codegen-all emits all three. Everything links eacp-gpu-codegen, and
+# the executable doing the link picks the copy: the all one when it sets the
+# EACP_ALL_SHADER_DIALECTS property (eacp_link_all_shader_dialects).
 if (APPLE)
-    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Apple.cpp)
+    set(EACP_HOST_SHADER_DIALECT Metal)
 elseif (WIN32)
-    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Windows.cpp)
+    set(EACP_HOST_SHADER_DIALECT DirectX)
 else ()
-    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Linux.cpp)
+    set(EACP_HOST_SHADER_DIALECT Vulkan)
 endif ()
 
-set_default_target_setting(eacp-gpu-codegen)
-eacp_enable_unity_build(eacp-gpu-codegen)
-add_ide_sources(eacp-gpu-codegen)
+function(eacp_add_gpu_codegen target all_dialects)
+    add_library(${target} STATIC)
+    target_link_libraries(${target} PUBLIC eacp-core)
+
+    # The EACP_SHADER reflection macro engine uses __VA_OPT__, which MSVC only
+    # supports under its conforming preprocessor. The macro lives in a public
+    # header, so the flag is PUBLIC to reach consumers.
+    target_compile_options(${target} PUBLIC
+            $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
+
+    target_compile_definitions(${target} PUBLIC
+            EACP_HOST_SHADER_DIALECT=${EACP_HOST_SHADER_DIALECT}
+            EACP_ALL_SHADER_DIALECTS=${all_dialects})
+
+    target_sources(${target} PRIVATE
+            Codegen/ComputeKernel.cpp
+            Codegen/OverrideValues.cpp
+            Codegen/PackedScalars.cpp
+            Codegen/PackedVertex.cpp
+            Codegen/Samplers.cpp
+            Codegen/ShaderBuilder.cpp
+            Codegen/ShaderComputeEmitter.cpp
+            Codegen/ShaderDeclarations.cpp
+            Codegen/ShaderDialect.cpp
+            Codegen/ShaderEmitter.cpp
+            Codegen/ShaderExpressionPrinter.cpp
+            Codegen/ShaderFunctionEmission.cpp
+            Codegen/ShaderFunctionInlining.cpp
+            Codegen/ShaderGraphAnalysis.cpp
+            Codegen/ShaderHelpers.cpp
+            Codegen/ShaderStageEmitter.cpp
+            Codegen/ShaderStageEmitterGroups.cpp
+            Codegen/ShaderGraph.cpp
+            Codegen/ShaderMembers.cpp
+            Codegen/ShaderOverrideEmission.cpp
+            Codegen/ShaderReflection.cpp
+            Codegen/ShaderSets.cpp
+            Codegen/ShaderStruct.cpp
+            Codegen/ShaderStructEmission.cpp
+            Codegen/ShaderTexturePrinter.cpp
+            Codegen/ShaderValue.cpp
+            Codegen/TextureFunctions.cpp
+            Codegen/UniformLayout.cpp
+            Pipeline/VertexLayout.cpp
+            Shader/CompilationInfo.cpp
+            Shader/PipelineConstants.cpp
+            Shader/ShaderSource.cpp
+            Texture/Texture.cpp)
+
+    set_default_target_setting(${target})
+    eacp_enable_unity_build(${target})
+    add_ide_sources(${target})
+endfunction()
+
+eacp_add_gpu_codegen(eacp-gpu-codegen-host 0)
+eacp_add_gpu_codegen(eacp-gpu-codegen-all 1)
+
+add_library(eacp-gpu-codegen INTERFACE)
+target_link_libraries(eacp-gpu-codegen INTERFACE
+        $<IF:$<BOOL:$<TARGET_PROPERTY:EACP_ALL_SHADER_DIALECTS>>,eacp-gpu-codegen-all,eacp-gpu-codegen-host>)
+
+# Sets EACP_ALL_SHADER_DIALECTS on every target under a directory.
+function(eacp_link_all_shader_dialects directory)
+    get_property(targets DIRECTORY ${directory} PROPERTY BUILDSYSTEM_TARGETS)
+    get_property(subdirectories DIRECTORY ${directory} PROPERTY SUBDIRECTORIES)
+
+    set_property(TARGET ${targets} PROPERTY EACP_ALL_SHADER_DIALECTS ON)
+
+    foreach (subdirectory IN LISTS subdirectories)
+        eacp_link_all_shader_dialects(${subdirectory})
+    endforeach ()
+endfunction()
 
 # The CPU executor, device-free like the codegen it links, so it builds wherever
 # that does.

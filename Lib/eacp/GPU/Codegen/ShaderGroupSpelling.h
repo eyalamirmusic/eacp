@@ -36,7 +36,8 @@ std::string formatBarrierStatement(Backend backend, const std::string& indent);
 
 constexpr std::string_view getGroupLaneName(Backend backend)
 {
-    return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";
+    return isDialect(backend, Backend::Vulkan) ? "gl_LocalInvocationIndex"
+                                               : "groupLane";
 }
 
 std::string getSimdMatrixName(int slot);

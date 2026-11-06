@@ -71,7 +71,7 @@ std::string formatHlslOverride(const ShaderGraph& graph, int id)
 
 std::string formatOverride(const ShaderGraph& graph, Backend backend, int id)
 {
-    switch (backend)
+    switch (getEmittedDialect(backend))
     {
         case Backend::Metal:
             return formatMetalOverride(graph, id);

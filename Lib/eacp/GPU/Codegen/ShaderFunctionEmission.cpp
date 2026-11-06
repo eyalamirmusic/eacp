@@ -278,7 +278,7 @@ std::string
             "{} v{}", stage.printer.printVariableTypeName(slot), slot));
     }
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         for (const auto& resource: getMetalResourceParameters(graph, function))
             parameters.add(resource.declaration);
 
