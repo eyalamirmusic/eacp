@@ -1154,7 +1154,7 @@ def get_page_title(markdown_text, fallback):
 def render_page_as_html(markdown_module, markdown_text, page_path):
     import html as html_escaping
     body = markdown_module.markdown(markdown_text,
-                                    extensions=["tables", "fenced_code", "sane_lists"])
+                                    extensions=["tables", "fenced_code", "sane_lists", "toc"])
     root = "../" * (len(page_path.parts) - 1)
     title = html_escaping.escape(get_page_title(markdown_text, page_path.stem))
     return (f"<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n"
