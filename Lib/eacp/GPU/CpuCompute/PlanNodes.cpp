@@ -329,6 +329,32 @@ bool isConversion(std::string_view name, ValueType source, ValueType target)
     return name == typeName(target)
            && componentCount(source) == componentCount(target) && !isMatrix(source);
 }
+ValueType getArgumentType(const ShaderGraph& graph, const Expr& expr, int which)
+{
+    return graph.expr(expr.args[which]).type;
+}
+
+int getArgumentComponents(const ShaderGraph& graph, const Expr& expr, int which)
+{
+    return componentCount(getArgumentType(graph, expr, which));
+}
+
+// Refract's third argument is its scalar eta; every other argument is a float
+// vector of the first's width.
+bool hasGeometricWidths(const ShaderGraph& graph, const Expr& expr, Op op, int width)
+{
+    for (auto which = 1; which < expr.args.size(); ++which)
+    {
+        auto isEta = op == Op::Refract && which == 2;
+        auto expected = isEta ? 1 : width;
+
+        if (getArgumentComponents(graph, expr, which) != expected
+            || !isFloatFamily(getArgumentType(graph, expr, which)))
+            return false;
+    }
+
+    return true;
+}
 } // namespace
 
 Vector<int> PlanBuilder::collectReachableRoots() const
@@ -357,7 +383,7 @@ void PlanBuilder::markReachable()
     }
 }
 
-bool PlanBuilder::markNodeReachable(NodeId id, Vector<int>& stack)
+bool PlanBuilder::markNodeReachable(int id, Vector<int>& stack)
 {
     if (plan.nodes[id].used)
         return true;
@@ -399,17 +425,7 @@ bool PlanBuilder::pushReachable(const Vector<int>& ids, Vector<int>& stack)
     return true;
 }
 
-ValueType PlanBuilder::getArgumentType(const Expr& expr, int which) const
-{
-    return graph.expr(expr.args[which]).type;
-}
-
-int PlanBuilder::getArgumentComponents(const Expr& expr, int which) const
-{
-    return componentCount(getArgumentType(expr, which));
-}
-
-void PlanBuilder::rejectNodeWith(NodeId id, std::string_view why)
+void PlanBuilder::rejectNodeWith(int id, std::string_view why)
 {
     const auto& expr = graph.expr(id);
     auto kind = Miro::enumToString(expr.kind);
@@ -423,7 +439,7 @@ void PlanBuilder::rejectNodeWith(NodeId id, std::string_view why)
     fail("expression {} \"{}\" (node {}): {}", kind, expr.text, id, why);
 }
 
-bool PlanBuilder::requireArguments(NodeId id, int count)
+bool PlanBuilder::requireArguments(int id, int count)
 {
     if (graph.expr(id).args.size() == count)
         return true;
@@ -432,14 +448,14 @@ bool PlanBuilder::requireArguments(NodeId id, int count)
     return false;
 }
 
-bool PlanBuilder::requireBroadcastable(NodeId id)
+bool PlanBuilder::requireBroadcastable(int id)
 {
     const auto& expr = graph.expr(id);
     auto width = componentCount(expr.type);
 
     for (auto which = 0; which < expr.args.size(); ++which)
     {
-        auto components = getArgumentComponents(expr, which);
+        auto components = getArgumentComponents(graph, expr, which);
 
         if (components != width && components != 1)
         {
@@ -451,28 +467,28 @@ bool PlanBuilder::requireBroadcastable(NodeId id)
     return true;
 }
 
-bool PlanBuilder::requireScalarIndex(NodeId id, const Expr& expr)
+bool PlanBuilder::requireScalarIndex(int id, const Expr& expr)
 {
-    if (isScalarInteger(getArgumentType(expr, 0)))
+    if (isScalarInteger(getArgumentType(graph, expr, 0)))
         return true;
 
     rejectNode(id, "the index is not a scalar integer");
     return false;
 }
 
-bool PlanBuilder::requireUnaryFloatVector(NodeId id, const Expr& expr)
+bool PlanBuilder::requireUnaryFloatVector(int id, const Expr& expr)
 {
     if (!requireArguments(id, 1))
         return false;
 
-    if (isFloatVector(expr.type) && getArgumentType(expr, 0) == expr.type)
+    if (isFloatVector(expr.type) && getArgumentType(graph, expr, 0) == expr.type)
         return true;
 
     rejectNode(id, "defined on the float vectors only");
     return false;
 }
 
-void PlanBuilder::decodeNode(NodeId id)
+void PlanBuilder::decodeNode(int id)
 {
     using Entry = std::pair<ExprKind, NodeDecoder>;
 
@@ -518,17 +534,17 @@ void PlanBuilder::decodeNode(NodeId id)
     (this->*decoder)(id, node, expr);
 }
 
-void PlanBuilder::rejectRenderInput(NodeId id, Plan::Node&, const Expr&)
+void PlanBuilder::rejectRenderInput(int id, Plan::Node&, const Expr&)
 {
     rejectNode(id, "a render graph input cannot run as a kernel");
 }
 
-void PlanBuilder::rejectTexture(NodeId id, Plan::Node&, const Expr&)
+void PlanBuilder::rejectTexture(int id, Plan::Node&, const Expr&)
 {
     rejectNode(id, "textures are not supported by the CPU executor");
 }
 
-void PlanBuilder::decodeIdLeaf(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeIdLeaf(int id, Plan::Node& node, const Expr& expr)
 {
     if (!isThreadIdShape(expr.index, node.components))
     {
@@ -542,7 +558,7 @@ void PlanBuilder::decodeIdLeaf(NodeId id, Plan::Node& node, const Expr& expr)
         plan.threadIdLeaves.add({id, expr.index});
 }
 
-void PlanBuilder::decodeLeaf(NodeId id, Plan::Node&, const Expr& expr)
+void PlanBuilder::decodeLeaf(int id, Plan::Node&, const Expr& expr)
 {
     if (expr.kind == ExprKind::SimdGroupIndex)
         plan.simdGroupLeaves.add(id);
@@ -552,7 +568,7 @@ void PlanBuilder::decodeLeaf(NodeId id, Plan::Node&, const Expr& expr)
         plan.extentLeaves.add({id, expr.index});
 }
 
-void PlanBuilder::decodeUniform(NodeId id, Plan::Node&, const Expr& expr)
+void PlanBuilder::decodeUniform(int id, Plan::Node&, const Expr& expr)
 {
     if (expr.index < 0 || expr.index >= plan.uniformTypes.size())
     {
@@ -563,18 +579,18 @@ void PlanBuilder::decodeUniform(NodeId id, Plan::Node&, const Expr& expr)
     plan.uniformLeaves.add({id, expr.index});
 }
 
-void PlanBuilder::decodeVarRead(NodeId id, Plan::Node&, const Expr& expr)
+void PlanBuilder::decodeVarRead(int id, Plan::Node&, const Expr& expr)
 {
     if (expr.index < 0 || expr.index >= graph.variables().size())
         rejectNode(id, "names a variable that does not exist");
 }
 
-void PlanBuilder::decodeSelect(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeSelect(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 3))
         return;
 
-    if (getArgumentType(expr, 0) != ValueType::Bool)
+    if (getArgumentType(graph, expr, 0) != ValueType::Bool)
     {
         rejectNode(id, "the condition is not a scalar Bool");
         return;
@@ -584,7 +600,7 @@ void PlanBuilder::decodeSelect(NodeId id, Plan::Node& node, const Expr& expr)
         node.op = Op::Select;
 }
 
-void PlanBuilder::decodeBufferRead(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeBufferRead(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1) || !checkSlot(expr.index))
         return;
@@ -600,7 +616,7 @@ void PlanBuilder::decodeBufferRead(NodeId id, Plan::Node& node, const Expr& expr
     node.immediate = expr.index;
 }
 
-void PlanBuilder::decodeArrayRead(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeArrayRead(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1))
         return;
@@ -615,7 +631,7 @@ void PlanBuilder::decodeArrayRead(NodeId id, Plan::Node& node, const Expr& expr)
     node.immediate = expr.index;
 }
 
-void PlanBuilder::decodeAtomicLoad(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeAtomicLoad(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1) || !checkSlot(expr.index))
         return;
@@ -634,7 +650,7 @@ void PlanBuilder::decodeAtomicLoad(NodeId id, Plan::Node& node, const Expr& expr
     node.immediate = expr.index;
 }
 
-void PlanBuilder::decodeSharedRead(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeSharedRead(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1) || !requireScalarIndex(id, expr))
         return;
@@ -668,12 +684,12 @@ Word PlanBuilder::getConstantWord(const Expr& expr)
     }
 }
 
-void PlanBuilder::decodeConstruct(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeConstruct(int id, Plan::Node& node, const Expr& expr)
 {
     auto total = 0;
 
     for (auto which = 0; which < expr.args.size(); ++which)
-        total += getArgumentComponents(expr, which);
+        total += getArgumentComponents(graph, expr, which);
 
     if (total != node.components || expr.args.empty())
     {
@@ -687,13 +703,13 @@ void PlanBuilder::decodeConstruct(NodeId id, Plan::Node& node, const Expr& expr)
     node.op = Op::Construct;
 }
 
-void PlanBuilder::decodeSwizzle(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeSwizzle(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1))
         return;
 
     const auto& letters = expr.text;
-    auto source = getArgumentType(expr, 0);
+    auto source = getArgumentType(graph, expr, 0);
 
     if (!isSwizzleShape(letters.size(), node, source)
         || !writeSwizzleComponents(node, letters, componentCount(source)))
@@ -705,7 +721,7 @@ void PlanBuilder::decodeSwizzle(NodeId id, Plan::Node& node, const Expr& expr)
     node.op = Op::Swizzle;
 }
 
-void PlanBuilder::decodeUnary(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeUnary(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1))
         return;
@@ -721,7 +737,7 @@ void PlanBuilder::decodeUnary(NodeId id, Plan::Node& node, const Expr& expr)
     rejectNode(id, "unsupported operator '{}' on {}", expr.op, typeName(expr.type));
 }
 
-void PlanBuilder::decodeBinary(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeBinary(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 2) || !requireBroadcastable(id))
         return;
@@ -743,7 +759,7 @@ void PlanBuilder::decodeBinary(NodeId id, Plan::Node& node, const Expr& expr)
     rejectNode(id, "unsupported operator '{}' on {}", expr.op, typeName(expr.type));
 }
 
-void PlanBuilder::decodeShift(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeShift(int id, Plan::Node& node, const Expr& expr)
 {
     auto type = expr.type;
 
@@ -760,7 +776,7 @@ void PlanBuilder::decodeShift(NodeId id, Plan::Node& node, const Expr& expr)
         node.op = isSignedInteger(type) ? Op::ShrS : Op::ShrU;
 }
 
-void PlanBuilder::decodeCompare(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeCompare(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 2) || !requireBroadcastable(id))
         return;
@@ -771,7 +787,7 @@ void PlanBuilder::decodeCompare(NodeId id, Plan::Node& node, const Expr& expr)
         return;
     }
 
-    auto operandType = getArgumentType(expr, 0);
+    auto operandType = getArgumentType(graph, expr, 0);
 
     if (isBoolean(operandType))
     {
@@ -793,7 +809,7 @@ void PlanBuilder::decodeCompare(NodeId id, Plan::Node& node, const Expr& expr)
     node.op = getComparisonOp(operandType);
 }
 
-void PlanBuilder::decodeBoolCompare(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeBoolCompare(int id, Plan::Node& node, const Expr& expr)
 {
     auto text = std::string_view {expr.text};
     auto found = std::ranges::find(boolRelations, text, &BoolRelation::text);
@@ -807,13 +823,13 @@ void PlanBuilder::decodeBoolCompare(NodeId id, Plan::Node& node, const Expr& exp
     node.op = found->op;
 }
 
-void PlanBuilder::decodeMul(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeMul(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 2))
         return;
 
-    auto left = getArgumentType(expr, 0);
-    auto right = getArgumentType(expr, 1);
+    auto left = getArgumentType(graph, expr, 0);
+    auto right = getArgumentType(graph, expr, 1);
     auto leftOrder = matrixOrder(left);
     auto rightOrder = matrixOrder(right);
 
@@ -839,7 +855,7 @@ void PlanBuilder::decodeMul(NodeId id, Plan::Node& node, const Expr& expr)
     }
 }
 
-void PlanBuilder::decodeCall(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeCall(int id, Plan::Node& node, const Expr& expr)
 {
     const auto& name = expr.text;
 
@@ -853,7 +869,7 @@ void PlanBuilder::decodeCall(NodeId id, Plan::Node& node, const Expr& expr)
         decodeConversionCall(id, node, expr);
 }
 
-void PlanBuilder::decodeConversionCall(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeConversionCall(int id, Plan::Node& node, const Expr& expr)
 {
     const auto& name = expr.text;
 
@@ -865,7 +881,7 @@ void PlanBuilder::decodeConversionCall(NodeId id, Plan::Node& node, const Expr& 
         rejectNode(id, "unknown builtin");
 }
 
-bool PlanBuilder::decodeNamedCall(NodeId id, Plan::Node& node, const Expr& expr)
+bool PlanBuilder::decodeNamedCall(int id, Plan::Node& node, const Expr& expr)
 {
     using Entry = std::pair<std::string_view, NodeDecoder>;
 
@@ -915,7 +931,7 @@ bool PlanBuilder::decodeNamedCall(NodeId id, Plan::Node& node, const Expr& expr)
     return true;
 }
 
-void PlanBuilder::decodeMath(NodeId id,
+void PlanBuilder::decodeMath(int id,
                              Plan::Node& node,
                              const Expr& expr,
                              MathFunction function)
@@ -927,10 +943,7 @@ void PlanBuilder::decodeMath(NodeId id,
     node.sub = static_cast<std::uint8_t>(function);
 }
 
-void PlanBuilder::decodeBroadcast(NodeId id,
-                                  Plan::Node& node,
-                                  const Expr& expr,
-                                  Op op)
+void PlanBuilder::decodeBroadcast(int id, Plan::Node& node, const Expr& expr, Op op)
 {
     if (isFloatVector(expr.type))
         node.op = op;
@@ -938,14 +951,14 @@ void PlanBuilder::decodeBroadcast(NodeId id,
         rejectNode(id, "defined on the float vectors only");
 }
 
-void PlanBuilder::decodeAbs(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeAbs(int id, Plan::Node& node, const Expr& expr)
 {
     auto type = expr.type;
 
     if (!requireArguments(id, 1))
         return;
 
-    if (getArgumentType(expr, 0) != type || isMatrix(type))
+    if (getArgumentType(graph, expr, 0) != type || isMatrix(type))
     {
         rejectNode(id, "the argument and the result differ");
     }
@@ -964,7 +977,7 @@ void PlanBuilder::decodeAbs(NodeId id, Plan::Node& node, const Expr& expr)
     }
 }
 
-void PlanBuilder::decodeMinMax(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeMinMax(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 2) || !requireBroadcastable(id))
         return;
@@ -980,9 +993,9 @@ void PlanBuilder::decodeMinMax(NodeId id, Plan::Node& node, const Expr& expr)
     node.op = *op;
 }
 
-void PlanBuilder::decodeMatrixFunction(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeMatrixFunction(int id, Plan::Node& node, const Expr& expr)
 {
-    auto operand = getArgumentType(expr, 0);
+    auto operand = getArgumentType(graph, expr, 0);
 
     if (!requireArguments(id, 1) || !isMatrix(operand))
     {
@@ -994,9 +1007,9 @@ void PlanBuilder::decodeMatrixFunction(NodeId id, Plan::Node& node, const Expr& 
     node.order = static_cast<std::uint8_t>(matrixOrder(operand));
 }
 
-void PlanBuilder::decodeBoolReduction(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeBoolReduction(int id, Plan::Node& node, const Expr& expr)
 {
-    auto operand = getArgumentType(expr, 0);
+    auto operand = getArgumentType(graph, expr, 0);
 
     if (!requireArguments(id, 1))
         return;
@@ -1011,12 +1024,12 @@ void PlanBuilder::decodeBoolReduction(NodeId id, Plan::Node& node, const Expr& e
     node.order = static_cast<std::uint8_t>(componentCount(operand));
 }
 
-void PlanBuilder::decodeBitcast(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeBitcast(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1))
         return;
 
-    if (!isBitcast(getArgumentType(expr, 0), expr.type))
+    if (!isBitcast(getArgumentType(graph, expr, 0), expr.type))
     {
         rejectNode(id, "the bitcast changes the width");
         return;
@@ -1025,7 +1038,7 @@ void PlanBuilder::decodeBitcast(NodeId id, Plan::Node& node, const Expr& expr)
     node.op = Op::CopyBits;
 }
 
-void PlanBuilder::decodeHelper(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodeHelper(int id, Plan::Node& node, const Expr& expr)
 {
     auto name = std::string_view {expr.text};
     auto helper = std::ranges::find(componentHelperNames, name, &HelperName::name);
@@ -1043,7 +1056,7 @@ void PlanBuilder::decodeHelper(NodeId id, Plan::Node& node, const Expr& expr)
     }
 }
 
-void PlanBuilder::decodePackedHelper(NodeId id, Plan::Node& node, const Expr& expr)
+void PlanBuilder::decodePackedHelper(int id, Plan::Node& node, const Expr& expr)
 {
     auto name = std::string_view {expr.text};
     auto packed =
@@ -1061,9 +1074,9 @@ void PlanBuilder::decodePackedHelper(NodeId id, Plan::Node& node, const Expr& ex
         return;
 
     auto matches = expr.type == signature.result
-                   && getArgumentType(expr, 0) == signature.first
+                   && getArgumentType(graph, expr, 0) == signature.first
                    && (signature.arguments == 1
-                       || getArgumentType(expr, 1) == signature.second);
+                       || getArgumentType(graph, expr, 1) == signature.second);
 
     if (!matches)
     {
@@ -1075,12 +1088,9 @@ void PlanBuilder::decodePackedHelper(NodeId id, Plan::Node& node, const Expr& ex
     node.sub = static_cast<std::uint8_t>(packed->function);
 }
 
-void PlanBuilder::decodeGeometric(NodeId id,
-                                  Plan::Node& node,
-                                  const Expr& expr,
-                                  Op op)
+void PlanBuilder::decodeGeometric(int id, Plan::Node& node, const Expr& expr, Op op)
 {
-    auto operand = getArgumentType(expr, 0);
+    auto operand = getArgumentType(graph, expr, 0);
     auto width = componentCount(operand);
 
     if (!isFloatVector(operand) || width < 2)
@@ -1089,7 +1099,7 @@ void PlanBuilder::decodeGeometric(NodeId id,
         return;
     }
 
-    if (!hasGeometricWidths(expr, op, width))
+    if (!hasGeometricWidths(graph, expr, op, width))
     {
         rejectNode(id, "the arguments' widths differ");
         return;
@@ -1105,26 +1115,9 @@ void PlanBuilder::decodeGeometric(NodeId id,
     node.order = static_cast<std::uint8_t>(width);
 }
 
-// Refract's third argument is its scalar eta; every other argument is a float
-// vector of the first's width.
-bool PlanBuilder::hasGeometricWidths(const Expr& expr, Op op, int width) const
+void PlanBuilder::decodeConversion(int id, Plan::Node& node, const Expr& expr)
 {
-    for (auto which = 1; which < expr.args.size(); ++which)
-    {
-        auto isEta = op == Op::Refract && which == 2;
-        auto expected = isEta ? 1 : width;
-
-        if (getArgumentComponents(expr, which) != expected
-            || !isFloatFamily(getArgumentType(expr, which)))
-            return false;
-    }
-
-    return true;
-}
-
-void PlanBuilder::decodeConversion(NodeId id, Plan::Node& node, const Expr& expr)
-{
-    auto source = getArgumentType(expr, 0);
+    auto source = getArgumentType(graph, expr, 0);
     auto target = expr.type;
 
     if (!requireArguments(id, 1))

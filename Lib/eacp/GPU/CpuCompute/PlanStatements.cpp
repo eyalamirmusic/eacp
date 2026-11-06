@@ -117,7 +117,7 @@ bool PlanBuilder::packUniforms()
     return false;
 }
 
-bool PlanBuilder::enterBlock(BlockId graphBlock)
+bool PlanBuilder::enterBlock(int graphBlock)
 {
     if (graphBlock < 0 || graphBlock >= graph.blockCount())
     {
@@ -148,7 +148,7 @@ bool PlanBuilder::checkStatement(int statement)
 }
 
 PlanBuilder::BlockResult
-    PlanBuilder::buildBlock(BlockId graphBlock, int loopDepth, int depth)
+    PlanBuilder::buildBlock(int graphBlock, int loopDepth, int depth)
 {
     if (!enterBlock(graphBlock))
         return {};
@@ -184,9 +184,7 @@ PlanBuilder::BlockResult
     return {id, walk.jumpsOut};
 }
 
-bool PlanBuilder::buildStep(const Statement& statement,
-                            StepId stepId,
-                            BlockWalk& walk)
+bool PlanBuilder::buildStep(const Statement& statement, int stepId, BlockWalk& walk)
 {
     using Entry = std::pair<StatementKind, StepBuilder>;
 
@@ -492,7 +490,7 @@ void PlanBuilder::failStatementWith(const Statement& statement,
     fail("a {} {}", Miro::enumToString(statement.kind), what);
 }
 
-bool PlanBuilder::checkNode(NodeId node)
+bool PlanBuilder::checkNode(int node)
 {
     if (node >= 0 && node < graph.nodeCount())
         return true;
@@ -534,7 +532,7 @@ bool PlanBuilder::checkVariableValue(const Statement& statement)
     return false;
 }
 
-bool PlanBuilder::checkCondition(NodeId node)
+bool PlanBuilder::checkCondition(int node)
 {
     if (!checkNode(node))
         return false;

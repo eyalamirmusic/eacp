@@ -21,7 +21,7 @@ PlanLevel getLeafLevel(ExprKind kind)
     }
 }
 
-PlanLevel getSiteLevel(Site site)
+PlanLevel getSiteLevel(int site)
 {
     if (site == PlanBuilder::dispatchSite)
         return PlanLevel::Dispatch;
@@ -47,7 +47,7 @@ bool readsChangingMemory(const Plan& plan, const Plan::Node& node)
 }
 } // namespace
 
-bool PlanBuilder::isScheduleLeaf(NodeId id, Site site, NodeId pinned) const
+bool PlanBuilder::isScheduleLeaf(int id, int site, int pinned) const
 {
     if (id == pinned || plan.nodes[id].op == Op::Leaf)
         return true;
@@ -59,9 +59,9 @@ bool PlanBuilder::isScheduleLeaf(NodeId id, Site site, NodeId pinned) const
 }
 
 template <typename Emit>
-void PlanBuilder::visit(NodeId root, Site site, NodeId pinned, Emit emit)
+void PlanBuilder::visit(int root, int site, int pinned, Emit emit)
 {
-    auto isVisited = [&](NodeId id)
+    auto isVisited = [&](int id)
     { return marks[id] == stamp || isScheduleLeaf(id, site, pinned); };
 
     if (root < 0 || isVisited(root))
@@ -123,7 +123,7 @@ void PlanBuilder::describeArrays()
 
 // Returns the last step of the block's subtree, or -1 when it has none. Step
 // ids run in program order, a compound step's before its bodies'.
-int PlanBuilder::mapBlock(BlockId block, int depth)
+int PlanBuilder::mapBlock(int block, int depth)
 {
     blockDepths[block] = depth;
     auto last = -1;
@@ -161,7 +161,7 @@ void PlanBuilder::mapBlocks()
     mapBlock(plan.rootBlock(), 0);
 }
 
-int PlanBuilder::findCommonBlock(BlockId a, BlockId b) const
+int PlanBuilder::findCommonBlock(int a, int b) const
 {
     while (a != b)
     {
@@ -174,7 +174,7 @@ int PlanBuilder::findCommonBlock(BlockId a, BlockId b) const
     return a;
 }
 
-PlanLevel PlanBuilder::calculateNodeLevel(NodeId id) const
+PlanLevel PlanBuilder::calculateNodeLevel(int id) const
 {
     const auto& node = plan.nodes[id];
 
@@ -191,7 +191,7 @@ PlanLevel PlanBuilder::calculateNodeLevel(NodeId id) const
 }
 
 // The widest level among the arguments, or Lane when one is not yet levelled.
-PlanLevel PlanBuilder::joinArgumentLevels(NodeId id, const Plan::Node& node) const
+PlanLevel PlanBuilder::joinArgumentLevels(int id, const Plan::Node& node) const
 {
     auto level = PlanLevel::Dispatch;
 
@@ -217,7 +217,7 @@ void PlanBuilder::computeLevels()
         levels[id] = calculateNodeLevel(id);
 }
 
-void PlanBuilder::countUse(NodeId id, Site site)
+void PlanBuilder::countUse(int id, int site)
 {
     if (levels[id] != PlanLevel::Lane || !graph.isPure(id))
         return;
@@ -242,8 +242,8 @@ void PlanBuilder::collectUses()
     firstUses.resize(graph.nodeCount(), unhoisted);
     useBlocks.resize(graph.nodeCount(), plan.rootBlock());
 
-    auto countAt = [this](Site site)
-    { return [this, site](NodeId id) { countUse(id, site); }; };
+    auto countAt = [this](int site)
+    { return [this, site](int id) { countUse(id, site); }; };
 
     ++stamp;
 
@@ -260,7 +260,7 @@ void PlanBuilder::collectUses()
 }
 
 // The step of the block that holds the site, or the site itself.
-int PlanBuilder::findSiteWithin(Site site, BlockId block) const
+int PlanBuilder::findSiteWithin(int site, int block) const
 {
     if (site < 0)
         return site;
@@ -292,14 +292,14 @@ void PlanBuilder::chooseHoistSites()
     }
 }
 
-void PlanBuilder::scheduleLevel(PlanLevel level, Site site, Plan::Range& range)
+void PlanBuilder::scheduleLevel(PlanLevel level, int site, Plan::Range& range)
 {
     ++stamp;
     range.begin = plan.scheduleList.size();
 
     for (auto id = 0; id < graph.nodeCount(); ++id)
         if (plan.nodes[id].used && levels[id] == level)
-            visit(id, site, -1, [this](NodeId node) { appendToSchedule(node); });
+            visit(id, site, -1, [this](int node) { appendToSchedule(node); });
 
     range.end = plan.scheduleList.size();
 }
@@ -311,14 +311,14 @@ void PlanBuilder::scheduleArrays()
     for (auto& layout: plan.arrayLayouts)
     {
         layout.schedule.begin = plan.scheduleList.size();
-        visitArrayElements(layout, [this](NodeId node) { appendToSchedule(node); });
+        visitArrayElements(layout, [this](int node) { appendToSchedule(node); });
         layout.schedule.end = plan.scheduleList.size();
     }
 }
 
 void PlanBuilder::scheduleSteps()
 {
-    auto append = [this](NodeId node) { appendToSchedule(node); };
+    auto append = [this](int node) { appendToSchedule(node); };
 
     for (auto stepId = 0; stepId < plan.steps.size(); ++stepId)
     {

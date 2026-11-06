@@ -47,25 +47,17 @@ std::string formatReason(std::string_view pattern, const Args&... args)
         return Strings::format(pattern, args...);
 }
 
-// Plain ints, named for what they index.
-using NodeId = int;
-using StepId = int;
-using BlockId = int;
-using ScheduleTime = int;
-
-// Where a node is evaluated: a step's id, or one of PlanBuilder's sites.
-using Site = int;
-
 class PlanBuilder
 {
 public:
     static constexpr std::int64_t maxLanes = std::int64_t {1} << 20;
     static constexpr std::size_t maxWords = std::numeric_limits<std::int32_t>::max();
 
-    static constexpr Site arraySite = -1;
-    static constexpr Site dispatchSite = -2;
-    static constexpr Site groupSite = -3;
-    static constexpr Site unhoisted = -4;
+    // Where a node is evaluated: a step's id, or one of these.
+    static constexpr int arraySite = -1;
+    static constexpr int dispatchSite = -2;
+    static constexpr int groupSite = -3;
+    static constexpr int unhoisted = -4;
 
     static constexpr int axisCount = 3;
 
@@ -113,12 +105,12 @@ private:
     };
 
     using StepBuilder = bool (PlanBuilder::*)(const Statement&, StepDraft&);
-    using NodeDecoder = void (PlanBuilder::*)(NodeId, Plan::Node&, const Expr&);
+    using NodeDecoder = void (PlanBuilder::*)(int, Plan::Node&, const Expr&);
 
     bool failed() const { return !plan.failure.empty(); }
     void failWith(std::string reason);
     void failStatementWith(const Statement&, std::string_view what);
-    void rejectNodeWith(NodeId id, std::string_view why);
+    void rejectNodeWith(int id, std::string_view why);
 
     template <typename... Args>
     void fail(std::string_view pattern, const Args&... args)
@@ -135,7 +127,7 @@ private:
     }
 
     template <typename... Args>
-    void rejectNode(NodeId id, std::string_view pattern, const Args&... args)
+    void rejectNode(int id, std::string_view pattern, const Args&... args)
     {
         rejectNodeWith(id, formatReason(pattern, args...));
     }
@@ -144,10 +136,10 @@ private:
     bool checkGraph();
     bool checkThreadGroupShape();
     bool packUniforms();
-    bool enterBlock(BlockId graphBlock);
+    bool enterBlock(int graphBlock);
     bool checkStatement(int statement);
-    BlockResult buildBlock(BlockId graphBlock, int loopDepth, int depth);
-    bool buildStep(const Statement&, StepId stepId, BlockWalk&);
+    BlockResult buildBlock(int graphBlock, int loopDepth, int depth);
+    bool buildStep(const Statement&, int stepId, BlockWalk&);
     bool buildVariableStep(const Statement&, StepDraft&);
     bool buildIfStep(const Statement&, StepDraft&);
     bool buildLoopStep(const Statement&, StepDraft&);
@@ -164,10 +156,10 @@ private:
     bool buildSimdMatrixMultiplyAddStep(const Statement&, StepDraft&);
     bool checkSimdMatrixTransfer(const Statement&);
     bool checkSimdMatrixMultiplyAdd(const Statement&);
-    bool checkNode(NodeId node);
+    bool checkNode(int node);
     bool checkVariable(int slot);
     bool checkVariableValue(const Statement&);
-    bool checkCondition(NodeId node);
+    bool checkCondition(int node);
     bool checkSlot(int slot);
     bool checkStore(const Statement&, int width);
     bool checkIndexAndValue(const Statement&);
@@ -175,7 +167,7 @@ private:
     bool checkFragment(const Statement&, int fragment, std::string_view role);
     bool checkFloatFragment(const Statement&, int fragment);
     bool checkWholeSimdGroups(const Statement&);
-    bool checkScalarInteger(const Statement&, NodeId node, std::string_view role);
+    bool checkScalarInteger(const Statement&, int node, std::string_view role);
     bool checkSimdMatrixElement(const Statement&);
     bool checkSimdMatrixMemory(const Statement&);
     bool checkSimdMatrixStorage(const Statement&);
@@ -183,50 +175,47 @@ private:
     // PlanNodes.cpp
     void markReachable();
     Vector<int> collectReachableRoots() const;
-    bool markNodeReachable(NodeId id, Vector<int>& stack);
+    bool markNodeReachable(int id, Vector<int>& stack);
     bool markArrayReachable(int array, Vector<int>& stack);
     bool pushReachable(const Vector<int>& ids, Vector<int>& stack);
-    ValueType getArgumentType(const Expr&, int which) const;
-    int getArgumentComponents(const Expr&, int which) const;
-    bool requireArguments(NodeId id, int count);
-    bool requireBroadcastable(NodeId id);
-    bool requireScalarIndex(NodeId id, const Expr&);
-    bool requireUnaryFloatVector(NodeId id, const Expr&);
-    void decodeNode(NodeId id);
-    void rejectRenderInput(NodeId id, Plan::Node&, const Expr&);
-    void rejectTexture(NodeId id, Plan::Node&, const Expr&);
-    void decodeLeaf(NodeId id, Plan::Node&, const Expr&);
-    void decodeIdLeaf(NodeId id, Plan::Node&, const Expr&);
-    void decodeUniform(NodeId id, Plan::Node&, const Expr&);
-    void decodeVarRead(NodeId id, Plan::Node&, const Expr&);
-    void decodeSelect(NodeId id, Plan::Node&, const Expr&);
-    void decodeBufferRead(NodeId id, Plan::Node&, const Expr&);
-    void decodeArrayRead(NodeId id, Plan::Node&, const Expr&);
-    void decodeAtomicLoad(NodeId id, Plan::Node&, const Expr&);
-    void decodeSharedRead(NodeId id, Plan::Node&, const Expr&);
-    void decodeConstruct(NodeId id, Plan::Node&, const Expr&);
-    void decodeSwizzle(NodeId id, Plan::Node&, const Expr&);
-    void decodeUnary(NodeId id, Plan::Node&, const Expr&);
-    void decodeBinary(NodeId id, Plan::Node&, const Expr&);
-    void decodeShift(NodeId id, Plan::Node&, const Expr&);
-    void decodeCompare(NodeId id, Plan::Node&, const Expr&);
-    void decodeBoolCompare(NodeId id, Plan::Node&, const Expr&);
-    void decodeMul(NodeId id, Plan::Node&, const Expr&);
-    void decodeCall(NodeId id, Plan::Node&, const Expr&);
-    bool decodeNamedCall(NodeId id, Plan::Node&, const Expr&);
-    void decodeConversionCall(NodeId id, Plan::Node&, const Expr&);
-    void decodeMath(NodeId id, Plan::Node&, const Expr&, MathFunction);
-    void decodeBroadcast(NodeId id, Plan::Node&, const Expr&, Op);
-    void decodeAbs(NodeId id, Plan::Node&, const Expr&);
-    void decodeMinMax(NodeId id, Plan::Node&, const Expr&);
-    void decodeMatrixFunction(NodeId id, Plan::Node&, const Expr&);
-    void decodeBoolReduction(NodeId id, Plan::Node&, const Expr&);
-    void decodeBitcast(NodeId id, Plan::Node&, const Expr&);
-    void decodeHelper(NodeId id, Plan::Node&, const Expr&);
-    void decodePackedHelper(NodeId id, Plan::Node&, const Expr&);
-    void decodeGeometric(NodeId id, Plan::Node&, const Expr&, Op);
-    bool hasGeometricWidths(const Expr&, Op, int width) const;
-    void decodeConversion(NodeId id, Plan::Node&, const Expr&);
+    bool requireArguments(int id, int count);
+    bool requireBroadcastable(int id);
+    bool requireScalarIndex(int id, const Expr&);
+    bool requireUnaryFloatVector(int id, const Expr&);
+    void decodeNode(int id);
+    void rejectRenderInput(int id, Plan::Node&, const Expr&);
+    void rejectTexture(int id, Plan::Node&, const Expr&);
+    void decodeLeaf(int id, Plan::Node&, const Expr&);
+    void decodeIdLeaf(int id, Plan::Node&, const Expr&);
+    void decodeUniform(int id, Plan::Node&, const Expr&);
+    void decodeVarRead(int id, Plan::Node&, const Expr&);
+    void decodeSelect(int id, Plan::Node&, const Expr&);
+    void decodeBufferRead(int id, Plan::Node&, const Expr&);
+    void decodeArrayRead(int id, Plan::Node&, const Expr&);
+    void decodeAtomicLoad(int id, Plan::Node&, const Expr&);
+    void decodeSharedRead(int id, Plan::Node&, const Expr&);
+    void decodeConstruct(int id, Plan::Node&, const Expr&);
+    void decodeSwizzle(int id, Plan::Node&, const Expr&);
+    void decodeUnary(int id, Plan::Node&, const Expr&);
+    void decodeBinary(int id, Plan::Node&, const Expr&);
+    void decodeShift(int id, Plan::Node&, const Expr&);
+    void decodeCompare(int id, Plan::Node&, const Expr&);
+    void decodeBoolCompare(int id, Plan::Node&, const Expr&);
+    void decodeMul(int id, Plan::Node&, const Expr&);
+    void decodeCall(int id, Plan::Node&, const Expr&);
+    bool decodeNamedCall(int id, Plan::Node&, const Expr&);
+    void decodeConversionCall(int id, Plan::Node&, const Expr&);
+    void decodeMath(int id, Plan::Node&, const Expr&, MathFunction);
+    void decodeBroadcast(int id, Plan::Node&, const Expr&, Op);
+    void decodeAbs(int id, Plan::Node&, const Expr&);
+    void decodeMinMax(int id, Plan::Node&, const Expr&);
+    void decodeMatrixFunction(int id, Plan::Node&, const Expr&);
+    void decodeBoolReduction(int id, Plan::Node&, const Expr&);
+    void decodeBitcast(int id, Plan::Node&, const Expr&);
+    void decodeHelper(int id, Plan::Node&, const Expr&);
+    void decodePackedHelper(int id, Plan::Node&, const Expr&);
+    void decodeGeometric(int id, Plan::Node&, const Expr&, Op);
+    void decodeConversion(int id, Plan::Node&, const Expr&);
 
     // PlanLayout.cpp
     bool usesAtomics() const;
@@ -242,37 +231,37 @@ private:
     void layOutVariables();
     void layOutFixedRows();
     void layOut();
-    bool hasOwnScratch(NodeId id) const;
-    bool isPooled(NodeId id) const;
-    int getLoopEnd(StepId step) const;
-    int calculateLoopExtent(Site site, Site definedAt) const;
-    void notePooledUse(NodeId id, ScheduleTime time, Site site);
-    void noteScheduled(Site, const Plan::Range&);
+    bool hasOwnScratch(int id) const;
+    bool isPooled(int id) const;
+    int getLoopEnd(int step) const;
+    int calculateLoopExtent(int site, int definedAt) const;
+    void notePooledUse(int id, int time, int site);
+    void noteScheduled(int, const Plan::Range&);
     void noteLiveRanges();
     void noteArrayLiveRanges(const Plan::ArrayLayout&);
-    void noteStepLiveRanges(StepId stepId);
+    void noteStepLiveRanges(int stepId);
     void colourPooledNodes();
     void colourDefinedNodes(Vector<int> byDefinition);
 
     // PlanSchedule.cpp
-    bool isScheduleLeaf(NodeId id, Site site, NodeId pinned) const;
+    bool isScheduleLeaf(int id, int site, int pinned) const;
     template <typename Emit>
-    void visit(NodeId root, Site site, NodeId pinned, Emit emit);
+    void visit(int root, int site, int pinned, Emit emit);
     template <typename Emit>
     void visitArrayElements(const Plan::ArrayLayout& layout, Emit emit);
     void describeArrays();
-    int mapBlock(BlockId block, int depth);
+    int mapBlock(int block, int depth);
     void mapBlocks();
-    int findCommonBlock(BlockId a, BlockId b) const;
-    PlanLevel calculateNodeLevel(NodeId id) const;
-    PlanLevel joinArgumentLevels(NodeId id, const Plan::Node&) const;
+    int findCommonBlock(int a, int b) const;
+    PlanLevel calculateNodeLevel(int id) const;
+    PlanLevel joinArgumentLevels(int id, const Plan::Node&) const;
     void computeLevels();
-    void countUse(NodeId id, Site site);
+    void countUse(int id, int site);
     void collectUses();
-    int findSiteWithin(Site site, BlockId block) const;
+    int findSiteWithin(int site, int block) const;
     void chooseHoistSites();
-    void appendToSchedule(NodeId id) { plan.scheduleList.add(id); }
-    void scheduleLevel(PlanLevel level, Site site, Plan::Range& range);
+    void appendToSchedule(int id) { plan.scheduleList.add(id); }
+    void scheduleLevel(PlanLevel level, int site, Plan::Range& range);
     void scheduleArrays();
     void scheduleSteps();
     void buildSchedules();
