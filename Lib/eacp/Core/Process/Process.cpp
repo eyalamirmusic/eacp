@@ -107,11 +107,11 @@ Threads::Async<ProcessResult> runAsync(ProcessOptions options)
     auto promise = Threads::AsyncPromise<ProcessResult> {};
 
     std::thread(
-        [promise, options = std::move(options)]() mutable
+        [promise, processOptions = std::move(options)]() mutable
         {
-            auto result = run(std::move(options));
-            Threads::callAsync([promise, result = std::move(result)]() mutable
-                               { promise.resolve(std::move(result)); });
+            auto result = run(std::move(processOptions));
+            Threads::callAsync([promise, finished = std::move(result)]() mutable
+                               { promise.resolve(std::move(finished)); });
         })
         .detach();
 
