@@ -3,11 +3,13 @@
 #include "RenderPass.h"
 
 #include "IndirectDrawPlan.h"
-#include "RenderPassBindings-Windows.h"
 #include "RenderPassRegions.h"
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Shader/ShaderSource.h"
+#include "../Texture/Sampler.h"
+#include "../Texture/Texture.h"
 #include "../Windows/D3D12Types.h"
 
 // Windows/D3D12 backend. Records draw commands onto the frame's recording via
@@ -17,6 +19,324 @@
 
 namespace eacp::GPU
 {
+struct StageTextureSlot
+{
+    ShaderStage stage = ShaderStage::Fragment;
+    int slot = 0;
+};
+
+struct IndirectDrawCount
+{
+    const Buffer* buffer = nullptr;
+    std::int64_t offset = 0;
+};
+
+struct IndirectDrawCall
+{
+    bool indexed = false;
+    const IndirectDrawPlan& plan;
+    const Buffer& arguments;
+    IndirectDrawCount count;
+};
+
+static const auto renderPassAnyShaderRead =
+    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+    | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+// A vertex read needs NON_PIXEL_SHADER_RESOURCE, and asks for both read states
+// so that a fragment bind of the same texture in the same draw finds its own
+// already there rather than barriering the vertex one away.
+static bool hasRenderPassReadState(D3D12_RESOURCE_STATES state,
+                                   D3D12_RESOURCE_STATES wanted)
+{
+    return (state & wanted) == wanted;
+}
+
+static D3D12_RESOURCE_STATES getRenderPassReadState(ShaderStage stage)
+{
+    if (stage == ShaderStage::Vertex)
+        return renderPassAnyShaderRead;
+
+    return D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+}
+
+static bool canBindTextureSlot(const D3D12Encoder* encoder, int slot)
+{
+    return encoder != nullptr && slot >= 0 && slot < maxTextureSlots;
+}
+
+static D3D12BufferData* getBufferDataAtOffset(const BufferRange& range)
+{
+    if (range.buffer == nullptr || range.offset < 0)
+        return nullptr;
+
+    auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr)
+        return nullptr;
+
+    if (!isOffsetInsideBuffer(range.offset, data->size))
+        return nullptr;
+
+    return data;
+}
+
+static bool hasSampleableDepthView(const D3D12TextureData* data)
+{
+    return data != nullptr && data->hasSampleableDepth();
+}
+
+// The depth resource rests in DEPTH_WRITE, which is where the pass that drew
+// it left it and where the next pass to attach it expects to find it - so
+// this is the outward half of the pair, and Frame::beginPass records the
+// return. The two states are two views of one resource, which is why they
+// are one tracked value rather than a flag per view.
+static void bindDepthView(D3D12Encoder& encoder,
+                          StageTextureSlot target,
+                          D3D12TextureData& data,
+                          D3D12_GPU_DESCRIPTOR_HANDLE view)
+{
+    auto* list = encoder.commands->list.get();
+    const auto wanted = getRenderPassReadState(target.stage);
+
+    if (!hasRenderPassReadState(data.depthState, wanted))
+        transitionDepthForUse(list, data, wanted);
+
+    list->SetGraphicsRootDescriptorTable(renderTextureParam(target.slot), view);
+}
+
+static void bindStageTexture(D3D12Encoder* encoder,
+                             StageTextureSlot target,
+                             const Texture& texture)
+{
+    if (!canBindTextureSlot(encoder, target.slot))
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
+
+    if (data == nullptr || data->srv.gpu.ptr == 0)
+        return;
+
+    auto* list = encoder->commands->list.get();
+    const auto wanted = getRenderPassReadState(target.stage);
+
+    // A render target an earlier pass on this frame drew into is still in
+    // RENDER_TARGET, and this is where it goes back. A plain texture is already
+    // in the state this asks for and the helper records nothing.
+    if (!hasRenderPassReadState(data->state, wanted))
+        transitionTextureForUse(list, *data, wanted);
+
+    // Only the SRV: the sampler is a static sampler in the root signature, chosen
+    // by the register the shader's sampler was emitted at. See TextureSampling.
+    list->SetGraphicsRootDescriptorTable(renderTextureParam(target.slot),
+                                         data->srv.gpu);
+}
+
+static void bindStageDepthTexture(D3D12Encoder* encoder,
+                                  StageTextureSlot target,
+                                  const Texture& renderTarget)
+{
+    if (!canBindTextureSlot(encoder, target.slot))
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
+
+    if (!hasSampleableDepthView(data) || data->depthSrv.gpu.ptr == 0)
+        return;
+
+    bindDepthView(*encoder, target, *data, data->depthSrv.gpu);
+}
+
+static void bindStageDepthSlice(D3D12Encoder* encoder,
+                                StageTextureSlot target,
+                                const Texture& renderTarget,
+                                int slice)
+{
+    if (!canBindTextureSlot(encoder, target.slot))
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
+
+    if (!hasSampleableDepthView(data))
+        return;
+
+    const auto view = data->depthSliceView(slice);
+
+    if (view.ptr == 0)
+        return;
+
+    bindDepthView(*encoder, target, *data, view);
+}
+
+static void
+    bindPerBindSampler(D3D12Encoder* encoder, int slot, const Sampler& sampler)
+{
+    if (!canBindTextureSlot(encoder, slot))
+        return;
+
+    const auto descriptor = perBindSamplerDescriptor(sampler);
+
+    if (descriptor.ptr == 0)
+        return;
+
+    encoder->commands->list->SetGraphicsRootDescriptorTable(renderSamplerParam(slot),
+                                                            descriptor);
+}
+
+static D3D12_GPU_VIRTUAL_ADDRESS getStorageBufferAddress(CommandContext& commands,
+                                                         const BufferRange& range)
+{
+    auto* data = getBufferDataAtOffset(range);
+
+    if (data == nullptr)
+        return 0;
+
+    // The union of the two read states rather than one: the same buffer may be
+    // bound to both stages, and asking for each in turn would barrier it back
+    // and forth between two states that are both just "a shader is reading it".
+    transitionForUse(commands, *data, renderPassAnyShaderRead);
+
+    return data->resource->GetGPUVirtualAddress() + (UINT64) range.offset;
+}
+
+// The barrier into a shader-read state is what orders the draw behind a kernel
+// that wrote this buffer and left it in UNORDERED_ACCESS. An offset outside the
+// buffer binds nothing.
+static void bindStorageBufferRange(D3D12Encoder& encoder,
+                                   UINT rootParameter,
+                                   const BufferRange& range)
+{
+    auto& commands = *encoder.commands;
+
+    if (auto address = getStorageBufferAddress(commands, range))
+        commands.list->SetGraphicsRootShaderResourceView(rootParameter, address);
+}
+
+static void
+    bindVertexBufferRange(D3D12Encoder& encoder, const BufferRange& range, int index)
+{
+    auto* data = getBufferDataAtOffset(range);
+
+    if (data == nullptr)
+        return;
+
+    auto& commands = *encoder.commands;
+    transitionForUse(
+        commands, *data, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+
+    // A view starting part-way into the resource: the address moves up by the
+    // offset and the size comes down by it, so the view still ends where the
+    // buffer does and vertex zero is the byte at the offset.
+    D3D12_VERTEX_BUFFER_VIEW view = {};
+    view.BufferLocation =
+        data->resource->GetGPUVirtualAddress() + (UINT64) range.offset;
+    view.SizeInBytes = static_cast<UINT>(data->size - (UINT64) range.offset);
+    view.StrideInBytes = strideForSlot(encoder.strides, index);
+
+    commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
+}
+
+static void bindConstantBytes(D3D12Encoder& encoder,
+                              UINT rootParameter,
+                              const void* data,
+                              int bytes)
+{
+    auto& commands = *encoder.commands;
+    const auto byteCount = static_cast<std::size_t>(bytes);
+    const auto address =
+        commands.context->uploadConstants(commands, data, byteCount);
+
+    if (address != 0)
+        commands.list->SetGraphicsRootConstantBufferView(rootParameter, address);
+}
+
+static DXGI_FORMAT getIndexBufferFormat(IndexFormat format)
+{
+    if (format == IndexFormat::UInt16)
+        return DXGI_FORMAT_R16_UINT;
+
+    return DXGI_FORMAT_R32_UINT;
+}
+
+// The index buffer view for a slice, bound, with the resource moved into the
+// state an index read needs. False when there is nothing to bind - no buffer,
+// no resource, or an offset past the end of it - so the draw that follows can
+// be skipped rather than issued over nothing. The view starts at the slice
+// and runs to the buffer's end, the same shape the vertex bind takes, so
+// firstIndex counts on from the slice's own index zero.
+static bool bindIndexRange(CommandContext& commands,
+                           const BufferRange& indices,
+                           IndexFormat format)
+{
+    auto* data = getBufferDataAtOffset(indices);
+
+    if (data == nullptr)
+        return false;
+
+    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+    D3D12_INDEX_BUFFER_VIEW view = {};
+    view.BufferLocation =
+        data->resource->GetGPUVirtualAddress() + (UINT64) indices.offset;
+    view.SizeInBytes = static_cast<UINT>(data->size - (UINT64) indices.offset);
+    view.Format = getIndexBufferFormat(format);
+
+    commands.list->IASetIndexBuffer(&view);
+
+    return true;
+}
+
+static D3D12BufferData* getIndirectArguments(CommandContext& commands,
+                                             const Buffer& buffer)
+{
+    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr)
+        return nullptr;
+
+    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    return data;
+}
+
+static D3D12BufferData* getIndirectCountArguments(CommandContext& commands,
+                                                  IndirectDrawCount count)
+{
+    if (count.buffer == nullptr)
+        return nullptr;
+
+    return getIndirectArguments(commands, *count.buffer);
+}
+
+static bool isIndirectCountMissing(IndirectDrawCount count,
+                                   const D3D12BufferData* countData)
+{
+    return count.buffer != nullptr && countData == nullptr;
+}
+
+// One ExecuteIndirect for the whole run: the stride is the signature's, and
+// the count buffer, where there is one, caps the run at the GPU's own number.
+static void executeIndirectDraws(CommandContext& commands,
+                                 const IndirectDrawCall& call)
+{
+    const auto stride = static_cast<UINT>(call.plan.stride);
+    auto* signature = commands.context->getDrawSignature(call.indexed, stride);
+    auto* data = getIndirectArguments(commands, call.arguments);
+    auto* countData = getIndirectCountArguments(commands, call.count);
+
+    if (signature == nullptr || data == nullptr)
+        return;
+
+    if (isIndirectCountMissing(call.count, countData))
+        return;
+
+    commands.list->ExecuteIndirect(signature,
+                                   static_cast<UINT>(call.plan.drawCount),
+                                   data->resource.get(),
+                                   static_cast<UINT64>(call.plan.offset),
+                                   countData ? countData->resource.get() : nullptr,
+                                   static_cast<UINT64>(call.count.offset));
+}
+
 struct RenderPass::Native
 {
     Native(void* encoderHandle, int width, int height)
@@ -47,20 +367,6 @@ struct RenderPass::Native
     bool hasCommands() const { return encoder && encoder->commands != nullptr; }
 
     ID3D12GraphicsCommandList* list() const { return encoder->commands->list.get(); }
-
-    void recordIndexedIndirectDraws(const IndexRange& indexRange,
-                                    const Buffer& arguments,
-                                    const IndirectDrawPlan& plan,
-                                    IndirectDrawCount count)
-    {
-        if (!canDraw())
-            return;
-
-        auto& commands = *encoder->commands;
-
-        if (bindIndexRange(commands, indexRange.indices, indexRange.format))
-            executeIndexedIndirectDraws(commands, plan, arguments, count);
-    }
 };
 
 RenderPass::RenderPass(void* encoder,
@@ -298,14 +604,8 @@ void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
 
 void RenderPass::setVertexStorageBuffer(const BufferRange& range, int slot)
 {
-    if (!impl->encoder || !isRenderPassSlotInRange(slot, maxBufferSlots))
-        return;
-
-    auto& commands = *impl->encoder->commands;
-
-    if (auto address = storageBufferAddress(commands, range))
-        commands.list->SetGraphicsRootShaderResourceView(renderVertexSRVParam(slot),
-                                                         address);
+    if (impl->encoder && isRenderPassSlotInRange(slot, maxBufferSlots))
+        bindStorageBufferRange(*impl->encoder, renderVertexSRVParam(slot), range);
 }
 
 void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
@@ -315,14 +615,8 @@ void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
 
 void RenderPass::setFragmentStorageBuffer(const BufferRange& range, int slot)
 {
-    if (!impl->encoder || !isRenderPassSlotInRange(slot, maxBufferSlots))
-        return;
-
-    auto& commands = *impl->encoder->commands;
-
-    if (auto address = storageBufferAddress(commands, range))
-        commands.list->SetGraphicsRootShaderResourceView(renderPixelSRVParam(slot),
-                                                         address);
+    if (impl->encoder && isRenderPassSlotInRange(slot, maxBufferSlots))
+        bindStorageBufferRange(*impl->encoder, renderPixelSRVParam(slot), range);
 }
 
 void RenderPass::setVertexBytes(const void* data, int bytes, int slot)
@@ -365,7 +659,8 @@ void RenderPass::drawIndirect(const Buffer& arguments,
         arguments, offset, drawCount, stride, sizeof(DrawArguments));
 
     if (plan && impl->canDraw())
-        executeIndirectDraws(*impl->encoder->commands, *plan, arguments, {});
+        executeIndirectDraws(*impl->encoder->commands,
+                             {false, *plan, arguments, {}});
 }
 
 void RenderPass::drawIndirectCount(const Buffer& arguments,
@@ -382,8 +677,8 @@ void RenderPass::drawIndirectCount(const Buffer& arguments,
         return;
 
     if (impl->canDraw())
-        executeIndirectDraws(
-            *impl->encoder->commands, *plan, arguments, {&count, countOffset});
+        executeIndirectDraws(*impl->encoder->commands,
+                             {false, *plan, arguments, {&count, countOffset}});
 }
 
 void RenderPass::drawIndexedIndirect(const BufferRange& indices,
@@ -396,8 +691,13 @@ void RenderPass::drawIndexedIndirect(const BufferRange& indices,
     const auto plan = planIndirectDraws(
         arguments, offset, drawCount, stride, sizeof(DrawIndexedArguments));
 
-    if (plan)
-        impl->recordIndexedIndirectDraws({indices, format}, arguments, *plan, {});
+    if (!plan || !impl->canDraw())
+        return;
+
+    auto& commands = *impl->encoder->commands;
+
+    if (bindIndexRange(commands, indices, format))
+        executeIndirectDraws(commands, {true, *plan, arguments, {}});
 }
 
 void RenderPass::drawIndexedIndirectCount(const BufferRange& indices,
@@ -412,9 +712,17 @@ void RenderPass::drawIndexedIndirectCount(const BufferRange& indices,
     const auto plan = planIndirectDraws(
         arguments, offset, maxDrawCount, stride, sizeof(DrawIndexedArguments));
 
-    if (plan && isValidDrawCountBuffer(count, countOffset))
-        impl->recordIndexedIndirectDraws(
-            {indices, format}, arguments, *plan, {&count, countOffset});
+    if (!plan || !isValidDrawCountBuffer(count, countOffset))
+        return;
+
+    if (!impl->canDraw())
+        return;
+
+    auto& commands = *impl->encoder->commands;
+
+    if (bindIndexRange(commands, indices, format))
+        executeIndirectDraws(commands,
+                             {true, *plan, arguments, {&count, countOffset}});
 }
 
 void RenderPass::drawIndexed(const Buffer& indices,
@@ -474,6 +782,82 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
                                         static_cast<UINT>(firstIndex),
                                         static_cast<INT>(baseVertex),
                                         static_cast<UINT>(firstInstance));
+}
+
+static constexpr auto depthResolveTriangleVertexCount = 3u;
+
+static bool canResolveDepthWithShader(const CommandContext& commands,
+                                      const D3D12TextureData& texture)
+{
+    return commands.list != nullptr && commands.context != nullptr
+           && texture.msaaDepthSrv.gpu.ptr != 0 && texture.resolvedDsv.ptr != 0;
+}
+
+static void setDepthResolveTargetArea(ID3D12GraphicsCommandList* list,
+                                      const D3D12TextureData& texture)
+{
+    const auto desc = texture.resolvedDepthResource->GetDesc();
+
+    D3D12_VIEWPORT viewport = {};
+    viewport.Width = static_cast<float>(desc.Width);
+    viewport.Height = static_cast<float>(desc.Height);
+    viewport.MaxDepth = 1.f;
+
+    const D3D12_RECT scissor = {
+        0, 0, static_cast<LONG>(desc.Width), static_cast<LONG>(desc.Height)};
+
+    list->RSSetViewports(1, &viewport);
+    list->RSSetScissorRects(1, &scissor);
+}
+
+// The depth resolve drawn rather than asked for: the multisampled plane goes
+// to PIXEL_SHADER_RESOURCE to be loaded from, the resolved buffer to
+// DEPTH_WRITE to be written through its own DSV, and one triangle carries every
+// pixel's furthest sample across. The pass that just ended has already bound
+// its own root state, targets and viewport, and the next one binds its own
+// again, so nothing set here has to be put back.
+//
+// The attachment returns to DEPTH_WRITE on the way out, as the API resolve
+// leaves it; the resolved buffer stays in DEPTH_WRITE with depthState saying
+// so, and whatever samples it next moves it from there.
+void resolveDepthWithShader(CommandContext& commands, D3D12TextureData& texture)
+{
+    if (!canResolveDepthWithShader(commands, texture))
+        return;
+
+    auto* list = commands.list.get();
+    auto* context = commands.context;
+
+    const auto& shader =
+        getD3D12Shared().getDepthResolveShader(texture.depthHasStencil);
+
+    if (!shader.isValid())
+        return;
+
+    transition(list,
+               texture.depthResource.get(),
+               texture.msaaDepthState,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    texture.msaaDepthState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+    transitionDepthForUse(list, texture, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+    ID3D12DescriptorHeap* heaps[] = {context->getTextureHeap(),
+                                     context->getSamplerHeap()};
+    list->SetDescriptorHeaps(2, heaps);
+    list->SetGraphicsRootSignature(shader.rootSignature.get());
+    list->SetGraphicsRootDescriptorTable(0, texture.msaaDepthSrv.gpu);
+    list->SetPipelineState(shader.state.get());
+    list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    list->OMSetRenderTargets(0, nullptr, FALSE, &texture.resolvedDsv);
+    setDepthResolveTargetArea(list, texture);
+    list->DrawInstanced(depthResolveTriangleVertexCount, 1, 0, 0);
+
+    transition(list,
+               texture.depthResource.get(),
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    texture.msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 }
 
 // OCCLUSION counts samples and BINARY_OCCLUSION says whether any passed, both

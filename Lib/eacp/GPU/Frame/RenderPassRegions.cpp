@@ -27,32 +27,20 @@ ScissorPixels calculateScissorPixels(const Graphics::Rect& rect,
     return pixels;
 }
 
-static bool hasNoViewportArea(const Graphics::Rect& rect)
-{
-    return rect.w <= 0.f || rect.h <= 0.f;
-}
-
-static bool startsBeforeViewportTarget(const Graphics::Rect& rect)
-{
-    return rect.x < 0.f || rect.y < 0.f;
-}
-
-static bool endsPastViewportTarget(const Graphics::Rect& rect,
-                                   int targetWidth,
-                                   int targetHeight)
-{
-    const auto width = static_cast<float>(targetWidth);
-    const auto height = static_cast<float>(targetHeight);
-    return rect.x + rect.w > width || rect.y + rect.h > height;
-}
-
-// Written as the negation of the refusals so a NaN edge passes, as it always has.
+// Each refusal is tested as written, so a NaN edge passes, as it always has.
 bool isViewportInsideTarget(const Graphics::Rect& rect,
                             int targetWidth,
                             int targetHeight)
 {
-    return !hasNoViewportArea(rect) && !startsBeforeViewportTarget(rect)
-           && !endsPastViewportTarget(rect, targetWidth, targetHeight);
+    if (rect.w <= 0.f || rect.h <= 0.f)
+        return false;
+
+    if (rect.x < 0.f || rect.y < 0.f)
+        return false;
+
+    const auto width = static_cast<float>(targetWidth);
+    const auto height = static_cast<float>(targetHeight);
+    return !(rect.x + rect.w > width || rect.y + rect.h > height);
 }
 
 bool isOffsetInsideBuffer(std::int64_t offset, std::uint64_t bufferSize)

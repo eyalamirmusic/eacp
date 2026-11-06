@@ -132,8 +132,6 @@ elseif (WIN32)
             Frame/Frame-Windows.cpp
             Frame/OcclusionQueries-Windows.cpp
             Frame/RenderPass-Windows.cpp
-            Frame/RenderPassBindings-Windows.cpp
-            Frame/DepthResolve-Windows.cpp
             Pipeline/ComputePipeline-Windows.cpp
             Pipeline/RenderPipeline-Windows.cpp
             Shader/Dxc-Windows.cpp
