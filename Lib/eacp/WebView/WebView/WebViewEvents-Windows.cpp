@@ -49,7 +49,7 @@ bool isMediaCapturePermission(COREWEBVIEW2_PERMISSION_KIND kind)
 bool WebView::Native::isFromTrustedSender(
     ICoreWebView2WebMessageReceivedEventArgs* args)
 {
-    CoTaskMemString sourceRaw;
+    ComAllocatedWideString sourceRaw;
 
     if (FAILED(args->get_Source(&sourceRaw)))
         return false;
@@ -112,7 +112,7 @@ void WebView::Native::addNavigationStartingHandler()
                    ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT
             {
                 loading = true;
-                CoTaskMemString uri;
+                ComAllocatedWideString uri;
                 args->get_Uri(&uri);
                 auto url = uri.toString();
                 Threads::callAsync([cb = owner.onNavigationStarted, url]()
@@ -142,7 +142,7 @@ void WebView::Native::handleNavigationCompleted(
 
     if (success)
     {
-        CoTaskMemString uri;
+        ComAllocatedWideString uri;
         webView->get_Source(&uri);
         owner.onNavigationFinished(uri.toString());
         return;
@@ -150,7 +150,7 @@ void WebView::Native::handleNavigationCompleted(
 
     COREWEBVIEW2_WEB_ERROR_STATUS status;
     args->get_WebErrorStatus(&status);
-    CoTaskMemString uri;
+    ComAllocatedWideString uri;
     webView->get_Source(&uri);
     auto errorStr = "Navigation failed (status=" + std::to_string(status)
                     + ") for url=" + uri.toString();
@@ -164,7 +164,7 @@ void WebView::Native::addDocumentTitleChangedHandler()
         Microsoft::WRL::Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
             [this](ICoreWebView2*, IUnknown*) -> HRESULT
             {
-                CoTaskMemString title;
+                ComAllocatedWideString title;
                 webView->get_DocumentTitle(&title);
                 auto titleStr = title.toString();
                 Threads::callAsync([cb = owner.onTitleChanged, titleStr]()
@@ -191,7 +191,7 @@ void WebView::Native::handleWebMessageReceived(
     if (!isFromTrustedSender(args))
         return;
 
-    CoTaskMemString messageRaw;
+    ComAllocatedWideString messageRaw;
     args->get_WebMessageAsJson(&messageRaw);
     if (!messageRaw)
         return;
@@ -272,7 +272,7 @@ HRESULT
 WebView::Native::handleNewWindowRequested(
     ICoreWebView2NewWindowRequestedEventArgs* args)
 {
-    CoTaskMemString uri;
+    ComAllocatedWideString uri;
     args->get_Uri(&uri);
     auto url = uri.toString();
 

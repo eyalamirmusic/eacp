@@ -144,7 +144,7 @@ std::string readRequestHeader(ICoreWebView2WebResourceRequest* request, LPCWSTR 
     if (FAILED(headers->Contains(name, &has)) || !has)
         return {};
 
-    CoTaskMemString value;
+    ComAllocatedWideString value;
     if (FAILED(headers->GetHeader(name, &value)) || !value)
         return {};
 
@@ -184,7 +184,7 @@ ComPtr<ICoreWebView2WebResourceRequest>
 
 std::optional<std::string> readRequestUri(ICoreWebView2WebResourceRequest* request)
 {
-    CoTaskMemString uri;
+    ComAllocatedWideString uri;
     if (FAILED(request->get_Uri(&uri)) || !uri)
         return std::nullopt;
 
