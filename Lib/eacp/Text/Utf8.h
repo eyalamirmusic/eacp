@@ -4,13 +4,13 @@
 
 #include <string_view>
 
-/// UTF-8 in and out, for the seams of this module that speak codepoints: the
-/// atlas shaping one codepoint on its own, and the platform shapers walking a
-/// string into the UTF-16 their text engines take.
+// UTF-8 in and out, for the seams of this module that speak codepoints: the
+// atlas shaping one codepoint on its own, and the platform shapers walking a
+// string into the UTF-16 their text engines take.
 namespace eacp::Text
 {
-/// Writes `codepoint` as UTF-8 into `into`, which holds at least four bytes,
-/// and returns how many it used.
+// Writes `codepoint` as UTF-8 into `into`, which holds at least four bytes,
+// and returns how many it used.
 constexpr int encodeUtf8(char32_t codepoint, char* into)
 {
     if (codepoint < 0x80)
@@ -41,9 +41,9 @@ constexpr int encodeUtf8(char32_t codepoint, char* into)
     return 4;
 }
 
-/// Decodes one UTF-8 sequence starting at `index`, advancing it past what was
-/// consumed. Malformed bytes yield U+FFFD and advance by one, so a bad byte
-/// costs one replacement glyph rather than desynchronising the rest of the line.
+// Decodes one UTF-8 sequence starting at `index`, advancing it past what was
+// consumed. Malformed bytes yield U+FFFD and advance by one, so a bad byte
+// costs one replacement glyph rather than desynchronising the rest of the line.
 constexpr char32_t decodeUtf8(std::string_view text, int& index)
 {
     const auto lead =

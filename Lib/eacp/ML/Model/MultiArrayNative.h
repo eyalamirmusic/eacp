@@ -13,7 +13,7 @@ bool toDType(MLMultiArrayDataType dataType, DType& type);
 
 MLMultiArray* nativeArray(const MultiArray& array);
 
-/// An array Core ML allocated for an output nobody bound: shared as it is when
-/// it lies in a pixel buffer, copied into a MultiArray of our own otherwise.
+// An array Core ML allocated for an output nobody bound: shared as it is when
+// it lies in a pixel buffer, copied into a MultiArray of our own otherwise.
 MultiArray adoptOutput(MLMultiArray* output);
 } // namespace eacp::ML

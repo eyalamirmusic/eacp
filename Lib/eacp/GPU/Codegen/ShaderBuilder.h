@@ -20,16 +20,16 @@ namespace detail
 ShaderBackend nativeShaderBackend();
 } // namespace detail
 
-/// What ShaderBuilder::build() returns for a graph, in the dialect `backend`
-/// compiles rather than the platform's own: build() is this with the
-/// platform's own backend, so an offline compiler that hashes this text
-/// hashes exactly what the runtime will be handed.
+// What ShaderBuilder::build() returns for a graph, in the dialect `backend`
+// compiles rather than the platform's own: build() is this with the
+// platform's own backend, so an offline compiler that hashes this text
+// hashes exactly what the runtime will be handed.
 GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend);
 
-/// The string-free authoring entry point. Declare vertex inputs, uniforms and
-/// varyings by call order, write the position and fragment outputs with value-type
-/// expressions, then build() emits the current backend's source and the matching
-/// vertex layout. No native shader files, no string literals at the call site.
+// The string-free authoring entry point. Declare vertex inputs, uniforms and
+// varyings by call order, write the position and fragment outputs with value-type
+// expressions, then build() emits the current backend's source and the matching
+// vertex layout. No native shader files, no string literals at the call site.
 class ShaderBuilder
 {
 public:
@@ -42,16 +42,16 @@ public:
         return value;
     }
 
-    /// Per-instance sibling of vertexInput<T>. The returned handle behaves
-    /// identically in shader expressions; the emitted VertexLayout routes
-    /// instance inputs to a dedicated buffer slot with PerInstance step rate,
-    /// so the caller binds a separate per-instance buffer at that slot.
-    ///
-    /// The zero-arg form auto-assigns slot 1 (the common case: one per-instance
-    /// buffer alongside the per-vertex buffer at slot 0). Pass an explicit
-    /// bufferIndex when a shader needs multiple per-instance streams in
-    /// distinct buffers (e.g. per-instance transform in slot 1, per-instance
-    /// colour in slot 2).
+    // Per-instance sibling of vertexInput<T>. The returned handle behaves
+    // identically in shader expressions; the emitted VertexLayout routes
+    // instance inputs to a dedicated buffer slot with PerInstance step rate,
+    // so the caller binds a separate per-instance buffer at that slot.
+    //
+    // The zero-arg form auto-assigns slot 1 (the common case: one per-instance
+    // buffer alongside the per-vertex buffer at slot 0). Pass an explicit
+    // bufferIndex when a shader needs multiple per-instance streams in
+    // distinct buffers (e.g. per-instance transform in slot 1, per-instance
+    // colour in slot 2).
     template <typename T>
     T instanceInput()
     {
@@ -84,17 +84,17 @@ public:
         return value;
     }
 
-    /// A per-frame constant. Every value type crosses from the CPU except a
-    /// Float2x2 or a Float3x3: MSL and HLSL pack those to different sizes inside
-    /// the value itself, so one block of bytes would read back as two different
-    /// matrices on the two backends (see UniformLayout.h). Send a Float4x4, or
-    /// send the columns as vectors and assemble the matrix in the shader.
-    ///
-    /// A Bool is refused for the same reason at a smaller scale: MSL packs one
-    /// into a byte and an HLSL cbuffer gives it four. Send the flag as a float
-    /// and compare it, which is what the block already knows how to carry. The
-    /// boolean vectors go with it; the integer ones do not, since both languages
-    /// pack an intN exactly where they pack a floatN.
+    // A per-frame constant. Every value type crosses from the CPU except a
+    // Float2x2 or a Float3x3: MSL and HLSL pack those to different sizes inside
+    // the value itself, so one block of bytes would read back as two different
+    // matrices on the two backends (see UniformLayout.h). Send a Float4x4, or
+    // send the columns as vectors and assemble the matrix in the shader.
+    //
+    // A Bool is refused for the same reason at a smaller scale: MSL packs one
+    // into a byte and an HLSL cbuffer gives it four. Send the flag as a float
+    // and compare it, which is what the block already knows how to carry. The
+    // boolean vectors go with it; the integer ones do not, since both languages
+    // pack an intN exactly where they pack a floatN.
     template <typename T>
     T uniform()
     {
@@ -114,78 +114,78 @@ public:
         return value;
     }
 
-    /// A 2D texture sampled by the fragment expression. Returns the slot-indexed
-    /// handle sample() reads; bind the matching GPU::Texture at the same slot.
+    // A 2D texture sampled by the fragment expression. Returns the slot-indexed
+    // handle sample() reads; bind the matching GPU::Texture at the same slot.
     Texture2D texture(TextureSampling sampling = {});
 
-    /// A cube texture, sampled with a Float3 direction rather than a Float2
-    /// coordinate - a sky, a reflection, anything looked up by where it points
-    /// rather than by where it is. Slots come from the same counter texture()
-    /// uses and the bind is the same call, so the only difference a caller sees
-    /// is the type of the handle and the width of what sample() takes. The
-    /// GPU::Texture bound at the slot has to have been created with
-    /// TextureDescriptor::cube.
+    // A cube texture, sampled with a Float3 direction rather than a Float2
+    // coordinate - a sky, a reflection, anything looked up by where it points
+    // rather than by where it is. Slots come from the same counter texture()
+    // uses and the bind is the same call, so the only difference a caller sees
+    // is the type of the handle and the width of what sample() takes. The
+    // GPU::Texture bound at the slot has to have been created with
+    // TextureDescriptor::cube.
     TextureCube cubeTexture(TextureSampling sampling = {});
 
-    /// The depth buffer of a render target, sampled at a Float2 coordinate for
-    /// the one float it holds. Slots come from the same counter as the two above;
-    /// what differs is the bind - RenderPass::setFragmentDepthTexture, given the
-    /// target rather than a texture - and that sample() gives back a Float.
-    ///
-    /// The target has to have been created with
-    /// TextureDescriptor::sampleableDepth, and the pass that wrote the depth has
-    /// to have ended and kept it. See TextureDepth2D.
+    // The depth buffer of a render target, sampled at a Float2 coordinate for
+    // the one float it holds. Slots come from the same counter as the two above;
+    // what differs is the bind - RenderPass::setFragmentDepthTexture, given the
+    // target rather than a texture - and that sample() gives back a Float.
+    //
+    // The target has to have been created with
+    // TextureDescriptor::sampleableDepth, and the pass that wrote the depth has
+    // to have ended and kept it. See TextureDepth2D.
     TextureDepth2D depthTexture(TextureSampling sampling = {});
 
-    /// A TwoDArray texture, and the whole depth plane of a TwoDArray target -
-    /// sampled with a layer beside the coordinate, bound with setFragmentTexture
-    /// and setFragmentDepthTexture. A sampling with TextureCompare::LessEqual
-    /// makes either depth form a shadow map, read with sampleCompare().
+    // A TwoDArray texture, and the whole depth plane of a TwoDArray target -
+    // sampled with a layer beside the coordinate, bound with setFragmentTexture
+    // and setFragmentDepthTexture. A sampling with TextureCompare::LessEqual
+    // makes either depth form a shadow map, read with sampleCompare().
     Texture2DArray textureArray(TextureSampling sampling = {});
     TextureDepth2DArray depthTextureArray(TextureSampling sampling = {});
 
-    /// The fragment's window position: x and y in pixels from the top left of
-    /// the target, y down, at pixel centres (.5), z its depth and w 1 / clip w -
-    /// the same four numbers on every backend. Fragment stage only.
+    // The fragment's window position: x and y in pixels from the top left of
+    // the target, y down, at pixel centres (.5), z its depth and w 1 / clip w -
+    // the same four numbers on every backend. Fragment stage only.
     Float4 fragmentCoordinate();
 
-    /// Which vertex and which instance of the draw the vertex stage is running.
-    /// Vertex stage only; carry one across with varying() for the fragment
-    /// stage. See the GPU README for what firstVertex, baseVertex and
-    /// firstInstance add on each backend.
+    // Which vertex and which instance of the draw the vertex stage is running.
+    // Vertex stage only; carry one across with varying() for the fragment
+    // stage. See the GPU README for what firstVertex, baseVertex and
+    // firstInstance add on each backend.
     UInt vertexId();
     UInt instanceId();
 
-    /// Compute kernel authoring. Declaring buffers assigns slots in call order
-    /// (inputs and outputs share one slot space, matching Metal's flat buffer
-    /// indices); threadId() is the 1D work-item index; write() records a kernel
-    /// output, which is what marks the built shader as compute.
+    // Compute kernel authoring. Declaring buffers assigns slots in call order
+    // (inputs and outputs share one slot space, matching Metal's flat buffer
+    // indices); threadId() is the 1D work-item index; write() records a kernel
+    // output, which is what marks the built shader as compute.
     UInt threadId();
 
-    /// The 2D work item, for a kernel over a grid rather than a flat count -
-    /// which is what anything image-shaped is. Asking for this is what makes the
-    /// kernel a 2D one, and it is dispatched with ComputePass::dispatch(width,
-    /// height) accordingly; a kernel takes one work item, never two.
+    // The 2D work item, for a kernel over a grid rather than a flat count -
+    // which is what anything image-shaped is. Asking for this is what makes the
+    // kernel a 2D one, and it is dispatched with ComputePass::dispatch(width,
+    // height) accordingly; a kernel takes one work item, never two.
     ThreadPosition threadPosition();
 
-    /// The 3D work item, for a kernel over a volume. Asking for this fixes the
-    /// rank at 3D, and it is dispatched with ComputePass::dispatch(width,
-    /// height, depth).
+    // The 3D work item, for a kernel over a volume. Asking for this fixes the
+    // rank at 3D, and it is dispatched with ComputePass::dispatch(width,
+    // height, depth).
     ThreadPosition3 threadPosition3();
 
-    /// The same work item as one value rather than a struct of components: a
-    /// UInt2 over a grid, a UInt3 over a volume. Asking for one fixes the rank
-    /// as threadPosition() and threadPosition3() do, so either spelling of a
-    /// rank sits beside the other in one kernel.
+    // The same work item as one value rather than a struct of components: a
+    // UInt2 over a grid, a UInt3 over a volume. Asking for one fixes the rank
+    // as threadPosition() and threadPosition3() do, so either spelling of a
+    // rank sits beside the other in one kernel.
     UInt2 threadId2();
     UInt3 threadId3();
 
-    /// Where a thread sits inside its threadgroup, and which group it belongs
-    /// to - the pair every shared-memory algorithm indexes with: the local id
-    /// subscripts the shared tile, the group id decides which slice of the
-    /// problem the group owns. 1D forms beside threadId(), 2D and 3D siblings
-    /// beside threadPosition() and threadPosition3(); asking for one fixes the
-    /// dispatch rank exactly as the global ids do.
+    // Where a thread sits inside its threadgroup, and which group it belongs
+    // to - the pair every shared-memory algorithm indexes with: the local id
+    // subscripts the shared tile, the group id decides which slice of the
+    // problem the group owns. 1D forms beside threadId(), 2D and 3D siblings
+    // beside threadPosition() and threadPosition3(); asking for one fixes the
+    // dispatch rank exactly as the global ids do.
     UInt localId();
 
     ThreadPosition localPosition();
@@ -198,52 +198,52 @@ public:
 
     ThreadPosition3 groupPosition3();
 
-    /// Their whole-vector forms, beside threadId2() and threadId3(): a group
-    /// origin and a lane offset that add and swizzle as one value.
+    // Their whole-vector forms, beside threadId2() and threadId3(): a group
+    // origin and a lane offset that add and swizzle as one value.
     UInt2 localId2();
     UInt3 localId3();
     UInt2 groupId2();
     UInt3 groupId3();
 
-    /// The implicit grid bound the dispatch supplied, readable in the body: the
-    /// very value the generated guard tests. A kernel that barriers has no such
-    /// guard - see barrier() - so this is what it bounds its own stores with.
+    // The implicit grid bound the dispatch supplied, readable in the body: the
+    // very value the generated guard tests. A kernel that barriers has no such
+    // guard - see barrier() - so this is what it bounds its own stores with.
     UInt gridCount();
 
     UInt gridWidth();
 
     UInt gridHeight();
 
-    /// The third extent, which only a 3D kernel has. gridWidth() and
-    /// gridHeight() serve a 3D kernel as they do a 2D one.
+    // The third extent, which only a 3D kernel has. gridWidth() and
+    // gridHeight() serve a 3D kernel as they do a 2D one.
     UInt gridDepth();
 
-    /// The threadgroup the kernel is dispatched in. Left unset, the stock shape
-    /// for the kernel's rank is used.
+    // The threadgroup the kernel is dispatched in. Left unset, the stock shape
+    // for the kernel's rank is used.
     void setThreadGroupShape(ThreadGroupShape shape);
 
     ThreadGroupShape threadGroupShape() const;
 
-    /// A threadgroup-shared array of count elements, its size a compile-time
-    /// constant in the emitted kernel. Size it against threadGroupShape(), which
-    /// is what the group the dispatch runs really is.
+    // A threadgroup-shared array of count elements, its size a compile-time
+    // constant in the emitted kernel. Size it against threadGroupShape(), which
+    // is what the group the dispatch runs really is.
     template <typename T>
     Shared<T> shared(int count)
     {
         return {&graphData, graphData.addSharedArray(ValueTypeOf<T>::value, count)};
     }
 
-    /// The threadgroup barrier: every thread of the group arrives before any
-    /// continues, and shared elements written before it are visible after.
-    /// Recording one removes the kernel's early-return bounds guard - a
-    /// barrier below a return some threads took is undefined on both backends,
-    /// so every thread runs the whole body and the kernel bounds its own
-    /// stores instead, typically with ifThen(id < gridCount(), ...).
+    // The threadgroup barrier: every thread of the group arrives before any
+    // continues, and shared elements written before it are visible after.
+    // Recording one removes the kernel's early-return bounds guard - a
+    // barrier below a return some threads took is undefined on both backends,
+    // so every thread runs the whole body and the kernel bounds its own
+    // stores instead, typically with ifThen(id < gridCount(), ...).
     void barrier();
 
-    /// The whole group's fold of what every thread contributed, handed back to
-    /// every thread. It barriers, so - like barrier() itself - every thread of
-    /// the group has to reach it or none of them.
+    // The whole group's fold of what every thread contributed, handed back to
+    // every thread. It barriers, so - like barrier() itself - every thread of
+    // the group has to reach it or none of them.
     Float groupSum(const Float& value);
     Float groupMax(const Float& value);
     Float groupMin(const Float& value);
@@ -252,39 +252,39 @@ public:
     UInt groupMax(const UInt& value);
     UInt groupMin(const UInt& value);
 
-    /// The same three narrowed to one SIMD group. Every thread is handed the
-    /// fold of the simdWidth threads it shares a SIMD group with, so a group of
-    /// several SIMD groups leaves one of these holding several answers - one per
-    /// SIMD group - rather than one.
-    ///
-    /// On Metal that is a single instruction with no threadgroup memory and no
-    /// barrier, which is what a fold inside a per-tile loop wants. It is still
-    /// collective, and the backends with no wave intrinsic still reach it
-    /// through a scratch array between barriers, so the group rule holds: every
-    /// thread of the threadgroup reaches it or none does, and a kernel holding
-    /// one loses its bounds guard and bounds its own stores.
-    ///
-    /// **How many threads is a promise these three cannot keep on their own.**
-    /// The two emulated backends fold exactly simdWidth lanes, because that is
-    /// what the emitted tree walks. Metal folds the *hardware* SIMD group, since
-    /// that is what simd_sum is collective over - 32 on every Apple GPU, and
-    /// eight or sixteen on an Intel one, where the same call would fold a
-    /// quarter of what the arithmetic around it assumes. eacp requires the two
-    /// to agree and cannot check it until there is a pipeline, so
-    /// ComputeProgram::prepare compares the compiled kernel's
-    /// threadExecutionWidth against simdWidth and says so when they differ. A
-    /// kernel that wants to be right at any width wants groupSum/groupMax/
-    /// groupMin, which combine per-SIMD-group partials however many there were.
-    ///
-    /// **Uniform control flow, not just a uniform arrival.** Every thread of the
-    /// group must reach a fold *with the same branches taken*: loop(condition,
-    /// body) takes an ordinary per-thread Bool, so a fold inside a loop whose
-    /// condition some lanes leave earlier than others is divergent. The emulated
-    /// backends hang at the barrier inside the fold; Metal's intrinsic tolerates
-    /// it silently and folds only the lanes still running, which is worse -
-    /// correct-looking on the machine it was written on and a hang on the next
-    /// one. Hoist the condition to something uniform across the group, or bound
-    /// the loop by a uniform and guard the body's stores instead.
+    // The same three narrowed to one SIMD group. Every thread is handed the
+    // fold of the simdWidth threads it shares a SIMD group with, so a group of
+    // several SIMD groups leaves one of these holding several answers - one per
+    // SIMD group - rather than one.
+    //
+    // On Metal that is a single instruction with no threadgroup memory and no
+    // barrier, which is what a fold inside a per-tile loop wants. It is still
+    // collective, and the backends with no wave intrinsic still reach it
+    // through a scratch array between barriers, so the group rule holds: every
+    // thread of the threadgroup reaches it or none does, and a kernel holding
+    // one loses its bounds guard and bounds its own stores.
+    //
+    // **How many threads is a promise these three cannot keep on their own.**
+    // The two emulated backends fold exactly simdWidth lanes, because that is
+    // what the emitted tree walks. Metal folds the *hardware* SIMD group, since
+    // that is what simd_sum is collective over - 32 on every Apple GPU, and
+    // eight or sixteen on an Intel one, where the same call would fold a
+    // quarter of what the arithmetic around it assumes. eacp requires the two
+    // to agree and cannot check it until there is a pipeline, so
+    // ComputeProgram::prepare compares the compiled kernel's
+    // threadExecutionWidth against simdWidth and says so when they differ. A
+    // kernel that wants to be right at any width wants groupSum/groupMax/
+    // groupMin, which combine per-SIMD-group partials however many there were.
+    //
+    // **Uniform control flow, not just a uniform arrival.** Every thread of the
+    // group must reach a fold *with the same branches taken*: loop(condition,
+    // body) takes an ordinary per-thread Bool, so a fold inside a loop whose
+    // condition some lanes leave earlier than others is divergent. The emulated
+    // backends hang at the barrier inside the fold; Metal's intrinsic tolerates
+    // it silently and folds only the lanes still running, which is worse -
+    // correct-looking on the machine it was written on and a hang on the next
+    // one. Hoist the condition to something uniform across the group, or bound
+    // the loop by a uniform and guard the body's stores instead.
     Float simdSum(const Float& value);
     Float simdMax(const Float& value);
     Float simdMin(const Float& value);
@@ -293,20 +293,20 @@ public:
     UInt simdMax(const UInt& value);
     UInt simdMin(const UInt& value);
 
-    /// Which SIMD group of the threadgroup this thread is in, which is what
-    /// places the block of the output that SIMD group owns. They are numbered
-    /// from the flat local index, so a group of simdGroupWidth * n threads holds
-    /// SIMD groups 0 to n - 1.
+    // Which SIMD group of the threadgroup this thread is in, which is what
+    // places the block of the output that SIMD group owns. They are numbered
+    // from the flat local index, so a group of simdGroupWidth * n threads holds
+    // SIMD groups 0 to n - 1.
     UInt simdGroupIndex();
 
-    /// An 8x8 fragment filled with one value - the zero an accumulator starts
-    /// from - or read from an 8x8 patch of a threadgroup tile or of a buffer.
-    /// Element (r, c) of the patch sits at offset + r * rowStride + c, and the
-    /// whole patch has to be inside the array: a fragment is loaded and stored
-    /// whole, and there is no per-element guard to put on one.
-    ///
-    /// Every thread of a SIMD group reaches these, and reaches them with the
-    /// same offset and the same stride. See SimdMatrix.
+    // An 8x8 fragment filled with one value - the zero an accumulator starts
+    // from - or read from an 8x8 patch of a threadgroup tile or of a buffer.
+    // Element (r, c) of the patch sits at offset + r * rowStride + c, and the
+    // whole patch has to be inside the array: a fragment is loaded and stored
+    // whole, and there is no per-element guard to put on one.
+    //
+    // Every thread of a SIMD group reaches these, and reaches them with the
+    // same offset and the same stride. See SimdMatrix.
     SimdMatrix simdMatrix(float fill = 0.f);
 
     SimdMatrix simdMatrix(const Shared<Float>& tile,
@@ -317,35 +317,35 @@ public:
                           const UInt& offset,
                           const UInt& rowStride);
 
-    /// An output is readable here as it is elementwise, which is what a product
-    /// accumulated across dispatches needs.
+    // An output is readable here as it is elementwise, which is what a product
+    // accumulated across dispatches needs.
     SimdMatrix simdMatrix(const OutputBuffer& buffer,
                           const UInt& offset,
                           const UInt& rowStride);
 
-    /// The same 8x8 patch out of a buffer whose elements are packed sixteen-bit
-    /// values rather than floats - the layout a checkpoint ships a weight in,
-    /// read here with no widening pass and no threadgroup tile to widen into.
-    ///
-    /// The offset and the row stride count in those sixteen-bit elements, which
-    /// is the convention InputBuffer::readHalf and readBFloat16 already set: a
-    /// row of a bf16 weight matrix has the row stride its columns say, not half
-    /// of it. The patch still has to be inside the buffer and still has to be
-    /// the same on every lane.
-    ///
-    /// The fragment these hand back is an operand of multiplyAccumulate and
-    /// nothing else - it cannot be an accumulator and cannot be written back.
-    ///
-    /// Both build on every backend. Where the hardware has the instruction the
-    /// patch is one load and the product is one more; where it does not, each
-    /// lane widens the pair it holds and the fragment is the float pair the
-    /// fallback always was. Ask Device::supportsHalfSimdMatrix or
-    /// supportsBFloat16SimdMatrix *before* recording one to decide whether that
-    /// is worth having, and where it is not, build the kernel that stages a tile
-    /// instead - which of the two shapes a kernel is has to be settled while it
-    /// is built rather than branched on at dispatch, because staging carries
-    /// barriers and this does not. See ComputeProgram::fitsPackedSimdMatrix,
-    /// which is the narrower question of whether this one builds at all.
+    // The same 8x8 patch out of a buffer whose elements are packed sixteen-bit
+    // values rather than floats - the layout a checkpoint ships a weight in,
+    // read here with no widening pass and no threadgroup tile to widen into.
+    //
+    // The offset and the row stride count in those sixteen-bit elements, which
+    // is the convention InputBuffer::readHalf and readBFloat16 already set: a
+    // row of a bf16 weight matrix has the row stride its columns say, not half
+    // of it. The patch still has to be inside the buffer and still has to be
+    // the same on every lane.
+    //
+    // The fragment these hand back is an operand of multiplyAccumulate and
+    // nothing else - it cannot be an accumulator and cannot be written back.
+    //
+    // Both build on every backend. Where the hardware has the instruction the
+    // patch is one load and the product is one more; where it does not, each
+    // lane widens the pair it holds and the fragment is the float pair the
+    // fallback always was. Ask Device::supportsHalfSimdMatrix or
+    // supportsBFloat16SimdMatrix *before* recording one to decide whether that
+    // is worth having, and where it is not, build the kernel that stages a tile
+    // instead - which of the two shapes a kernel is has to be settled while it
+    // is built rather than branched on at dispatch, because staging carries
+    // barriers and this does not. See ComputeProgram::fitsPackedSimdMatrix,
+    // which is the narrower question of whether this one builds at all.
     SimdMatrix simdMatrixHalf(const InputBuffer& buffer,
                               const UInt& offset,
                               const UInt& rowStride);
@@ -354,15 +354,15 @@ public:
                                   const UInt& offset,
                                   const UInt& rowStride);
 
-    /// accumulator += left * right over the 8x8 fragments: the whole reason the
-    /// type exists, and one instruction on Metal.
+    // accumulator += left * right over the 8x8 fragments: the whole reason the
+    // type exists, and one instruction on Metal.
     void multiplyAccumulate(const SimdMatrix& accumulator,
                             const SimdMatrix& left,
                             const SimdMatrix& right);
 
-    /// The fragment written back to an 8x8 patch, addressed the way the load
-    /// addresses one. Beside the element writes rather than named apart from
-    /// them: the extra argument already says which is meant.
+    // The fragment written back to an 8x8 patch, addressed the way the load
+    // addresses one. Beside the element writes rather than named apart from
+    // them: the extra argument already says which is meant.
     void write(const OutputBuffer& buffer,
                const UInt& offset,
                const UInt& rowStride,
@@ -377,106 +377,106 @@ public:
 
     OutputBuffer outputBuffer();
 
-    /// The integer pair, taking slots from the same counter and binding through
-    /// the same two calls: what changes is that a read yields a UInt and a write
-    /// takes one.
+    // The integer pair, taking slots from the same counter and binding through
+    // the same two calls: what changes is that a read yields a UInt and a write
+    // takes one.
     UIntInputBuffer uintInputBuffer();
 
     UIntOutputBuffer uintOutputBuffer();
 
-    /// A buffer of unsigned integers threads share. It takes a slot from the same
-    /// counter the others do, and binds exactly as an output does - what differs
-    /// is the element type, and that only the emitted declaration knows.
+    // A buffer of unsigned integers threads share. It takes a slot from the same
+    // counter the others do, and binds exactly as an output does - what differs
+    // is the element type, and that only the emitted declaration knows.
     AtomicBuffer atomicBuffer();
 
-    /// Adds to one element and yields what it held *before* - so every thread
-    /// that adds one to the same counter gets a different number back, which is
-    /// how a kernel hands out slots of a shared array without the threads
-    /// agreeing on anything first.
-    ///
-    /// Relaxed ordering: this says the read-modify-write cannot be interleaved,
-    /// and nothing about how other memory either side of it is ordered. That is
-    /// all a counter needs and all this offers; a kernel that needs the second
-    /// thing needs a barrier, not a stronger atomic.
+    // Adds to one element and yields what it held *before* - so every thread
+    // that adds one to the same counter gets a different number back, which is
+    // how a kernel hands out slots of a shared array without the threads
+    // agreeing on anything first.
+    //
+    // Relaxed ordering: this says the read-modify-write cannot be interleaved,
+    // and nothing about how other memory either side of it is ordered. That is
+    // all a counter needs and all this offers; a kernel that needs the second
+    // thing needs a barrier, not a stronger atomic.
     UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
 
-    /// Either argument as a literal, anchored on the buffer. Both are literals in
-    /// the commonest call there is - one thread taking one ticket from one shared
-    /// counter - so refusing them would make the plainest use the ugliest.
+    // Either argument as a literal, anchored on the buffer. Both are literals in
+    // the commonest call there is - one thread taking one ticket from one shared
+    // counter - so refusing them would make the plainest use the ugliest.
     UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value);
 
     UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value);
 
     UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value);
 
-    /// A texture a kernel writes. It takes a slot from the same counter
-    /// texture() does, so a kernel reading one texture and writing another
-    /// binds them at distinct indices.
+    // A texture a kernel writes. It takes a slot from the same counter
+    // texture() does, so a kernel reading one texture and writing another
+    // binds them at distinct indices.
     WritableTexture2D writableTexture();
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value);
 
-    /// The vector writes, laying a record of N floats down at index * N - the
-    /// layout InputBuffer::read2/3/4 reads back, and the one a CPU struct of N
-    /// floats already has. The index is in records rather than in floats, so a
-    /// kernel writing a struct of four never spells the stride itself.
-    ///
-    /// These lay the record down as N scalar stores; write2/write3/write4 below
-    /// lay the same bytes down as one. Both are here because the wide form is
-    /// not the trade it was once taken for: it reinterprets the address being
-    /// written rather than the binding - the same pointer cast read4 makes - so
-    /// an output written wide is still a run of floats and still bindable as a
-    /// per-instance vertex stream. These keep the callers that have them, and a
-    /// kernel bound by how fast it can issue stores reaches for the wide one.
+    // The vector writes, laying a record of N floats down at index * N - the
+    // layout InputBuffer::read2/3/4 reads back, and the one a CPU struct of N
+    // floats already has. The index is in records rather than in floats, so a
+    // kernel writing a struct of four never spells the stride itself.
+    //
+    // These lay the record down as N scalar stores; write2/write3/write4 below
+    // lay the same bytes down as one. Both are here because the wide form is
+    // not the trade it was once taken for: it reinterprets the address being
+    // written rather than the binding - the same pointer cast read4 makes - so
+    // an output written wide is still a run of floats and still bindable as a
+    // per-instance vertex stream. These keep the callers that have them, and a
+    // kernel bound by how fast it can issue stores reaches for the wide one.
     void write(const OutputBuffer& buffer, const UInt& index, const Float2& value);
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float3& value);
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float4& value);
 
-    /// The same record laid down as one store rather than as N. write4(out, i,
-    /// v) is elements 4i..4i+3, exactly the bytes InputBuffer::read4(i) reads
-    /// back, and on Metal it is one sixteen-byte instruction where the write()
-    /// above is four.
-    ///
-    /// Named rather than another write() overload because the value type cannot
-    /// tell the two apart: both take a Float4 at a record index and leave the
-    /// same thing in memory, so which store a kernel gets is something it has to
-    /// say rather than something to infer.
-    ///
-    /// The alignment contract is read4's, and for the same reason: the run is
-    /// written through a *packed* vector pointer, which wants four-byte
-    /// alignment and not sixteen, so any offset
-    /// Device::storageBufferOffsetAlignment allows a BufferRange to start at is
-    /// one these can write to. The index counts records, so the first element
-    /// written is index * N.
+    // The same record laid down as one store rather than as N. write4(out, i,
+    // v) is elements 4i..4i+3, exactly the bytes InputBuffer::read4(i) reads
+    // back, and on Metal it is one sixteen-byte instruction where the write()
+    // above is four.
+    //
+    // Named rather than another write() overload because the value type cannot
+    // tell the two apart: both take a Float4 at a record index and leave the
+    // same thing in memory, so which store a kernel gets is something it has to
+    // say rather than something to infer.
+    //
+    // The alignment contract is read4's, and for the same reason: the run is
+    // written through a *packed* vector pointer, which wants four-byte
+    // alignment and not sixteen, so any offset
+    // Device::storageBufferOffsetAlignment allows a BufferRange to start at is
+    // one these can write to. The index counts records, so the first element
+    // written is index * N.
     void write2(const OutputBuffer& buffer, const UInt& index, const Float2& value);
 
     void write3(const OutputBuffer& buffer, const UInt& index, const Float3& value);
 
     void write4(const OutputBuffer& buffer, const UInt& index, const Float4& value);
 
-    /// Two values narrowed to fp16 and stored in the single float slot that
-    /// holds them both - the store InputBuffer::readHalf2 reads back, and the
-    /// index is in those slots rather than in halves for the same reason.
-    ///
-    /// Named rather than another write() overload because the value type does
-    /// not say it: a Float2 already means two consecutive floats here, and this
-    /// means one.
+    // Two values narrowed to fp16 and stored in the single float slot that
+    // holds them both - the store InputBuffer::readHalf2 reads back, and the
+    // index is in those slots rather than in halves for the same reason.
+    //
+    // Named rather than another write() overload because the value type does
+    // not say it: a Float2 already means two consecutive floats here, and this
+    // means one.
     void writeHalf2(const OutputBuffer& buffer,
                     const UInt& index,
                     const Float2& value);
 
-    /// The same store for bf16, which InputBuffer::readBFloat16x2 reads back at
-    /// the same index.
+    // The same store for bf16, which InputBuffer::readBFloat16x2 reads back at
+    // the same index.
     void writeBFloat16x2(const OutputBuffer& buffer,
                          const UInt& index,
                          const Float2& value);
 
-    /// Four integers packed into the one float slot that holds them, which
-    /// InputBuffer::readInt8x4 and readUInt8x4 read back at the same index. The
-    /// value is an integer vector rather than a Float4 for the reason
-    /// packInt8x4 gives: the rounding is the caller's decision to make.
+    // Four integers packed into the one float slot that holds them, which
+    // InputBuffer::readInt8x4 and readUInt8x4 read back at the same index. The
+    // value is an integer vector rather than a Float4 for the reason
+    // packInt8x4 gives: the rounding is the caller's decision to make.
     void writeInt8x4(const OutputBuffer& buffer,
                      const UInt& index,
                      const Int4& value);
@@ -485,13 +485,13 @@ public:
                       const UInt& index,
                       const UInt4& value);
 
-    /// The wide packed stores, one per wide read: each packs its values into the
-    /// two or four words that hold them and lays those down through write2 or
-    /// write4, so the eight or sixteen bytes leave in one store wherever the
-    /// backend has one. The index counts records on exactly the terms the
-    /// matching read does - writeHalf4(out, i, v) is what readHalf4(i) reads
-    /// back - so a kernel that widens a row and narrows it again spells one
-    /// index.
+    // The wide packed stores, one per wide read: each packs its values into the
+    // two or four words that hold them and lays those down through write2 or
+    // write4, so the eight or sixteen bytes leave in one store wherever the
+    // backend has one. The index counts records on exactly the terms the
+    // matching read does - writeHalf4(out, i, v) is what readHalf4(i) reads
+    // back - so a kernel that widens a row and narrows it again spells one
+    // index.
     void writeHalf4(const OutputBuffer& buffer,
                     const UInt& index,
                     const Float4& value);
@@ -500,12 +500,12 @@ public:
                          const UInt& index,
                          const Float4& value);
 
-    /// The byte ones take their values as integer vectors rather than as a
-    /// Float4Pair or a Float4Quad, which is what the reads hand back: the pair
-    /// and the quad are what eight and sixteen *widened* values arrive as, and
-    /// the rounding back down is the caller's decision to make, exactly as it is
-    /// for writeInt8x4. The parameters carry the read's own names, so what goes
-    /// out in .low goes in as low.
+    // The byte ones take their values as integer vectors rather than as a
+    // Float4Pair or a Float4Quad, which is what the reads hand back: the pair
+    // and the quad are what eight and sixteen *widened* values arrive as, and
+    // the rounding back down is the caller's decision to make, exactly as it is
+    // for writeInt8x4. The parameters carry the read's own names, so what goes
+    // out in .low goes in as low.
     void writeInt8x8(const OutputBuffer& buffer,
                      const UInt& index,
                      const Int4& low,
@@ -530,8 +530,8 @@ public:
                        const UInt4& c,
                        const UInt4& d);
 
-    /// One element of an integer output, index or value spelled as a literal
-    /// where it is one.
+    // One element of an integer output, index or value spelled as a literal
+    // where it is one.
     void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt& value);
 
     void write(const UIntOutputBuffer& buffer, const UInt& index, unsigned value);
@@ -540,9 +540,9 @@ public:
 
     void write(const UIntOutputBuffer& buffer, unsigned index, unsigned value);
 
-    /// The record writes, laying N integers down at index * N - the layout
-    /// UIntInputBuffer::read2/3/4 reads back. The index is in records rather
-    /// than in elements, on the terms the float ones set.
+    // The record writes, laying N integers down at index * N - the layout
+    // UIntInputBuffer::read2/3/4 reads back. The index is in records rather
+    // than in elements, on the terms the float ones set.
     void
         write(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value);
 
@@ -552,10 +552,10 @@ public:
     void
         write(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value);
 
-    /// The same records laid down as one store, pairing with
-    /// UIntInputBuffer::read2/3/4 the way the float ones pair with InputBuffer's:
-    /// a packed_uintN pointer on Metal, the N subscripts on the other two, and
-    /// the same four-byte alignment a ranged bind already guarantees.
+    // The same records laid down as one store, pairing with
+    // UIntInputBuffer::read2/3/4 the way the float ones pair with InputBuffer's:
+    // a packed_uintN pointer on Metal, the N subscripts on the other two, and
+    // the same four-byte alignment a ranged bind already guarantees.
     void write2(const UIntOutputBuffer& buffer,
                 const UInt& index,
                 const UInt2& value);
@@ -568,14 +568,14 @@ public:
                 const UInt& index,
                 const UInt4& value);
 
-    /// One element of an atomic buffer, set outright rather than added to. It
-    /// completes the trio - add, load, store - and it is what a kernel computing
-    /// a *dispatch size* needs: the threadgroup count an indirect dispatch reads
-    /// is a number arrived at, not a number accumulated.
-    ///
-    /// Ordinary Store underneath, because the buffer's own access is what decides
-    /// how it spells: only Metal needs anything, its atomic_uint having to be
-    /// stored through rather than assigned.
+    // One element of an atomic buffer, set outright rather than added to. It
+    // completes the trio - add, load, store - and it is what a kernel computing
+    // a *dispatch size* needs: the threadgroup count an indirect dispatch reads
+    // is a number arrived at, not a number accumulated.
+    //
+    // Ordinary Store underneath, because the buffer's own access is what decides
+    // how it spells: only Metal needs anything, its atomic_uint having to be
+    // stored through rather than assigned.
     void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
 
     void write(const AtomicBuffer& buffer, const UInt& index, unsigned value);
@@ -584,58 +584,58 @@ public:
 
     void write(const AtomicBuffer& buffer, unsigned index, unsigned value);
 
-    /// One element of a threadgroup-shared array. A single wide store whatever
-    /// the element type - the array never crosses the CPU boundary, so there
-    /// is no layout contract to keep and nothing to decompose.
+    // One element of a threadgroup-shared array. A single wide store whatever
+    // the element type - the array never crosses the CPU boundary, so there
+    // is no layout contract to keep and nothing to decompose.
     template <typename T>
     void write(const Shared<T>& array, const UInt& index, const T& value)
     {
         graphData.addSharedStore(array.slot, index.node, value.node);
     }
 
-    /// One texel of a kernel's output image. The coordinates are the pair a 2D
-    /// kernel already has in hand from threadPosition(), and the colour is the
-    /// four channels both backends store in one go.
+    // One texel of a kernel's output image. The coordinates are the pair a 2D
+    // kernel already has in hand from threadPosition(), and the colour is the
+    // four channels both backends store in one go.
     void write(const WritableTexture2D& texture,
                const UInt& x,
                const UInt& y,
                const Float4& color);
 
-    /// Non-templated siblings of vertexInput()/uniform() keyed on a runtime
-    /// ValueType. The reflection-driven ShaderProgram visitor walks erased member
-    /// handles, so it needs to add a slot from a ValueType it carries rather than a
-    /// compile-time T. The returned handle is adopted by the declaring member.
+    // Non-templated siblings of vertexInput()/uniform() keyed on a runtime
+    // ValueType. The reflection-driven ShaderProgram visitor walks erased member
+    // handles, so it needs to add a slot from a ValueType it carries rather than a
+    // compile-time T. The returned handle is adopted by the declaring member.
     detail::ValueHandle addVertexInput(ValueType type);
 
-    /// Per-instance sibling of addVertexInput, keyed on a runtime ValueType for
-    /// the reflection-driven ShaderProgram path. Routes the input to the given
-    /// buffer slot with PerInstance step rate (see the templated instanceInput).
+    // Per-instance sibling of addVertexInput, keyed on a runtime ValueType for
+    // the reflection-driven ShaderProgram path. Routes the input to the given
+    // buffer slot with PerInstance step rate (see the templated instanceInput).
     detail::ValueHandle addInstanceInput(ValueType type, int bufferIndex);
 
     detail::ValueHandle addUniform(ValueType type);
 
-    /// A scalar literal usable in expressions (e.g. an ambient term).
+    // A scalar literal usable in expressions (e.g. an ambient term).
     Float constant(float value);
 
-    /// Its boolean sibling, for a flag a shader sets and later tests. Spelled
-    /// apart from constant() rather than overloaded on it: an integer literal
-    /// converts to both float and bool, so one name would make constant(1)
-    /// ambiguous.
+    // Its boolean sibling, for a flag a shader sets and later tests. Spelled
+    // apart from constant() rather than overloaded on it: an integer literal
+    // converts to both float and bool, so one name would make constant(1)
+    // ambiguous.
     Bool boolean(bool value);
 
-    /// And its integer one, for an index a shader starts from. Spelled apart for
-    /// the same reason: constant(1) would otherwise be ambiguous.
+    // And its integer one, for an index a shader starts from. Spelled apart for
+    // the same reason: constant(1) would otherwise be ambiguous.
     Int integer(int value);
 
-    /// And its unsigned one, for the index or the mask a kernel starts from -
-    /// and for the handle a wholly literal uint2/3/4 needs to anchor its graph.
+    // And its unsigned one, for the index or the mask a kernel starts from -
+    // and for the handle a wholly literal uint2/3/4 needs to anchor its graph.
     UInt unsignedInteger(unsigned value);
 
-    /// A constant array, its size taken from the pack. Every element is an
-    /// ordinary value - a literal vector, or something built from a uniform -
-    /// and all of them are evaluated once at the top of the shader body, which
-    /// is why a mutable local cannot be one. See ConstantArray for what a
-    /// subscript of one costs and what bounds it.
+    // A constant array, its size taken from the pack. Every element is an
+    // ordinary value - a literal vector, or something built from a uniform -
+    // and all of them are evaluated once at the top of the shader body, which
+    // is why a mutable local cannot be one. See ConstantArray for what a
+    // subscript of one costs and what bounds it.
     template <ShaderHandleLike T, SameShaderHandle<T>... Rest>
     ConstantArray<ShaderHandle<T>, 1 + (int) sizeof...(Rest)>
         array(const T& first, const Rest&... rest)
@@ -649,16 +649,16 @@ public:
                                    std::move(elements))};
     }
 
-    /// A mutable local, initialised from a value or from a literal. This is what
-    /// makes a loop worth having: something the body can write that the code
-    /// after it reads. Its type follows the initialiser.
-    ///
-    /// Control flow is a fragment-stage (or kernel) facility, like sampling: the
-    /// statements a shader records are emitted into the fragment function, so a
-    /// variable must not feed the position expression or a varying.
-    /// Constrained on the handle rather than on the float vocabulary, so the
-    /// flag a shader sets and later tests and the cell it walks a grid with are
-    /// variables on the same terms a colour is.
+    // A mutable local, initialised from a value or from a literal. This is what
+    // makes a loop worth having: something the body can write that the code
+    // after it reads. Its type follows the initialiser.
+    //
+    // Control flow is a fragment-stage (or kernel) facility, like sampling: the
+    // statements a shader records are emitted into the fragment function, so a
+    // variable must not feed the position expression or a varying.
+    // Constrained on the handle rather than on the float vocabulary, so the
+    // flag a shader sets and later tests and the cell it walks a grid with are
+    // variables on the same terms a colour is.
     template <ShaderHandleLike T>
     Var<ShaderHandle<T>> var(const T& initialValue)
     {
@@ -675,10 +675,10 @@ public:
 
     Var<UInt> var(unsigned initialValue);
 
-    /// A matrix is a mutable local on the same terms - the orientation a shader
-    /// builds up over several steps before it goes through it - and it needs an
-    /// overload of its own for the reason it needs one everywhere here: it is
-    /// outside all three handle families, none of whose operators it has.
+    // A matrix is a mutable local on the same terms - the orientation a shader
+    // builds up over several steps before it goes through it - and it needs an
+    // overload of its own for the reason it needs one everywhere here: it is
+    // outside all three handle families, none of whose operators it has.
     template <typename T>
         requires(isMatrix(ValueTypeOf<T>::value))
     Var<T> var(const T& initialValue)
@@ -686,9 +686,9 @@ public:
         return {graphData, ValueTypeOf<T>::value, initialValue.node};
     }
 
-    /// The statements. Each body is a callable recording into a block of its
-    /// own, so what it declares is scoped to it in the emitted source exactly as
-    /// it is in the C++ lambda that wrote it.
+    // The statements. Each body is a callable recording into a block of its
+    // own, so what it declares is scoped to it in the emitted source exactly as
+    // it is in the C++ lambda that wrote it.
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)
     {
@@ -713,11 +713,11 @@ public:
         graphData.addIf(condition.node, thenBlock, elseBlock);
     }
 
-    /// The condition is a value built before the loop, and it is still re-tested
-    /// every iteration: what the emitter writes into the while header is the
-    /// expression, printed in place, not a name bound to it beforehand. That is
-    /// why a condition never becomes one of the emitter's shared locals - a loop
-    /// testing a value computed once before it started would never end.
+    // The condition is a value built before the loop, and it is still re-tested
+    // every iteration: what the emitter writes into the while header is the
+    // expression, printed in place, not a name bound to it beforehand. That is
+    // why a condition never becomes one of the emitter's shared locals - a loop
+    // testing a value computed once before it started would never end.
     template <typename Body>
     void loop(const Bool& condition, Body&& body)
     {

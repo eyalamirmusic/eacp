@@ -5,9 +5,9 @@
 
 namespace eacp::ML
 {
-/// Where Core ML placed each op of a loaded model, read back through
-/// MLComputePlan (macOS 14.4 / iOS 17.4, ML::hasComputePlan()). Constants are
-/// left out: they run nowhere.
+// Where Core ML placed each op of a loaded model, read back through
+// MLComputePlan (macOS 14.4 / iOS 17.4, ML::hasComputePlan()). Constants are
+// left out: they run nowhere.
 struct ComputePlan
 {
     enum class Device
@@ -20,17 +20,17 @@ struct ComputePlan
 
     struct Op
     {
-        /// The name of the op's first output, which is what a graph named it.
+        // The name of the op's first output, which is what a graph named it.
         std::string name;
 
-        /// The MIL operator: "linear", "softmax", ...
+        // The MIL operator: "linear", "softmax", ...
         std::string type;
 
         Device device = Device::unknown;
         Vector<Device> supported;
 
-        /// Core ML's relative estimate, the ops of one plan summing to about 1.
-        /// Negative when the plan gave none.
+        // Core ML's relative estimate, the ops of one plan summing to about 1.
+        // Negative when the plan gave none.
         double cost = -1.0;
     };
 

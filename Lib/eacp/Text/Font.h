@@ -9,9 +9,9 @@
 
 namespace eacp::Text
 {
-/// The four faces a code editor or terminal actually switches between mid-line.
-/// Deliberately not a general weight axis: the atlas keys on this, and a
-/// two-bit style keeps one glyph to one cache entry per face.
+// The four faces a code editor or terminal actually switches between mid-line.
+// Deliberately not a general weight axis: the atlas keys on this, and a
+// two-bit style keeps one glyph to one cache entry per face.
 enum class FontStyle : std::uint8_t
 {
     Regular = 0,
@@ -35,16 +35,16 @@ constexpr bool isItalic(FontStyle style)
     return (static_cast<std::uint8_t>(style) & 2) != 0;
 }
 
-/// What a family varies its faces by, on the axes CSS names: the weight on
-/// its 100 (thin) to 900 (black) scale, 400 regular and 700 bold, and the
-/// slant. The axis FontStyle folds to two bits, kept beside it rather than
-/// in it so a caller that has only ever wanted bold-or-not keeps its enum.
-///
-/// `synthesizeItalic` is what an italic asked of a family with no italic face
-/// gets: the upright face sheared by syntheticItalicAngle when true, as
-/// DirectWrite's oblique simulation and a browser's synthetic italic draw it,
-/// and the upright face as it is when false (CSS's `font-synthesis-style:
-/// none`). The shear moves no advance, so a line measures the same either way.
+// What a family varies its faces by, on the axes CSS names: the weight on
+// its 100 (thin) to 900 (black) scale, 400 regular and 700 bold, and the
+// slant. The axis FontStyle folds to two bits, kept beside it rather than
+// in it so a caller that has only ever wanted bold-or-not keeps its enum.
+//
+// `synthesizeItalic` is what an italic asked of a family with no italic face
+// gets: the upright face sheared by syntheticItalicAngle when true, as
+// DirectWrite's oblique simulation and a browser's synthetic italic draw it,
+// and the upright face as it is when false (CSS's `font-synthesis-style:
+// none`). The shear moves no advance, so a line measures the same either way.
 struct FontVariant
 {
     int weight = 400;
@@ -54,8 +54,8 @@ struct FontVariant
     bool operator==(const FontVariant&) const = default;
 };
 
-/// The lean of a synthetic italic, in degrees clockwise from upright: CSS's
-/// default oblique angle, the quarter-em-per-em shear browsers draw one at.
+// The lean of a synthetic italic, in degrees clockwise from upright: CSS's
+// default oblique angle, the quarter-em-per-em shear browsers draw one at.
 constexpr float syntheticItalicAngle = 14.f;
 
 constexpr bool wantsSyntheticItalic(const FontVariant& variant, bool faceIsItalic)
@@ -63,8 +63,8 @@ constexpr bool wantsSyntheticItalic(const FontVariant& variant, bool faceIsItali
     return variant.italic && variant.synthesizeItalic && !faceIsItalic;
 }
 
-/// An italic that may not be synthesized is a face of its own wherever faces
-/// are cached; upright, the flag changes nothing and keys nothing.
+// An italic that may not be synthesized is a face of its own wherever faces
+// are cached; upright, the flag changes nothing and keys nothing.
 constexpr bool withholdsSyntheticItalic(const FontVariant& variant)
 {
     return variant.italic && !variant.synthesizeItalic;
@@ -80,8 +80,8 @@ constexpr FontStyle styleOf(const FontVariant& variant)
     return toFontStyle(variant.weight >= 600, variant.italic);
 }
 
-/// The nearest of the nine CSS weights, so a face's own value keys the same
-/// way whichever of them it was asked for as.
+// The nearest of the nine CSS weights, so a face's own value keys the same
+// way whichever of them it was asked for as.
 constexpr int weightClass(int weight)
 {
     const auto clamped = weight < 100 ? 100 : weight > 900 ? 900 : weight;
@@ -89,17 +89,17 @@ constexpr int weightClass(int weight)
     return (clamped + 50) / 100 * 100;
 }
 
-/// One number per face a rasterizer builds for a variant.
+// One number per face a rasterizer builds for a variant.
 constexpr int faceKeyOf(const FontVariant& variant)
 {
     return weightClass(variant.weight) * 4 + (variant.italic ? 1 : 0)
            + (withholdsSyntheticItalic(variant) ? 2 : 0);
 }
 
-/// The platform's stock fixed-pitch face. No family name ships on all three
-/// systems, so asking for a literal one gets you a substitute on the others —
-/// a proportional substitute, which quietly loses the property most callers of a
-/// monospace family wanted in the first place.
+// The platform's stock fixed-pitch face. No family name ships on all three
+// systems, so asking for a literal one gets you a substitute on the others —
+// a proportional substitute, which quietly loses the property most callers of a
+// monospace family wanted in the first place.
 constexpr const char* defaultMonospaceFamily()
 {
     if constexpr (Platform::isWindows())
@@ -112,12 +112,12 @@ constexpr const char* defaultMonospaceFamily()
         return "Menlo";
 }
 
-/// What to rasterize with.
-///
-/// pointSize is in logical points and scale is device pixels per point, so the
-/// rasterizer works at pointSize * scale and everything the caller sees comes
-/// back in points. That split is why glyphs land 1:1 on a Retina panel instead
-/// of being magnified from a 1x bitmap.
+// What to rasterize with.
+//
+// pointSize is in logical points and scale is device pixels per point, so the
+// rasterizer works at pointSize * scale and everything the caller sees comes
+// back in points. That split is why glyphs land 1:1 on a Retina panel instead
+// of being magnified from a 1x bitmap.
 struct FontRequest
 {
     std::string family = defaultMonospaceFamily();
@@ -127,25 +127,25 @@ struct FontRequest
     constexpr float pixelSize() const { return pointSize * scale; }
 };
 
-/// A face named completely: the family and size a FontStyle cannot vary, and the
-/// style it can.
-///
-/// Distinct from FontRequest, which is what a *rasterizer* is built from and
-/// therefore carries the device scale. Nothing above the atlas rasterizes
-/// anything, so nothing above the atlas has to know the scale — a caller asks
-/// for 18pt Helvetica and gets 18 points on any display.
+// A face named completely: the family and size a FontStyle cannot vary, and the
+// style it can.
+//
+// Distinct from FontRequest, which is what a *rasterizer* is built from and
+// therefore carries the device scale. Nothing above the atlas rasterizes
+// anything, so nothing above the atlas has to know the scale — a caller asks
+// for 18pt Helvetica and gets 18 points on any display.
 struct Font
 {
     std::string family = defaultMonospaceFamily();
     float pointSize = 13.f;
     FontStyle style = FontStyle::Regular;
 
-    /// A weight on CSS's scale, 100 to 900, for a caller that has one. Zero
-    /// takes it from the style: 400, or 700 when the style is bold.
+    // A weight on CSS's scale, 100 to 900, for a caller that has one. Zero
+    // takes it from the style: 400, or 700 when the style is bold.
     int weight = 0;
 
-    /// Whether an italic the family has no face for is drawn sheared; see
-    /// FontVariant.
+    // Whether an italic the family has no face for is drawn sheared; see
+    // FontVariant.
     bool synthesizeItalic = true;
 
     constexpr FontVariant variant() const
@@ -156,11 +156,11 @@ struct Font
     }
 };
 
-/// How close two sizes have to be to share a face. Matched with a tolerance
-/// rather than exactly because two sizes a hundredth of a point apart rasterize
-/// to the same glyphs: a document scaled by a drag asks for a slightly different
-/// size every frame, and an exact match would give it a face and an atlas full
-/// of glyphs per frame of the drag.
+// How close two sizes have to be to share a face. Matched with a tolerance
+// rather than exactly because two sizes a hundredth of a point apart rasterize
+// to the same glyphs: a document scaled by a drag asks for a slightly different
+// size every frame, and an exact match would give it a face and an atlas full
+// of glyphs per frame of the drag.
 constexpr float faceSizeTolerance = 0.01f;
 
 constexpr bool sameFace(const Font& a, const Font& b)
@@ -170,16 +170,16 @@ constexpr bool sameFace(const Font& a, const Font& b)
                   < faceSizeTolerance * faceSizeTolerance;
 }
 
-/// Face metrics, in device pixels — the same space GlyphBitmap reports its
-/// bearings in. GlyphAtlas divides by the scale before handing anything out.
+// Face metrics, in device pixels — the same space GlyphBitmap reports its
+// bearings in. GlyphAtlas divides by the scale before handing anything out.
 struct FontMetrics
 {
     float ascent = 0.f;
     float descent = 0.f;
     float leading = 0.f;
 
-    /// The advance of 'M'. A monospace grid steps by this; a proportional face
-    /// reports it only as a reasonable column guess.
+    // The advance of 'M'. A monospace grid steps by this; a proportional face
+    // reports it only as a reasonable column guess.
     float advance = 0.f;
 
     constexpr float lineHeight() const { return ascent + descent + leading; }

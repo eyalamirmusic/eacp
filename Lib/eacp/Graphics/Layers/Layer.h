@@ -8,9 +8,9 @@ namespace eacp::Graphics
 {
 class View;
 
-/// A retained native layer (CALayer, DirectComposition visual) drawn above a
-/// view's paint(). Attaching does not transfer ownership. No subclass
-/// exists on Linux or Android.
+// A retained native layer (CALayer, DirectComposition visual) drawn above a
+// view's paint(). Attaching does not transfer ownership. No subclass
+// exists on Linux or Android.
 class Layer
 {
 public:
@@ -31,6 +31,7 @@ public:
     virtual void* getNativeLayer() = 0;
 
 private:
+
     View* parent = nullptr;
 };
 } // namespace eacp::Graphics

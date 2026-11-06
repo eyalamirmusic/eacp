@@ -14,10 +14,10 @@ concept FilesystemPathLike = requires(const T& path) {
     { path.generic_u8string() };
 };
 
-/// A filesystem path carried as UTF-8 text, so public headers never need
-/// `<filesystem>`. Deliberately minimal: it stores, joins and inspects text;
-/// everything that touches the filesystem converts at the boundary via
-/// StdPath.h.
+// A filesystem path carried as UTF-8 text, so public headers never need
+// `<filesystem>`. Deliberately minimal: it stores, joins and inspects text;
+// everything that touches the filesystem converts at the boundary via
+// StdPath.h.
 class FilePath
 {
 public:
@@ -26,12 +26,12 @@ public:
     FilePath(std::string_view textToUse);
     FilePath(const char* textToUse);
 
-    /// Accepts std::filesystem::path without this header naming it: the
-    /// template only instantiates at call sites that already include
-    /// `<filesystem>`. Not generic_u8string(), which throws on names that are
-    /// not valid UTF-16 (NTFS permits unpaired surrogates): this conversion
-    /// never throws, mapping invalid units to U+FFFD, and keeps non-ASCII
-    /// intact on Windows.
+    // Accepts std::filesystem::path without this header naming it: the
+    // template only instantiates at call sites that already include
+    // `<filesystem>`. Not generic_u8string(), which throws on names that are
+    // not valid UTF-16 (NTFS permits unpaired surrogates): this conversion
+    // never throws, mapping invalid units to U+FFFD, and keeps non-ASCII
+    // intact on Windows.
     template <FilesystemPathLike P>
     FilePath(const P& path)
     {
@@ -43,9 +43,9 @@ public:
             assignFromWide({native.data(), native.size()});
     }
 
-    /// Well-known user directories, resolved through the native platform API
-    /// (NSSearchPathForDirectoriesInDomains, SHGetKnownFolderPath, the XDG
-    /// user dirs on Linux). Empty when the platform can't resolve them.
+    // Well-known user directories, resolved through the native platform API
+    // (NSSearchPathForDirectoriesInDomains, SHGetKnownFolderPath, the XDG
+    // user dirs on Linux). Empty when the platform can't resolve them.
     static FilePath homeDirectory();
     static FilePath documentsDirectory();
     static FilePath downloadsDirectory();
@@ -55,22 +55,22 @@ public:
     static FilePath desktopDirectory();
     static FilePath tempDirectory();
 
-    /// The process's working directory. Empty when it cannot be read.
+    // The process's working directory. Empty when it cannot be read.
     static FilePath currentDirectory();
 
-    /// Per-user application data and cache roots: Application Support and
-    /// Caches on Apple platforms, Roaming and Local AppData on Windows, the
-    /// XDG data and cache homes on Linux, getFilesDir() and getCacheDir() on
-    /// Android.
+    // Per-user application data and cache roots: Application Support and
+    // Caches on Apple platforms, Roaming and Local AppData on Windows, the
+    // XDG data and cache homes on Linux, getFilesDir() and getCacheDir() on
+    // Android.
     static FilePath appDataDirectory();
     static FilePath cacheDirectory();
 
-    /// This app's own folder under those roots: `<root>/<Company>/<App>`, e.g.
-    /// ~/Library/Application Support/Acme/My App. The names come from the
-    /// embedded AppInfo (Platform::getAppName / getCompanyName); the company
-    /// level is left out when there is none, and an app with no AppInfo is
-    /// named after its executable. The explicit overloads take the names
-    /// instead, for a plugin that shares its host's folder or a test.
+    // This app's own folder under those roots: `<root>/<Company>/<App>`, e.g.
+    // ~/Library/Application Support/Acme/My App. The names come from the
+    // embedded AppInfo (Platform::getAppName / getCompanyName); the company
+    // level is left out when there is none, and an app with no AppInfo is
+    // named after its executable. The explicit overloads take the names
+    // instead, for a plugin that shares its host's folder or a test.
     static FilePath appSupportDirectory();
     static FilePath appCacheDirectory();
     static FilePath appSupportDirectory(std::string_view company,
@@ -78,105 +78,105 @@ public:
     static FilePath appCacheDirectory(std::string_view company,
                                       std::string_view app);
 
-    /// Machine-wide application data, shared by every user: /Library on Apple
-    /// platforms, ProgramData on Windows, /opt on Linux (JUCE's choice). Empty
-    /// on Android.
+    // Machine-wide application data, shared by every user: /Library on Apple
+    // platforms, ProgramData on Windows, /opt on Linux (JUCE's choice). Empty
+    // on Android.
     static FilePath commonAppDataDirectory();
 
-    /// Where applications are installed: /Applications on Apple platforms,
-    /// Program Files on Windows, /usr on Linux. Empty on Android.
+    // Where applications are installed: /Applications on Apple platforms,
+    // Program Files on Windows, /usr on Linux. Empty on Android.
     static FilePath applicationsDirectory();
 
-    /// The shared container of an Apple app group, for sandboxed apps and
-    /// plugins that share data. Empty when the group is unknown, the id is
-    /// empty, or the platform has no app groups.
+    // The shared container of an Apple app group, for sandboxed apps and
+    // plugins that share data. Empty when the group is unknown, the id is
+    // empty, or the platform has no app groups.
     static FilePath appGroupContainerDirectory(std::string_view groupID);
 
-    /// Builds a path from a native wide string — a Win32 out-parameter, a
-    /// GetModuleFileNameW buffer. Converts to UTF-8 and normalizes '\' to '/',
-    /// the same treatment the std::filesystem::path constructor above gets.
+    // Builds a path from a native wide string — a Win32 out-parameter, a
+    // GetModuleFileNameW buffer. Converts to UTF-8 and normalizes '\' to '/',
+    // the same treatment the std::filesystem::path constructor above gets.
     static FilePath fromWide(std::wstring_view wide);
 
-    /// Builds a path from UTF-8 text in the platform's own form — a string
-    /// nativeString() wrote out, one a user typed, one read from a settings
-    /// file. On Windows '\' becomes '/', so "C:\dir\file.wav" equals the
-    /// FilePath of "C:/dir/file.wav"; elsewhere '\' is an ordinary file name
-    /// character and the text is kept as-is, like the string constructors.
+    // Builds a path from UTF-8 text in the platform's own form — a string
+    // nativeString() wrote out, one a user typed, one read from a settings
+    // file. On Windows '\' becomes '/', so "C:\dir\file.wav" equals the
+    // FilePath of "C:/dir/file.wav"; elsewhere '\' is an ordinary file name
+    // character and the text is kept as-is, like the string constructors.
     static FilePath fromNative(std::string_view nativeText);
 
-    /// The text in eacp's own form: UTF-8 with '/' separators on every
-    /// platform, Windows included.
+    // The text in eacp's own form: UTF-8 with '/' separators on every
+    // platform, Windows included.
     const std::string& str() const;
     const char* c_str() const;
     bool empty() const;
 
-    /// The text the platform's own APIs and users expect, for display or for
-    /// storing where other software reads it: on Windows every '/' becomes '\',
-    /// so "C:/dir/file.wav" reads "C:\dir\file.wav", "//server/share" reads
-    /// "\\server\share" and a "//?/" long-path prefix reads "\\?\" again — the
-    /// inverse of what the wide constructors and fromWide do. Elsewhere it is
-    /// str(). fromNative() parses it back.
+    // The text the platform's own APIs and users expect, for display or for
+    // storing where other software reads it: on Windows every '/' becomes '\',
+    // so "C:/dir/file.wav" reads "C:\dir\file.wav", "//server/share" reads
+    // "\\server\share" and a "//?/" long-path prefix reads "\\?\" again — the
+    // inverse of what the wide constructors and fromWide do. Elsewhere it is
+    // str(). fromNative() parses it back.
     std::string nativeString() const;
 
-    /// nativeString() as a wide string, for native APIs and std::filesystem on
-    /// Windows, so a "\\?\" long path reaches CreateFileW intact. Never
-    /// throws: bytes that are not valid UTF-8 decode to U+FFFD.
+    // nativeString() as a wide string, for native APIs and std::filesystem on
+    // Windows, so a "\\?\" long path reaches CreateFileW intact. Never
+    // throws: bytes that are not valid UTF-8 decode to U+FFFD.
     std::wstring wide() const;
 
-    /// ".png" for "dir/image.png"; empty for dotfiles and extension-less
-    /// names, mirroring std::filesystem::path::extension().
+    // ".png" for "dir/image.png"; empty for dotfiles and extension-less
+    // names, mirroring std::filesystem::path::extension().
     std::string extension() const;
 
-    /// "dir/sub" for "dir/sub/image.png"; empty when there is no directory
-    /// part, mirroring std::filesystem::path::parent_path().
+    // "dir/sub" for "dir/sub/image.png"; empty when there is no directory
+    // part, mirroring std::filesystem::path::parent_path().
     FilePath parentDirectory() const;
 
-    /// "image.png" for "dir/image.png": everything after the last separator.
+    // "image.png" for "dir/image.png": everything after the last separator.
     std::string fileName() const;
 
-    /// The file name with only its last extension removed: "a.tar" for
-    /// "dir/a.tar.gz". A dotfile keeps its whole name.
+    // The file name with only its last extension removed: "a.tar" for
+    // "dir/a.tar.gz". A dotfile keeps its whole name.
     std::string stem() const;
 
-    /// Case-insensitive, with or without the leading dot, or several
-    /// alternatives separated by ';' ("wav; flac"). An empty argument asks
-    /// whether there is no extension at all.
+    // Case-insensitive, with or without the leading dot, or several
+    // alternatives separated by ';' ("wav; flac"). An empty argument asks
+    // whether there is no extension at all.
     bool hasExtension(std::string_view ext) const;
 
-    /// The same path with the last extension replaced by ext, given with or
-    /// without its dot. An empty ext strips the extension.
+    // The same path with the last extension replaced by ext, given with or
+    // without its dot. An empty ext strips the extension.
     FilePath withExtension(std::string_view ext) const;
 
-    /// A path beside this one: parentDirectory() / name.
+    // A path beside this one: parentDirectory() / name.
     FilePath sibling(std::string_view name) const;
 
-    /// The same path with suffix added to the end of the file name, so
-    /// "a/b.tar" with ".lock" is "a/b.tar.lock".
+    // The same path with suffix added to the end of the file name, so
+    // "a/b.tar" with ".lock" is "a/b.tar.lock".
     FilePath withSuffix(std::string_view suffix) const;
 
-    /// This path with "." and ".." resolved and repeated separators collapsed,
-    /// as std::filesystem::path::lexically_normal does. Pure text.
+    // This path with "." and ".." resolved and repeated separators collapsed,
+    // as std::filesystem::path::lexically_normal does. Pure text.
     FilePath lexicallyNormal() const;
 
-    /// This path written relative to base: "b/c" for "a/b/c" against "a",
-    /// "../d" for "a/d" against "a/b". Pure text, like
-    /// std::filesystem::path::lexically_relative; empty when no relative path
-    /// joins them, such as two different roots.
+    // This path written relative to base: "b/c" for "a/b/c" against "a",
+    // "../d" for "a/d" against "a/b". Pure text, like
+    // std::filesystem::path::lexically_relative; empty when no relative path
+    // joins them, such as two different roots.
     FilePath relativeTo(const FilePath& base) const;
 
-    /// Rooted at '/', or on Windows at a drive letter ("C:") or a UNC share.
+    // Rooted at '/', or on Windows at a drive letter ("C:") or a UNC share.
     bool isAbsolute() const;
 
     FilePath operator/(std::string_view part) const;
 
     bool operator==(const FilePath& other) const = default;
 
-    /// Files::readFile: the whole file, empty when it cannot be opened.
+    // Files::readFile: the whole file, empty when it cannot be opened.
     std::string read() const;
 
 private:
-    /// UTF-16 or UTF-32 (by wchar_t width) to UTF-8, with '\' normalized to
-    /// '/' and invalid units mapped to U+FFFD — never throws.
+    // UTF-16 or UTF-32 (by wchar_t width) to UTF-8, with '\' normalized to
+    // '/' and invalid units mapped to U+FFFD — never throws.
     void assignFromWide(std::wstring_view wide);
 
     std::string text;

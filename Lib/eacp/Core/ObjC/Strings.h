@@ -13,7 +13,7 @@ namespace eacp::Strings
 NSData* toNSData(const std::string& input);
 NSString* toNSString(const std::string& input);
 
-/// The error's localizedDescription; empty for nil.
+// The error's localizedDescription; empty for nil.
 std::string toStdString(NSError* error);
 std::string toStdString(NSData* data);
 std::string toStdString(NSString* string);

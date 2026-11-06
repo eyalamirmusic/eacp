@@ -33,8 +33,8 @@ constexpr bool allDistinct()
 }
 } // namespace Detail
 
-/// One reloadable function: type-erased, with its signature as this compiler
-/// spells it, which is how the app finds it and checks a rebuilt module.
+// One reloadable function: type-erased, with its signature as this compiler
+// spells it, which is how the app finds it and checks a rebuilt module.
 struct ReloadableEntry
 {
     using Erased = void (*)();
@@ -50,7 +50,7 @@ struct ReloadableEntry
     const char* signature = "";
 };
 
-/// What a hot-reload module's one entry point returns: every function it lists.
+// What a hot-reload module's one entry point returns: every function it lists.
 struct ReloadableTable
 {
     const ReloadableEntry* entries = nullptr;
@@ -97,10 +97,10 @@ inline constexpr auto reloadableTableSymbol =
     EACP_RELOADABLE_STRINGIZE(eacpReloadableTable);
 } // namespace eacp::Plugins
 
-/// Lists the functions a Plugins::Reloadable reloads, each of a distinct type.
-/// Used once per app, at global scope, after the functions (kept in an
-/// anonymous namespace). The table is a local static of this non-inline
-/// function, so the app's copy and the module's never merge.
+// Lists the functions a Plugins::Reloadable reloads, each of a distinct type.
+// Used once per app, at global scope, after the functions (kept in an
+// anonymous namespace). The table is a local static of this non-inline
+// function, so the app's copy and the module's never merge.
 #define EACP_RELOADABLE(...)                                                        \
     EACP_RELOADABLE_ENTRY_BEGIN                                                     \
     EACP_HOT_RELOAD_EXPORT eacp::Plugins::ReloadableTable eacpReloadableTable()     \

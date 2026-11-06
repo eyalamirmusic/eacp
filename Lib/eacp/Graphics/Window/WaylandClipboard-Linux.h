@@ -36,12 +36,12 @@ public:
 private:
     friend struct WaylandClipboardDispatch;
 
-    /// The seat can arrive after the connection, so the device is made on the
-    /// first call that needs one.
+    // The seat can arrive after the connection, so the device is made on the
+    // first call that needs one.
     bool ensureDevice();
 
-    /// The first of `mimes` the current selection offers, and null when it
-    /// offers none of them or there is no selection at all.
+    // The first of `mimes` the current selection offers, and null when it
+    // offers none of them or there is no selection at all.
     const std::string* pickMime(const Vector<std::string>& mimes) const;
 
     bool offerSelection(std::string data, const Vector<std::string>& mimes);
@@ -65,8 +65,8 @@ private:
 
     wl_data_source* source = nullptr;
 
-    /// Shared, because the thread that writes it may outlive the source: a
-    /// receiver that stopped reading is not allowed to hold up a copy.
+    // Shared, because the thread that writes it may outlive the source: a
+    // receiver that stopped reading is not allowed to hold up a copy.
     std::shared_ptr<const std::string> sourceData;
 };
 } // namespace eacp::Graphics

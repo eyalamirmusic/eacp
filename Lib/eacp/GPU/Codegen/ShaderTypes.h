@@ -7,22 +7,22 @@
 
 namespace eacp::GPU
 {
-/// The value types the shader EDSL understands. Inputs, varyings and expression
-/// results are all described with these, and they spell identically in MSL and
-/// HLSL ("float2" etc.), so the emitters share one type vocabulary. UInt exists
-/// for the compute thread id and the element count it is checked against; it is
-/// never a vertex attribute. Int is what indexes an array and what the operators
-/// no float has - %, the bitwise set and the shifts - are defined on; unlike UInt
-/// it is signed, which is what a coordinate truncated towards zero needs. Bool is
-/// what a comparison yields and what a branch or a select tests; like UInt it
-/// never crosses from the CPU.
-///
-/// UInt, Int and Bool have vectors of their own because a comparison of two
-/// vectors is componentwise in both languages - it yields a bool of the same
-/// width, which any() or all() then collapses - and because a shader working on a
-/// grid counts its cell as a pair of integers. An integer vector, signed or
-/// unsigned, crosses from the CPU like its scalar does; a boolean one does not,
-/// like the scalar does not.
+// The value types the shader EDSL understands. Inputs, varyings and expression
+// results are all described with these, and they spell identically in MSL and
+// HLSL ("float2" etc.), so the emitters share one type vocabulary. UInt exists
+// for the compute thread id and the element count it is checked against; it is
+// never a vertex attribute. Int is what indexes an array and what the operators
+// no float has - %, the bitwise set and the shifts - are defined on; unlike UInt
+// it is signed, which is what a coordinate truncated towards zero needs. Bool is
+// what a comparison yields and what a branch or a select tests; like UInt it
+// never crosses from the CPU.
+//
+// UInt, Int and Bool have vectors of their own because a comparison of two
+// vectors is componentwise in both languages - it yields a bool of the same
+// width, which any() or all() then collapses - and because a shader working on a
+// grid counts its cell as a pair of integers. An integer vector, signed or
+// unsigned, crosses from the CPU like its scalar does; a boolean one does not,
+// like the scalar does not.
 enum class ValueType
 {
     Float,
@@ -46,16 +46,16 @@ enum class ValueType
     Bool4
 };
 
-/// Whether a type is one of the square matrices. They share every rule that
-/// separates a matrix from a vector: built from columns, multiplied with mul()
-/// on HLSL, and transposed at construction there.
+// Whether a type is one of the square matrices. They share every rule that
+// separates a matrix from a vector: built from columns, multiplied with mul()
+// on HLSL, and transposed at construction there.
 constexpr bool isMatrix(ValueType type)
 {
     return type == ValueType::Float2x2 || type == ValueType::Float3x3
            || type == ValueType::Float4x4;
 }
 
-/// The width of a square matrix's columns, and the number of them.
+// The width of a square matrix's columns, and the number of them.
 constexpr int matrixOrder(ValueType type)
 {
     switch (type)
@@ -123,11 +123,11 @@ constexpr int componentCount(ValueType type)
     return 1;
 }
 
-/// Which of the three vocabularies outside float arithmetic a type belongs to -
-/// the unsigned integers, the signed ones, the booleans - each crossed into
-/// explicitly. Asked by the uniform block, which takes the two integer families
-/// and refuses the boolean one, and by the operator sets, which are defined per
-/// family.
+// Which of the three vocabularies outside float arithmetic a type belongs to -
+// the unsigned integers, the signed ones, the booleans - each crossed into
+// explicitly. Asked by the uniform block, which takes the two integer families
+// and refuses the boolean one, and by the operator sets, which are defined per
+// family.
 constexpr bool isUnsignedInteger(ValueType type)
 {
     return type == ValueType::UInt || type == ValueType::UInt2
@@ -146,9 +146,9 @@ constexpr bool isBoolean(ValueType type)
            || type == ValueType::Bool3 || type == ValueType::Bool4;
 }
 
-/// The mask a componentwise comparison of two of these yields: a boolean of the
-/// same width, whatever the operands were made of. Both shading languages give
-/// `<` on two vectors exactly this.
+// The mask a componentwise comparison of two of these yields: a boolean of the
+// same width, whatever the operands were made of. Both shading languages give
+// `<` on two vectors exactly this.
 constexpr ValueType maskFor(ValueType type)
 {
     switch (componentCount(type))
@@ -263,7 +263,7 @@ constexpr const char* glslTypeName(ValueType type)
     return "float";
 }
 
-/// A constructor-style cast is a call under the target's canonical type name.
+// A constructor-style cast is a call under the target's canonical type name.
 constexpr const char* glslTypeNameFor(std::string_view canonicalName)
 {
     for (auto raw = 0; raw <= static_cast<int>(ValueType::Bool4); ++raw)

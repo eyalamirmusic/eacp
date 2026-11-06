@@ -22,21 +22,21 @@ enum class ViewVisibility
     NotInVisibleWindow
 };
 
-/// Visible: drawn on screen. WindowNotVisible: the view's window is minimised,
-/// ordered out, covered or on a sleeping display, and says so when that ends.
-/// NotInVisibleWindow: no window, or the view is hidden, so no notification
-/// will announce the view coming back.
+// Visible: drawn on screen. WindowNotVisible: the view's window is minimised,
+// ordered out, covered or on a sleeping display, and says so when that ends.
+// NotInVisibleWindow: no window, or the view is hidden, so no notification
+// will announce the view coming back.
 ViewVisibility platformViewVisibility(GPUView& view);
 
 bool platformIsInLiveResize(GPUView& view);
 
-/// Calls `changed` on the main thread whenever any window's occlusion state
-/// changes. The returned token goes to platformStopObservingWindowVisibility.
+// Calls `changed` on the main thread whenever any window's occlusion state
+// changes. The returned token goes to platformStopObservingWindowVisibility.
 void* platformObserveWindowVisibility(const Callback& changed);
 void platformStopObservingWindowVisibility(void* token);
 
-/// The view's backing scale (device pixels per logical point). Read from the
-/// window/screen on macOS (NSWindow/NSScreen), from the UIView on iOS. Defined in
-/// GPUView-macOS.mm / GPUView-iOS.mm.
+// The view's backing scale (device pixels per logical point). Read from the
+// window/screen on macOS (NSWindow/NSScreen), from the UIView on iOS. Defined in
+// GPUView-macOS.mm / GPUView-iOS.mm.
 double platformBackingScale(GPUView& view);
 } // namespace eacp::GPU

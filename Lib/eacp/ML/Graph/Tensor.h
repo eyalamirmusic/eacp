@@ -17,9 +17,9 @@ enum class DType
 
 std::string toString(DType type);
 
-/// A tensor's dimensions, outermost first. A dimension is `unknown` where an
-/// input enumerates more than one size for it; reshape also takes `unknown` as
-/// the one dimension to infer, as MIL's reshape does.
+// A tensor's dimensions, outermost first. A dimension is `unknown` where an
+// input enumerates more than one size for it; reshape also takes `unknown` as
+// the one dimension to infer, as MIL's reshape does.
 struct Shape
 {
     static constexpr int unknown = -1;
@@ -42,9 +42,9 @@ struct Shape
     Vector<int> dims;
 };
 
-/// A value in a Graph: an index into it, meaningless in any other graph. A
-/// default-constructed Tensor is invalid, which is what every op returns
-/// after recording an error.
+// A value in a Graph: an index into it, meaningless in any other graph. A
+// default-constructed Tensor is invalid, which is what every op returns
+// after recording an error.
 struct Tensor
 {
     constexpr bool isValid() const { return id >= 0; }

@@ -20,13 +20,13 @@ class Timer;
 
 namespace eacp::Graphics
 {
-/// Seconds since an arbitrary origin, as MouseEvent::timestamp wants them; only
-/// differences are meaningful.
+// Seconds since an arbitrary origin, as MouseEvent::timestamp wants them; only
+// differences are meaningful.
 double linuxTimestamp(uint32_t milliseconds);
 
 MouseButton linuxButtonFromEvdev(uint32_t code);
 
-/// Most likely name first; a theme with none of them falls back to the arrow.
+// Most likely name first; a theme with none of them falls back to the arrow.
 std::span<const char* const> linuxCursorNames(MouseCursor::Shape cursor);
 
 class XkbKeyboardState
@@ -38,17 +38,17 @@ public:
     XkbKeyboardState(const XkbKeyboardState&) = delete;
     XkbKeyboardState& operator=(const XkbKeyboardState&) = delete;
 
-    /// For a server that hands its keymap over as an object rather than as
-    /// text, which is how X11 does it.
+    // For a server that hands its keymap over as an object rather than as
+    // text, which is how X11 does it.
     constexpr xkb_context* getContext() const { return context; }
 
-    /// Both take the keymap on: the previous one and the states made from it
-    /// are dropped. False leaves the last keymap in place.
+    // Both take the keymap on: the previous one and the states made from it
+    // are dropped. False leaves the last keymap in place.
     bool setKeymapFromText(const char* text);
     bool setKeymap(xkb_keymap* newKeymap);
 
-    /// The server's modifier state. The plain state follows the layout group
-    /// and nothing else, so it says what a key types with nothing held.
+    // The server's modifier state. The plain state follows the layout group
+    // and nothing else, so it says what a key types with nothing held.
     void setModifiers(uint32_t depressed,
                       uint32_t latched,
                       uint32_t locked,
@@ -78,8 +78,8 @@ private:
     Vector<uint32_t> pressedCodes;
 };
 
-/// A repeat is a delay and then a rate; Timer has one interval, so the delay is
-/// a callAfter. A generation counter stops a stale one starting a repeat.
+// A repeat is a delay and then a rate; Timer has one interval, so the delay is
+// a callAfter. A generation counter stops a stale one starting a repeat.
 class KeyRepeat
 {
 public:
@@ -89,13 +89,13 @@ public:
     KeyRepeat(const KeyRepeat&) = delete;
     KeyRepeat& operator=(const KeyRepeat&) = delete;
 
-    /// A rate of zero or less is a server that wants no repeats at all.
+    // A rate of zero or less is a server that wants no repeats at all.
     void setRate(int rateHz, Time::MS delay);
 
     void start(uint32_t evdevCode);
     void stop();
 
-    /// The key that was let go is only the repeating one some of the time.
+    // The key that was let go is only the repeating one some of the time.
     void stopFor(uint32_t evdevCode);
 
     std::function<void(uint32_t)> onRepeat = [](uint32_t) {};
@@ -109,15 +109,15 @@ private:
     std::unique_ptr<Pending> pending;
 };
 
-/// What no window system reports: the click count and the slop it allows, the
-/// button held down and where it went down.
+// What no window system reports: the click count and the slop it allows, the
+// button held down and where it went down.
 class PointerTracker
 {
 public:
     constexpr Point getPosition() const { return position; }
     constexpr void setPosition(Point newPosition) { position = newPosition; }
 
-    /// The click count this press earns.
+    // The click count this press earns.
     int pressed(MouseButton button, uint32_t timeMilliseconds);
     constexpr void released() { buttonHeld = false; }
 
@@ -139,11 +139,11 @@ private:
     Point lastClickPosition;
 };
 
-/// One frame's worth of scroll, however the server spelled it out.
+// One frame's worth of scroll, however the server spelled it out.
 class WheelTracker
 {
 public:
-    /// Both in MouseEvent::delta's orientation, not the server's.
+    // Both in MouseEvent::delta's orientation, not the server's.
     void addDelta(Point delta);
     void addNotches(Point notches);
 
@@ -155,10 +155,10 @@ public:
     constexpr bool isGesture() const { return gesture; }
     constexpr bool hasStopped() const { return stopped; }
 
-    /// Lines for a notched wheel, points for a trackpad.
+    // Lines for a notched wheel, points for a trackpad.
     Point getDelta() const;
 
-    /// Keeps the source, which is a property of the device and not of a frame.
+    // Keeps the source, which is a property of the device and not of a frame.
     void endFrame();
 
 private:
@@ -171,8 +171,8 @@ private:
     bool stopped = false;
 };
 
-/// The shape under the pointer, and whether a mouse lock has hidden it. Both
-/// setters are true when the backend must apply the cursor again.
+// The shape under the pointer, and whether a mouse lock has hidden it. Both
+// setters are true when the backend must apply the cursor again.
 class CursorTracker
 {
 public:

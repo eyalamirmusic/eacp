@@ -13,15 +13,15 @@ namespace eacp::UI
 {
 class Layer;
 
-/// The shadow a rounded box casts, in the terms it is authored in: the box
-/// that casts it, how far it falls, how far past that box it spreads, how wide
-/// its blur is, and whether it falls inside the box rather than behind it.
-///
-/// Never drawn over the box itself: CSS casts a shadow as though the box were
-/// opaque, so what shows through a translucent card is the page behind it and
-/// not its own shadow. Which is why the box is what is named here rather than
-/// the rectangle the shadow lands in -- the renderer needs both, and one of
-/// them is arithmetic on the other.
+// The shadow a rounded box casts, in the terms it is authored in: the box
+// that casts it, how far it falls, how far past that box it spreads, how wide
+// its blur is, and whether it falls inside the box rather than behind it.
+//
+// Never drawn over the box itself: CSS casts a shadow as though the box were
+// opaque, so what shows through a translucent card is the page behind it and
+// not its own shadow. Which is why the box is what is named here rather than
+// the rectangle the shadow lands in -- the renderer needs both, and one of
+// them is arithmetic on the other.
 struct ShadowShape
 {
     Rect box;
@@ -32,57 +32,57 @@ struct ShadowShape
     bool inset = false;
 };
 
-/// What one paint() produced: the primitives it issued, in the order it issued
-/// them, in the painting component's own points.
-///
-/// Recorded rather than drawn, so that a component whose drawing has not changed
-/// is replayed instead of being asked again. Only a component that called
-/// repaint() runs paint() again.
-///
-/// What that buys is not the primitives, which are cheap; it is everything a
-/// paint() does *around* them. A string is laid out glyph by glyph, a gradient is
-/// resolved against the ramp table, a widget works out its own colours and
-/// positions. None of it changes while the component does not, and all of it used
-/// to happen sixty times a second.
-///
-/// **Recorded in the component's own points**, which is what makes a move cheap:
-/// replay adds the component's origin as it goes, so a component that is dragged
-/// or scrolled replays the list it already has rather than painting again. The
-/// only things in here that are not local are the atlas coordinates -- a mask uv
-/// and a glyph's source rect -- and those move only when an atlas is rebuilt,
-/// which the host notices and answers by re-recording the tree.
-///
-/// The parameters rather than the finished instances, deliberately: building a
-/// ShapeInstance is ShapeBatch's business, and a second copy of that arithmetic
-/// living here is a second place for the antialiasing margin and the corner
-/// clamp to be got wrong.
+// What one paint() produced: the primitives it issued, in the order it issued
+// them, in the painting component's own points.
+//
+// Recorded rather than drawn, so that a component whose drawing has not changed
+// is replayed instead of being asked again. Only a component that called
+// repaint() runs paint() again.
+//
+// What that buys is not the primitives, which are cheap; it is everything a
+// paint() does *around* them. A string is laid out glyph by glyph, a gradient is
+// resolved against the ramp table, a widget works out its own colours and
+// positions. None of it changes while the component does not, and all of it used
+// to happen sixty times a second.
+//
+// **Recorded in the component's own points**, which is what makes a move cheap:
+// replay adds the component's origin as it goes, so a component that is dragged
+// or scrolled replays the list it already has rather than painting again. The
+// only things in here that are not local are the atlas coordinates -- a mask uv
+// and a glyph's source rect -- and those move only when an atlas is rebuilt,
+// which the host notices and answers by re-recording the tree.
+//
+// The parameters rather than the finished instances, deliberately: building a
+// ShapeInstance is ShapeBatch's business, and a second copy of that arithmetic
+// living here is a second place for the antialiasing margin and the corner
+// clamp to be got wrong.
 struct ShapeDraw
 {
     enum class Kind
     {
-        /// A rounded box. A radius of zero is a plain rectangle, which is the
-        /// same primitive and the same batch.
+        // A rounded box. A radius of zero is a plain rectangle, which is the
+        // same primitive and the same batch.
         Fill,
 
-        /// The same box's outline, drawn inside its edges.
+        // The same box's outline, drawn inside its edges.
         Border,
 
-        /// A line of any orientation, from `from` to `to`, with round caps.
+        // A line of any orientation, from `from` to `to`, with round caps.
         Line,
 
-        /// A box painted through a rect of the coverage atlas: what a vector path
-        /// draws as.
+        // A box painted through a rect of the coverage atlas: what a vector path
+        // draws as.
         Mask,
 
-        /// The shadow `rect` casts: a rounded box whose edge fades over
-        /// `blurRadius` each side of it, drawn everywhere but over the box
-        /// itself. See ShadowShape.
+        // The shadow `rect` casts: a rounded box whose edge fades over
+        // `blurRadius` each side of it, drawn everywhere but over the box
+        // itself. See ShadowShape.
         Shadow
     };
 
     Kind kind = Kind::Fill;
 
-    /// The box, for everything but a line.
+    // The box, for everything but a line.
     Rect rect;
 
     Point from;
@@ -93,25 +93,25 @@ struct ShapeDraw
     float cornerRadius = 0.f;
     float thickness = 0.f;
 
-    /// Where a shadow falls from the box that casts it, how far past that box
-    /// it spreads, how wide its blur is, and whether it falls inside the box
-    /// rather than behind it. For Kind::Shadow, whose `rect` is the box that
-    /// casts it -- see ShadowShape, which these are.
+    // Where a shadow falls from the box that casts it, how far past that box
+    // it spreads, how wide its blur is, and whether it falls inside the box
+    // rather than behind it. For Kind::Shadow, whose `rect` is the box that
+    // casts it -- see ShadowShape, which these are.
     Point shadowOffset;
     float spread = 0.f;
     float blurRadius = 0.f;
     bool inset = false;
 
-    /// Where in the coverage atlas this shape's own mask is, for Kind::Mask.
+    // Where in the coverage atlas this shape's own mask is, for Kind::Mask.
     Rect maskUV;
 
-    /// Already resolved against the ramp table, and expressed as a map from this
-    /// list's *own* space -- so replay composes the component's origin into it
-    /// rather than the recording having to know where the component sits.
+    // Already resolved against the ramp table, and expressed as a map from this
+    // list's *own* space -- so replay composes the component's origin into it
+    // rather than the recording having to know where the component sits.
     GradientFill gradient;
 };
 
-/// A run of glyphs one drawText produced, all in one colour.
+// A run of glyphs one drawText produced, all in one colour.
 struct GlyphRun
 {
     int first = 0;
@@ -119,68 +119,68 @@ struct GlyphRun
     Color colour;
 };
 
-/// A tessellated shape: the triangles, copied rather than pointed at, because a
-/// list outlives the frame it was recorded in and a shape that has since been
-/// re-tessellated would leave the pointer aimed at nothing.
+// A tessellated shape: the triangles, copied rather than pointed at, because a
+// list outlives the frame it was recorded in and a shape that has since been
+// re-tessellated would leave the pointer aimed at nothing.
 struct MeshDraw
 {
     Vector<GPUWidgets::MeshVertex> vertices;
 
-    /// Where the triangles sit in this list's space. They are authored in the
-    /// points of the component that owns the shape, so a paint() that translated
-    /// before filling has an offset to carry and the replay adds its own to it.
+    // Where the triangles sit in this list's space. They are authored in the
+    // points of the component that owns the shape, so a paint() that translated
+    // before filling has an offset to carry and the replay adds its own to it.
     Point offset;
 
-    /// The shape's own reach, for the clip to be elided against. The triangles
-    /// carry it too, but a bound the recording already knows is cheaper than one
-    /// the replay works out per frame.
+    // The shape's own reach, for the clip to be elided against. The triangles
+    // carry it too, but a bound the recording already knows is cheaper than one
+    // the replay works out per frame.
     Rect bounds;
 
     Color colour;
     GradientFill gradient;
 };
 
-/// A layer composited as one quad. The layer itself is pointed at, its texture
-/// and opacity being read at replay -- so an animated opacity re-records nothing.
+// A layer composited as one quad. The layer itself is pointed at, its texture
+// and opacity being read at replay -- so an animated opacity re-records nothing.
 struct LayerDraw
 {
     const Layer* layer = nullptr;
     Rect bounds;
 };
 
-/// An image drawn as one quad of its texture: which part of it, where, and how
-/// faded. The texture is shared with the recording rather than pointed at, which
-/// is what lets a list outlive the component that painted it -- see
-/// ImageTexture. A run of them sharing a texture is one instanced draw.
+// An image drawn as one quad of its texture: which part of it, where, and how
+// faded. The texture is shared with the recording rather than pointed at, which
+// is what lets a list outlive the component that painted it -- see
+// ImageTexture. A run of them sharing a texture is one instanced draw.
 struct ImageDraw
 {
     ImageRef image;
     Rect bounds;
 
-    /// The part of the image drawn, in normalised coordinates.
+    // The part of the image drawn, in normalised coordinates.
     Rect uv;
 
     float opacity = 1.f;
 
-    /// The rounded rect the picture is cut to, in the same space as `bounds`;
-    /// empty when nothing cuts it but the clip.
+    // The rounded rect the picture is cut to, in the same space as `bounds`;
+    // empty when nothing cuts it but the clip.
     RoundedRect corners;
 };
 
-/// The clip in force for everything issued after it, as an absolute state rather
-/// than a change: what a paint() narrowed the region to, and the mask it narrowed
-/// it with. Recorded whenever it differs from the last one recorded, which is the
-/// same laziness the renderers apply -- a paint() that saves and restores around
-/// a run costs two of these however much state the save carried.
+// The clip in force for everything issued after it, as an absolute state rather
+// than a change: what a paint() narrowed the region to, and the mask it narrowed
+// it with. Recorded whenever it differs from the last one recorded, which is the
+// same laziness the renderers apply -- a paint() that saves and restores around
+// a run costs two of these however much state the save carried.
 struct ClipDraw
 {
     Rect region;
     ClipMask mask;
 };
 
-/// One entry of the list: what kind of thing, and where its data is. Consecutive
-/// primitives of one kind share a command, so replaying a component is a walk
-/// over a handful of these rather than over its primitives.
+// One entry of the list: what kind of thing, and where its data is. Consecutive
+// primitives of one kind share a command, so replaying a component is a walk
+// over a handful of these rather than over its primitives.
 struct DrawCommand
 {
     enum class Kind
@@ -192,37 +192,37 @@ struct DrawCommand
         Images,
         Clip,
 
-        /// Everything after it draws over everything before it, text included.
-        /// See Graphics::paintOver.
+        // Everything after it draws over everything before it, text included.
+        // See Graphics::paintOver.
         Fence
     };
 
     Kind kind = Kind::Shapes;
 
-    /// A range into the matching vector for Shapes and Images; an index into it
-    /// for the rest, whose entries carry their own ranges.
+    // A range into the matching vector for Shapes and Images; an index into it
+    // for the rest, whose entries carry their own ranges.
     int first = 0;
     int count = 0;
 };
 
-/// The commands one component recorded, replayed by DrawPlayer each frame.
+// The commands one component recorded, replayed by DrawPlayer each frame.
 class DrawList
 {
 public:
-    /// Keeps the storage. A component re-recording its own drawing writes over
-    /// what was there, so a repaint every frame allocates nothing after the first
-    /// one -- which is the case that has to be cheap, an animation being exactly
-    /// that.
+    // Keeps the storage. A component re-recording its own drawing writes over
+    // what was there, so a repaint every frame allocates nothing after the first
+    // one -- which is the case that has to be cheap, an animation being exactly
+    // that.
     void clear();
 
     bool isEmpty() const;
 
     void addShape(const ShapeDraw& shape);
 
-    /// The glyphs go straight into the list's own storage, so a layout writes
-    /// where it will be replayed from rather than into a scratch buffer that is
-    /// then copied. The pair is one call in practice: take the size, lay out,
-    /// and close the run.
+    // The glyphs go straight into the list's own storage, so a layout writes
+    // where it will be replayed from rather than into a scratch buffer that is
+    // then copied. The pair is one call in practice: take the size, lay out,
+    // and close the run.
     Vector<Text::PlacedGlyph>& glyphStorage();
     void addGlyphRun(int first, const Color& colour);
 
@@ -249,10 +249,10 @@ public:
     const Vector<ClipDraw>& getClips() const;
 
 private:
-    /// Extends the last command when it is of `kind`, and starts one otherwise.
-    /// Which is what collapses a component's twenty rectangles into one command,
-    /// and what keeps a component that alternates rectangles and glyphs honest
-    /// about the order it drew them in.
+    // Extends the last command when it is of `kind`, and starts one otherwise.
+    // Which is what collapses a component's twenty rectangles into one command,
+    // and what keeps a component that alternates rectangles and glyphs honest
+    // about the order it drew them in.
     void append(DrawCommand::Kind kind, int first);
 
     Vector<DrawCommand> commands;

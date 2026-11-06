@@ -8,8 +8,8 @@
 
 namespace eacp::Graphics
 {
-/// Surfaceless, and so headless in everything but name, when no window could be
-/// made - the same window a lost connection leaves behind.
-std::unique_ptr<LinuxWindowNative> makeX11WindowNative(const WindowOptions& options,
-                                                       WindowEvents& events);
+// Surfaceless, and so headless in everything but name, when no window could be
+// made - the same window a lost connection leaves behind.
+std::unique_ptr<LinuxWindowNative>
+    makeX11WindowNative(const WindowOptions& options, WindowEvents& events);
 } // namespace eacp::Graphics

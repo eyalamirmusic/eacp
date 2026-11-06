@@ -15,10 +15,10 @@
 
 namespace eacp::GPU
 {
-/// A copy checked against both resources and reduced to numbers every backend
-/// records as they stand: no zero sizes left to resolve, nothing out of range.
-/// Built by the plan functions below, which trace and return nothing for a copy
-/// they refuse, so a backend never has to.
+// A copy checked against both resources and reduced to numbers every backend
+// records as they stand: no zero sizes left to resolve, nothing out of range.
+// Built by the plan functions below, which trace and return nothing for a copy
+// they refuse, so a backend never has to.
 struct TextureCopyPlan
 {
     const Texture* source = nullptr;
@@ -37,12 +37,12 @@ struct TextureCopyPlan
     int width = 0;
     int height = 0;
 
-    /// A volume's images: z on each side and how many. 0, 0 and 1 elsewhere.
+    // A volume's images: z on each side and how many. 0, 0 and 1 elsewhere.
     int sourceZ = 0;
     int destinationZ = 0;
     int depth = 1;
 
-    /// Consecutive slices from each side's, the same box of each.
+    // Consecutive slices from each side's, the same box of each.
     int sliceCount = 1;
 };
 
@@ -79,7 +79,7 @@ int textureSlices(const Texture& texture);
 int levelWidth(const Texture& texture, int level);
 int levelHeight(const Texture& texture, int level);
 
-/// The 2D images a level holds: its slices, or a volume's images at that level.
+// The 2D images a level holds: its slices, or a volume's images at that level.
 int levelSlices(const Texture& texture, int level);
 
 std::optional<TextureCopyPlan> planTextureCopy(const Texture& source,
@@ -95,10 +95,10 @@ std::optional<BufferCopyPlan> planBufferCopy(const Buffer& source,
                                              std::int64_t destinationOffset,
                                              std::int64_t bytes);
 
-/// Whether Frame::generateMipmaps has work to record for `texture`: true for a
-/// valid texture of more than one level in a format the device generates a
-/// chain for (Device::supportsMipGeneration). A single level is nothing to do,
-/// silently; anything else is refused with a trace.
+// Whether Frame::generateMipmaps has work to record for `texture`: true for a
+// valid texture of more than one level in a format the device generates a
+// chain for (Device::supportsMipGeneration). A single level is nothing to do,
+// silently; anything else is refused with a trace.
 bool planMipGeneration(const Texture& texture);
 
 std::optional<BufferTextureCopyPlan> planBufferTextureCopy(

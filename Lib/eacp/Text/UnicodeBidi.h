@@ -14,9 +14,9 @@ namespace eacp::Text
 // Bidi_Mirroring_Glyph from BidiMirroring.txt. All three are sorted, merged,
 // inclusive ranges searched by binary search, the shape UnicodeEmoji.h uses.
 
-/// The Bidi_Class property values, named as UAX #9 abbreviates them: the
-/// strong and weak types, the neutrals, and the explicit formatting characters
-/// - embeddings and overrides, which X9 removes, and isolates, which it keeps.
+// The Bidi_Class property values, named as UAX #9 abbreviates them: the
+// strong and weak types, the neutrals, and the explicit formatting characters
+// - embeddings and overrides, which X9 removes, and isolates, which it keeps.
 enum class BidiClass : std::uint8_t
 {
     L,
@@ -76,8 +76,8 @@ struct BracketPair
     BidiBracketType type;
 };
 
-/// Everything the table does not name is L, which is both the property's
-/// default and by far its commonest value, so only the rest is here.
+// Everything the table does not name is L, which is both the property's
+// default and by far its commonest value, so only the rest is here.
 inline constexpr ClassRange classRanges[] = {
     {0x0000, 0x0008, BN},     {0x0009, 0x0009, S},     {0x000A, 0x000A, B},
     {0x000B, 0x000B, S},      {0x000C, 0x000C, WS},    {0x000D, 0x000D, B},
@@ -489,14 +489,14 @@ inline constexpr BracketPair bracketPairs[] = {
 
 BidiClass bidiClassOf(char32_t codepoint);
 
-/// The Bidi_Mirroring_Glyph, or the codepoint itself where there is none,
-/// which is what rule L4 wants: it mirrors only what has a mirror.
+// The Bidi_Mirroring_Glyph, or the codepoint itself where there is none,
+// which is what rule L4 wants: it mirrors only what has a mirror.
 char32_t bidiMirroredGlyph(char32_t codepoint);
 
 const BidiTable::BracketPair* bidiBracketOf(char32_t codepoint);
 
-/// BD16 compares brackets under canonical equivalence, and the only pair that
-/// matters for is the angle brackets Unicode deprecated for the CJK ones.
+// BD16 compares brackets under canonical equivalence, and the only pair that
+// matters for is the angle brackets Unicode deprecated for the CJK ones.
 inline char32_t bidiCanonicalBracket(char32_t codepoint)
 {
     if (codepoint == 0x3008)

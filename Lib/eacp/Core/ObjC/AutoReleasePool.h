@@ -3,7 +3,7 @@
 
 namespace eacp::ObjC
 {
-/// Pushes a pool on construction and drains it on destruction; keep it on the stack.
+// Pushes a pool on construction and drains it on destruction; keep it on the stack.
 class AutoReleasePool
 {
 public:

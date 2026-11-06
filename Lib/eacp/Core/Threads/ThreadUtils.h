@@ -6,7 +6,7 @@
 
 namespace eacp::Threads
 {
-/// Asserts in debug builds when called off the main thread.
+// Asserts in debug builds when called off the main thread.
 void assertMainThread();
 bool isMainThread();
 

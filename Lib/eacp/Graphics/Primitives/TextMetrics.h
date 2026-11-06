@@ -7,8 +7,8 @@
 namespace eacp::Graphics
 {
 
-/// Static measurements in points, through Core Text on Apple and DirectWrite on
-/// Windows. Indices are byte offsets into the UTF-8 string.
+// Static measurements in points, through Core Text on Apple and DirectWrite on
+// Windows. Indices are byte offsets into the UTF-8 string.
 struct TextMetrics
 {
     static float measureWidth(const std::string& text, const Font& font);

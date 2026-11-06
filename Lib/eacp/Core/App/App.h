@@ -37,70 +37,70 @@ AppFactory& getAppFactory();
 
 void destroyApp();
 
-/// The value run<T>() returns once the loop has unwound — main()'s exit
-/// code. Defaults to 0 and resets on each run(). Safe to call from any
-/// thread; quit(returnValue) is the usual way to set it.
+// The value run<T>() returns once the loop has unwound — main()'s exit
+// code. Defaults to 0 and resets on each run(). Safe to call from any
+// thread; quit(returnValue) is the usual way to set it.
 void setReturnValue(int returnValue);
 int getReturnValue();
 
 void quit();
 
-/// Sets the return value and quits, so with
-/// `int main() { return Apps::run<App>(); }` the process exits with
-/// `returnValue`.
+// Sets the return value and quits, so with
+// `int main() { return Apps::run<App>(); }` the process exits with
+// `returnValue`.
 void quit(int returnValue);
 
-/// Destroys the current app instance and recreates it via run<T>()'s
-/// factory. Safe to call from any thread; returns immediately and the
-/// recreate happens on the next runloop tick.
+// Destroys the current app instance and recreates it via run<T>()'s
+// factory. Safe to call from any thread; returns immediately and the
+// recreate happens on the next runloop tick.
 void restart();
 
-/// Hands `url` to the OS for its registered handler (e.g. the default
-/// browser for http/https) — e.g. to run an OAuth login outside the
-/// in-app WebView. Linux spawns xdg-open. For a local file or folder, use
-/// Files::openWithSystem, which takes a path rather than a URL and reports
-/// whether the launch happened.
+// Hands `url` to the OS for its registered handler (e.g. the default
+// browser for http/https) — e.g. to run an OAuth login outside the
+// in-app WebView. Linux spawns xdg-open. For a local file or folder, use
+// Files::openWithSystem, which takes a path rather than a URL and reports
+// whether the launch happened.
 void openExternalURL(const std::string& url);
 
-/// Controls whether the app shows a Dock icon and appears in the app
-/// switcher. Pass false to run as a menu-bar / tray-only app — pair with
-/// a Graphics::TrayIcon so it stays reachable. Call early (e.g. from the
-/// app struct's constructor).
-///
-/// For a flicker-free accessory launch, also set LSUIElement in the
-/// bundle's Info.plist; this call then just confirms the policy at
-/// runtime. No-op on Windows, Linux and iOS.
+// Controls whether the app shows a Dock icon and appears in the app
+// switcher. Pass false to run as a menu-bar / tray-only app — pair with
+// a Graphics::TrayIcon so it stays reachable. Call early (e.g. from the
+// app struct's constructor).
+//
+// For a flicker-free accessory launch, also set LSUIElement in the
+// bundle's Info.plist; this call then just confirms the policy at
+// runtime. No-op on Windows, Linux and iOS.
 void setDockIconVisible(bool visible);
 
-/// The badge drawn on the app's Dock tile (macOS) or over its taskbar button
-/// (Windows) — an unread count, a short status. An empty string clears it.
-///
-/// macOS draws the text itself, in the system's badge shape. Windows has no
-/// text badge at all: the taskbar takes a small overlay *icon*, so the string
-/// is rendered into one at the system's small-icon size, which realistically
-/// fits two or three characters ("9", "12", "99+"). Keep it short either way —
-/// a badge that has to be read is not a badge.
-///
-/// Safe to call before any window exists on macOS. On Windows the overlay
-/// belongs to a window, so it is applied to the process's first top-level
-/// window and is a no-op until one is up; call it again once it is.
-///
-/// No-op on Linux and iOS.
+// The badge drawn on the app's Dock tile (macOS) or over its taskbar button
+// (Windows) — an unread count, a short status. An empty string clears it.
+//
+// macOS draws the text itself, in the system's badge shape. Windows has no
+// text badge at all: the taskbar takes a small overlay *icon*, so the string
+// is rendered into one at the system's small-icon size, which realistically
+// fits two or three characters ("9", "12", "99+"). Keep it short either way —
+// a badge that has to be read is not a badge.
+//
+// Safe to call before any window exists on macOS. On Windows the overlay
+// belongs to a window, so it is applied to the process's first top-level
+// window and is a no-op until one is up; call it again once it is.
+//
+// No-op on Linux and iOS.
 void setAppBadge(const std::string& text);
 
-/// macOS: called when the user reactivates the app (Dock icon click) while
-/// it has no visible windows — applicationShouldHandleReopen:. A window
-/// hidden via WindowOptions::hidesOnClose uses this to come back:
-/// setReopenHandler([&] { window.setVisible(true); }). Unset, reopen falls
-/// through to the system default. Never fires on other platforms.
+// macOS: called when the user reactivates the app (Dock icon click) while
+// it has no visible windows — applicationShouldHandleReopen:. A window
+// hidden via WindowOptions::hidesOnClose uses this to come back:
+// setReopenHandler([&] { window.setVisible(true); }). Unset, reopen falls
+// through to the system default. Never fires on other platforms.
 void setReopenHandler(const Callback& handler);
 
-/// Internal: the handler above, invoked by the platform's app delegate.
+// Internal: the handler above, invoked by the platform's app delegate.
 const Callback& getReopenHandler();
 
-/// iOS and Android: called on the main thread with true when the app goes to the
-/// background (on Android, paused or without its surface) and with false when it
-/// comes back; where to stop and restart audio. Never fires on other platforms.
+// iOS and Android: called on the main thread with true when the app goes to the
+// background (on Android, paused or without its surface) and with false when it
+// comes back; where to stop and restart audio. Never fires on other platforms.
 void setSuspendHandler(std::function<void(bool suspended)> handler);
 
 namespace Detail
@@ -109,41 +109,41 @@ namespace Detail
 void setSuspended(bool suspended);
 } // namespace Detail
 
-/// Called when something asks the app to quit on the user's behalf: Cmd+Q,
-/// the standard app menu's Quit, Dock ▸ Quit, a quit Apple Event. Return
-/// false to refuse, leaving the app running — which is how a tray-resident
-/// app answers Cmd+Q with "hide the window" instead of "exit". Unset, every
-/// request quits, as it always has.
-///
-/// quit() deliberately bypasses this and is the unconditional exit, so a
-/// tray menu's own "Quit" item must call quit() — a handler that refused
-/// everything would otherwise leave the app with no way out at all.
-///
-/// A logout / restart / shutdown is never put to the handler either: that is
-/// the system asking, not the user asking this app, and refusing it cancels
-/// the logout with macOS naming this app as the culprit. Everything else is,
-/// Dock ▸ Quit and a scripted `quit` included — they arrive as the same
-/// Apple Event a logout does, and only the power-off notification that
-/// precedes a real one tells them apart.
-///
-/// Only macOS asks: it is the platform with an OS-level quit request. Set it
-/// anywhere; elsewhere nothing calls it and a window's close button
-/// (WindowOptions::hidesOnClose, WindowEvents::onHidden) is the close path.
+// Called when something asks the app to quit on the user's behalf: Cmd+Q,
+// the standard app menu's Quit, Dock ▸ Quit, a quit Apple Event. Return
+// false to refuse, leaving the app running — which is how a tray-resident
+// app answers Cmd+Q with "hide the window" instead of "exit". Unset, every
+// request quits, as it always has.
+//
+// quit() deliberately bypasses this and is the unconditional exit, so a
+// tray menu's own "Quit" item must call quit() — a handler that refused
+// everything would otherwise leave the app with no way out at all.
+//
+// A logout / restart / shutdown is never put to the handler either: that is
+// the system asking, not the user asking this app, and refusing it cancels
+// the logout with macOS naming this app as the culprit. Everything else is,
+// Dock ▸ Quit and a scripted `quit` included — they arrive as the same
+// Apple Event a logout does, and only the power-off notification that
+// precedes a real one tells them apart.
+//
+// Only macOS asks: it is the platform with an OS-level quit request. Set it
+// anywhere; elsewhere nothing calls it and a window's close button
+// (WindowOptions::hidesOnClose, WindowEvents::onHidden) is the close path.
 void setQuitHandler(std::function<bool()> handler);
 
-/// Puts a quit request to the handler above and quits unless it refused.
-/// What the platforms' user-initiated quit paths call; app code that means
-/// "exit now" calls quit(). An app supplying its own NSApplicationDelegate
-/// should call this from applicationShouldTerminate: and reply
-/// NSTerminateCancel, which is all eacp's own delegate does — replacing the
-/// delegate otherwise drops the app off the loop-unwinding teardown path and
-/// lets Cocoa exit() out from under run<T>().
+// Puts a quit request to the handler above and quits unless it refused.
+// What the platforms' user-initiated quit paths call; app code that means
+// "exit now" calls quit(). An app supplying its own NSApplicationDelegate
+// should call this from applicationShouldTerminate: and reply
+// NSTerminateCancel, which is all eacp's own delegate does — replacing the
+// delegate otherwise drops the app off the loop-unwinding teardown path and
+// lets Cocoa exit() out from under run<T>().
 void requestQuit();
 
-/// True once the machine has announced a logout, restart or shutdown. The
-/// window between that announcement and the process going away, in which an
-/// app should be saving rather than asking questions. requestQuit() reads it
-/// so a refusing quit handler can't hold up a logout. Always false off macOS.
+// True once the machine has announced a logout, restart or shutdown. The
+// window between that announcement and the process going away, in which an
+// app should be saving rather than asking questions. requestQuit() reads it
+// so a refusing quit handler can't hold up a logout. Always false off macOS.
 bool isSystemPoweringOff();
 
 namespace Detail
@@ -153,19 +153,19 @@ namespace Detail
 void observeSystemPowerOff();
 } // namespace Detail
 
-/// True when this process's executable carries a distribution code signature:
-/// Developer ID or Apple-issued (App Store / system) on macOS, an embedded
-/// Authenticode signature on Windows, no development provisioning profile on
-/// iOS. Local builds — unsigned, linker ad-hoc signed, or Xcode
-/// development-signed — return false, so this doubles as a "running a released
-/// build?" check. Deliberately ignores certificate expiry and revocation: the
-/// answer must stay stable offline and over time, and a false negative would
-/// silently flip a released install into dev behaviour. Linux has no signing
-/// convention and returns false.
+// True when this process's executable carries a distribution code signature:
+// Developer ID or Apple-issued (App Store / system) on macOS, an embedded
+// Authenticode signature on Windows, no development provisioning profile on
+// iOS. Local builds — unsigned, linker ad-hoc signed, or Xcode
+// development-signed — return false, so this doubles as a "running a released
+// build?" check. Deliberately ignores certificate expiry and revocation: the
+// answer must stay stable offline and over time, and a false negative would
+// silently flip a released install into dev behaviour. Linux has no signing
+// convention and returns false.
 bool isDistributionSigned();
 
-/// `title` and `initialDirectory` are honoured on macOS (the panel's message
-/// and starting folder); the Windows dialog ignores them for now.
+// `title` and `initialDirectory` are honoured on macOS (the panel's message
+// and starting folder); the Windows dialog ignores them for now.
 struct FilePickerOptions
 {
     Vector<std::string> allowedExtensions;
@@ -173,14 +173,14 @@ struct FilePickerOptions
     std::string initialDirectory;
 };
 
-/// Shows the OS's native file chooser, blocking until the user picks a file
-/// or cancels. Returns the chosen absolute path, or std::nullopt on cancel.
-/// Must be called on the UI thread. Implemented on macOS and Windows; Linux
-/// returns std::nullopt for now.
+// Shows the OS's native file chooser, blocking until the user picks a file
+// or cancels. Returns the chosen absolute path, or std::nullopt on cancel.
+// Must be called on the UI thread. Implemented on macOS and Windows; Linux
+// returns std::nullopt for now.
 std::optional<std::string> chooseFile(const FilePickerOptions& options = {});
 
-/// The save panel's options: the same extension filter, plus the file name the
-/// panel opens with (the user is free to change it).
+// The save panel's options: the same extension filter, plus the file name the
+// panel opens with (the user is free to change it).
 struct FileSaveOptions
 {
     Vector<std::string> allowedExtensions;
@@ -189,37 +189,37 @@ struct FileSaveOptions
     std::string initialDirectory;
 };
 
-/// Shows the OS's native save panel, blocking until the user names a file or
-/// cancels. Returns the chosen absolute path — which need NOT exist yet, and
-/// whose overwrite the panel has already confirmed with the user — or
-/// std::nullopt on cancel. Writing the file is the caller's job. Must be called
-/// on the UI thread. Implemented on macOS and Windows; Linux returns
-/// std::nullopt for now.
+// Shows the OS's native save panel, blocking until the user names a file or
+// cancels. Returns the chosen absolute path — which need NOT exist yet, and
+// whose overwrite the panel has already confirmed with the user — or
+// std::nullopt on cancel. Writing the file is the caller's job. Must be called
+// on the UI thread. Implemented on macOS and Windows; Linux returns
+// std::nullopt for now.
 std::optional<std::string> chooseSaveFile(const FileSaveOptions& options = {});
 
-/// Shows the OS's native folder chooser, blocking until the user picks a
-/// directory or cancels. Returns the chosen absolute path, or std::nullopt
-/// on cancel. Must be called on the UI thread. Implemented on macOS and
-/// Windows; Linux returns std::nullopt for now.
+// Shows the OS's native folder chooser, blocking until the user picks a
+// directory or cancels. Returns the chosen absolute path, or std::nullopt
+// on cancel. Must be called on the UI thread. Implemented on macOS and
+// Windows; Linux returns std::nullopt for now.
 std::optional<std::string> chooseDirectory();
 
-/// The path picked, or std::nullopt on cancel.
+// The path picked, or std::nullopt on cancel.
 using FileChosenCallback = std::function<void(const std::optional<std::string>&)>;
 
-/// The choosers above without the block: each returns at once, and `onChosen`
-/// is called later on the UI thread, exactly once. What a plugin wants, since a
-/// modal loop inside a host's UI thread is the host's to run, not ours.
-///
-/// On macOS the panel runs modelessly (beginWithCompletionHandler), so the app
-/// and its host keep running while it is up. Elsewhere the blocking chooser is
-/// run from the event loop through Threads::callAsync -- still modal on
-/// Windows, and answering std::nullopt wherever the blocking one does (Linux,
-/// iOS, Android). Must be called on the UI thread.
+// The choosers above without the block: each returns at once, and `onChosen`
+// is called later on the UI thread, exactly once. What a plugin wants, since a
+// modal loop inside a host's UI thread is the host's to run, not ours.
+//
+// On macOS the panel runs modelessly (beginWithCompletionHandler), so the app
+// and its host keep running while it is up. Elsewhere the blocking chooser is
+// run from the event loop through Threads::callAsync -- still modal on
+// Windows, and answering std::nullopt wherever the blocking one does (Linux,
+// iOS, Android). Must be called on the UI thread.
 void chooseFileAsync(const FilePickerOptions& options, FileChosenCallback onChosen);
 void chooseSaveFileAsync(const FileSaveOptions& options,
                          FileChosenCallback onChosen);
 
-/// `allowedExtensions` is ignored: it is a folder being picked.
+// `allowedExtensions` is ignored: it is a folder being picked.
 void chooseDirectoryAsync(const FilePickerOptions& options,
                           FileChosenCallback onChosen);
 
@@ -231,9 +231,9 @@ void runChooserLater(std::function<std::optional<std::string>()> chooser,
                      FileChosenCallback onChosen);
 } // namespace Detail
 
-/// True when this copy's app was started by run<T>() from inside a dynamic
-/// library — it rides the host executable's loop instead of owning one, and
-/// its quit() stops that loop rather than its own (see Apps::quit).
+// True when this copy's app was started by run<T>() from inside a dynamic
+// library — it rides the host executable's loop instead of owning one, and
+// its quit() stops that loop rather than its own (see Apps::quit).
 bool isRunningAsPlugin();
 
 namespace Detail
@@ -256,9 +256,9 @@ AppFactory makeAppFactory(Args&&... args)
 }
 } // namespace Detail
 
-/// Runs T as the app: blocks on the main thread's event loop, constructs T on
-/// its first tick and destroys it after quit(), then returns getReturnValue().
-/// In a dynamic library it schedules T onto the host's loop and returns 0 at once.
+// Runs T as the app: blocks on the main thread's event loop, constructs T on
+// its first tick and destroys it after quit(), then returns getReturnValue().
+// In a dynamic library it schedules T onto the host's loop and returns 0 at once.
 template <typename T, typename... Args>
 int run(Args&&... args)
 {
@@ -286,9 +286,9 @@ int run(Args&&... args)
     return getReturnValue();
 }
 
-/// argc/argv overload — captures the command line (see commandLineArgs)
-/// before starting the loop, so main() is a one-liner:
-/// `return Apps::run<MyApp>(argc, argv);`.
+// argc/argv overload — captures the command line (see commandLineArgs)
+// before starting the loop, so main() is a one-liner:
+// `return Apps::run<MyApp>(argc, argv);`.
 template <typename T>
 int run(int argc, char* argv[])
 {
@@ -296,34 +296,33 @@ int run(int argc, char* argv[])
     return run<T>();
 }
 
-/// Function overload — runs `func` once on the first loop tick and quits when
-/// it returns, for app-shaped work with no app state to keep alive (a compute
-/// job, a test runner). The loop is fully bootstrapped while `func` runs, so
-/// timers fire and nested pumps (runEventLoopFor / runEventLoopUntil) work.
-/// Use run<T>() when state must outlive a single call (windows, tray icons).
+// Function overload — runs `func` once on the first loop tick and quits when
+// it returns, for app-shaped work with no app state to keep alive (a compute
+// job, a test runner). The loop is fully bootstrapped while `func` runs, so
+// timers fire and nested pumps (runEventLoopFor / runEventLoopUntil) work.
+// Use run<T>() when state must outlive a single call (windows, tray icons).
 int run(const Callback& func);
 
-/// The entry point for a command-line tool:
-/// `int main(int argc, char* argv[]) { return Apps::runConsole(argc, argv, body);
-/// }`.
-/// Stores argv (see commandLineArgs), then runs `body` once inside the
-/// bootstrapped loop, as run(func) does, and returns what `body` returned. On
-/// macOS the Dock icon is hidden as the body starts (it cannot be before: the
-/// loop's bootstrap sets the activation policy from the bundle). A
-/// std::exception escaping `body` is printed to stderr as
-/// `"<program>`: <what()>", `<program>` being argv[0]'s file name less any ".exe",
-/// and the exit code is 1. `body` reads the command line from there
-/// (commandLineArgs(),
-/// Args::Parser::parse()), so it needs no captures.
+// The entry point for a command-line tool:
+// `int main(int argc, char* argv[]) { return Apps::runConsole(argc, argv, body); }`.
+// Stores argv (see commandLineArgs), then runs `body` once inside the
+// bootstrapped loop, as run(func) does, and returns what `body` returned. On
+// macOS the Dock icon is hidden as the body starts (it cannot be before: the
+// loop's bootstrap sets the activation policy from the bundle). A
+// std::exception escaping `body` is printed to stderr as
+// `"<program>`: <what()>", `<program>` being argv[0]'s file name less any ".exe",
+// and the exit code is 1. `body` reads the command line from there
+// (commandLineArgs(),
+// Args::Parser::parse()), so it needs no captures.
 int runConsole(int argc, char* argv[], const std::function<int()>& body);
 
-/// The same for a command line setCommandLineArgs() has already stored, as in a
-/// main() that reads it before choosing between runConsole and run<T>():
-///
-///   setCommandLineArgs(argc, argv);
-///   if (isWorker())
-///       return Apps::runConsole(workerBody);
-///   return Apps::run<MyApp>();
+// The same for a command line setCommandLineArgs() has already stored, as in a
+// main() that reads it before choosing between runConsole and run<T>():
+//
+//   setCommandLineArgs(argc, argv);
+//   if (isWorker())
+//       return Apps::runConsole(workerBody);
+//   return Apps::run<MyApp>();
 int runConsole(const std::function<int()>& body);
 
 } // namespace eacp::Apps

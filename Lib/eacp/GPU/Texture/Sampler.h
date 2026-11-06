@@ -12,7 +12,7 @@
 
 namespace eacp::GPU
 {
-/// Defined in RenderPipeline.h; a descriptor only stores one.
+// Defined in RenderPipeline.h; a descriptor only stores one.
 enum class CompareFunction;
 
 enum class SamplerAddressMode
@@ -29,7 +29,7 @@ enum class SamplerFilter
     Linear
 };
 
-/// None reads level 0 whatever other levels exist.
+// None reads level 0 whatever other levels exist.
 enum class SamplerMipFilter
 {
     None,
@@ -37,7 +37,7 @@ enum class SamplerMipFilter
     Linear
 };
 
-/// The three every backend can express without an extension.
+// The three every backend can express without an extension.
 enum class SamplerBorderColor
 {
     TransparentBlack,
@@ -45,16 +45,16 @@ enum class SamplerBorderColor
     OpaqueWhite
 };
 
-/// How a sampler reads a texture, described per bind rather than declared by the
-/// shader. A plain value: equal descriptors are the same sampler, which is what
-/// lets Device::makeSampler hand back one native object for each.
-///
-/// compare makes it a comparison sampler, for a depth texture sampled through
-/// sample_compare / SampleCmp / sampler2DShadow: the result is 1 where
-/// `reference compare texel` holds and 0 where it does not.
-///
-/// maxAnisotropy above 1 takes effect where min, mag and mip filters are all
-/// Linear, and is clamped to what the device allows.
+// How a sampler reads a texture, described per bind rather than declared by the
+// shader. A plain value: equal descriptors are the same sampler, which is what
+// lets Device::makeSampler hand back one native object for each.
+//
+// compare makes it a comparison sampler, for a depth texture sampled through
+// sample_compare / SampleCmp / sampler2DShadow: the result is 1 where
+// `reference compare texel` holds and 0 where it does not.
+//
+// maxAnisotropy above 1 takes effect where min, mag and mip filters are all
+// Linear, and is clamped to what the device allows.
 struct SamplerDescriptor
 {
     SamplerAddressMode addressU = SamplerAddressMode::ClampToEdge;
@@ -76,29 +76,29 @@ struct SamplerDescriptor
 
     bool operator==(const SamplerDescriptor&) const = default;
 
-    /// The descriptor a TextureSampling stands for: one filter for min, mag and
-    /// mip, one address mode on every axis, and LessEqual where it compares.
+    // The descriptor a TextureSampling stands for: one filter for min, mag and
+    // mip, one address mode on every axis, and LessEqual where it compares.
     static SamplerDescriptor from(const TextureSampling& sampling);
 
-    /// Whether all three filters are Linear, which is what anisotropy needs.
+    // Whether all three filters are Linear, which is what anisotropy needs.
     bool isFullyLinear() const;
 };
 
 std::size_t hashOf(const SamplerDescriptor& descriptor);
 
-/// Hashes a SamplerDescriptor, for the Device's sampler cache.
+// Hashes a SamplerDescriptor, for the Device's sampler cache.
 struct SamplerDescriptorHash
 {
     std::size_t operator()(const SamplerDescriptor& descriptor) const;
 };
 
-/// A handle to a sampler the Device made and keeps: copying one is free, and it
-/// stays valid for as long as that Device lives. Made by Device::makeSampler and
-/// bound through RenderPass::setFragmentTexture or ComputePass::setInputTexture
-/// on a pass of the same Device.
-///
-/// nativeSampler() is an id<MTLSamplerState> on Metal and a VkSampler on Vulkan;
-/// on D3D12 it points at the backend's record of a sampler-heap descriptor.
+// A handle to a sampler the Device made and keeps: copying one is free, and it
+// stays valid for as long as that Device lives. Made by Device::makeSampler and
+// bound through RenderPass::setFragmentTexture or ComputePass::setInputTexture
+// on a pass of the same Device.
+//
+// nativeSampler() is an id<MTLSamplerState> on Metal and a VkSampler on Vulkan;
+// on D3D12 it points at the backend's record of a sampler-heap descriptor.
 class Sampler
 {
 public:

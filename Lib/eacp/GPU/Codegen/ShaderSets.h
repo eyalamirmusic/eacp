@@ -29,6 +29,23 @@
 #include <type_traits>
 #include <utility>
 
+// The shaders an app compiles at build time, listed in any of its shader
+// translation units (the SOURCES of eacp_add_precompiled_shaders):
+//
+//   EACP_SHADER_SET()
+//   {
+//       visit<RotatingShader>();
+//       visit<GainKernel, BlurKernel, SumKernel>();
+//       visit<SpriteShader>(TextureSampling::nearest);
+//       UI::LayerRenderer::forEachShaderGraph(visitor());
+//   }
+//
+// The braces are the body of a ShaderSetDefinition's define(), and the macro
+// registers one instance of it before main(), so a translation unit can hold
+// any number of sets and nothing names them. The build's shader host
+// executable (CMake/ShaderHostMain.cpp.in) links those translation units into
+// itself and ShaderCompiler::runMain compiles every graph every registered set
+// shows it.
 namespace eacp::GPU
 {
 template <typename Shader>
@@ -42,11 +59,11 @@ struct ShaderSetDefinition
 
     virtual void define() const = 0;
 
-    /// Calls define() with every visit() it makes going to `visitor`.
+    // Calls define() with every visit() it makes going to `visitor`.
     void run(const ShaderGraphVisitor& visitor) const;
 
 protected:
-    /// Each shader built with no arguments.
+    // Each shader built with no arguments.
     template <typename... Shaders>
     void visit() const
     {
@@ -59,7 +76,7 @@ protected:
             (visit(static_cast<const ShaderGraph&>(Shaders().graph())), ...);
     }
 
-    /// One shader built from `args`, once per variant the app draws with.
+    // One shader built from `args`, once per variant the app draws with.
     template <HasShaderGraph Shader, typename... Args>
         requires(sizeof...(Args) > 0) && std::constructible_from<Shader, Args...>
     void visit(Args&&... args) const
@@ -68,11 +85,11 @@ protected:
             Shader(std::forward<Args>(args)...).graph()));
     }
 
-    /// For a module hook that hands over graphs rather than types.
+    // For a module hook that hands over graphs rather than types.
     void visit(const ShaderGraph& graph) const;
 
-    /// The visitor itself, for a module that hands over shaders it keeps
-    /// private: forEachShaderGraph(visitor()).
+    // The visitor itself, for a module that hands over shaders it keeps
+    // private: forEachShaderGraph(visitor()).
     const ShaderGraphVisitor& visitor() const;
 
 private:
@@ -83,7 +100,7 @@ namespace ShaderSets
 {
 void registerSet(const ShaderSetDefinition& set);
 
-/// Every set registered in this process, in registration order.
+// Every set registered in this process, in registration order.
 const Vector<const ShaderSetDefinition*>& registered();
 } // namespace ShaderSets
 } // namespace eacp::GPU

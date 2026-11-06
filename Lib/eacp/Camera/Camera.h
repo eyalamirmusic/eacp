@@ -23,17 +23,17 @@ enum class PixelFormat
     NV12 // 4:2:0: a luma plane, then a half-height interleaved CbCr plane
 };
 
-/// Which YCbCr matrix an NV12 frame's chroma was coded with, read alongside
-/// fullRangeYuv (0-255 levels rather than video's 16-235). Camera2's
-/// YUV_420_888 is BT.601 full range.
+// Which YCbCr matrix an NV12 frame's chroma was coded with, read alongside
+// fullRangeYuv (0-255 levels rather than video's 16-235). Camera2's
+// YUV_420_888 is BT.601 full range.
 enum class YuvMatrix
 {
     BT601,
     BT709
 };
 
-/// Android reports Denied for anything not yet granted: whether the user was
-/// ever asked is not visible without the activity's Java side.
+// Android reports Denied for anything not yet granted: whether the user was
+// ever asked is not visible without the activity's Java side.
 enum class PermissionStatus
 {
     Granted,
@@ -42,8 +42,8 @@ enum class PermissionStatus
     Restricted
 };
 
-/// A camera the system can capture from. id is a stable platform identifier
-/// (AVCaptureDevice.uniqueID on macOS) to pass back in CameraConfig::deviceId.
+// A camera the system can capture from. id is a stable platform identifier
+// (AVCaptureDevice.uniqueID on macOS) to pass back in CameraConfig::deviceId.
 struct CameraDevice
 {
     std::string id;
@@ -51,8 +51,8 @@ struct CameraDevice
     bool isFrontFacing = false;
 };
 
-/// One capture mode a device supports — a resolution and the fastest frame rate
-/// it runs at. Reported by Camera::supportedFormats.
+// One capture mode a device supports — a resolution and the fastest frame rate
+// it runs at. Reported by Camera::supportedFormats.
 struct CameraFormat
 {
     int width = 0;
@@ -61,9 +61,9 @@ struct CameraFormat
     PixelFormat pixelFormat = PixelFormat::BGRA8;
 };
 
-/// How to open the camera. An unset deviceId uses the system default camera.
-/// width/height/frameRate are advisory: the backend picks the closest mode the
-/// device supports.
+// How to open the camera. An unset deviceId uses the system default camera.
+// width/height/frameRate are advisory: the backend picks the closest mode the
+// device supports.
 struct CameraConfig
 {
     std::optional<std::string> deviceId;
@@ -74,10 +74,10 @@ struct CameraConfig
     bool discardLateFrames = true; // drop frames the consumer can't keep up with
 };
 
-/// A single captured frame, handed to the frame callback. It is a lightweight
-/// non-owning view over the platform pixel buffer: data() and nativeBuffer() are
-/// valid only for the duration of the callback. To keep a frame past the call,
-/// copy it out (toImage) or retain the native buffer yourself.
+// A single captured frame, handed to the frame callback. It is a lightweight
+// non-owning view over the platform pixel buffer: data() and nativeBuffer() are
+// valid only for the duration of the callback. To keep a frame past the call,
+// copy it out (toImage) or retain the native buffer yourself.
 class CameraFrame
 {
 public:
@@ -98,41 +98,41 @@ public:
     constexpr int bytesPerRow() const { return rowBytes; }
     constexpr double timestampSeconds() const { return timestamp; }
 
-    /// The clockwise quarter turn (0, 90, 180 or 270) that shows the frame
-    /// upright on the current display. Always 0 on Apple and Windows, whose
-    /// capture paths rotate for you; on Android frames arrive in sensor
-    /// orientation.
+    // The clockwise quarter turn (0, 90, 180 or 270) that shows the frame
+    // upright on the current display. Always 0 on Apple and Windows, whose
+    // capture paths rotate for you; on Android frames arrive in sensor
+    // orientation.
     constexpr int rotationDegrees() const { return rotation; }
 
-    /// How to turn an NV12 frame's samples into RGB; unused for BGRA8.
+    // How to turn an NV12 frame's samples into RGB; unused for BGRA8.
     constexpr YuvMatrix yuvMatrix() const { return matrix; }
     constexpr bool fullRangeYuv() const { return fullRange; }
 
-    /// The raw pixel bytes, rows bytesPerRow apart — which may exceed the row's
-    /// own size when it is padded. Null when the backend could not map the
-    /// buffer. BGRA8 is 4 bytes a pixel. NV12 is the luma plane, one byte a
-    /// pixel, followed by chromaPlane().
+    // The raw pixel bytes, rows bytesPerRow apart — which may exceed the row's
+    // own size when it is padded. Null when the backend could not map the
+    // buffer. BGRA8 is 4 bytes a pixel. NV12 is the luma plane, one byte a
+    // pixel, followed by chromaPlane().
     constexpr const std::uint8_t* data() const { return pixels; }
 
-    /// NV12's interleaved Cb,Cr plane: height / 2 rows of width / 2 pairs, the
-    /// same bytesPerRow apart, starting at data() + bytesPerRow * height. Null
-    /// for BGRA8.
+    // NV12's interleaved Cb,Cr plane: height / 2 rows of width / 2 pairs, the
+    // same bytesPerRow apart, starting at data() + bytesPerRow * height. Null
+    // for BGRA8.
     const std::uint8_t* chromaPlane() const;
 
-    /// The platform pixel buffer (CVPixelBufferRef on macOS) for zero-copy GPU
-    /// upload. Null on backends that don't expose one.
+    // The platform pixel buffer (CVPixelBufferRef on macOS) for zero-copy GPU
+    // upload. Null on backends that don't expose one.
     constexpr void* nativeBuffer() const { return buffer; }
 
-    /// A tightly packed RGBA copy of the frame (top-left origin), ready for
-    /// Graphics::Image consumers and GPU upload. Returns an empty image when the
-    /// frame has no readable pixels. NV12 is converted on the CPU; neither
-    /// format is rotated by rotationDegrees. Defined in Camera.cpp.
+    // A tightly packed RGBA copy of the frame (top-left origin), ready for
+    // Graphics::Image consumers and GPU upload. Returns an empty image when the
+    // frame has no readable pixels. NV12 is converted on the CPU; neither
+    // format is rotated by rotationDegrees. Defined in Camera.cpp.
     Graphics::Image toImage() const;
 
-    /// As above, but converts into `reuse`, recycling its storage — no
-    /// per-frame allocation or zero-fill when it already holds the frame size
-    /// (see Image::prepareForOverwrite). `reuse` is left empty on an unreadable
-    /// or unsupported frame. For per-frame capture loops that keep one buffer.
+    // As above, but converts into `reuse`, recycling its storage — no
+    // per-frame allocation or zero-fill when it already holds the frame size
+    // (see Image::prepareForOverwrite). `reuse` is left empty on an unreadable
+    // or unsupported frame. For per-frame capture loops that keep one buffer.
     void toImage(Graphics::Image& reuse) const;
 
 private:
@@ -148,18 +148,18 @@ private:
     bool fullRange = true;
 };
 
-/// Invoked for each captured frame on a dedicated background capture thread (not
-/// the main thread). Keep the work short; offload heavy processing or marshal to
-/// the main thread (Threads::callAsync) as needed.
+// Invoked for each captured frame on a dedicated background capture thread (not
+// the main thread). Keep the work short; offload heavy processing or marshal to
+// the main thread (Threads::callAsync) as needed.
 using FrameCallback = std::function<void(const CameraFrame&)>;
 
-/// A CPU-side copy of a frame for the upload display path (used on backends
-/// without a zero-copy native buffer, e.g. Windows) and other pull-based
-/// consumers. data is tightly packed: BGRA8 with a stride of width * 4, or NV12
-/// (Android) as width * height luma bytes followed by width * height / 2 bytes
-/// of interleaved CbCr, both with a stride of width. sequence bumps once per
-/// captured frame so a consumer can skip work when nothing is new. The rotation
-/// and YUV fields mean what CameraFrame's do.
+// A CPU-side copy of a frame for the upload display path (used on backends
+// without a zero-copy native buffer, e.g. Windows) and other pull-based
+// consumers. data is tightly packed: BGRA8 with a stride of width * 4, or NV12
+// (Android) as width * height luma bytes followed by width * height / 2 bytes
+// of interleaved CbCr, both with a stride of width. sequence bumps once per
+// captured frame so a consumer can skip work when nothing is new. The rotation
+// and YUV fields mean what CameraFrame's do.
 struct FramePixels
 {
     int width = 0;
@@ -172,9 +172,9 @@ struct FramePixels
     bool fullRangeYuv = true;
 };
 
-/// Captures video from a camera. Raw frames go to the frame callback on a
-/// background thread; the same device feeds the display path (CameraView) via
-/// nativeSession(). One Camera drives one device at a time.
+// Captures video from a camera. Raw frames go to the frame callback on a
+// background thread; the same device feeds the display path (CameraView) via
+// nativeSession(). One Camera drives one device at a time.
 class Camera
 {
 public:
@@ -184,61 +184,61 @@ public:
     Camera(const Camera&) = delete;
     Camera& operator=(const Camera&) = delete;
 
-    /// The cameras currently available to the system.
+    // The cameras currently available to the system.
     static Vector<CameraDevice> devices();
 
-    /// The capture modes a device supports, or an empty list if it can't be
-    /// queried.
+    // The capture modes a device supports, or an empty list if it can't be
+    // queried.
     static Vector<CameraFormat> supportedFormats(const CameraDevice& device);
 
-    /// The app's current camera authorisation. On macOS, enumeration works
-    /// regardless, but capture needs Granted.
+    // The app's current camera authorisation. On macOS, enumeration works
+    // regardless, but capture needs Granted.
     static PermissionStatus permissionStatus();
 
-    /// Asks the OS for camera access if it hasn't been decided yet. onResult is
-    /// delivered on the main thread with the granted/denied outcome.
+    // Asks the OS for camera access if it hasn't been decided yet. onResult is
+    // delivered on the main thread with the granted/denied outcome.
     static void requestPermission(std::function<void(bool)> onResult);
 
-    /// Sets the per-frame callback. Set it before start(). Passing {} clears it.
+    // Sets the per-frame callback. Set it before start(). Passing {} clears it.
     void setFrameCallback(FrameCallback callback);
 
-    /// Sets a lightweight notification invoked on the capture thread after each
-    /// captured frame is stored as the latest — no pixel access; pair it with
-    /// acquireLatestPixelBuffer or copyLatestFrame. Independent of the frame
-    /// callback (which stays free for app code), and unlike it this may be
-    /// (re)assigned while the camera runs. One consumer at a time: the display
-    /// path (CameraView) claims it while attached. Passing {} clears it.
+    // Sets a lightweight notification invoked on the capture thread after each
+    // captured frame is stored as the latest — no pixel access; pair it with
+    // acquireLatestPixelBuffer or copyLatestFrame. Independent of the frame
+    // callback (which stays free for app code), and unlike it this may be
+    // (re)assigned while the camera runs. One consumer at a time: the display
+    // path (CameraView) claims it while attached. Passing {} clears it.
     void setFrameArrivedCallback(Callback callback);
 
-    /// Does not block on device warm-up. Apple and Android open and configure
-    /// the device on the caller's thread and return false if that fails, then
-    /// start capture in the background; Windows does all of it on a worker
-    /// thread and returns true at once, so a device that fails to open there
-    /// shows only as no frames. Frames begin arriving shortly after - poll
-    /// isRunning() or wait for the first frame. Check
-    /// permissionStatus() first, since capture needs Granted.
+    // Does not block on device warm-up. Apple and Android open and configure
+    // the device on the caller's thread and return false if that fails, then
+    // start capture in the background; Windows does all of it on a worker
+    // thread and returns true at once, so a device that fails to open there
+    // shows only as no frames. Frames begin arriving shortly after - poll
+    // isRunning() or wait for the first frame. Check
+    // permissionStatus() first, since capture needs Granted.
     bool start(const CameraConfig& config = {});
     void stop();
     bool isRunning() const;
 
-    /// The platform capture session (AVCaptureSession* on macOS), for the
-    /// display View to attach to without copying frames. Null when not running.
+    // The platform capture session (AVCaptureSession* on macOS), for the
+    // display View to attach to without copying frames. Null when not running.
     void* nativeSession() const;
 
-    /// The most recent frame's native pixel buffer (CVPixelBufferRef on macOS),
-    /// retained — the caller owns the reference and must hand it back to
-    /// releasePixelBuffer. Null when no frame has arrived. Thread-safe; the
-    /// display path (CameraView) calls this on the render thread to wrap the
-    /// frame zero-copy, independently of the frame callback.
+    // The most recent frame's native pixel buffer (CVPixelBufferRef on macOS),
+    // retained — the caller owns the reference and must hand it back to
+    // releasePixelBuffer. Null when no frame has arrived. Thread-safe; the
+    // display path (CameraView) calls this on the render thread to wrap the
+    // frame zero-copy, independently of the frame callback.
     void* acquireLatestPixelBuffer();
 
-    /// Releases a buffer returned by acquireLatestPixelBuffer.
+    // Releases a buffer returned by acquireLatestPixelBuffer.
     static void releasePixelBuffer(void* buffer);
 
-    /// Copies the most recent frame into `out` when it is newer than
-    /// out.sequence, reusing out's storage; returns true if a new frame was
-    /// copied, false if there is nothing newer. Thread-safe. The display path
-    /// uses this on backends without a zero-copy native buffer.
+    // Copies the most recent frame into `out` when it is newer than
+    // out.sequence, reusing out's storage; returns true if a new frame was
+    // copied, false if there is nothing newer. Thread-safe. The display path
+    // uses this on backends without a zero-copy native buffer.
     bool copyLatestFrame(FramePixels& out);
 
 private:

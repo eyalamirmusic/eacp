@@ -11,17 +11,17 @@
 
 namespace eacp::ObjC
 {
-/// Builds and registers an Objective-C class at runtime under a
-/// process-unique name: the ObjC class registry is global to the process, so
-/// a compile-time `@implementation` collides as soon as a host and a
-/// dlopen-loaded plugin both carry this eacp copy's classes ("Class X is
-/// implemented in both..."). Probing objc_lookUpClass and suffixing _1, _2...
-/// keeps every eacp copy's classes distinct while staying readable in crash
-/// logs. Method implementations are plain C functions taking (id self,
-/// SEL _cmd, ...); their type encodings are generated from the signature.
-///
-/// Build one per class inside a function-local static so the class outlives
-/// its instances and is disposed only at image teardown.
+// Builds and registers an Objective-C class at runtime under a
+// process-unique name: the ObjC class registry is global to the process, so
+// a compile-time `@implementation` collides as soon as a host and a
+// dlopen-loaded plugin both carry this eacp copy's classes ("Class X is
+// implemented in both..."). Probing objc_lookUpClass and suffixing _1, _2...
+// keeps every eacp copy's classes distinct while staying readable in crash
+// logs. Method implementations are plain C functions taking (id self,
+// SEL _cmd, ...); their type encodings are generated from the signature.
+//
+// Build one per class inside a function-local static so the class outlives
+// its instances and is disposed only at image teardown.
 template <typename SuperType>
 class RuntimeClass
 {
@@ -54,7 +54,7 @@ public:
     RuntimeClass(const RuntimeClass&) = delete;
     RuntimeClass& operator=(const RuntimeClass&) = delete;
 
-    /// Call before registerClass(); the type encoding comes from the signature.
+    // Call before registerClass(); the type encoding comes from the signature.
     template <typename ReturnType, typename... Args>
     void addMethod(SEL selector, ReturnType (*implementation)(id, SEL, Args...))
     {
@@ -77,8 +77,8 @@ public:
                       @encode(T));
     }
 
-    /// Registers the class with the runtime; add methods, protocols and ivars before
-    /// this.
+    // Registers the class with the runtime; add methods, protocols and ivars before
+    // this.
     Class registerClass()
     {
         objc_registerClassPair(cls);
@@ -103,10 +103,10 @@ private:
     Class cls = nullptr;
 };
 
-/// Calls the superclass implementation from a runtime-class method — the
-/// equivalent of [super selector]. Safe for void/scalar returns on both
-/// arm64 and x86_64; large struct returns would need objc_msgSendSuper_stret
-/// on x86_64 and are deliberately unsupported.
+// Calls the superclass implementation from a runtime-class method — the
+// equivalent of [super selector]. Safe for void/scalar returns on both
+// arm64 and x86_64; large struct returns would need objc_msgSendSuper_stret
+// on x86_64 and are deliberately unsupported.
 template <typename ReturnType, typename... Args>
 ReturnType sendSuper(id self, Class superclass, SEL selector, Args... args)
 {
@@ -116,7 +116,7 @@ ReturnType sendSuper(id self, Class superclass, SEL selector, Args... args)
     return function(&super, selector, args...);
 }
 
-/// An instance variable added with addIvar<T>, by name. The name must exist.
+// An instance variable added with addIvar<T>, by name. The name must exist.
 template <typename T>
 T& getIvar(id object, const char* name)
 {

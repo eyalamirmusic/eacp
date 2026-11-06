@@ -6,8 +6,8 @@
 
 namespace eacp
 {
-/// Owns a T built from the constructor's arguments; move-only. Holds a
-/// shared_ptr, so T may stay incomplete in the header.
+// Owns a T built from the constructor's arguments; move-only. Holds a
+// shared_ptr, so T may stay incomplete in the header.
 template <typename T>
 class Pimpl
 {

@@ -8,14 +8,14 @@
 
 namespace eacp::UI
 {
-/// A pointer to a component that turns null once the component is destroyed,
-/// as juce::Component::SafePointer. What a callback that outlives the code that
-/// made it holds: a click handler that may delete its own button, a callAsync
-/// that lands after the panel it was for has closed.
-///
-/// It goes null when Component's destructor starts, which is after the derived
-/// class's destructor has run -- so while a derived destructor is running, the
-/// pointer still answers. Message-thread only, like the component itself.
+// A pointer to a component that turns null once the component is destroyed,
+// as juce::Component::SafePointer. What a callback that outlives the code that
+// made it holds: a click handler that may delete its own button, a callAsync
+// that lands after the panel it was for has closed.
+//
+// It goes null when Component's destructor starts, which is after the derived
+// class's destructor has run -- so while a derived destructor is running, the
+// pointer still answers. Message-thread only, like the component itself.
 template <typename T>
 class SafePointer
 {

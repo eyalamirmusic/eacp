@@ -11,34 +11,34 @@
 
 namespace eacp::Maths
 {
-/// A 4x4 transform, stored column-major — values[column * 4 + row] — which is the
-/// layout Metal and HLSL both give a float4x4, so one of these uploads into a
-/// GPU::Uniform<Float4x4> byte for byte with nothing to transpose.
-///
-/// The projections are right-handed with a [0, 1] depth range: the camera looks
-/// down -z, and the near plane maps to 0 rather than to -1. That is what Metal
-/// and D3D12 clip against, and what ShaderProgram's own perspective() builds, so
-/// a matrix assembled here and one assembled inside define() agree.
-///
-/// A default-constructed Mat4 is the identity, not a block of zeros — the useful
-/// neutral value, and the one a transform left unset should behave as.
+// A 4x4 transform, stored column-major — values[column * 4 + row] — which is the
+// layout Metal and HLSL both give a float4x4, so one of these uploads into a
+// GPU::Uniform<Float4x4> byte for byte with nothing to transpose.
+//
+// The projections are right-handed with a [0, 1] depth range: the camera looks
+// down -z, and the near plane maps to 0 rather than to -1. That is what Metal
+// and D3D12 clip against, and what ShaderProgram's own perspective() builds, so
+// a matrix assembled here and one assembled inside define() agree.
+//
+// A default-constructed Mat4 is the identity, not a block of zeros — the useful
+// neutral value, and the one a transform left unset should behave as.
 struct Mat4
 {
     static constexpr Mat4 translation(const Vec3& offset);
     static constexpr Mat4 scale(const Vec3& factors);
     static constexpr Mat4 scale(float factor);
 
-    /// Rotations take radians.
+    // Rotations take radians.
     static Mat4 rotationX(float radians);
     static Mat4 rotationY(float radians);
     static Mat4 rotationZ(float radians);
 
-    /// fovY is the vertical field of view in radians; aspect is width over height.
+    // fovY is the vertical field of view in radians; aspect is width over height.
     static Mat4 perspective(float aspect, float fovY, float nearZ, float farZ);
 
-    /// The same frustum with depth reversed: near lands on 1 and far on 0, for a
-    /// pass cleared to 0 and tested GreaterEqual. An infinite farZ is allowed,
-    /// the far plane then being at depth 0 in the limit.
+    // The same frustum with depth reversed: near lands on 1 and far on 0, for a
+    // pass cleared to 0 and tested GreaterEqual. An infinite farZ is allowed,
+    // the far plane then being at depth 0 in the limit.
     static Mat4
         perspectiveReversedZ(float aspect,
                              float fovY,
@@ -48,11 +48,11 @@ struct Mat4
     static constexpr Mat4 orthographic(
         float left, float right, float bottom, float top, float nearZ, float farZ);
 
-    /// The view matrix for a camera at eye looking at target. `up` only has to
-    /// point roughly upward; the part of it along the view direction is removed.
+    // The view matrix for a camera at eye looking at target. `up` only has to
+    // point roughly upward; the part of it along the view direction is removed.
     static Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
 
-    /// Column first, then row.
+    // Column first, then row.
     constexpr float& at(int column, int row) { return values[column * 4 + row]; }
 
     constexpr const float& at(int column, int row) const
@@ -73,13 +73,13 @@ struct Mat4
 
     constexpr Mat4 transposed() const;
 
-    /// A singular matrix has no inverse, and the identity comes back for one, so
-    /// the result stays usable rather than turning into a block of NaNs.
+    // A singular matrix has no inverse, and the identity comes back for one, so
+    // the result stays usable rather than turning into a block of NaNs.
     constexpr Mat4 inverted() const;
 
-    /// The determinant of the upper-left 3x3: how the transform scales volume,
-    /// translation and projection left out. Negative for a mirroring transform,
-    /// which is what flips a triangle's winding and so the face to cull.
+    // The determinant of the upper-left 3x3: how the transform scales volume,
+    // translation and projection left out. Negative for a mirroring transform,
+    // which is what flips a triangle's winding and so the face to cull.
     constexpr float linearDeterminant() const;
 
     constexpr const float* data() const { return values.data(); }
@@ -248,8 +248,8 @@ constexpr Vec4 operator*(const Mat4& matrix, const Vec4& vector)
     return result;
 }
 
-/// A position: translated, and divided through by w so a projection matrix gives
-/// back the point it lands on rather than a homogeneous one.
+// A position: translated, and divided through by w so a projection matrix gives
+// back the point it lands on rather than a homogeneous one.
 constexpr Vec3 transformPoint(const Mat4& matrix, const Vec3& point)
 {
     auto transformed = matrix * Vec4 {point.x, point.y, point.z, 1.f};
@@ -260,17 +260,17 @@ constexpr Vec3 transformPoint(const Mat4& matrix, const Vec3& point)
     return transformed.xyz() / transformed.w;
 }
 
-/// A direction: rotated and scaled, never translated. A normal wants the inverse
-/// transpose instead whenever the transform scales non-uniformly.
+// A direction: rotated and scaled, never translated. A normal wants the inverse
+// transpose instead whenever the transform scales non-uniformly.
 constexpr Vec3 transformDirection(const Mat4& matrix, const Vec3& direction)
 {
     auto transformed = matrix * Vec4 {direction.x, direction.y, direction.z, 0.f};
     return transformed.xyz();
 }
 
-/// What to compare two matrices with: exact equality holds for one that was
-/// assembled rather than computed, and stops holding the moment a product or an
-/// inverse has rounded anything.
+// What to compare two matrices with: exact equality holds for one that was
+// assembled rather than computed, and stops holding the moment a product or an
+// inverse has rounded anything.
 constexpr bool nearlyEqual(const Mat4& a, const Mat4& b, float allowed = tolerance)
 {
     for (auto column = 0; column < 4; ++column)

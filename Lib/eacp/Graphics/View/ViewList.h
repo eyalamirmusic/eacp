@@ -6,8 +6,8 @@
 
 namespace eacp::Graphics
 {
-/// Owns child views and adds each one created to `parent`; erasing
-/// destroys the view, which removes it from the parent.
+// Owns child views and adds each one created to `parent`; erasing
+// destroys the view, which removes it from the parent.
 template <typename T = View>
 struct ViewList
 {

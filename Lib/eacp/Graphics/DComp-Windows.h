@@ -43,28 +43,28 @@ ID2D1Device* getD2DDevice();
 IDCompositionDesktopDevice* getCompositionDevice();
 bool isCompositorInitialized();
 
-/// Flushes every pending visual/surface change to the screen. Cheap when nothing
-/// changed, so callers batch a whole render pass and commit once at the end.
+// Flushes every pending visual/surface change to the screen. Cheap when nothing
+// changed, so callers batch a whole render pass and commit once at the end.
 void commitComposition();
 
-/// AddVisual's insertAbove flag reads inverted when referenceVisual is null:
-/// TRUE prepends to the child list (BOTTOM of the z-order — siblings added
-/// earlier render on top), FALSE appends (TOP). These wrappers carry the WinRT
-/// Children().InsertAtTop/InsertAtBottom semantics the call sites were written
-/// against.
+// AddVisual's insertAbove flag reads inverted when referenceVisual is null:
+// TRUE prepends to the child list (BOTTOM of the z-order — siblings added
+// earlier render on top), FALSE appends (TOP). These wrappers carry the WinRT
+// Children().InsertAtTop/InsertAtBottom semantics the call sites were written
+// against.
 HRESULT insertVisualAtTop(IDCompositionVisual2* parent, IDCompositionVisual2* child);
 HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
                              IDCompositionVisual2* child);
 
-/// Bumped every time the rendering device is replaced. Anything holding a visual,
-/// surface or target must compare against its own stamp and rebuild on a
-/// mismatch — see the device-loss note above.
+// Bumped every time the rendering device is replaced. Anything holding a visual,
+// surface or target must compare against its own stamp and rebuild on a
+// mismatch — see the device-loss note above.
 uint64_t getCompositionGeneration();
 
-/// Recovers the shared D3D/D2D/DComp devices when `hr` is a device-loss HRESULT
-/// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
-/// recovery ran; the caller should drop the current frame — every host rebuilds
-/// and redraws once the replacement device is live.
+// Recovers the shared D3D/D2D/DComp devices when `hr` is a device-loss HRESULT
+// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
+// recovery ran; the caller should drop the current frame — every host rebuilds
+// and redraws once the replacement device is live.
 bool handleDeviceLossIfNeeded(HRESULT hr);
 
 } // namespace eacp::Graphics

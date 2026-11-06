@@ -12,8 +12,8 @@
 namespace eacp::Graphics
 {
 
-/// Window styles, named after AppKit's style masks; most map to Win32 styles
-/// too.
+// Window styles, named after AppKit's style masks; most map to Win32 styles
+// too.
 enum class WindowFlags
 {
     Borderless,
@@ -33,44 +33,44 @@ enum class WindowFlags
 using ResizeCallback = std::function<void(int width, int height)>;
 using WillResizeCallback = std::function<void(int& width, int& height)>;
 
-/// Observable window events. Assign a handler to react; all fire on the main
-/// thread.
+// Observable window events. Assign a handler to react; all fire on the main
+// thread.
 struct WindowEvents
 {
-    /// Fires when the window gains (true) or loses (false) key focus.
+    // Fires when the window gains (true) or loses (false) key focus.
     std::function<void(bool isKey)> onActivationChanged = [](bool) {};
 
-    /// Fires when the user closes a WindowOptions::hidesOnClose window: by
-    /// then it has ordered out, its state is intact, and the app is still
-    /// running. Without this the close is invisible to app code — onQuit is
-    /// exactly what hidesOnClose suppresses — so it is where a tray-resident
-    /// app drops its Dock icon (Apps::setDockIconVisible(false)) and stops
-    /// work that only a visible window needs. Never fires for a window that
-    /// closes normally; that one gets onQuit and is destroyed.
+    // Fires when the user closes a WindowOptions::hidesOnClose window: by
+    // then it has ordered out, its state is intact, and the app is still
+    // running. Without this the close is invisible to app code — onQuit is
+    // exactly what hidesOnClose suppresses — so it is where a tray-resident
+    // app drops its Dock icon (Apps::setDockIconVisible(false)) and stops
+    // work that only a visible window needs. Never fires for a window that
+    // closes normally; that one gets onQuit and is destroyed.
     std::function<void()> onHidden = [] {};
 
-    /// Fires after the window has moved, with its new top-left in screen
-    /// points — the same space WindowOptions::initialPosition and
-    /// Window::getPosition are in. The pair of them is what lets an app put a
-    /// window back where the user left it on the next launch.
-    ///
-    /// Every move, not only the user's: setPosition reports itself too. The
-    /// one placement it does not fire for is the window's first, from
-    /// initialPosition, which happens before there is a window to observe.
-    ///
-    /// Here rather than beside WindowOptions::onResize because, unlike a first
-    /// size, nothing needs a position before the window exists: a handler set
-    /// after construction has still missed nothing.
+    // Fires after the window has moved, with its new top-left in screen
+    // points — the same space WindowOptions::initialPosition and
+    // Window::getPosition are in. The pair of them is what lets an app put a
+    // window back where the user left it on the next launch.
+    //
+    // Every move, not only the user's: setPosition reports itself too. The
+    // one placement it does not fire for is the window's first, from
+    // initialPosition, which happens before there is a window to observe.
+    //
+    // Here rather than beside WindowOptions::onResize because, unlike a first
+    // size, nothing needs a position before the window exists: a handler set
+    // after construction has still missed nothing.
     std::function<void(Point position)> onMoved = [](auto&&) {};
 
-    /// The raw key, mouse and focus stream, for input layers beside the view
-    /// tree (see WindowInput.h). Framework-owned: the platform reports into it
-    /// whatever the handlers above are set to.
+    // The raw key, mouse and focus stream, for input layers beside the view
+    // tree (see WindowInput.h). Framework-owned: the platform reports into it
+    // whatever the handlers above are set to.
     WindowInputTap input;
 };
 
-/// Everything a Window is made with. Sizes are content points, not the outer
-/// frame.
+// Everything a Window is made with. Sizes are content points, not the outer
+// frame.
 struct WindowOptions
 {
     WindowOptions();
@@ -83,70 +83,70 @@ struct WindowOptions
     Callback effectiveOnQuit() const;
     bool effectiveAllowsFullScreen() const;
 
-    /// Whether aspectRatio carries a ratio worth enforcing - both sides have to
-    /// be positive for it to describe a shape at all.
+    // Whether aspectRatio carries a ratio worth enforcing - both sides have to
+    // be positive for it to describe a shape at all.
     bool hasAspectRatio() const;
 
-    /// The one rule the platforms enforce: onWillResize, then sizeConstraint,
-    /// then aspectRatio - the lock last, so the shape the window ends up with
-    /// is the locked one however the callbacks moved the size around.
+    // The one rule the platforms enforce: onWillResize, then sizeConstraint,
+    // then aspectRatio - the lock last, so the shape the window ends up with
+    // is the locked one however the callbacks moved the size around.
     SizeConstraint effectiveSizeConstraint() const;
 
-    /// The content size the window opens at: width/height put through the
-    /// rule, so a window is never made in a shape it would refuse to be
-    /// dragged into. Width wins where the two disagree.
+    // The content size the window opens at: width/height put through the
+    // rule, so a window is never made in a shape it would refuse to be
+    // dragged into. Width wins where the two disagree.
     Point effectiveInitialSize() const;
 
-    /// The content size a programmatic resize (Window::setSize) lands on:
-    /// floored at minWidth/minHeight, as a drag is before the rule sees it,
-    /// then through the rule as a corner resize.
+    // The content size a programmatic resize (Window::setSize) lands on:
+    // floored at minWidth/minHeight, as a drag is before the rule sees it,
+    // then through the rule as a corner resize.
     Point effectiveSize(Point size) const;
 
-    /// When the user closes the window. If left empty, falls back to
-    /// Apps::quit when isPrimary is true, or a no-op otherwise.
+    // When the user closes the window. If left empty, falls back to
+    // Apps::quit when isPrimary is true, or a no-op otherwise.
     Callback onQuit {};
 
-    /// Set to false for secondary/popup windows so closing them doesn't
-    /// terminate the app when onQuit is unset.
+    // Set to false for secondary/popup windows so closing them doesn't
+    // terminate the app when onQuit is unset.
     bool isPrimary = true;
 
-    /// Closing the window (red button / Alt+F4) hides it instead of
-    /// destroying it — onQuit never fires and the app keeps running with the
-    /// window's state alive. Bring it back with setVisible(true), e.g. from
-    /// a tray icon, a Dock reopen (Apps::setReopenHandler) or a notification
-    /// click. Quitting the app still tears the window down normally.
+    // Closing the window (red button / Alt+F4) hides it instead of
+    // destroying it — onQuit never fires and the app keeps running with the
+    // window's state alive. Bring it back with setVisible(true), e.g. from
+    // a tray icon, a Dock reopen (Apps::setReopenHandler) or a notification
+    // click. Quitting the app still tears the window down normally.
     bool hidesOnClose = false;
 
-    /// Called after the window has been resized. Sizes are in points and refer
-    /// to the content view, not the outer frame.
-    ///
-    /// For reacting to a size, not for choosing one: a resize made from here
-    /// fires here again. The shape a window may take is sizeConstraint's.
+    // Called after the window has been resized. Sizes are in points and refer
+    // to the content view, not the outer frame.
+    //
+    // For reacting to a size, not for choosing one: a resize made from here
+    // fires here again. The shape a window may take is sizeConstraint's.
     ResizeCallback onResize {};
 
-    /// Called with the proposed content size, in points, before a resize is
-    /// applied; may be mutated to clamp it. The older, edge-blind form of
-    /// sizeConstraint, kept for the callers that have it: it runs first, and
-    /// what it leaves goes through sizeConstraint and aspectRatio.
+    // Called with the proposed content size, in points, before a resize is
+    // applied; may be mutated to clamp it. The older, edge-blind form of
+    // sizeConstraint, kept for the callers that have it: it runs first, and
+    // what it leaves goes through sizeConstraint and aspectRatio.
     WillResizeCallback onWillResize = [](int&, int&) {};
 
-    /// The shapes the window may take, as a rule from the size about to be
-    /// applied to the one that will be (see SizeConstraint.h). Asked before
-    /// every size the window can take - the initial one, an edge or corner
-    /// drag, a maximise or zoom, fullscreen, a display too small for the
-    /// window - so there is no moment where the window holds a shape the rule
-    /// forbids, and no callback for the app to write. The default accepts
-    /// every size.
-    ///
-    /// AspectRatioLock is the rule an app most often wants: a ratio-locked
-    /// canvas, optionally under a toolbar or beside a panel that keeps its own
-    /// size. `sizeConstraint = AspectRatioLock {{16, 9}, {.top = 56}}` locks
-    /// the content below a 56-point header to 16:9; for the whole content,
-    /// aspectRatio below is the shorthand.
-    ///
-    /// Fullscreen and maximise give a constrained window the largest size the
-    /// rule allows on that display, centred: macOS and the Wayland compositor
-    /// letterbox the rest in black, Windows leaves it to the desktop.
+    // The shapes the window may take, as a rule from the size about to be
+    // applied to the one that will be (see SizeConstraint.h). Asked before
+    // every size the window can take - the initial one, an edge or corner
+    // drag, a maximise or zoom, fullscreen, a display too small for the
+    // window - so there is no moment where the window holds a shape the rule
+    // forbids, and no callback for the app to write. The default accepts
+    // every size.
+    //
+    // AspectRatioLock is the rule an app most often wants: a ratio-locked
+    // canvas, optionally under a toolbar or beside a panel that keeps its own
+    // size. `sizeConstraint = AspectRatioLock {{16, 9}, {.top = 56}}` locks
+    // the content below a 56-point header to 16:9; for the whole content,
+    // aspectRatio below is the shorthand.
+    //
+    // Fullscreen and maximise give a constrained window the largest size the
+    // rule allows on that display, centred: macOS and the Wayland compositor
+    // letterbox the rest in black, Windows leaves it to the desktop.
     SizeConstraint sizeConstraint = [](const ResizeRequest& request)
     { return request.size; };
 
@@ -154,142 +154,142 @@ struct WindowOptions
     int height = 400;
     std::string title = "New Window";
 
-    /// When false, the title bar still shows but the title text is hidden.
+    // When false, the title bar still shows but the title text is hidden.
     bool showTitle = true;
 
-    /// When true, the title bar draws no background, so a FullSizeContentView's
-    /// content shows through beneath the traffic lights (otherwise macOS paints
-    /// a translucent grey band over it).
+    // When true, the title bar draws no background, so a FullSizeContentView's
+    // content shows through beneath the traffic lights (otherwise macOS paints
+    // a translucent grey band over it).
     bool titlebarTransparent = false;
 
-    /// The hairline separator drawn under the title bar. Set false to drop it
-    /// so a custom header blends into the content with no chrome line.
+    // The hairline separator drawn under the title bar. Set false to drop it
+    // so a custom header blends into the content with no chrome line.
     bool showTitlebarSeparator = true;
 
-    /// macOS: inset of the window controls (close / minimise / zoom) from the
-    /// top-left, in points; mirrors Electron's trafficLightPosition. Only
-    /// meaningful with a hidden/transparent title bar (FullSizeContentView);
-    /// unset leaves them at the default macOS position.
+    // macOS: inset of the window controls (close / minimise / zoom) from the
+    // top-left, in points; mirrors Electron's trafficLightPosition. Only
+    // meaningful with a hidden/transparent title bar (FullSizeContentView);
+    // unset leaves them at the default macOS position.
     std::optional<Point> trafficLightPosition;
 
-    /// macOS: background colour shown behind the content view — before the web
-    /// view first paints and during live resize. Unset uses the system window
-    /// background; set to black to avoid a white flash on launch/resize.
+    // macOS: background colour shown behind the content view — before the web
+    // view first paints and during live resize. Unset uses the system window
+    // background; set to black to avoid a white flash on launch/resize.
     std::optional<Color> backgroundColor;
 
-    /// Nothing is painted behind the content view, so wherever the content is
-    /// see-through the desktop is. For floating cards and HUDs, where the page
-    /// draws one small shape and the surplus around it must not exist. Wins
-    /// over backgroundColor.
-    ///
-    /// The content then defines the whole window: macOS makes the window
-    /// non-opaque with a clear background, and Windows creates it with no
-    /// redirection surface (WS_EX_NOREDIRECTIONBITMAP) and no frame — so no
-    /// system rounding or shadow is drawn around the transparent surplus, and
-    /// cornerRadius is left to the content as well.
+    // Nothing is painted behind the content view, so wherever the content is
+    // see-through the desktop is. For floating cards and HUDs, where the page
+    // draws one small shape and the surplus around it must not exist. Wins
+    // over backgroundColor.
+    //
+    // The content then defines the whole window: macOS makes the window
+    // non-opaque with a clear background, and Windows creates it with no
+    // redirection surface (WS_EX_NOREDIRECTIONBITMAP) and no frame — so no
+    // system rounding or shadow is drawn around the transparent surplus, and
+    // cornerRadius is left to the content as well.
     bool transparentBackground = false;
 
-    /// Minimum content size in points (0 = no minimum). Content-relative, to
-    /// match width/height and the resize callbacks above.
+    // Minimum content size in points (0 = no minimum). Content-relative, to
+    // match width/height and the resize callbacks above.
     int minWidth = 0;
     int minHeight = 0;
 
-    /// Locks the whole content's proportions: the user can resize the window,
-    /// but only into shapes of this width-to-height ratio. Only the ratio is
-    /// read, so {16, 9} and {1920, 1080} mean the same thing, and a ratio with
-    /// a non-positive side locks nothing. The same as
-    /// `sizeConstraint = AspectRatioLock {ratio}`, for the case with no fixed
-    /// border; the two compose (see effectiveSizeConstraint) so either can be
-    /// set alone.
+    // Locks the whole content's proportions: the user can resize the window,
+    // but only into shapes of this width-to-height ratio. Only the ratio is
+    // read, so {16, 9} and {1920, 1080} mean the same thing, and a ratio with
+    // a non-positive side locks nothing. The same as
+    // `sizeConstraint = AspectRatioLock {ratio}`, for the case with no fixed
+    // border; the two compose (see effectiveSizeConstraint) so either can be
+    // set alone.
     std::optional<Point> aspectRatio;
 
-    /// Whether the user can send the window fullscreen - the green button, the
-    /// Window menu's Enter Full Screen, ctrl-cmd-F. Mirrors Electron's
-    /// fullscreenable.
-    ///
-    /// Unset allows it, EXCEPT when aspectRatio is set: a window that locks
-    /// its whole content is saying it has no letterbox path, so by default
-    /// the escape hatch goes with it, and the green button zooms instead -
-    /// which does respect the lock - so the window keeps a maximise gesture.
-    /// Set it to true to keep both; fullscreen then gives the window the
-    /// largest allowed size and centres it on black. A sizeConstraint alone
-    /// makes no such statement - a bordered lock has its own layout, and
-    /// lockedArea letterboxes - so it leaves fullscreen on.
-    ///
-    /// macOS only: Windows has no OS-level fullscreen mode for a window (an
-    /// app that wants one builds it from a borderless monitor-sized window),
-    /// and its maximise path honours the constraint on its own. No-op on iOS.
+    // Whether the user can send the window fullscreen - the green button, the
+    // Window menu's Enter Full Screen, ctrl-cmd-F. Mirrors Electron's
+    // fullscreenable.
+    //
+    // Unset allows it, EXCEPT when aspectRatio is set: a window that locks
+    // its whole content is saying it has no letterbox path, so by default
+    // the escape hatch goes with it, and the green button zooms instead -
+    // which does respect the lock - so the window keeps a maximise gesture.
+    // Set it to true to keep both; fullscreen then gives the window the
+    // largest allowed size and centres it on black. A sizeConstraint alone
+    // makes no such statement - a bordered lock has its own layout, and
+    // lockedArea letterboxes - so it leaves fullscreen on.
+    //
+    // macOS only: Windows has no OS-level fullscreen mode for a window (an
+    // app that wants one builds it from a borderless monitor-sized window),
+    // and its maximise path honours the constraint on its own. No-op on iOS.
     std::optional<bool> allowsFullScreen;
 
-    /// Keeps the window above normal windows (macOS NSFloatingWindowLevel,
-    /// Windows WS_EX_TOPMOST). Mirrors Electron's alwaysOnTop.
+    // Keeps the window above normal windows (macOS NSFloatingWindowLevel,
+    // Windows WS_EX_TOPMOST). Mirrors Electron's alwaysOnTop.
     bool alwaysOnTop = false;
 
-    /// macOS: pins the window to every Space so it follows the user between
-    /// desktops and fullscreen apps. Mirrors Electron's
-    /// setVisibleOnAllWorkspaces(true). No-op on other platforms.
+    // macOS: pins the window to every Space so it follows the user between
+    // desktops and fullscreen apps. Mirrors Electron's
+    // setVisibleOnAllWorkspaces(true). No-op on other platforms.
     bool visibleOnAllWorkspaces = false;
 
-    /// Shows the window without making it key / stealing focus from the
-    /// frontmost app (macOS orderFront vs makeKeyAndOrderFront). The window
-    /// can still become key when clicked. Mirrors Electron's showInactive().
+    // Shows the window without making it key / stealing focus from the
+    // frontmost app (macOS orderFront vs makeKeyAndOrderFront). The window
+    // can still become key when clicked. Mirrors Electron's showInactive().
     bool showInactive = false;
 
-    /// Lets mouse clicks pass through this window to whatever is underneath.
-    /// Useful for transient HUDs and overlays. No-op on iOS.
+    // Lets mouse clicks pass through this window to whatever is underneath.
+    // Useful for transient HUDs and overlays. No-op on iOS.
     bool ignoresMouseEvents = false;
 
-    /// Initial position of the window's top-left corner in screen points,
-    /// measured from the primary display's top-left (Electron convention).
-    /// Unset centers the window (macOS) / uses the system default (Windows).
+    // Initial position of the window's top-left corner in screen points,
+    // measured from the primary display's top-left (Electron convention).
+    // Unset centers the window (macOS) / uses the system default (Windows).
     std::optional<Point> initialPosition;
 
-    /// Overrides the RUNNING app's icon with a dynamically generated one —
-    /// badge counts, progress overlays, theme-aware art. Called once when
-    /// the window is constructed: Windows stamps it on the window (title
-    /// bar, taskbar, Alt-Tab); macOS swaps the Dock tile.
-    ///
-    /// This is not how an app gets its icon. Finder, Explorer and a
-    /// not-yet-running Dock tile never execute the binary — they read the
-    /// static icon that eacp_set_app_icon (CMake) bakes into the bundle
-    /// (.icns) / executable (ICON resource). Returning an invalid Image
-    /// (the default) keeps that static icon, so apps whose icon never
-    /// changes need only the CMake call.
+    // Overrides the RUNNING app's icon with a dynamically generated one —
+    // badge counts, progress overlays, theme-aware art. Called once when
+    // the window is constructed: Windows stamps it on the window (title
+    // bar, taskbar, Alt-Tab); macOS swaps the Dock tile.
+    //
+    // This is not how an app gets its icon. Finder, Explorer and a
+    // not-yet-running Dock tile never execute the binary — they read the
+    // static icon that eacp_set_app_icon (CMake) bakes into the bundle
+    // (.icns) / executable (ICON resource). Returning an invalid Image
+    // (the default) keeps that static icon, so apps whose icon never
+    // changes need only the CMake call.
     std::function<Image()> applicationIcon = [] { return Image {}; };
 
-    /// Windows: overrides the icon the Alt-Tab switcher shows (the big-icon
-    /// slot); the title bar and taskbar keep applicationIcon. An invalid
-    /// Image (the default) falls back to applicationIcon, then to the
-    /// executable's embedded icon. No-op on macOS, which has no per-window
-    /// icons.
+    // Windows: overrides the icon the Alt-Tab switcher shows (the big-icon
+    // slot); the title bar and taskbar keep applicationIcon. An invalid
+    // Image (the default) falls back to applicationIcon, then to the
+    // executable's embedded icon. No-op on macOS, which has no per-window
+    // icons.
     std::function<Image()> altTabIcon = [] { return Image {}; };
 
-    /// Rounds the window's corners (points). Borderless windows are square
-    /// by default; set this to get the standard macOS rounded shape. On
-    /// macOS this makes the window non-opaque with a clear background
-    /// (overriding backgroundColor) so the clipped content view defines the
-    /// visible shape. Windows 11 rounds via DWM at the system radius — the
-    /// value is ignored there; earlier Windows stays square.
+    // Rounds the window's corners (points). Borderless windows are square
+    // by default; set this to get the standard macOS rounded shape. On
+    // macOS this makes the window non-opaque with a clear background
+    // (overriding backgroundColor) so the clipped content view defines the
+    // visible shape. Windows 11 rounds via DWM at the system radius — the
+    // value is ignored there; earlier Windows stays square.
     std::optional<float> cornerRadius;
 
-    /// Default: Titled, Closable, Miniaturizable, Resizable.
+    // Default: Titled, Closable, Miniaturizable, Resizable.
     EA::Vector<WindowFlags> flags;
 };
 
 struct ModifierKeys;
 
-/// A native top-level window. Main thread only. Does not own its content
-/// view: declare the view before the window so it outlives it. For one view in
-/// one window, use ViewWindow or runWindowedApp instead.
+// A native top-level window. Main thread only. Does not own its content
+// view: declare the view before the window so it outlives it. For one view in
+// one window, use ViewWindow or runWindowedApp instead.
 class Window
 {
 public:
     Window(const WindowOptions& optionsToUse = {});
 
-    /// The window with `view` already as its content, so a struct that pairs a
-    /// view with a window can write `Window window {view, options};` as a
-    /// member initializer and needs no constructor body for it. Declare the
-    /// view before the window.
+    // The window with `view` already as its content, so a struct that pairs a
+    // view with a window can write `Window window {view, options};` as a
+    // member initializer and needs no constructor body for it. Declare the
+    // view before the window.
     Window(View& view, const WindowOptions& optionsToUse = {});
 
     ~Window();
@@ -298,76 +298,76 @@ public:
     void* getHandle();
     void* getContentViewHandle();
 
-    /// Makes this view the window's content, and makes the window findable from
-    /// it: View::getWindow() answers for this view and everything under it.
+    // Makes this view the window's content, and makes the window findable from
+    // it: View::getWindow() answers for this view and everything under it.
     void setContentView(View& view);
 
-    /// Brings the window to the front and activates the app so it rises above
-    /// other applications. No-op under headless and on iOS.
+    // Brings the window to the front and activates the app so it rises above
+    // other applications. No-op under headless and on iOS.
     void toFront();
 
-    /// Shows or hides the window WITHOUT destroying it (macOS orderOut /
-    /// orderFront, Windows ShowWindow) — the content view and any WebView
-    /// state stay alive, unlike closing and recreating, and the window keeps
-    /// its frame, so it reappears where the user left it. Showing respects
-    /// showInactive (no focus steal) and re-asserts alwaysOnTop. No-op under
-    /// headless and on iOS.
+    // Shows or hides the window WITHOUT destroying it (macOS orderOut /
+    // orderFront, Windows ShowWindow) — the content view and any WebView
+    // state stay alive, unlike closing and recreating, and the window keeps
+    // its frame, so it reappears where the user left it. Showing respects
+    // showInactive (no focus steal) and re-asserts alwaysOnTop. No-op under
+    // headless and on iOS.
     void setVisible(bool visible);
 
-    /// Whether the window is currently shown on screen — the query side of
-    /// setVisible, so toggles need no shadow bool in app code. False while
-    /// hidden, minimized to nothing, or under headless; always true on iOS.
+    // Whether the window is currently shown on screen — the query side of
+    // setVisible, so toggles need no shadow bool in app code. False while
+    // hidden, minimized to nothing, or under headless; always true on iOS.
     bool isVisible();
 
-    /// The window's top-left in screen points, measured from the primary
-    /// display's top-left and growing right and down — the same space
-    /// WindowOptions::initialPosition and Display report, so a position read
-    /// here can be stored and handed straight back to a later launch.
-    ///
-    /// The frame's top-left, title bar included, which is what
-    /// initialPosition places.
-    ///
-    /// A window has a frame whether or not it is on screen, so this answers
-    /// under headless too — where the window is made and simply never ordered
-    /// front. {0, 0} on iOS, which has no window to place.
+    // The window's top-left in screen points, measured from the primary
+    // display's top-left and growing right and down — the same space
+    // WindowOptions::initialPosition and Display report, so a position read
+    // here can be stored and handed straight back to a later launch.
+    //
+    // The frame's top-left, title bar included, which is what
+    // initialPosition places.
+    //
+    // A window has a frame whether or not it is on screen, so this answers
+    // under headless too — where the window is made and simply never ordered
+    // front. {0, 0} on iOS, which has no window to place.
     Point getPosition() const;
 
-    /// Moves the window's top-left to `position`, in the same space, without
-    /// clamping to the display (initialPosition clamps); fires
-    /// WindowEvents::onMoved. No-op on iOS.
+    // Moves the window's top-left to `position`, in the same space, without
+    // clamping to the display (initialPosition clamps); fires
+    // WindowEvents::onMoved. No-op on iOS.
     void setPosition(Point position);
 
-    /// The content size in points - the measure WindowOptions::width/height,
-    /// minWidth/minHeight, onResize and sizeConstraint are all in, not the
-    /// outer frame. Under headless the window is made and simply never shown,
-    /// so this reads a real size there too. The screen on iOS.
+    // The content size in points - the measure WindowOptions::width/height,
+    // minWidth/minHeight, onResize and sizeConstraint are all in, not the
+    // outer frame. Under headless the window is made and simply never shown,
+    // so this reads a real size there too. The screen on iOS.
     Point getSize() const;
 
-    /// Resizes the content to `size`, keeping the top-left where it is. The size
-    /// goes through sizeConstraint and minWidth/minHeight, so it may differ from
-    /// the one asked for (getSize says which); fires onResize. No-op on iOS.
+    // Resizes the content to `size`, keeping the top-left where it is. The size
+    // goes through sizeConstraint and minWidth/minHeight, so it may differ from
+    // the one asked for (getSize says which); fires onResize. No-op on iOS.
     void setSize(Point size);
 
-    /// Minimizes to the Dock / taskbar (macOS miniaturize, Windows
-    /// SW_MINIMIZE). Lets borderless windows with web-rendered window
-    /// controls offer the standard button. No-op under headless and on iOS.
+    // Minimizes to the Dock / taskbar (macOS miniaturize, Windows
+    // SW_MINIMIZE). Lets borderless windows with web-rendered window
+    // controls offer the standard button. No-op under headless and on iOS.
     void minimize();
 
-    /// Maximizes (macOS zoom, Windows SW_MAXIMIZE), or restores the previous
-    /// frame when already maximized — the standard caption-button toggle.
-    /// No-op under headless and on iOS.
+    // Maximizes (macOS zoom, Windows SW_MAXIMIZE), or restores the previous
+    // frame when already maximized — the standard caption-button toggle.
+    // No-op under headless and on iOS.
     void toggleMaximize();
 
-    /// Mouse lock for relative-motion input (FPS-style mouse look). While
-    /// locked the cursor is hidden and pinned in place, and mouse movement
-    /// keeps streaming to the content view as mouseMoved events whose
-    /// MouseEvent::delta carries the motion. The lock expresses intent: it
-    /// engages while the window has key focus, suspends when focus is lost so
-    /// the cursor works in other apps, and re-engages when focus returns.
+    // Mouse lock for relative-motion input (FPS-style mouse look). While
+    // locked the cursor is hidden and pinned in place, and mouse movement
+    // keeps streaming to the content view as mouseMoved events whose
+    // MouseEvent::delta carries the motion. The lock expresses intent: it
+    // engages while the window has key focus, suspends when focus is lost so
+    // the cursor works in other apps, and re-engages when focus returns.
     void setMouseLocked(bool locked);
     bool isMouseLocked() const;
 
-    /// Keyboard state.
+    // Keyboard state.
     bool isKeyPressed(uint16_t virtualKeyCode) const;
     bool isShiftPressed() const;
     bool isControlPressed() const;
@@ -375,17 +375,17 @@ public:
     bool isCommandPressed() const;
     ModifierKeys getModifiers() const;
 
-    /// Observable window events (e.g. key-focus changes); see WindowEvents.
+    // Observable window events (e.g. key-focus changes); see WindowEvents.
     WindowEvents events;
 
 private:
     WindowOptions options;
 
-    /// The back-pointer View::getWindow() reads, owned as a member so it is
-    /// cleared by the window's own destruction rather than by a line in each
-    /// platform's destructor - three of which are `= default`, and a fourth
-    /// would be written the day a fourth platform arrives. A view outliving its
-    /// window then reports no window instead of a dangling one.
+    // The back-pointer View::getWindow() reads, owned as a member so it is
+    // cleared by the window's own destruction rather than by a line in each
+    // platform's destructor - three of which are `= default`, and a fourth
+    // would be written the day a fourth platform arrives. A view outliving its
+    // window then reports no window instead of a dangling one.
     struct ContentViewLink
     {
         ~ContentViewLink();

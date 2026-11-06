@@ -9,9 +9,9 @@
 namespace eacp::Graphics
 {
 
-/// A vector outline in points. A Core Graphics path on Apple, a Direct2D geometry
-/// on Windows, and on Linux and Android a recorded command list only (see
-/// Path-Linux.h), since those have no 2D Context.
+// A vector outline in points. A Core Graphics path on Apple, a Direct2D geometry
+// on Windows, and on Linux and Android a recorded command list only (see
+// Path-Linux.h), since those have no 2D Context.
 class Path
 {
 public:
@@ -33,8 +33,8 @@ public:
 
     Path scaled(float sx, float sy) const;
 
-    /// The native object: CGPathRef on Apple, ID2D1Geometry* on Windows,
-    /// PathGeometry* on Linux and Android. Owned by the Path.
+    // The native object: CGPathRef on Apple, ID2D1Geometry* on Windows,
+    // PathGeometry* on Linux and Android. Owned by the Path.
     void* getHandle() const;
 
 private:

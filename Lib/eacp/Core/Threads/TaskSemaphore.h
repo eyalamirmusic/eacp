@@ -16,7 +16,7 @@ public:
 
     void acquire();
 
-    /// False when the timeout passed before a release.
+    // False when the timeout passed before a release.
     bool tryAcquireFor(Time::MS timeout);
 
 private:
@@ -31,7 +31,7 @@ public:
     void signal();
     void wait();
 
-    /// False when the timeout passed before a signal.
+    // False when the timeout passed before a signal.
     bool waitFor(Time::MS timeout);
 
 private:

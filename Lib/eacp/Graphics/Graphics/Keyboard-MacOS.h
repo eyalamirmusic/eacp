@@ -8,4 +8,4 @@ namespace eacp::Graphics
 {
 ModifierKeys modifierKeysFromEvent(NSEvent* event);
 KeyEvent keyEventFrom(NSEvent* event, KeyEventType type);
-} // namespace eacp::Graphics
+}

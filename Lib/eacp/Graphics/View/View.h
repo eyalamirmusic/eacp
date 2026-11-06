@@ -26,7 +26,7 @@ namespace eacp::Graphics
 class Image;
 class Window;
 
-/// Which pointer callback a MouseEvent is for.
+// Which pointer callback a MouseEvent is for.
 enum class MouseEventType
 {
     Down,
@@ -76,7 +76,7 @@ enum class ScrollPhase
     MomentumEnded
 };
 
-/// A pointer event; positions are in the receiving view's points.
+// A pointer event; positions are in the receiving view's points.
 struct MouseEvent
 {
     Point pos;
@@ -149,7 +149,7 @@ enum class TouchPhase
     Cancelled
 };
 
-/// One finger's change; positions in the receiving view's points.
+// One finger's change; positions in the receiving view's points.
 // id is held from Began to Ended or Cancelled, unique among fingers that are down.
 struct TouchEvent
 {
@@ -167,7 +167,7 @@ struct TouchEvent
     double timestamp = 0.0;
 };
 
-/// Per-view input flags, set through View's fluent setters.
+// Per-view input flags, set through View's fluent setters.
 struct ViewProperties
 {
     bool handlesMouseEvents = false;
@@ -187,12 +187,12 @@ struct ViewProperties
     bool ignoresMouseEvents = false;
 };
 
-/// The base of every on-screen element: override paint() and the input
-/// callbacks, place it with setBounds() in its parent's points. Main thread
-/// only. Children are not owned; a destroyed view leaves its parent.
-/// Put one on screen with ViewWindow or runWindowedApp (Window/ViewWindow.h).
-/// paint() never runs on Linux or Android (EACP_HAS_CONTEXT is 0): draw with UI
-/// components (UI::ComponentHost) or GPU::GPUView / UI::GPUComponent there.
+// The base of every on-screen element: override paint() and the input
+// callbacks, place it with setBounds() in its parent's points. Main thread
+// only. Children are not owned; a destroyed view leaves its parent.
+// Put one on screen with ViewWindow or runWindowedApp (Window/ViewWindow.h).
+// paint() never runs on Linux or Android (EACP_HAS_CONTEXT is 0): draw with UI
+// components (UI::ComponentHost) or GPU::GPUView / UI::GPUComponent there.
 class View
 {
     using ChildViews = std::initializer_list<std::reference_wrapper<View>>;
@@ -201,7 +201,7 @@ public:
     View();
     virtual ~View();
 
-    /// Schedules paint(); does not paint synchronously.
+    // Schedules paint(); does not paint synchronously.
     void repaint();
 
     // Renders this view and its child views into an off-screen image, stacked
@@ -245,9 +245,9 @@ public:
 
     void* getHandle();
 
-    /// Draws with the platform 2D context (Core Graphics, Direct2D). Never
-    /// called where EACP_HAS_CONTEXT is 0 (Linux, Android); use UI components or
-    /// UI::GPUComponent there.
+    // Draws with the platform 2D context (Core Graphics, Direct2D). Never
+    // called where EACP_HAS_CONTEXT is 0 (Linux, Android); use UI components or
+    // UI::GPUComponent there.
     virtual void paint(Context&);
 
     // Native, non-paint content this view renders itself (a GPUView's Metal
@@ -364,8 +364,8 @@ public:
     void scaleToFit(ChildViews views);
 
     void addChildren(ChildViews views);
-    /// Does not take ownership; the child must outlive its membership or be
-    /// destroyed, which removes it.
+    // Does not take ownership; the child must outlive its membership or be
+    // destroyed, which removes it.
     void addSubview(View& view);
     void removeSubview(View& view);
     void removeFromParent();
@@ -399,8 +399,8 @@ public:
     // cursor rather than letting whatever is behind it take the files.
     View& setAcceptsFileDrops(bool value = true);
 
-    /// Starts dragging files out to the OS. Returns false where it could not
-    /// start, and always on Linux and iOS.
+    // Starts dragging files out to the OS. Returns false where it could not
+    // start, and always on Linux and iOS.
     bool startFileDrag(const Vector<std::string>& paths,
                        const FileDragOptions& options = {});
 

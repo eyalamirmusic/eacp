@@ -9,11 +9,11 @@
 
 namespace eacp::GPUWidgets
 {
-/// The EDSL-authored shader for solid fills and strokes. It maps a path-space
-/// position into clip space using the viewport size (top-left origin, y down, like
-/// the View coordinate system) and paints every pixel the solid fill colour, read
-/// straight from the uniform block in the fragment stage. Reusable on its own for
-/// drawing any 2D triangle mesh in a flat colour.
+// The EDSL-authored shader for solid fills and strokes. It maps a path-space
+// position into clip space using the viewport size (top-left origin, y down, like
+// the View coordinate system) and paints every pixel the solid fill colour, read
+// straight from the uniform block in the fragment stage. Reusable on its own for
+// drawing any 2D triangle mesh in a flat colour.
 struct PathFillShader final : GPU::ShaderProgram
 {
     PathFillShader();

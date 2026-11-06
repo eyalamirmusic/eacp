@@ -25,8 +25,8 @@ using StateBinder = std::function<OwningPointer<EA::Listener>(Miro::Bridge&)>;
 namespace Detail
 {
 
-/// Inline so static initializers in any TU using EACP_STATE can call it without
-/// linking the eacp-webview library (the Miro codegen executable doesn't).
+// Inline so static initializers in any TU using EACP_STATE can call it without
+// linking the eacp-webview library (the Miro codegen executable doesn't).
 inline Vector<StateBinder>& stateBinderRegistry()
 {
     static auto registry = Vector<StateBinder> {};

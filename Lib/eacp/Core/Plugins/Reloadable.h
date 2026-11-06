@@ -21,16 +21,16 @@
 
 namespace eacp::Plugins
 {
-/// Callbacks and overrides for a Reloadable. Every callback runs on the main thread.
+// Callbacks and overrides for a Reloadable. Every callback runs on the main thread.
 struct ReloadableOptions
 {
     std::function<void(std::string_view line)> log = [](std::string_view line)
     { LOG(line); };
 
-    /// Where objects from create<T>() are rebuilt; runs while the previous image is
-    /// still mapped.
+    // Where objects from create<T>() are rebuilt; runs while the previous image is
+    // still mapped.
     std::function<void()> onReloaded = [] {};
-    /// False skips the onReloaded call at the end of construction.
+    // False skips the onReloaded call at the end of construction.
     bool callOnReloadedAtCreation = true;
 
     std::function<void()> onStateChanged = [] {};
@@ -42,7 +42,7 @@ struct ReloadableOptions
         [](std::string_view) {};
 
     Files::SourceWatcher::Options sources;
-    /// Replaces the loop options derived from the app's hot-reload target.
+    // Replaces the loop options derived from the app's hot-reload target.
     std::optional<HotReloadLoop::Options> loop;
 };
 
@@ -61,34 +61,34 @@ struct ReloadableSetup
 std::string readableSignature(std::string_view signature);
 } // namespace Detail
 
-/// The functions EACP_RELOADABLE lists, each found by its type: create<T>()
-/// calls the T*() factory and function<F>() returns the F. In static mode they
-/// are the app's own; under EACP_HOT_RELOAD they come from the module, loaded
-/// at construction as generation 0 and swapped on every save. See
-/// Docs/HotReload.md.
-///
-/// Lifetime: onReloaded runs once at the end of construction and again after
-/// every reload, so declare the Reloadable after everything onReloaded uses.
-/// On a reload, every object create<T>() made must be replaced or destroyed
-/// inside onReloaded, while the previous image is still mapped. Destroying the
-/// Reloadable leaves its image mapped for the rest of the loop turn, so members
-/// destroyed after it may still hold its objects.
-///
-/// No value: create<T>() returns an empty pointer when the factory returns null
-/// or throws, or when no module is loaded; function<F>() returns nullptr when no
-/// module is loaded, and call<F>() then returns a value-initialised result. A
-/// type EACP_RELOADABLE does not list throws std::logic_error.
+// The functions EACP_RELOADABLE lists, each found by its type: create<T>()
+// calls the T*() factory and function<F>() returns the F. In static mode they
+// are the app's own; under EACP_HOT_RELOAD they come from the module, loaded
+// at construction as generation 0 and swapped on every save. See
+// Docs/HotReload.md.
+//
+// Lifetime: onReloaded runs once at the end of construction and again after
+// every reload, so declare the Reloadable after everything onReloaded uses.
+// On a reload, every object create<T>() made must be replaced or destroyed
+// inside onReloaded, while the previous image is still mapped. Destroying the
+// Reloadable leaves its image mapped for the rest of the loop turn, so members
+// destroyed after it may still hold its objects.
+//
+// No value: create<T>() returns an empty pointer when the factory returns null
+// or throws, or when no module is loaded; function<F>() returns nullptr when no
+// module is loaded, and call<F>() then returns a value-initialised result. A
+// type EACP_RELOADABLE does not list throws std::logic_error.
 class Reloadable
 {
 public:
-    /// Static or dev mode as the app was configured; main thread only.
+    // Static or dev mode as the app was configured; main thread only.
     template <bool hotReload = isHotReload()>
     explicit Reloadable(const ReloadableOptions& optionsToUse = {})
         : Reloadable(setupFor<hotReload>(), optionsToUse)
     {
     }
 
-    /// Mode and module given explicitly; for tests.
+    // Mode and module given explicitly; for tests.
     Reloadable(const Detail::ReloadableSetup& setup,
                const ReloadableOptions& optionsToUse);
     ~Reloadable();
@@ -147,7 +147,7 @@ public:
     }
 
     [[nodiscard]] std::string describeState() const;
-    /// 0 for the first image, one more per successful reload.
+    // 0 for the first image, one more per successful reload.
     [[nodiscard]] int getGeneration() const;
 
 private:

@@ -42,14 +42,14 @@ public:
     std::string getText();
     bool hasText();
 
-    /// True when the event was this object's: a request for the selection we
-    /// own, the answer to one we asked for, or the loss of ownership. All of
-    /// them name the clipboard's own window, which is nobody else's, so a
-    /// toplevel never loses an event here.
+    // True when the event was this object's: a request for the selection we
+    // own, the answer to one we asked for, or the loss of ownership. All of
+    // them name the clipboard's own window, which is nobody else's, so a
+    // toplevel never loses an event here.
     bool handleEvent(const xcb_generic_event_t& event);
 
-    /// The server is gone: the store goes with it, and the hooks go back to the
-    /// answers a machine with no clipboard gives.
+    // The server is gone: the store goes with it, and the hooks go back to the
+    // answers a machine with no clipboard gives.
     void connectionLost();
 
 private:
@@ -60,9 +60,9 @@ private:
         Files
     };
 
-    /// A hook is running whenever the connection is pumped from inside one, and
-    /// the loss may arrive there: clearing the backend then would destroy the
-    /// std::function whose body is on the stack, so the clear waits.
+    // A hook is running whenever the connection is pumped from inside one, and
+    // the loss may arrive there: clearing the backend then would destroy the
+    // std::function whose body is on the stack, so the clear waits.
     struct Call;
 
     bool ensureWindow();
@@ -85,7 +85,7 @@ private:
     Vector<xcb_atom_t> offeredTargets() const;
     bool isTextTarget(xcb_atom_t target) const;
 
-    /// XCB_ATOM_NONE when the owner offers nothing this can read as text.
+    // XCB_ATOM_NONE when the owner offers nothing this can read as text.
     xcb_atom_t pickTextTarget();
     Vector<xcb_atom_t> availableTargets();
 
@@ -100,8 +100,8 @@ private:
     std::string ownedData;
     Content ownedContent = Content::None;
 
-    /// Set by handleEvent, read by the waits in convertSelection: an answer may
-    /// already be in the queue by the time one starts waiting for it.
+    // Set by handleEvent, read by the waits in convertSelection: an answer may
+    // already be in the queue by the time one starts waiting for it.
     bool notifyArrived = false;
     bool chunkArrived = false;
     xcb_atom_t notifyProperty = XCB_ATOM_NONE;

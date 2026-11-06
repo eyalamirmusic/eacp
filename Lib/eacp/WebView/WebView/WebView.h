@@ -10,16 +10,16 @@
 
 namespace eacp::Graphics
 {
-/// Owning byte buffer and non-owning views used across the resource API.
+// Owning byte buffer and non-owning views used across the resource API.
 using Bytes = Vector<std::uint8_t>;
 using ByteSpan = Span<std::uint8_t>;
 using ByteView = Span<const std::uint8_t>;
 
-/// Byte offsets / lengths into a resource, and a half-open byte range.
+// Byte offsets / lengths into a resource, and a half-open byte range.
 using RangeSize = std::uint64_t;
 using ByteRange = Range<RangeSize>;
 
-/// A whole resource served from memory to a custom scheme.
+// A whole resource served from memory to a custom scheme.
 struct ResourceResponse
 {
     std::string mimeType;
@@ -32,17 +32,17 @@ using ResourceProvider =
 
 using FileProvider = std::function<std::optional<ByteView>(std::string_view path)>;
 
-/// Sequential pull reader for a streamed resource: fill `out` starting at byte
-/// `offset`, returning the number of bytes written (0 == end of resource). The
-/// handler calls it repeatedly with monotonically advancing offsets, and may
-/// call it off the main thread -- so it must be safe to run on a background
-/// queue.
+// Sequential pull reader for a streamed resource: fill `out` starting at byte
+// `offset`, returning the number of bytes written (0 == end of resource). The
+// handler calls it repeatedly with monotonically advancing offsets, and may
+// call it off the main thread -- so it must be safe to run on a background
+// queue.
 using ResourceReader = std::function<int(RangeSize offset, ByteSpan out)>;
 
-/// A resource served in chunks rather than as one in-memory blob. The provider
-/// reports the MIME type and the full `size`; the handler owns Range parsing,
-/// emits 200 / 206 / 416 with the right Content-Range / Content-Length /
-/// Accept-Ranges headers, and pulls the body through `read` as it goes.
+// A resource served in chunks rather than as one in-memory blob. The provider
+// reports the MIME type and the full `size`; the handler owns Range parsing,
+// emits 200 / 206 / 416 with the right Content-Range / Content-Length /
+// Accept-Ranges headers, and pulls the body through `read` as it goes.
 struct StreamingResource
 {
     std::string mimeType;
@@ -54,41 +54,41 @@ struct StreamingResource
 using StreamingProvider =
     std::function<std::optional<StreamingResource>(std::string_view url)>;
 
-/// The MIME type for a file extension, case-insensitive; application/octet-stream when unknown.
+// The MIME type for a file extension, case-insensitive; application/octet-stream when unknown.
 std::string mimeForPath(std::string_view path);
 
 std::string pathFromURL(std::string_view url,
                         std::string_view indexFile = "index.html");
 
-/// `scheme://host/abs/path?query#frag` -> `/abs/path`, percent-decoded. Unlike
-/// pathFromURL (which yields a host-relative resource key for embedded schemes),
-/// this keeps the leading slash so the result is an absolute filesystem path.
-/// Empty if the URL has no path.
+// `scheme://host/abs/path?query#frag` -> `/abs/path`, percent-decoded. Unlike
+// pathFromURL (which yields a host-relative resource key for embedded schemes),
+// this keeps the leading slash so the result is an absolute filesystem path.
+// Empty if the URL has no path.
 std::string fileURLToPath(std::string_view url);
 
-/// A FileProvider over the ResEmbed resources in `category`; empty for a missing path.
+// A FileProvider over the ResEmbed resources in `category`; empty for a missing path.
 FileProvider fromResEmbed(std::string category);
 
-/// A StreamingProvider that serves files straight off disk for a custom scheme,
-/// in bounded chunks with Range support. `roots` bounds which directories are
-/// readable: a request resolving outside every root is rejected (404), and an
-/// empty `roots` allows any readable file. MIME defaults to mimeForPath; pass
-/// `mimeForFile` to override. Pair with Options::streamingSchemes.
+// A StreamingProvider that serves files straight off disk for a custom scheme,
+// in bounded chunks with Range support. `roots` bounds which directories are
+// readable: a request resolving outside every root is rejected (404), and an
+// empty `roots` allows any readable file. MIME defaults to mimeForPath; pass
+// `mimeForFile` to override. Pair with Options::streamingSchemes.
 StreamingProvider fileStreamProvider(
     Vector<std::string> roots,
     std::function<std::string(std::string_view path)> mimeForFile = {});
 
 struct WebViewNativeAccess;
 
-/// A native web view (WKWebView or WebView2) that is also the ScriptHost the bridge talks to.
+// A native web view (WKWebView or WebView2) that is also the ScriptHost the bridge talks to.
 class WebView
     : public View
     , public ScriptHost
 {
 public:
-    /// The drag-out payload types live at namespace scope beside ScriptHost
-    /// now, so the built-in `armFileDrag` command deserializes into the same
-    /// struct whichever host serves it. Still spelled WebView::DraggableFile.
+    // The drag-out payload types live at namespace scope beside ScriptHost
+    // now, so the built-in `armFileDrag` command deserializes into the same
+    // struct whichever host serves it. Still spelled WebView::DraggableFile.
     using DraggableFile = ::eacp::Graphics::DraggableFile;
     using DraggableFileList = ::eacp::Graphics::DraggableFileList;
 
@@ -113,128 +113,128 @@ public:
         bool debugConsole = true;
         bool transparentBackground = false;
 
-        /// Overrides the User-Agent this view reports
-        /// (WKWebView.customUserAgent on Apple, ICoreWebView2Settings2's
-        /// UserAgent on Windows). Empty — the default — keeps the platform's
-        /// own. Set it for a site that gates on the UA: several refuse to
-        /// serve, or refuse to log in to, a runtime they do not recognise as a
-        /// desktop browser, and an embedded web view is exactly that.
+        // Overrides the User-Agent this view reports
+        // (WKWebView.customUserAgent on Apple, ICoreWebView2Settings2's
+        // UserAgent on Windows). Empty — the default — keeps the platform's
+        // own. Set it for a site that gates on the UA: several refuse to
+        // serve, or refuse to log in to, a runtime they do not recognise as a
+        // desktop browser, and an embedded web view is exactly that.
         std::string userAgent;
 
-        /// Windows only: gives this WebView its own WebView2 user-data folder
-        /// (`%LOCALAPPDATA%\<exe>\WebView2-<suffix>`). WebViews sharing a folder
-        /// must declare the same custom schemes, or the second one stays blank;
-        /// give them distinct suffixes. Empty keeps the shared folder.
+        // Windows only: gives this WebView its own WebView2 user-data folder
+        // (`%LOCALAPPDATA%\<exe>\WebView2-<suffix>`). WebViews sharing a folder
+        // must declare the same custom schemes, or the second one stays blank;
+        // give them distinct suffixes. Empty keeps the shared folder.
         std::string userDataFolderSuffix;
 
-        /// Windows: WebView2's status bar — the hover-link URL overlay in the
-        /// bottom corner. Off by default so the embedding matches macOS,
-        /// where WKWebView has no status bar. No-op on Apple platforms.
+        // Windows: WebView2's status bar — the hover-link URL overlay in the
+        // bottom corner. Off by default so the embedding matches macOS,
+        // where WKWebView has no status bar. No-op on Apple platforms.
         bool statusBar = false;
 
-        /// The built-in right-click menu: WebView2's on Windows (Back, Reload,
-        /// Save as, Print), WebKit's on macOS. Separate from debugConsole,
-        /// which only governs the DevTools window — turning that off drops
-        /// Inspect but leaves the rest of the menu standing. Windows has a
-        /// settings switch for this; macOS has none, so the menu is emptied as
-        /// WebKit opens it. No-op on iOS.
+        // The built-in right-click menu: WebView2's on Windows (Back, Reload,
+        // Save as, Print), WebKit's on macOS. Separate from debugConsole,
+        // which only governs the DevTools window — turning that off drops
+        // Inspect but leaves the rest of the menu standing. Windows has a
+        // settings switch for this; macOS has none, so the menu is emptied as
+        // WebKit opens it. No-op on iOS.
         bool defaultContextMenu = true;
 
-        /// What happens to THIS view when onNewWindowRequested declines a
-        /// target="_blank" / window.open request.
-        ///
-        /// True, the default, keeps the behaviour an app with nowhere else to
-        /// put the navigation wants: the URL loads here, replacing this
-        /// document, so the click still reaches the user. False drops the
-        /// request entirely and leaves this page where it is — for an embedder
-        /// that has already dealt with the URL itself (handed it to the system
-        /// browser, opened its own tab), and for which replacing the page under
-        /// the user is the one wrong answer.
+        // What happens to THIS view when onNewWindowRequested declines a
+        // target="_blank" / window.open request.
+        //
+        // True, the default, keeps the behaviour an app with nowhere else to
+        // put the navigation wants: the URL loads here, replacing this
+        // document, so the click still reaches the user. False drops the
+        // request entirely and leaves this page where it is — for an embedder
+        // that has already dealt with the URL itself (handed it to the system
+        // browser, opened its own tab), and for which replacing the page under
+        // the user is the one wrong answer.
         bool loadDeclinedPopupsInline = true;
 
-        /// Origins whose pages may post to message handlers and get the window
-        /// bridges. Every page message is checked against its sender before
-        /// any handler runs: the framework's own (__eacpBridge and so every
-        /// bound API method and armFileDrag, __eacpKeyEvent, the window-drag
-        /// and window-control bridges) and the app's alike. A message from
-        /// anywhere else is dropped, so a remote page, or a foreign iframe, in
-        /// this view cannot drive the app or the window hosting it — inside a
-        /// plugin editor, the DAW's.
-        ///
-        /// Empty, the default, means only the content the view serves itself:
-        /// pages on one of its own `schemes` / `streamingSchemes` (the embedded
-        /// scheme included), the Vite dev server when Embedded picked it, and
-        /// the document loadHTML loads without a base URL. A UI served from
-        /// anywhere else — a remote site, or loadHTML with an http(s) base URL
-        /// — has to list its origin here: "https://example.com", or with an
-        /// explicit port, "http://localhost:8080". "*" trusts every origin,
-        /// which is the behaviour before this option existed.
+        // Origins whose pages may post to message handlers and get the window
+        // bridges. Every page message is checked against its sender before
+        // any handler runs: the framework's own (__eacpBridge and so every
+        // bound API method and armFileDrag, __eacpKeyEvent, the window-drag
+        // and window-control bridges) and the app's alike. A message from
+        // anywhere else is dropped, so a remote page, or a foreign iframe, in
+        // this view cannot drive the app or the window hosting it — inside a
+        // plugin editor, the DAW's.
+        //
+        // Empty, the default, means only the content the view serves itself:
+        // pages on one of its own `schemes` / `streamingSchemes` (the embedded
+        // scheme included), the Vite dev server when Embedded picked it, and
+        // the document loadHTML loads without a base URL. A UI served from
+        // anywhere else — a remote site, or loadHTML with an http(s) base URL
+        // — has to list its origin here: "https://example.com", or with an
+        // explicit port, "http://localhost:8080". "*" trusts every origin,
+        // which is the behaviour before this option existed.
         Vector<std::string> trustedOrigins;
 
-        /// macOS/iOS: back this WebView with a non-persistent (in-memory)
-        /// WKWebsiteDataStore instead of the app-wide default store. Two
-        /// effects: nothing the page stores (cookies, localStorage, caches)
-        /// survives the WebView, and the session's Networking helper process
-        /// is torn down with it — the default store is an app-lifetime
-        /// singleton whose network process lingers in Activity Monitor until
-        /// the app exits. The WebContent process dies with the WebView either
-        /// way, and the GPU helper always stays for the app's lifetime.
-        /// Opt-in because losing persisted page storage is the wrong default
-        /// for a long-lived embedded UI. No-op on Windows, where the WebView2
-        /// process tree already exits with the last controller for its
-        /// user-data folder.
+        // macOS/iOS: back this WebView with a non-persistent (in-memory)
+        // WKWebsiteDataStore instead of the app-wide default store. Two
+        // effects: nothing the page stores (cookies, localStorage, caches)
+        // survives the WebView, and the session's Networking helper process
+        // is torn down with it — the default store is an app-lifetime
+        // singleton whose network process lingers in Activity Monitor until
+        // the app exits. The WebContent process dies with the WebView either
+        // way, and the GPU helper always stays for the app's lifetime.
+        // Opt-in because losing persisted page storage is the wrong default
+        // for a long-lived embedded UI. No-op on Windows, where the WebView2
+        // process tree already exits with the last controller for its
+        // user-data folder.
         bool ephemeralSession = false;
 
-        /// macOS: deliver the first click on an unfocused window to the page
-        /// instead of swallowing it as activation (NSView acceptsFirstMouse).
-        /// Without it, app-region drag handles need one click to focus and a
-        /// second to drag. Mirrors Electron's acceptFirstMouse. Opt-in — on a
-        /// normal window it makes accidental first-click page interaction
-        /// possible. No-op on Windows, where clicks already reach the page.
+        // macOS: deliver the first click on an unfocused window to the page
+        // instead of swallowing it as activation (NSView acceptsFirstMouse).
+        // Without it, app-region drag handles need one click to focus and a
+        // second to drag. Mirrors Electron's acceptFirstMouse. Opt-in — on a
+        // normal window it makes accidental first-click page interaction
+        // possible. No-op on Windows, where clicks already reach the page.
         bool acceptFirstMouse = false;
 
-        /// Hand key events the page leaves unhandled back to the native host,
-        /// instead of letting the web view swallow them all. The page consumes a
-        /// key with preventDefault(), or implicitly when it lands on a control
-        /// that uses it (a text field, arrows on a slider); everything else fires
-        /// onUnhandledKeyEvent and, unless that consumes it, continues to whatever
-        /// hosts the view — for an embedded plugin editor, the DAW's own window,
-        /// so host shortcuts like spacebar transport keep working while the editor
-        /// has focus. On macOS the unconsumed event travels the responder chain
-        /// past the framework container; on Windows it is re-injected into the
-        /// host window's WM_KEYDOWN path. The verdict comes from the page, so
-        /// re-dispatch is asynchronous (a few ms after the original event). Opt-in.
-        /// On Windows keys WebView2 claims as browser shortcuts (F5, Ctrl+F, …)
-        /// are handled by the page/browser and never forwarded. iOS has no
-        /// hardware-key chain to feed, so it is a no-op there.
+        // Hand key events the page leaves unhandled back to the native host,
+        // instead of letting the web view swallow them all. The page consumes a
+        // key with preventDefault(), or implicitly when it lands on a control
+        // that uses it (a text field, arrows on a slider); everything else fires
+        // onUnhandledKeyEvent and, unless that consumes it, continues to whatever
+        // hosts the view — for an embedded plugin editor, the DAW's own window,
+        // so host shortcuts like spacebar transport keep working while the editor
+        // has focus. On macOS the unconsumed event travels the responder chain
+        // past the framework container; on Windows it is re-injected into the
+        // host window's WM_KEYDOWN path. The verdict comes from the page, so
+        // re-dispatch is asynchronous (a few ms after the original event). Opt-in.
+        // On Windows keys WebView2 claims as browser shortcuts (F5, Ctrl+F, …)
+        // are handled by the page/browser and never forwarded. iOS has no
+        // hardware-key chain to feed, so it is a no-op there.
         bool forwardUnhandledKeys = false;
 
-        /// Ask the user before a page gets the camera or microphone. Off (the
-        /// default) grants every getUserMedia request once the app itself has
-        /// OS permission, which suits an app whose pages are its own UI. A
-        /// general browser loads arbitrary sites and should turn this on: macOS
-        /// 12+ answers WKPermissionDecisionPrompt so WebKit shows its own
-        /// per-origin prompt, and Windows leaves PermissionRequested at its
-        /// default so WebView2 shows its prompt. macOS 11 has no prompt to
-        /// defer to (only the private _WKCaptureDevices SPI), so there the
-        /// request is denied.
+        // Ask the user before a page gets the camera or microphone. Off (the
+        // default) grants every getUserMedia request once the app itself has
+        // OS permission, which suits an app whose pages are its own UI. A
+        // general browser loads arbitrary sites and should turn this on: macOS
+        // 12+ answers WKPermissionDecisionPrompt so WebKit shows its own
+        // per-origin prompt, and Windows leaves PermissionRequested at its
+        // default so WebView2 shows its prompt. macOS 11 has no prompt to
+        // defer to (only the private _WKCaptureDevices SPI), so there the
+        // request is denied.
         bool promptForMediaCapture = false;
 
-        /// Keep requestAnimationFrame-driven content advancing while the view is
-        /// off-screen, so an animated canvas (a spectrum analyser, a meter, a
-        /// visualiser) is captured by renderToImageAsync / takeSnapshot instead of
-        /// freezing on its last on-screen frame.
-        ///
-        /// An off-screen WKWebView has no display link, so the platform never
-        /// fires requestAnimationFrame — an rAF loop simply stops. With this set, a
-        /// document-start shim redirects requestAnimationFrame onto a ~60 Hz timer,
-        /// which does fire off-screen, so the loop keeps running and each snapshot
-        /// reflects live content. Opt-in and meant for snapshot / test hosts: the
-        /// timer is not vsync-aligned, and it stays in effect for the view's whole
-        /// life, so a normal on-screen editor should leave it off and keep true rAF.
-        /// On Windows this is effectively a no-op: WebView2 is composition-hosted
-        /// and always reports itself visible (so snapshots work), so its rAF keeps
-        /// firing off-screen either way.
+        // Keep requestAnimationFrame-driven content advancing while the view is
+        // off-screen, so an animated canvas (a spectrum analyser, a meter, a
+        // visualiser) is captured by renderToImageAsync / takeSnapshot instead of
+        // freezing on its last on-screen frame.
+        //
+        // An off-screen WKWebView has no display link, so the platform never
+        // fires requestAnimationFrame — an rAF loop simply stops. With this set, a
+        // document-start shim redirects requestAnimationFrame onto a ~60 Hz timer,
+        // which does fire off-screen, so the loop keeps running and each snapshot
+        // reflects live content. Opt-in and meant for snapshot / test hosts: the
+        // timer is not vsync-aligned, and it stays in effect for the view's whole
+        // life, so a normal on-screen editor should leave it off and keep true rAF.
+        // On Windows this is effectively a no-op: WebView2 is composition-hosted
+        // and always reports itself visible (so snapshots work), so its rAF keeps
+        // firing off-screen either way.
         bool driveOffscreenAnimation = false;
     };
 
@@ -262,32 +262,32 @@ public:
 
     void evaluateJavaScript(const std::string& script, const JSCallback& callback);
 
-    /// The fire-and-forget form, which is also ScriptHost's. Separate rather
-    /// than a defaulted callback argument: the one-argument call has to be
-    /// the virtual the bridge reaches through a ScriptHost&, and a default
-    /// argument on the two-argument overload would make that call ambiguous.
+    // The fire-and-forget form, which is also ScriptHost's. Separate rather
+    // than a defaulted callback argument: the one-argument call has to be
+    // the virtual the bridge reaches through a ScriptHost&, and a default
+    // argument on the two-argument overload would make that call ambiguous.
     void evaluateJavaScript(const std::string& script) override;
 
-    /// Awaitable wrapper around evaluateJavaScript. The returned Async
-    /// resolves with the script result string, or rejects with the
-    /// error message if the script threw. Both resolve and reject fire
-    /// on the main thread.
+    // Awaitable wrapper around evaluateJavaScript. The returned Async
+    // resolves with the script result string, or rejects with the
+    // error message if the script threw. Both resolve and reject fire
+    // on the main thread.
     Threads::Async<std::string> callJS(const std::string& script);
 
     using SnapshotCallback =
         std::function<void(Bytes pngBytes, const std::string& error)>;
 
-    /// Captures the page as PNG bytes. The callback runs exactly once, on the
-    /// main thread, and is guaranteed to run: a snapshot the platform never
-    /// answers — WKWebView can drop the completion handler for a hidden,
-    /// throttled page — arrives after a few seconds with empty bytes and an
-    /// error instead of never arriving at all. So it may fire after the page it
-    /// was asked about has moved on, and a callback that captures state of its
-    /// own has to stay valid for that long.
+    // Captures the page as PNG bytes. The callback runs exactly once, on the
+    // main thread, and is guaranteed to run: a snapshot the platform never
+    // answers — WKWebView can drop the completion handler for a hidden,
+    // throttled page — arrives after a few seconds with empty bytes and an
+    // error instead of never arriving at all. So it may fire after the page it
+    // was asked about has moved on, and a callback that captures state of its
+    // own has to stay valid for that long.
     void takeSnapshot(SnapshotCallback callback);
 
-    /// View snapshot hooks: the page is async-only, so renderToImageAsync folds it
-    /// in via takeSnapshot. renderToImage (sync) leaves the web region blank.
+    // View snapshot hooks: the page is async-only, so renderToImageAsync folds it
+    // in via takeSnapshot. renderToImage (sync) leaves the web region blank.
     bool hasAsyncContent() const override;
     void captureAsyncContent(float scale, std::function<void(Image)> done) override;
 
@@ -297,20 +297,20 @@ public:
     void setZoom(double level);
     double getZoom() const;
 
-    /// Focuses the browser runtime itself, not just the framework wrapper View.
-    /// Use this before JS focus() calls that should leave page inputs ready for
-    /// typing.
+    // Focuses the browser runtime itself, not just the framework wrapper View.
+    // Use this before JS focus() calls that should leave page inputs ready for
+    // typing.
     void focusContent();
 
     static WebView* focused();
 
-    /// True when the platform web runtime backing WebView is present. Always
-    /// true on macOS/iOS, where WKWebView ships with the OS. On Windows it
-    /// probes for the Microsoft Edge WebView2 Runtime, which Windows 11 and
-    /// most updated Windows 10 machines have but which is not guaranteed.
-    /// Call this before constructing a WebView to fail gracefully (e.g. prompt
-    /// the user to install the runtime) instead of hitting a silent
-    /// environment-creation failure later.
+    // True when the platform web runtime backing WebView is present. Always
+    // true on macOS/iOS, where WKWebView ships with the OS. On Windows it
+    // probes for the Microsoft Edge WebView2 Runtime, which Windows 11 and
+    // most updated Windows 10 machines have but which is not guaranteed.
+    // Call this before constructing a WebView to fail gracefully (e.g. prompt
+    // the user to install the runtime) instead of hitting a silent
+    // environment-creation failure later.
     static bool isRuntimeAvailable();
 
     void addScriptMessageHandler(const std::string& name,
@@ -320,14 +320,14 @@ public:
     void addUserScript(const std::string& source,
                        bool atDocumentStart = true) override;
 
-    /// Arms a native file drag-out of the given on-disk files for the next mouse
-    /// gesture, so the drag can escape the app into Finder / Explorer / a DAW.
-    /// Prefer the built-in `armFileDrag` bridge command, which routes a
-    /// DraggableFileList here. Desktop only (macOS + Windows); asserts on iOS.
+    // Arms a native file drag-out of the given on-disk files for the next mouse
+    // gesture, so the drag can escape the app into Finder / Explorer / a DAW.
+    // Prefer the built-in `armFileDrag` bridge command, which routes a
+    // DraggableFileList here. Desktop only (macOS + Windows); asserts on iOS.
     void armFileDrag(const Vector<std::string>& paths) override;
 
-    /// Arms a native window drag for the next mouse gesture. Desktop only
-    /// (macOS + Windows); asserts on iOS.
+    // Arms a native window drag for the next mouse gesture. Desktop only
+    // (macOS + Windows); asserts on iOS.
     void armWindowDrag();
 
     std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};
@@ -338,10 +338,10 @@ public:
     std::function<bool(OwningPointer<WebView> popup, const std::string& url)>
         onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
-    /// Cursor during a native file drag-out, in the page's own client CSS pixels
-    /// (top-left origin — the same space as clientX/clientY). `inside` is false
-    /// once the pointer leaves the window, so the drop belongs to whatever it
-    /// lands on outside.
+    // Cursor during a native file drag-out, in the page's own client CSS pixels
+    // (top-left origin — the same space as clientX/clientY). `inside` is false
+    // once the pointer leaves the window, so the drop belongs to whatever it
+    // lands on outside.
     struct FileDragPoint
     {
         double x = 0;
@@ -350,25 +350,25 @@ public:
     };
 
     std::function<void()> onFileDragStarted = [] {};
-    /// Windows only: the OS file drag is a blocking modal loop (SHDoDragDrop), so
-    /// eacp streams the cursor (onFileDragMoved) and reports the release
-    /// (onFileDragEnded) from a custom drop source. On macOS the drag is async
-    /// and the host polls the cursor itself, so these stay unused there.
+    // Windows only: the OS file drag is a blocking modal loop (SHDoDragDrop), so
+    // eacp streams the cursor (onFileDragMoved) and reports the release
+    // (onFileDragEnded) from a custom drop source. On macOS the drag is async
+    // and the host polls the cursor itself, so these stay unused there.
     std::function<void(FileDragPoint)> onFileDragMoved = [](auto&&) {};
     std::function<void(FileDragPoint)> onFileDragEnded = [](auto&&) {};
     std::function<void()> onClose = [] {};
 
-    /// Downloads (Apple platforms, macOS 11.3+ / iOS 14.5+). A navigation to
-    /// something WebKit can't display, or an anchor marked `download`, becomes
-    /// a download into the user's Downloads directory under a collision-free
-    /// name; these report where it landed / why it died. On Windows, WebView2
-    /// runs its own download UI and these never fire.
+    // Downloads (Apple platforms, macOS 11.3+ / iOS 14.5+). A navigation to
+    // something WebKit can't display, or an anchor marked `download`, becomes
+    // a download into the user's Downloads directory under a collision-free
+    // name; these report where it landed / why it died. On Windows, WebView2
+    // runs its own download UI and these never fire.
     std::function<void(const std::string& path)> onDownloadFinished = [](auto&&) {};
     std::function<void(const std::string& error)> onDownloadFailed = [](auto&&) {};
 
-    /// Fired (with Options::forwardUnhandledKeys) for every key event the page
-    /// did not consume. Return true to consume it here; returning false sends
-    /// it on up the native responder chain to whatever hosts the view.
+    // Fired (with Options::forwardUnhandledKeys) for every key event the page
+    // did not consume. Return true to consume it here; returning false sends
+    // it on up the native responder chain to whatever hosts the view.
     std::function<bool(const KeyEvent&)> onUnhandledKeyEvent;
 
     struct Native;
@@ -376,22 +376,22 @@ public:
 protected:
     void resized() override;
 
-    /// The platform web view itself, so a window focuses the live page rather
-    /// than the empty container View that hosts it. See View::nativeFocusTarget.
+    // The platform web view itself, so a window focuses the live page rather
+    // than the empty container View that hosts it. See View::nativeFocusTarget.
     void* nativeFocusTarget() override;
 
-    /// Windows keeps the browser's input/IME surface outside the composition
-    /// tree, placed in screen coordinates and shown independently of the host
-    /// window, so both have to be followed explicitly. No-ops on macOS/iOS,
-    /// where the native web view is an ordinary subview of the window.
+    // Windows keeps the browser's input/IME surface outside the composition
+    // tree, placed in screen coordinates and shown independently of the host
+    // window, so both have to be followed explicitly. No-ops on macOS/iOS,
+    // where the native web view is an ordinary subview of the window.
     void hostWindowMoved() override;
     void hostWindowVisibilityChanged(bool visible) override;
     void visibilityChanged(bool visible) override;
 
-    /// Windows hosts the WebView as a composition visual (no input HWND), so the
-    /// framework's routed mouse events are forwarded to the browser here. On
-    /// macOS/iOS the native web view receives input directly and these are
-    /// no-ops.
+    // Windows hosts the WebView as a composition visual (no input HWND), so the
+    // framework's routed mouse events are forwarded to the browser here. On
+    // macOS/iOS the native web view receives input directly and these are
+    // no-ops.
     void mouseDown(const MouseEvent&) override;
     void mouseUp(const MouseEvent&) override;
     void mouseDragged(const MouseEvent&) override;
@@ -408,15 +408,15 @@ private:
     void installWindowDragSupport();
     void installWindowControlSupport();
 
-    /// Redirects requestAnimationFrame onto a timer so rAF-driven content keeps
-    /// advancing off-screen. Installed from initNative when
-    /// Options::driveOffscreenAnimation is set. See that flag.
+    // Redirects requestAnimationFrame onto a timer so rAF-driven content keeps
+    // advancing off-screen. Installed from initNative when
+    // Options::driveOffscreenAnimation is set. See that flag.
     void installOffscreenAnimationSupport();
     void installKeyEventSupport();
     void performWindowControl(const std::string& action);
     std::shared_ptr<Native> impl;
 };
 
-/// Options that serve the page from the ResEmbed resources in `category`.
+// Options that serve the page from the ResEmbed resources in `category`.
 WebView::Options embeddedOptions(std::string category);
 } // namespace eacp::Graphics

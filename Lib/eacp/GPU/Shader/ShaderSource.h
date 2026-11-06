@@ -30,10 +30,10 @@ enum class ResourceKind
     Sampler
 };
 
-/// The threadgroup a kernel is dispatched in, chosen by its author. A default
-/// shape means the stock one for the kernel's rank - 64 threads in 1D, 8x8 in
-/// 2D, 4x4x4 in 3D - which is what ComputePass::threadGroupWidth and its two
-/// siblings spell.
+// The threadgroup a kernel is dispatched in, chosen by its author. A default
+// shape means the stock one for the kernel's rank - 64 threads in 1D, 8x8 in
+// 2D, 4x4x4 in 3D - which is what ComputePass::threadGroupWidth and its two
+// siblings spell.
 struct ThreadGroupShape
 {
     bool isSet() const;
@@ -44,9 +44,9 @@ struct ThreadGroupShape
     int z = 1;
 };
 
-/// An explicit shader resource binding. Kept as plain data (never inferred via
-/// runtime reflection) so a future C++ shader EDSL can populate the exact same
-/// description it generated the source for.
+// An explicit shader resource binding. Kept as plain data (never inferred via
+// runtime reflection) so a future C++ shader EDSL can populate the exact same
+// description it generated the source for.
 struct ResourceBinding
 {
     ResourceKind kind = ResourceKind::Buffer;
@@ -55,38 +55,38 @@ struct ResourceBinding
     std::string name;
 };
 
-/// Native shader source plus the metadata a pipeline needs. The whole GPU layer
-/// downstream of this type consumes only this struct, so the planned shader EDSL
-/// becomes "a factory that returns a ShaderSource" with no call-site changes.
+// Native shader source plus the metadata a pipeline needs. The whole GPU layer
+// downstream of this type consumes only this struct, so the planned shader EDSL
+// becomes "a factory that returns a ShaderSource" with no call-site changes.
 struct ShaderSource
 {
     static ShaderSource msl(std::string sourceToUse);
 
     static ShaderSource hlsl(std::string sourceToUse);
 
-    /// Both stages share one string behind `#ifdef EACP_VERTEX`/`EACP_FRAGMENT`, so
-    /// the entry is always main; only computeEntry is still read, by isCompute().
+    // Both stages share one string behind `#ifdef EACP_VERTEX`/`EACP_FRAGMENT`, so
+    // the entry is always main; only computeEntry is still read, by isCompute().
     static ShaderSource glsl(std::string sourceToUse);
 
     ShaderSource& withVertex(std::string entry);
 
-    /// An empty entry makes a vertex-only source: the pipeline built from it has
-    /// no fragment stage, so it writes depth and stencil and no colour - a depth
-    /// prepass, a shadow map, an occluder pass.
+    // An empty entry makes a vertex-only source: the pipeline built from it has
+    // no fragment stage, so it writes depth and stencil and no colour - a depth
+    // prepass, a shadow map, an occluder pass.
     ShaderSource& withFragment(std::string entry);
 
-    /// Names the kernel entry point and marks this as a compute source: a library
-    /// built from it compiles only the compute stage, and ComputePipeline pulls
-    /// this function. Leave unset for a vertex/fragment source.
+    // Names the kernel entry point and marks this as a compute source: a library
+    // built from it compiles only the compute stage, and ComputePipeline pulls
+    // this function. Leave unset for a vertex/fragment source.
     ShaderSource& withCompute(std::string entry);
 
     bool isCompute() const;
 
     bool hasFragment() const;
 
-    /// The group the kernel's entry point was emitted for, which is the group
-    /// the pass has to dispatch it in. Left unset for a hand-written source, and
-    /// the stock shape for the dispatch's rank is used.
+    // The group the kernel's entry point was emitted for, which is the group
+    // the pass has to dispatch it in. Left unset for a hand-written source, and
+    // the stock shape for the dispatch's rank is used.
     ShaderSource& withThreadGroup(ThreadGroupShape shape);
 
     ShaderSource& withBinding(ResourceBinding binding);

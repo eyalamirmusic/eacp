@@ -9,11 +9,11 @@
 namespace eacp::WebSocket
 {
 
-/// What a backend reports, from any thread - the caller's inside makeBackend
-/// included. The common layer marshals each report to the message thread and
-/// ignores whatever arrives after the Connection is gone, so a report may
-/// come late; but a backend reports a terminal event - closed or failed -
-/// exactly once, and nothing after it.
+// What a backend reports, from any thread - the caller's inside makeBackend
+// included. The common layer marshals each report to the message thread and
+// ignores whatever arrives after the Connection is gone, so a report may
+// come late; but a backend reports a terminal event - closed or failed -
+// exactly once, and nothing after it.
 class Sink
 {
 public:
@@ -25,11 +25,11 @@ public:
     virtual void failed(const std::string& error) = 0;
 };
 
-/// One platform's transport, connecting from construction. send and close are
-/// called on the message thread only, close at most once; after close the
-/// backend keeps receiving until the peer's close frame or the transport's
-/// end, then reports it. The destructor tears the transport down without
-/// waiting on the network.
+// One platform's transport, connecting from construction. send and close are
+// called on the message thread only, close at most once; after close the
+// backend keeps receiving until the peer's close frame or the transport's
+// end, then reports it. The destructor tears the transport down without
+// waiting on the network.
 class Backend
 {
 public:

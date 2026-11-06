@@ -14,6 +14,8 @@
 #include <cstddef>
 #include <cstring>
 
+// Internal: the per-dispatch context shared by the executor's translation units.
+
 namespace eacp::GPU::CpuCompute
 {
 static_assert(std::atomic_ref<Word>::is_always_lock_free);

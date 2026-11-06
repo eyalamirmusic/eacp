@@ -21,6 +21,6 @@
 
 namespace eacp
 {
-/// A void() callback, the type every eacp API that schedules work takes.
+// A void() callback, the type every eacp API that schedules work takes.
 using Callback = std::function<void()>;
-} // namespace eacp
+}

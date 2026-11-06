@@ -9,26 +9,26 @@
 
 namespace eacp::Graphics
 {
-/// Immediate-mode 2D drawing in points, y down, from the View's top-left.
-/// Core Graphics on Apple, Direct2D on Windows. Only valid inside paint().
+// Immediate-mode 2D drawing in points, y down, from the View's top-left.
+// Core Graphics on Apple, Direct2D on Windows. Only valid inside paint().
 class Context
 {
 public:
     virtual ~Context() = default;
 
-    /// True when this context draws an off-screen View snapshot (renderToImage)
-    /// rather than a live on-screen frame. Lets paint() skip work that only makes
-    /// sense on screen -- a GPUView renders its content via renderNativeContent
-    /// and must not present a live frame while being snapshotted.
+    // True when this context draws an off-screen View snapshot (renderToImage)
+    // rather than a live on-screen frame. Lets paint() skip work that only makes
+    // sense on screen -- a GPUView renders its content via renderNativeContent
+    // and must not present a live frame while being snapshotted.
     constexpr bool isSnapshot() const { return snapshotMode; }
 
-    /// Pushes transform, colour and line width; pair with restoreState().
+    // Pushes transform, colour and line width; pair with restoreState().
     virtual void saveState() = 0;
     virtual void restoreState() = 0;
 
     virtual void translate(float x, float y) = 0;
     virtual void scale(float x, float y) = 0;
-    /// Radians, about the current origin.
+    // Radians, about the current origin.
     virtual void rotate(float angleRadians) = 0;
 
     virtual void setColor(const Color& color) = 0;

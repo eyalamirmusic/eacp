@@ -16,7 +16,7 @@ enum class FileDragResult
     Moved
 };
 
-/// Options for View::startFileDrag. `imageScale` is image pixels per point.
+// Options for View::startFileDrag. `imageScale` is image pixels per point.
 struct FileDragOptions
 {
     bool canMove = false;

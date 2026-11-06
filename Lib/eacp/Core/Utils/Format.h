@@ -13,20 +13,20 @@
 
 namespace eacp::Strings
 {
-/// Brace-pattern formatting: format("{} of {:08X}", n, code). The pattern is
-/// std::format/fmt syntax, but it is checked at runtime, not compile time - a
-/// malformed pattern or a spec that does not fit its argument comes back as a
-/// readable error string rather than a throw, so a bad log line never takes the
-/// caller down.
-///
-/// The implementation is fmt, deliberately hidden behind vformat in Format.cpp:
-/// the arguments are type-erased into FormatArg here, so fmt never appears in a
-/// header and nothing outside eacp-core links or sees it.
+// Brace-pattern formatting: format("{} of {:08X}", n, code). The pattern is
+// std::format/fmt syntax, but it is checked at runtime, not compile time - a
+// malformed pattern or a spec that does not fit its argument comes back as a
+// readable error string rather than a throw, so a bad log line never takes the
+// caller down.
+//
+// The implementation is fmt, deliberately hidden behind vformat in Format.cpp:
+// the arguments are type-erased into FormatArg here, so fmt never appears in a
+// header and nothing outside eacp-core links or sees it.
 
-/// float stays apart from double so "{}" prints the float's own shortest
-/// round-trip ("0.1"), not the widened double's. The string alternatives are
-/// views into the caller's storage, which outlives the call; std::string holds
-/// what toString produced for anything else.
+// float stays apart from double so "{}" prints the float's own shortest
+// round-trip ("0.1"), not the widened double's. The string alternatives are
+// views into the caller's storage, which outlives the call; std::string holds
+// what toString produced for anything else.
 using FormatArg = std::variant<bool,
                                char,
                                long long,
@@ -67,8 +67,8 @@ FormatArg toFormatArg(const T& value)
 
 std::string vformat(std::string_view pattern, std::span<const FormatArg> args);
 
-/// format("{} of {:08X}", n, code): fmt syntax checked at run time. A bad
-/// pattern returns "[format error: ...] <pattern>" instead of throwing.
+// format("{} of {:08X}", n, code): fmt syntax checked at run time. A bad
+// pattern returns "[format error: ...] <pattern>" instead of throwing.
 template <typename... Args>
 std::string format(std::string_view pattern, const Args&... args)
 {
@@ -83,11 +83,11 @@ std::string format(std::string_view pattern, const Args&... args)
     }
 }
 
-/// The shortest %g-style text ("{:.Ng}", N from 6 up to 9) that strtof reads
-/// back as exactly this float; non-finite values print as fmt spells them.
-/// Deliberately not fmt's "{}" shortest form, which switches to exponent
-/// notation from 1e7 up ("1.6777215e+07") where %g keeps the digits: callers
-/// emit this into shader source and host-visible parameter text, and their
-/// tests pin that notation.
+// The shortest %g-style text ("{:.Ng}", N from 6 up to 9) that strtof reads
+// back as exactly this float; non-finite values print as fmt spells them.
+// Deliberately not fmt's "{}" shortest form, which switches to exponent
+// notation from 1e7 up ("1.6777215e+07") where %g keeps the digits: callers
+// emit this into shader source and host-visible parameter text, and their
+// tests pin that notation.
 std::string shortestRoundTrip(float value);
 } // namespace eacp::Strings

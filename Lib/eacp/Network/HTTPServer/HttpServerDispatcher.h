@@ -23,7 +23,7 @@ struct Dispatcher
     virtual void shutdown() = 0;
 };
 
-/// A dispatcher for options.threading: main-thread or thread-pool.
+// A dispatcher for options.threading: main-thread or thread-pool.
 OwningPointer<Dispatcher> makeDispatcher(const ServerOptions& options);
 
 // How a streaming body reaches the decoder: the bytes the header read already

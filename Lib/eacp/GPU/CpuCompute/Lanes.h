@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstring>
 
+// One word per lane per component; loops are branch-free so they vectorise (D5).
+
 namespace eacp::GPU::CpuCompute
 {
 using Word = std::uint32_t;

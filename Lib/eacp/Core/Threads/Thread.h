@@ -8,7 +8,7 @@
 
 namespace eacp::Threads
 {
-/// A thread that joins in its destructor, like std::jthread without the stop token.
+// A thread that joins in its destructor, like std::jthread without the stop token.
 class Thread
 {
 public:

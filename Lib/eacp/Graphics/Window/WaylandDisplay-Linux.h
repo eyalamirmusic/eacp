@@ -26,7 +26,7 @@ class View;
 class WaylandClipboard;
 class WaylandInput;
 
-/// Nothing here is trustworthy until `configured`.
+// Nothing here is trustworthy until `configured`.
 struct WaylandOutputInfo
 {
     Point logicalSize() const;
@@ -40,20 +40,20 @@ struct WaylandOutputInfo
     Point xdgLogicalSize;
     int scale = 1;
 
-    /// Millihertz, as wl_output.mode reports it: 60 Hz is 60000.
+    // Millihertz, as wl_output.mode reports it: 60 Hz is 60000.
     int refreshMilliHz = 0;
 
     bool hasXdgLogicalSize = false;
     bool configured = false;
 };
 
-/// A Window on this connection: the neutral half plus the wl_surface every
-/// piece of Wayland glue starts from.
+// A Window on this connection: the neutral half plus the wl_surface every
+// piece of Wayland glue starts from.
 struct WaylandWindowSurface : LinuxWindowSurface
 {
     WaylandWindowSurface();
 
-    /// Null while the window is headless or the connection failed.
+    // Null while the window is headless or the connection failed.
     wl_surface* getSurface() const;
 
     void setSurface(wl_surface* surface);
@@ -64,11 +64,11 @@ struct WaylandSurfaceTarget
     wl_surface* surface = nullptr;
     WaylandWindowSurface* window = nullptr;
 
-    /// Null for the window's own toplevel surface, set for a view's subsurface.
+    // Null for the window's own toplevel surface, set for a view's subsurface.
     View* view = nullptr;
 };
 
-/// A solid colour behind the toplevel: a surface with no buffer is never mapped.
+// A solid colour behind the toplevel: a surface with no buffer is never mapped.
 class WaylandShmBuffer
 {
 public:
@@ -78,7 +78,7 @@ public:
     WaylandShmBuffer(const WaylandShmBuffer&) = delete;
     WaylandShmBuffer& operator=(const WaylandShmBuffer&) = delete;
 
-    /// False when the shm pool could not be made.
+    // False when the shm pool could not be made.
     bool create(wl_shm* shm, int width, int height, Color colour);
 
     void destroy();
@@ -137,11 +137,11 @@ public:
 
     WaylandInput* getInput() const;
 
-    /// False once the compositor has gone: every global is dropped then, so
-    /// windows made afterwards come up surfaceless, exactly as headless ones do.
+    // False once the compositor has gone: every global is dropped then, so
+    // windows made afterwards come up surfaceless, exactly as headless ones do.
     constexpr bool isConnected() const { return compositor != nullptr; }
 
-    /// Null when the compositor advertised no output.
+    // Null when the compositor advertised no output.
     const WaylandOutputInfo* getPrimaryOutput() const;
 
     float getFallbackScale() const;
@@ -160,7 +160,7 @@ private:
     void prepareForPoll();
     void readAndDispatch();
 
-    /// Fired once, when a dispatch or a flush says the compositor has gone.
+    // Fired once, when a dispatch or a flush says the compositor has gone.
     void connectionLost();
 
     friend struct WaylandRegistryDispatch;
@@ -180,7 +180,7 @@ private:
     wl_data_device_manager* dataDevices = nullptr;
     libdecor* decorations = nullptr;
 
-    /// By pointer: each one is a live wl_output listener's payload.
+    // By pointer: each one is a live wl_output listener's payload.
     Vector<std::unique_ptr<WaylandOutputInfo>> outputs;
 
     Vector<WaylandSurfaceTarget> surfaces;
@@ -192,11 +192,11 @@ private:
     int decorationsLoopFd = -1;
 };
 
-/// Whether the environment names a compositor to connect to. Asked before any
-/// connection is opened, so it is the environment and nothing more.
+// Whether the environment names a compositor to connect to. Asked before any
+// connection is opened, so it is the environment and nothing more.
 bool waylandCompositorIsReachable();
 
-/// Null when Wayland is not this copy's window system, or no compositor could
-/// be reached.
+// Null when Wayland is not this copy's window system, or no compositor could
+// be reached.
 WaylandDisplay* waylandDisplay();
 } // namespace eacp::Graphics

@@ -9,8 +9,8 @@ namespace eacp::Graphics
 
 class Window;
 
-/// Platform-independent key codes. The values are macOS virtual key codes;
-/// other backends translate their native codes into them.
+// Platform-independent key codes. The values are macOS virtual key codes;
+// other backends translate their native codes into them.
 namespace KeyCode
 {
 constexpr uint16_t A = 0x00;
@@ -75,12 +75,12 @@ constexpr uint16_t F10 = 0x6D;
 constexpr uint16_t F11 = 0x67;
 constexpr uint16_t F12 = 0x6F;
 
-/// Punctuation, named for the *unshifted* key. Shift arrives separately in
-/// ModifierKeys, so Quote is the same key whether it produced ' or ".
-///
-/// These matter for shortcuts, where the character a key produced is the wrong
-/// thing to match on: Cmd+[ and Cmd+] should navigate on any layout, but which
-/// character that key emits depends on the layout.
+// Punctuation, named for the *unshifted* key. Shift arrives separately in
+// ModifierKeys, so Quote is the same key whether it produced ' or ".
+//
+// These matter for shortcuts, where the character a key produced is the wrong
+// thing to match on: Cmd+[ and Cmd+] should navigate on any layout, but which
+// character that key emits depends on the layout.
 constexpr uint16_t Minus = 0x1B;
 constexpr uint16_t Equals = 0x18;
 constexpr uint16_t LeftBracket = 0x21;
@@ -93,22 +93,22 @@ constexpr uint16_t Period = 0x2F;
 constexpr uint16_t Slash = 0x2C;
 constexpr uint16_t Grave = 0x32;
 
-/// Navigation.
+// Navigation.
 constexpr uint16_t Home = 0x73;
 constexpr uint16_t End = 0x77;
 constexpr uint16_t PageUp = 0x74;
 constexpr uint16_t PageDown = 0x79;
 
-/// Forward delete, as against Delete above, which is backspace. The names here
-/// follow what the key does rather than what the platform calls it.
+// Forward delete, as against Delete above, which is backspace. The names here
+// follow what the key does rather than what the platform calls it.
 constexpr uint16_t ForwardDelete = 0x75;
 
 constexpr uint16_t CapsLock = 0x39;
 
-/// Modifier keys as keys in their own right, left and right apart, for
-/// GameInput, where Shift to sprint is a held key. On macOS the view callbacks
-/// never deliver them (AppKit reports them through flagsChanged:, which is
-/// ModifierKeys' business); Windows and Linux do.
+// Modifier keys as keys in their own right, left and right apart, for
+// GameInput, where Shift to sprint is a held key. On macOS the view callbacks
+// never deliver them (AppKit reports them through flagsChanged:, which is
+// ModifierKeys' business); Windows and Linux do.
 constexpr uint16_t Shift = 0x38;
 constexpr uint16_t RightShift = 0x3C;
 constexpr uint16_t Control = 0x3B;
@@ -120,8 +120,8 @@ constexpr uint16_t RightAlt = RightOption;
 constexpr uint16_t Command = 0x37;
 constexpr uint16_t RightCommand = 0x36;
 
-/// Keypad, distinct from the number row: a numeric keypad reports its own codes,
-/// and an app that folds them together cannot bind them separately.
+// Keypad, distinct from the number row: a numeric keypad reports its own codes,
+// and an app that folds them together cannot bind them separately.
 constexpr uint16_t KeypadEnter = 0x4C;
 constexpr uint16_t Keypad0 = 0x52;
 constexpr uint16_t Keypad1 = 0x53;
@@ -141,14 +141,14 @@ constexpr uint16_t KeypadDivide = 0x4B;
 constexpr uint16_t KeypadClear = 0x47;
 constexpr uint16_t KeypadEquals = 0x51;
 
-/// Android's Back, and the Back key some desktop keyboards carry. Outside the
-/// Mac's range, which has no such key. Distinct from Escape because passing it
-/// on means something: on Android a Back no view kept leaves the activity, so
-/// a view closes a popup on it and lets every other press go.
+// Android's Back, and the Back key some desktop keyboards carry. Outside the
+// Mac's range, which has no such key. Distinct from Escape because passing it
+// on means something: on Android a Back no view kept leaves the activity, so
+// a view closes a popup on it and lets every other press go.
 constexpr uint16_t Back = 0x100;
 
-/// A platform key with no framework mapping. Backends that translate native
-/// codes (Windows) report it for keys outside the table above.
+// A platform key with no framework mapping. Backends that translate native
+// codes (Windows) report it for keys outside the table above.
 constexpr uint16_t Unknown = 0xFFFF;
 } // namespace KeyCode
 
@@ -166,13 +166,13 @@ enum class KeyEventType
     Up
 };
 
-/// One key press or release, delivered to View::keyDown/keyUp on the main thread.
+// One key press or release, delivered to View::keyDown/keyUp on the main thread.
 struct KeyEvent
 {
-    /// The text the key typed with the modifiers applied; may be empty.
+    // The text the key typed with the modifiers applied; may be empty.
     std::string characters;
     std::string charactersIgnoringModifiers;
-    /// A KeyCode value.
+    // A KeyCode value.
     uint16_t keyCode = 0;
     KeyEventType type = KeyEventType::Down;
     ModifierKeys modifiers;
@@ -186,11 +186,11 @@ struct Key
     std::string character;
 };
 
-/// Polled keyboard state, main thread. For a game loop prefer GameInput.
+// Polled keyboard state, main thread. For a game loop prefer GameInput.
 struct Keyboard
 {
-    /// Window-scoped keyboard state. Preferred over the global variants below
-    /// when a window reference is available.
+    // Window-scoped keyboard state. Preferred over the global variants below
+    // when a window reference is available.
     static bool isKeyPressed(const Window& window, uint16_t keyCode);
     static bool isShiftPressed(const Window& window);
     static bool isControlPressed(const Window& window);
@@ -198,7 +198,7 @@ struct Keyboard
     static bool isCommandPressed(const Window& window);
     static ModifierKeys getModifiers(const Window& window);
 
-    /// Global keyboard state, for when no window reference is available.
+    // Global keyboard state, for when no window reference is available.
     static bool isKeyPressed(uint16_t keyCode);
     static bool isShiftPressed();
     static bool isControlPressed();
@@ -208,7 +208,7 @@ struct Keyboard
 
     static Vector<Key> getPressedKeys();
 
-    /// What the key types on the current layout, unshifted; empty when unknown.
+    // What the key types on the current layout, unshifted; empty when unknown.
     static std::string keyCodeToCharacter(uint16_t keyCode);
 };
 

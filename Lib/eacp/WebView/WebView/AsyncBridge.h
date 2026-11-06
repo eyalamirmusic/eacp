@@ -6,8 +6,8 @@
 
 #include <eacp/Network/Rpc/AsyncCommand.h>
 
-/// The async-command glue moved to eacp::Rpc when the IPC bridge started
-/// sharing it; these usings keep the WebView-era spellings working.
+// The async-command glue moved to eacp::Rpc when the IPC bridge started
+// sharing it; these usings keep the WebView-era spellings working.
 namespace eacp::Graphics
 {
 

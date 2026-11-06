@@ -18,13 +18,13 @@ namespace eacp::ML
 {
 using ElementwiseBody = std::function<GPU::Float(const Vector<GPU::Float>&)>;
 
-/// A tensor program recorded op by op and lowered to a Core ML ML Program.
-///
-/// Misuse - a rank or dimension that does not fit, an axis out of range, a
-/// duplicate name, an elementwise body using something MIL cannot express - is
-/// recorded rather than thrown: the op returns an invalid Tensor, ops given an
-/// invalid Tensor return one without adding a second error, errors() says what
-/// went wrong first, and build() of a graph with errors is an empty Package.
+// A tensor program recorded op by op and lowered to a Core ML ML Program.
+//
+// Misuse - a rank or dimension that does not fit, an axis out of range, a
+// duplicate name, an elementwise body using something MIL cannot express - is
+// recorded rather than thrown: the op returns an invalid Tensor, ops given an
+// invalid Tensor return one without adding a second error, errors() says what
+// went wrong first, and build() of a graph with errors is an empty Package.
 class Graph
 {
 public:
@@ -37,10 +37,10 @@ public:
 
     void output(Tensor value, std::string_view name);
 
-    /// Goes into the weight blob if it reaches an output. Input and output names
-    /// must be identifiers, since the runner addresses features by them; a
-    /// constant's name is made one, every character outside [A-Za-z0-9_]
-    /// becoming '_'.
+    // Goes into the weight blob if it reaches an output. Input and output names
+    // must be identifiers, since the runner addresses features by them; a
+    // constant's name is made one, every character outside [A-Za-z0-9_]
+    // becoming '_'.
     Tensor constant(std::string_view name,
                     const Shape& shape,
                     DType type,
@@ -54,7 +54,7 @@ public:
 
     Tensor linear(Tensor x, Tensor weight, Tensor bias);
 
-    /// A zero bias of x's type, which goes into the blob with the linear.
+    // A zero bias of x's type, which goes into the blob with the linear.
     Tensor linear(Tensor x, Tensor weight);
 
     Tensor
@@ -65,8 +65,8 @@ public:
     Tensor sum(Tensor x, int axis, bool keepDims = false);
     Tensor max(Tensor x, int axis, bool keepDims = false);
 
-    /// The index of the largest element along axis, as int32: MIL's
-    /// reduce_argmax, which gives a tie to the lowest index.
+    // The index of the largest element along axis, as int32: MIL's
+    // reduce_argmax, which gives a tie to the lowest index.
     Tensor argmax(Tensor x, int axis, bool keepDims = false);
     Tensor layerNorm(Tensor x,
                      const Vector<int>& axes,
@@ -78,19 +78,19 @@ public:
     Tensor concat(const Vector<Tensor>& parts, int axis);
     Tensor slice(Tensor x, const Vector<int>& begin, const Vector<int>& end);
 
-    /// x from its start to reference's extent on every axis, reference of x's
-    /// rank: a positional table cut to the rows an enumerated input has at run
-    /// time. A fixed reference is a plain slice, x itself is x, and any other
-    /// reference reads its extents through MIL's shape op. Each of its fixed
-    /// extents must fit x, and an axis unknown in x must be unknown in it too.
+    // x from its start to reference's extent on every axis, reference of x's
+    // rank: a positional table cut to the rows an enumerated input has at run
+    // time. A fixed reference is a plain slice, x itself is x, and any other
+    // reference reads its extents through MIL's shape op. Each of its fixed
+    // extents must fit x, and an axis unknown in x must be unknown in it too.
     Tensor sliceLike(Tensor x, Tensor reference);
     Tensor scaledDotProductAttention(Tensor q, Tensor k, Tensor v, bool causal);
 
-    /// Attention under a mask known only at run time: allowed is a floating
-    /// tensor broadcasting to [..., queries, keys], 1 where a query may attend
-    /// to a key and 0 where it may not. It reaches the op as the bool the
-    /// causal mask is, greater(allowed, 0.5), since Core ML's fp16 attention
-    /// ignores a float attn_mask.
+    // Attention under a mask known only at run time: allowed is a floating
+    // tensor broadcasting to [..., queries, keys], 1 where a query may attend
+    // to a key and 0 where it may not. It reaches the op as the bool the
+    // causal mask is, greater(allowed, 0.5), since Core ML's fp16 attention
+    // ignores a float attn_mask.
     Tensor scaledDotProductAttention(Tensor q, Tensor k, Tensor v, Tensor allowed);
     Tensor gelu(Tensor x);
     Tensor cast(Tensor x, DType type);

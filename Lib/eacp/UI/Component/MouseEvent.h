@@ -6,64 +6,64 @@
 
 namespace eacp::UI
 {
-/// A mouse event as the component receiving it sees it.
-///
-/// Distinct from eacp::Graphics::MouseEvent, which is in the host view's
-/// coordinates, because a component is only ever told about its own space: the
-/// tree walk converts on the way down, so a knob at the bottom of a nested panel
-/// still compares position against its own bounds rather than against wherever
-/// the panel happens to sit this frame.
+// A mouse event as the component receiving it sees it.
+//
+// Distinct from eacp::Graphics::MouseEvent, which is in the host view's
+// coordinates, because a component is only ever told about its own space: the
+// tree walk converts on the way down, so a knob at the bottom of a nested panel
+// still compares position against its own bounds rather than against wherever
+// the panel happens to sit this frame.
 struct MouseEvent
 {
-    /// Where the pointer is, in the receiving component's coordinates.
+    // Where the pointer is, in the receiving component's coordinates.
     Point position;
 
-    /// Where the button went down, in the same space. Carried on every drag so a
-    /// handler can work from the gesture's origin without storing it.
+    // Where the button went down, in the same space. Carried on every drag so a
+    // handler can work from the gesture's origin without storing it.
     Point downPosition;
 
-    /// Movement since the previous event, in points.
+    // Movement since the previous event, in points.
     Point delta;
 
-    /// The same movement as the device reported it, with no acceleration curve:
-    /// what a camera orbit or an FPS look follows. In the device's own units
-    /// rather than points. See eacp::Graphics::MouseEvent::rawDelta.
+    // The same movement as the device reported it, with no acceleration curve:
+    // what a camera orbit or an FPS look follows. In the device's own units
+    // rather than points. See eacp::Graphics::MouseEvent::rawDelta.
     Point rawDelta;
 
-    /// Pen or Force Touch pressure, 0 to 1; 1 where the device has none.
+    // Pen or Force Touch pressure, 0 to 1; 1 where the device has none.
     float pressure = 1.0f;
 
-    /// Wheel and magnify events: where the event sits in its gesture. See
-    /// eacp::Graphics::ScrollPhase.
+    // Wheel and magnify events: where the event sits in its gesture. See
+    // eacp::Graphics::ScrollPhase.
     eacp::Graphics::ScrollPhase scrollPhase = eacp::Graphics::ScrollPhase::None;
 
     eacp::Graphics::MouseButton button = eacp::Graphics::MouseButton::Left;
     eacp::Graphics::ModifierKeys modifiers;
     int clickCount = 1;
 
-    /// Wheel events only. Positive y means the content should move toward the
-    /// start of the document; the platform has already applied the user's
-    /// natural-scroll preference. `preciseWheel` says whether the figures are
-    /// points (trackpad) or lines (a notched wheel) -- see
-    /// eacp::Graphics::MouseEvent::preciseScrolling.
+    // Wheel events only. Positive y means the content should move toward the
+    // start of the document; the platform has already applied the user's
+    // natural-scroll preference. `preciseWheel` says whether the figures are
+    // points (trackpad) or lines (a notched wheel) -- see
+    // eacp::Graphics::MouseEvent::preciseScrolling.
     Point wheelDelta;
     bool preciseWheel = false;
 
-    /// Magnify events only: the pinch step's zoom factor, to multiply the
-    /// current zoom by. 1 is no change, above 1 zooms in.
+    // Magnify events only: the pinch step's zoom factor, to multiply the
+    // current zoom by. 1 is no change, above 1 zooms in.
     float magnifyScale = 1.0f;
 
-    /// A finger rather than a pointer. A scrolling component follows a finger
-    /// dragged across it and leaves a mouse drag with the meaning it always had.
+    // A finger rather than a pointer. A scrolling component follows a finger
+    // dragged across it and leaves a mouse drag with the meaning it always had.
     bool fromTouch = false;
 
-    /// Seconds, on whatever clock the platform stamps its input with: only the
-    /// difference between two events means anything, which is what a fling's
-    /// velocity is measured from.
+    // Seconds, on whatever clock the platform stamps its input with: only the
+    // difference between two events means anything, which is what a fling's
+    // velocity is measured from.
     double timestamp = 0.0;
 
-    /// A right-click, or a Control-click on macOS: whether this press asks for a
-    /// context menu. See eacp::Graphics::isPopupMenuClick.
+    // A right-click, or a Control-click on macOS: whether this press asks for a
+    // context menu. See eacp::Graphics::isPopupMenuClick.
     bool isPopupMenu() const
     {
         return eacp::Graphics::isPopupMenuClick(button, modifiers);

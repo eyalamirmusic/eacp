@@ -7,50 +7,50 @@
 namespace eacp::TCP
 {
 
-/// Where to dial. An empty host resolves to the loopback interface.
+// Where to dial. An empty host resolves to the loopback interface.
 struct Address
 {
     std::string host = "127.0.0.1";
     std::uint16_t port = 0;
 };
 
-/// How long each phase may block before a TimeoutError. io applies to a single
-/// send or receive, not a whole transaction. Zero or negative means no timeout
-/// — what a long-lived server wants for accept() and reads.
+// How long each phase may block before a TimeoutError. io applies to a single
+// send or receive, not a whole transaction. Zero or negative means no timeout
+// — what a long-lived server wants for accept() and reads.
 struct Timeouts
 {
     Time::MS connect {15000};
     Time::MS io {20000};
 };
 
-/// Every failure - name resolution, refused connect, timeout, peer hangup -
-/// surfaces as this one exception type, with a message ready to log or show.
+// Every failure - name resolution, refused connect, timeout, peer hangup -
+// surfaces as this one exception type, with a message ready to log or show.
 struct Error : std::runtime_error
 {
     using std::runtime_error::runtime_error;
 };
 
-/// A send or receive that ran past its timeout. Distinct from Error so "the
-/// peer went quiet" can be told apart from "the connection broke".
+// A send or receive that ran past its timeout. Distinct from Error so "the
+// peer went quiet" can be told apart from "the connection broke".
 struct TimeoutError : Error
 {
     using Error::Error;
 };
 
-/// A live, connected TCP stream.
-///
-/// Move-only: holding a Connection means the socket is open. connect() either
-/// yields an open stream or throws (no half-built state); the destructor
-/// closes. Reconnect via a fresh connect().
+// A live, connected TCP stream.
+//
+// Move-only: holding a Connection means the socket is open. connect() either
+// yields an open stream or throws (no half-built state); the destructor
+// closes. Reconnect via a fresh connect().
 class Connection
 {
 public:
-    /// Opens a stream to address, or throws TCP::Error trying.
+    // Opens a stream to address, or throws TCP::Error trying.
     static Connection connect(Address address, Timeouts timeouts = {});
 
-    /// Wraps an already-connected native socket (an int fd or a SOCKET, passed
-    /// as intptr_t) in a Connection that owns it. Listener::accept() is the
-    /// caller that matters; reach for connect() to open a stream yourself.
+    // Wraps an already-connected native socket (an int fd or a SOCKET, passed
+    // as intptr_t) in a Connection that owns it. Listener::accept() is the
+    // caller that matters; reach for connect() to open a stream yourself.
     static Connection adopt(std::intptr_t nativeSocket, Address peer);
 
     ~Connection();
@@ -64,34 +64,34 @@ public:
     [[nodiscard]] bool isOpen() const;
     void close();
 
-    /// Wakes a send or receive blocked on this stream in another thread, and
-    /// ends every later one at once: a receive reports the stream closed or
-    /// throws. Bytes already sent still reach the peer. Safe from any thread
-    /// while the stream is open; close() is not, so interrupt, join, close.
+    // Wakes a send or receive blocked on this stream in another thread, and
+    // ends every later one at once: a receive reports the stream closed or
+    // throws. Bytes already sent still reach the peer. Safe from any thread
+    // while the stream is open; close() is not, so interrupt, join, close.
     void interrupt();
 
     [[nodiscard]] const Address& address() const;
 
-    /// Re-arms the per-call io timeout on an open stream. A server reads a
-    /// request under a short one so stop() can interrupt an idle peer, then
-    /// lets the reply block for as long as the peer takes to drain it.
+    // Re-arms the per-call io timeout on an open stream. A server reads a
+    // request under a short one so stop() can interrupt an idle peer, then
+    // lets the reply block for as long as the peer takes to drain it.
     void setIoTimeout(Time::MS timeout);
 
-    /// Writes every byte, looping past partial writes. Throws on failure.
+    // Writes every byte, looping past partial writes. Throws on failure.
     void send(std::string_view bytes);
 
-    /// Returns the bytes up to (and consuming) the next delimiter, keeping
-    /// any overshoot for the following call. Throws if the peer closes
-    /// before the delimiter arrives.
+    // Returns the bytes up to (and consuming) the next delimiter, keeping
+    // any overshoot for the following call. Throws if the peer closes
+    // before the delimiter arrives.
     std::string receiveUntil(char delimiter);
 
-    /// receiveUntil('\n') with a trailing carriage return trimmed - the
-    /// common case for line-oriented protocols.
+    // receiveUntil('\n') with a trailing carriage return trimmed - the
+    // common case for line-oriented protocols.
     std::string receiveLine();
 
-    /// Returns whatever a single read yields, up to maxBytes (draining any
-    /// bytes already buffered by receiveUntil first). An empty string means
-    /// the peer closed the stream cleanly.
+    // Returns whatever a single read yields, up to maxBytes (draining any
+    // bytes already buffered by receiveUntil first). An empty string means
+    // the peer closed the stream cleanly.
     std::string receive(int maxBytes = 4096);
 
 private:

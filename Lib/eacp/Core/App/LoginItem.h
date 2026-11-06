@@ -5,7 +5,7 @@
 namespace eacp::Apps
 {
 
-/// Adds or removes this app from the user's login items.
+// Adds or removes this app from the user's login items.
 void setLaunchAtLogin(bool enabled);
 bool isLaunchAtLogin();
 

@@ -8,59 +8,59 @@
 
 namespace eacp::UI
 {
-/// How a Viewport draws its scrollbars.
+// How a Viewport draws its scrollbars.
 struct ScrollbarStyle
 {
     Color track = defaultTheme().get(ThemeKeys::outline);
     Color thumb = defaultTheme().get(ThemeKeys::dimText);
 
-    /// Across the bar. The strip a shown bar takes is kept clear of the content
-    /// the scroll can reach, so the last row or column is never under it.
+    // Across the bar. The strip a shown bar takes is kept clear of the content
+    // the scroll can reach, so the last row or column is never under it.
     float thickness = 8.f;
 
-    /// Along the bar, so the thumb of a very long content stays something to grab.
+    // Along the bar, so the thumb of a very long content stays something to grab.
     float minimumThumbLength = 24.f;
 };
 
-/// A window onto a component larger than itself, scrolled on both axes.
-///
-/// Where ScrollPanel is a vertical page that sizes its content's width to fit,
-/// this leaves the content exactly the size it was given and scrolls whichever
-/// axes it overflows: by the wheel, a finger (with a fling), or the scrollbars,
-/// whose thumbs drag and whose tracks page. It is transparent unless told to
-/// draw a background, so it can sit on whatever its parent paints.
-///
-/// The view position is the content point shown at the viewport's top-left
-/// corner, always clamped to the content: an axis the content fits on does not
-/// scroll at all, and a wheel turned over content that fits is left for a
-/// parent to take.
+// A window onto a component larger than itself, scrolled on both axes.
+//
+// Where ScrollPanel is a vertical page that sizes its content's width to fit,
+// this leaves the content exactly the size it was given and scrolls whichever
+// axes it overflows: by the wheel, a finger (with a fling), or the scrollbars,
+// whose thumbs drag and whose tracks page. It is transparent unless told to
+// draw a background, so it can sit on whatever its parent paints.
+//
+// The view position is the content point shown at the viewport's top-left
+// corner, always clamped to the content: an axis the content fits on does not
+// scroll at all, and a wheel turned over content that fits is left for a
+// parent to take.
 class Viewport : public Component
 {
 public:
     Viewport();
 
-    /// The component to scroll. Not owned, and not resized: it keeps whatever
-    /// size it has. Replacing it removes the previous one and returns to the
-    /// top-left corner.
+    // The component to scroll. Not owned, and not resized: it keeps whatever
+    // size it has. Replacing it removes the previous one and returns to the
+    // top-left corner.
     void setContent(Component& newContent);
     Component* getContent() const;
 
-    /// Resizes the content while keeping the view where it is, as far as the
-    /// new size allows.
+    // Resizes the content while keeping the view where it is, as far as the
+    // new size allows.
     void setContentSize(float width, float height);
 
-    /// Re-reads the content's size after something else changed it.
+    // Re-reads the content's size after something else changed it.
     void contentResized();
 
     void setViewPosition(Point newPosition);
     Point getViewPosition() const;
 
-    /// The furthest the view can go on each axis: zero on an axis the content
-    /// fits on.
+    // The furthest the view can go on each axis: zero on an axis the content
+    // fits on.
     Point getMaximumViewPosition() const;
 
-    /// The part of the viewport the content shows through, which is the whole
-    /// of it less the strip of each scrollbar that is shown.
+    // The part of the viewport the content shows through, which is the whole
+    // of it less the strip of each scrollbar that is shown.
     Rect getViewArea() const;
 
     void setScrollbarsShown(bool horizontal, bool vertical);
@@ -70,8 +70,8 @@ public:
     void setScrollbarStyle(const ScrollbarStyle& newStyle);
     const ScrollbarStyle& getScrollbarStyle() const;
 
-    /// Where each bar's track and thumb are, in this component's coordinates.
-    /// Empty while that bar is not shown.
+    // Where each bar's track and thumb are, in this component's coordinates.
+    // Empty while that bar is not shown.
     Rect getHorizontalTrackBounds() const;
     Rect getVerticalTrackBounds() const;
     Rect getHorizontalThumbBounds() const;
@@ -80,7 +80,7 @@ public:
     void setDrawsBackground(bool shouldDraw);
     bool getDrawsBackground() const;
 
-    /// What one notch of a wheel that counts in lines scrolls, in points.
+    // What one notch of a wheel that counts in lines scrolls, in points.
     void setWheelLineSize(float points);
 
     bool isFlinging() const;
@@ -103,9 +103,9 @@ public:
     bool advanceAnimation(double seconds) override;
 
 private:
-    /// A bar's track as a mouse target. Children are hit before their parent,
-    /// so without one on top of the content a press on a bar would land on
-    /// whatever the content has under it.
+    // A bar's track as a mouse target. Children are hit before their parent,
+    // so without one on top of the content a press on a bar would land on
+    // whatever the content has under it.
     class ScrollbarArea final : public Component
     {
     public:

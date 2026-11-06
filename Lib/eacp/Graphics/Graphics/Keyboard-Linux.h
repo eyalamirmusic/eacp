@@ -11,9 +11,9 @@
 
 namespace eacp::Graphics
 {
-/// KeyCode::Unknown for a key outside the table.
+// KeyCode::Unknown for a key outside the table.
 uint16_t linuxKeyCodeFromEvdev(uint32_t evdevCode);
 
-/// Zero for a KeyCode with no evdev key behind it.
+// Zero for a KeyCode with no evdev key behind it.
 uint32_t linuxEvdevFromKeyCode(uint16_t keyCode);
 } // namespace eacp::Graphics

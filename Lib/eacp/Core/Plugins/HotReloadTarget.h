@@ -10,8 +10,8 @@
 
 namespace eacp::Plugins
 {
-/// Filled in by eacp_add_hot_reload through compile definitions; see
-/// hotReloadTarget().
+// Filled in by eacp_add_hot_reload through compile definitions; see
+// hotReloadTarget().
 struct HotReloadTarget
 {
     std::string_view library;
@@ -21,12 +21,12 @@ struct HotReloadTarget
     std::string_view target;
     std::string_view sourceDirectory;
 
-    /// The module's own source files, absolute and separated by '|'. Empty
-    /// watches the whole source directory instead.
+    // The module's own source files, absolute and separated by '|'. Empty
+    // watches the whole source directory instead.
     std::string_view sources;
 };
 
-/// `cmake --build <dir> --config <config> --target <target>` for the target.
+// `cmake --build <dir> --config <config> --target <target>` for the target.
 inline Processes::ProcessOptions hotReloadBuildCommand(const HotReloadTarget& target)
 {
     auto options = Processes::ProcessOptions {};

@@ -13,6 +13,11 @@
 
 #include <eacp/GPU/Codegen/ShaderMembers.h>
 
+// The fourth member walk, beside the build, upload and bind ones: each uniform
+// member's current value copied as it is typed - tightly packed, no MSL padding
+// - into the words of the slot its handle names. A virtual call per member on a
+// stack object, so it runs on every dispatch without allocating.
+
 namespace eacp::GPU::CpuCompute
 {
 class CpuUniformVisitor final : public ShaderVisitor

@@ -7,7 +7,7 @@
 namespace eacp::SVG
 {
 
-/// Parses markup into its root element; empty when the markup does not parse.
+// Parses markup into its root element; empty when the markup does not parse.
 std::optional<SVGElement> parseXML(std::string_view input);
 
 } // namespace eacp::SVG

@@ -8,43 +8,43 @@
 
 namespace eacp::UI
 {
-/// Where a ListBox gets its rows.
-///
-/// A model rather than a component per row, and that is the whole design: a log
-/// with ten thousand lines in it is one component, and what it costs to draw is
-/// the rows that are actually on screen. A row is not a thing that can be
-/// clicked, focused or laid out -- it is a rectangle the model paints into --
-/// which is the trade a list of that size has to make.
+// Where a ListBox gets its rows.
+//
+// A model rather than a component per row, and that is the whole design: a log
+// with ten thousand lines in it is one component, and what it costs to draw is
+// the rows that are actually on screen. A row is not a thing that can be
+// clicked, focused or laid out -- it is a rectangle the model paints into --
+// which is the trade a list of that size has to make.
 struct ListBoxModel
 {
     virtual ~ListBoxModel() = default;
 
     virtual int getNumRows() = 0;
 
-    /// The row's background, and its content in a list with no columns.
-    /// `rowBounds` is in the ListBox's own coordinates, already scrolled, and the
-    /// painter is clipped to the area rows are drawn in.
-    ///
-    /// Drawing the selection is the model's, which is why it is told: a row is
-    /// whatever the model paints, and a highlight the list drew over or under it
-    /// would be a second opinion about what a selected row looks like.
+    // The row's background, and its content in a list with no columns.
+    // `rowBounds` is in the ListBox's own coordinates, already scrolled, and the
+    // painter is clipped to the area rows are drawn in.
+    //
+    // Drawing the selection is the model's, which is why it is told: a row is
+    // whatever the model paints, and a highlight the list drew over or under it
+    // would be a second opinion about what a selected row looks like.
     virtual void
         paintRow(Graphics& g, int row, const Rect& rowBounds, bool selected) = 0;
 
-    /// One cell, called for every column after paintRow has drawn the row it is
-    /// in. Never called in a list that has no columns.
+    // One cell, called for every column after paintRow has drawn the row it is
+    // in. Never called in a list that has no columns.
     virtual void paintCell(Graphics&, int, int, const Rect&, bool);
 
     virtual void selectedRowChanged(int);
     virtual void rowDoubleClicked(int);
 };
 
-/// A scrolling list of rows painted by a model, with an optional header that
-/// turns it into a table.
+// A scrolling list of rows painted by a model, with an optional header that
+// turns it into a table.
 class ListBox final : public Component
 {
 public:
-    /// A table column: what the header says, and how wide the cell is.
+    // A table column: what the header says, and how wide the cell is.
     struct Column
     {
         std::string name;
@@ -53,66 +53,66 @@ public:
 
     ListBox();
 
-    /// Not owned, and has to outlive the list. Re-reads the row count, so a
-    /// model set after its data is ready needs no second call.
+    // Not owned, and has to outlive the list. Re-reads the row count, so a
+    // model set after its data is ready needs no second call.
     void setModel(ListBoxModel* newModel);
     ListBoxModel* getModel() const;
 
     void setRowHeight(float newHeight);
     float getRowHeight() const;
 
-    /// Asks the model how many rows there are now, and puts the selection and
-    /// the scroll position back inside them. Silent: a selection dropped because
-    /// the row it named has gone is not the user changing it, and a model
-    /// rebuilding its data does not want to hear about the rows it destroyed.
+    // Asks the model how many rows there are now, and puts the selection and
+    // the scroll position back inside them. Silent: a selection dropped because
+    // the row it named has gone is not the user changing it, and a model
+    // rebuilding its data does not want to hear about the rows it destroyed.
     void updateContent();
     int getNumRows() const;
 
-    /// -1 means nothing is selected, and is the only value outside the list that
-    /// is accepted. Does not scroll -- scrollToRow is separate, so a selection
-    /// arriving from elsewhere cannot move a list somebody is reading.
+    // -1 means nothing is selected, and is the only value outside the list that
+    // is accepted. Does not scroll -- scrollToRow is separate, so a selection
+    // arriving from elsewhere cannot move a list somebody is reading.
     void setSelectedRow(int row, bool notify = false);
     int getSelectedRow() const;
 
-    /// As far as it has to be and no further, from whichever edge the row left:
-    /// a row already in view does not move the list at all.
+    // As far as it has to be and no further, from whichever edge the row left:
+    // a row already in view does not move the list at all.
     void scrollToRow(int row);
 
     void setScrollPosition(float newOffset);
     float getScrollPosition() const;
 
-    /// Which row is at `localPosition`, or -1 for the header, the gap under the
-    /// last row, or outside.
+    // Which row is at `localPosition`, or -1 for the header, the gap under the
+    // last row, or outside.
     int getRowAt(Point localPosition) const;
 
-    /// Where a row is drawn, in this component's own coordinates. Answers for
-    /// any row, including one scrolled out of view.
+    // Where a row is drawn, in this component's own coordinates. Answers for
+    // any row, including one scrolled out of view.
     Rect getRowBounds(int row) const;
 
-    /// Everything under the header, which is where the rows go.
+    // Everything under the header, which is where the rows go.
     Rect getRowArea() const;
 
-    /// Setting columns is what makes this a table: the header appears, and the
-    /// model is asked for cells as well as rows.
+    // Setting columns is what makes this a table: the header appears, and the
+    // model is asked for cells as well as rows.
     void setColumns(Vector<Column> newColumns);
     const Vector<Column>& getColumns() const;
 
     void setHeaderHeight(float newHeight);
 
-    /// Zero while there are no columns, there being no header to leave room for.
+    // Zero while there are no columns, there being no header to leave room for.
     float getHeaderHeight() const;
 
-    /// Where `column` sits inside `rowBounds` -- what the model splits a row
-    /// with, and what the list itself lays the header out with, so the two
-    /// cannot drift apart. Empty for a column that does not exist.
+    // Where `column` sits inside `rowBounds` -- what the model splits a row
+    // with, and what the list itself lays the header out with, so the two
+    // cannot drift apart. Empty for a column that does not exist.
     Rect getColumnBounds(int column, const Rect& rowBounds) const;
 
     void paint(Graphics& g) override;
 
-    /// A mouse selects on the press. A finger selects on the release, and only
-    /// if it neither moved past the slop -- which scrolls the list instead,
-    /// coasting on when let go moving -- nor landed while the list was coasting,
-    /// which stops it.
+    // A mouse selects on the press. A finger selects on the release, and only
+    // if it neither moved past the slop -- which scrolls the list instead,
+    // coasting on when let go moving -- nor landed while the list was coasting,
+    // which stops it.
     void mouseDown(const MouseEvent& event) override;
     void mouseDrag(const MouseEvent& event) override;
     void mouseUp(const MouseEvent& event) override;
@@ -139,10 +139,10 @@ private:
 
     Vector<Column> columns;
 
-    /// Read from the model by updateContent rather than asked for while
-    /// painting: the count decides what the selection and the scroll may be, and
-    /// a list whose length changed under its own paint() would be drawing
-    /// against one answer and hit-testing against another.
+    // Read from the model by updateContent rather than asked for while
+    // painting: the count decides what the selection and the scroll may be, and
+    // a list whose length changed under its own paint() would be drawing
+    // against one answer and hit-testing against another.
     int numRows = 0;
 
     int selectedRow = -1;

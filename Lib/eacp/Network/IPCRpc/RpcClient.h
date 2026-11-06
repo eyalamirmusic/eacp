@@ -11,10 +11,10 @@ namespace eacp::IPC
 {
 using AsyncValue = Threads::Async<Miro::Json::Value>;
 
-/// The dialing side of RpcServer. Calls are safe to issue immediately after
-/// construction: anything sent before the dial lands waits in an outbox
-/// and flushes on connection, and every call still in flight when the
-/// conversation ends is rejected rather than left pending forever.
+// The dialing side of RpcServer. Calls are safe to issue immediately after
+// construction: anything sent before the dial lands waits in an outbox
+// and flushes on connection, and every call still in flight when the
+// conversation ends is rejected rather than left pending forever.
 class RpcClient
 {
 public:
@@ -27,10 +27,10 @@ public:
 
     bool isConnected() const;
 
-    /// Invokes a command on the server, resolving with its JSON result on
-    /// the main thread. The typed overloads serialize the request and
-    /// deserialize the response through Miro, so a call site is just:
-    ///     rpc.call<DotTotal>("addDot", dot).then([](DotTotal t) { ... });
+    // Invokes a command on the server, resolving with its JSON result on
+    // the main thread. The typed overloads serialize the request and
+    // deserialize the response through Miro, so a call site is just:
+    //     rpc.call<DotTotal>("addDot", dot).then([](DotTotal t) { ... });
     AsyncValue call(const std::string& command, const Miro::Json::Value& payload);
 
     AsyncValue call(const std::string& command);
@@ -47,10 +47,10 @@ public:
         return Rpc::mapJson<Res>(call(command, Miro::Json::Value {}));
     }
 
-    /// Subscribes to a server-pushed event (a Bridge::emit on the other
-    /// side), one handler per event name - assigning again replaces. The
-    /// typed form deserializes the payload and drops events that fail to;
-    /// the Callback form ignores the payload entirely.
+    // Subscribes to a server-pushed event (a Bridge::emit on the other
+    // side), one handler per event name - assigning again replaces. The
+    // typed form deserializes the payload and drops events that fail to;
+    // the Callback form ignores the payload entirely.
     template <typename T>
     void on(const std::string& event, std::function<void(const T&)> handler)
     {
@@ -83,12 +83,12 @@ private:
     std::unordered_map<std::string, std::function<void(const Miro::Json::Value&)>>
         events;
 
-    /// Calls issued while the dial is still in the air, flushed in order
-    /// the moment it lands.
+    // Calls issued while the dial is still in the air, flushed in order
+    // the moment it lands.
     Vector<std::string> outbox;
 
-    /// Last member on purpose: the messenger's destructor is what
-    /// guarantees none of the handlers above fire again.
+    // Last member on purpose: the messenger's destructor is what
+    // guarantees none of the handlers above fire again.
     Messenger messenger;
 };
 

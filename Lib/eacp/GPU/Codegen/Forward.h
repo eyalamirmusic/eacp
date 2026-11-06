@@ -9,6 +9,9 @@
 
 #include <functional>
 
+// Names from the shader codegen layer, for headers that mention them without
+// needing the EDSL itself.
+
 namespace eacp::GPU
 {
 class ShaderGraph;
@@ -37,6 +40,6 @@ struct Float2x2;
 struct Float3x3;
 struct Float4x4;
 
-/// How a module hands over a shader whose program type is nested in a .cpp.
+// How a module hands over a shader whose program type is nested in a .cpp.
 using ShaderGraphVisitor = std::function<void(const ShaderGraph&)>;
 } // namespace eacp::GPU

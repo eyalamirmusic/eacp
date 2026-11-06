@@ -14,16 +14,16 @@
 
 namespace eacp::UI
 {
-/// What a theme can hold: a colour, a number (a corner radius, a line width, a
-/// size) or a face.
+// What a theme can hold: a colour, a number (a corner radius, a line width, a
+// size) or a face.
 template <typename T>
 concept ThemeValueType =
     std::same_as<T, Color> || std::same_as<T, float> || std::same_as<T, Font>;
 
 using ThemeValue = std::variant<Color, float, Font>;
 
-/// FNV-1a over a key's name, at compile time for a key declared constexpr, so a
-/// lookup in a paint() hashes nothing.
+// FNV-1a over a key's name, at compile time for a key declared constexpr, so a
+// lookup in a paint() hashes nothing.
 constexpr std::uint64_t themeKeyId(std::string_view name)
 {
     auto hash = 14695981039346656037ull;
@@ -37,11 +37,11 @@ constexpr std::uint64_t themeKeyId(std::string_view name)
     return hash;
 }
 
-/// A name and the type of value it names. Declared once, constexpr, by whoever
-/// draws with it -- eacp's stock widgets in ThemeKeys.h, a library or an app
-/// anywhere else -- and then used to set and to read, so a misspelt name is a
-/// compile error rather than a colour that silently never arrives. Names are
-/// dotted by owner, "comboBox.highlight", so two owners do not collide.
+// A name and the type of value it names. Declared once, constexpr, by whoever
+// draws with it -- eacp's stock widgets in ThemeKeys.h, a library or an app
+// anywhere else -- and then used to set and to read, so a misspelt name is a
+// compile error rather than a colour that silently never arrives. Names are
+// dotted by owner, "comboBox.highlight", so two owners do not collide.
 template <ThemeValueType T>
 class ThemeKey
 {
@@ -66,19 +66,19 @@ using FontKey = ThemeKey<Font>;
 
 class Theme;
 
-/// eacp's own values for the keys its stock widgets read (ThemeKeys.h): what
-/// every tree draws in until it is given a theme, and what any theme falls back
-/// to for a key it does not hold.
+// eacp's own values for the keys its stock widgets read (ThemeKeys.h): what
+// every tree draws in until it is given a theme, and what any theme falls back
+// to for a key it does not hold.
 const Theme& defaultTheme();
 
-/// A look as data: keys to values, any number of them, of any owner's keys. A
-/// tree's widgets draw in their host's (ComponentHost::setTheme); a value a
-/// widget was given itself, such as setAccentColour, wins over it.
-///
-/// Reading falls back in order: this theme, then defaultTheme(), then the value
-/// the caller passes. So a theme need only hold what it changes, and a key no
-/// one has set -- one of an app's own that eacp has never heard of -- reads as
-/// what its caller says it should.
+// A look as data: keys to values, any number of them, of any owner's keys. A
+// tree's widgets draw in their host's (ComponentHost::setTheme); a value a
+// widget was given itself, such as setAccentColour, wins over it.
+//
+// Reading falls back in order: this theme, then defaultTheme(), then the value
+// the caller passes. So a theme need only hold what it changes, and a key no
+// one has set -- one of an app's own that eacp has never heard of -- reads as
+// what its caller says it should.
 class Theme
 {
 public:
@@ -88,8 +88,8 @@ public:
         setValue(key.getName(), key.getId(), std::move(value));
     }
 
-    /// This theme's own value, null when it holds none. No fallback: what a
-    /// theme says, rather than what drawing with it would use.
+    // This theme's own value, null when it holds none. No fallback: what a
+    // theme says, rather than what drawing with it would use.
     template <ThemeValueType T>
     const T* find(const ThemeKey<T>& key) const
     {
@@ -105,8 +105,8 @@ public:
         return find(key) != nullptr;
     }
 
-    /// What drawing with this theme uses for the key: its own value, else
-    /// defaultTheme()'s, else the fallback.
+    // What drawing with this theme uses for the key: its own value, else
+    // defaultTheme()'s, else the fallback.
     template <ThemeValueType T>
     T get(const ThemeKey<T>& key, const T& fallback) const
     {
@@ -130,9 +130,9 @@ public:
     bool isEmpty() const { return entries.empty(); }
 
 private:
-    /// The name is kept beside the value and compared on every read, so two
-    /// names that happened to hash alike would read as unset rather than as each
-    /// other's.
+    // The name is kept beside the value and compared on every read, so two
+    // names that happened to hash alike would read as unset rather than as each
+    // other's.
     struct Entry
     {
         std::string name;

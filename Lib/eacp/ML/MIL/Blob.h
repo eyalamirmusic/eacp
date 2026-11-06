@@ -5,10 +5,10 @@
 
 namespace eacp::ML::Blob
 {
-/// MILBlob's storage format, version 2, as the phase 0 spike found Core ML
-/// accepts it: a 64-byte header, then per entry a 64-byte metadata record on a
-/// 64-byte boundary with the data right after it. The program's
-/// BlobFileValue.offset names the record, not the data.
+// MILBlob's storage format, version 2, as the phase 0 spike found Core ML
+// accepts it: a 64-byte header, then per entry a 64-byte metadata record on a
+// 64-byte boundary with the data right after it. The program's
+// BlobFileValue.offset names the record, not the data.
 enum class DataType : std::uint32_t
 {
     float16 = 1,

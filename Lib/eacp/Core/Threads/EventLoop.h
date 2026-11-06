@@ -17,88 +17,88 @@ struct EventLoop
     void call(Callback func);
 };
 
-/// The main thread's loop. Prefer the free functions below.
+// The main thread's loop. Prefer the free functions below.
 EventLoop& getEventLoop();
 
 void runEventLoop(const Callback& func = [] {});
-/// Pumps the loop on the calling (main) thread for at most timeout.
+// Pumps the loop on the calling (main) thread for at most timeout.
 bool runEventLoopFor(Time::MS timeout, const Callback& func = [] {});
-/// Runs func once on the main thread, from any thread. Never blocks. With no
-/// loop running it waits in the queue; see isEventLoopRunning().
+// Runs func once on the main thread, from any thread. Never blocks. With no
+// loop running it waits in the queue; see isEventLoopRunning().
 void callAsync(const Callback& func);
 
-/// callAsync, delayed: runs func on the message thread once, after `delay`.
-/// A non-positive delay is just callAsync. There is no cancelling it - hold a
-/// Timer, whose destructor stops it, when the callback must be revocable.
-///
-/// Every pending callback shares one scheduler thread, so a rate limiter
-/// holding a deadline per bucket costs one thread rather than one per bucket
-/// (Threads::delay is built on it).
+// callAsync, delayed: runs func on the message thread once, after `delay`.
+// A non-positive delay is just callAsync. There is no cancelling it - hold a
+// Timer, whose destructor stops it, when the callback must be revocable.
+//
+// Every pending callback shares one scheduler thread, so a rate limiter
+// holding a deadline per bucket costs one thread rather than one per bucket
+// (Threads::delay is built on it).
 void callAfter(Time::MS delay, Callback func);
 
 void stopEventLoop();
 
-/// Marks the calling thread as this eacp copy's main/UI thread and brings up
-/// the services callAsync depends on, without running an event loop. For eacp
-/// statically linked into a dlopen-hosted plugin: the host owns the loop, so
-/// call this once on the host's UI thread (creating a Window or EmbeddedView
-/// does it implicitly) and the host's own pump then drives this copy's async
-/// callbacks and timers. Idempotent. A no-op on macOS, where the main run loop
-/// is a process singleton and callAsync already reaches the host's loop without
-/// any setup; on Linux the loop is per-copy, so this is what makes callAsync
-/// reach a pump — a foreign host drives it through
-/// getEventLoopFd()/pumpEventLoop() (EventLoop-Linux.h), and under an eacp
-/// host this is also where the copy hands that descriptor to the copy running
-/// the root loop.
+// Marks the calling thread as this eacp copy's main/UI thread and brings up
+// the services callAsync depends on, without running an event loop. For eacp
+// statically linked into a dlopen-hosted plugin: the host owns the loop, so
+// call this once on the host's UI thread (creating a Window or EmbeddedView
+// does it implicitly) and the host's own pump then drives this copy's async
+// callbacks and timers. Idempotent. A no-op on macOS, where the main run loop
+// is a process singleton and callAsync already reaches the host's loop without
+// any setup; on Linux the loop is per-copy, so this is what makes callAsync
+// reach a pump — a foreign host drives it through
+// getEventLoopFd()/pumpEventLoop() (EventLoop-Linux.h), and under an eacp
+// host this is also where the copy hands that descriptor to the copy running
+// the root loop.
 void attachCurrentThreadAsMain();
 
-/// The inverse, for a hosted copy whose image is about to be unloaded (a
-/// plug-in's module exit, before the host's FreeLibrary/dlclose). Everything the
-/// host's pump could still reach in this image goes: on Windows the message-only
-/// window and its class, whose procedure is this copy's code, and the thread
-/// timers still registered, whose procedure is too; on Linux the root copy's
-/// pointer into this one; everywhere the callAfter scheduler thread, which would
-/// otherwise wake into unmapped code, and the callbacks still queued, which
-/// nothing could run any more. Idempotent; a later attach starts over. Call it
-/// on the thread that attached.
+// The inverse, for a hosted copy whose image is about to be unloaded (a
+// plug-in's module exit, before the host's FreeLibrary/dlclose). Everything the
+// host's pump could still reach in this image goes: on Windows the message-only
+// window and its class, whose procedure is this copy's code, and the thread
+// timers still registered, whose procedure is too; on Linux the root copy's
+// pointer into this one; everywhere the callAfter scheduler thread, which would
+// otherwise wake into unmapped code, and the callbacks still queued, which
+// nothing could run any more. Idempotent; a later attach starts over. Call it
+// on the thread that attached.
 void detachCurrentThreadAsMain();
 
-/// Stops the process's root run loop, provided an eacp copy is running it —
-/// any copy: loop ownership is marked in the process environment
-/// (EACP_ROOT_LOOP), which crosses DLL boundaries. The quit path for an app
-/// that lives in a dynamic library while a thin host executable pumps the
-/// loop (Apps::run<T> detects that case and rides the host's loop). A loop
-/// owned by a foreign host (a DAW) carries no marker, so this is a no-op
-/// there: that loop is never ours to stop.
-///
-/// On Linux the marker carries the address of the root copy's bridge
-/// (EACP_ROOT_LOOP_BRIDGE), which is also how a hosted copy's loop
-/// descriptor joins the root copy's poll set — so an eacp host pumps a
-/// plugin's timers and callbacks without either side knowing the other.
+// Stops the process's root run loop, provided an eacp copy is running it —
+// any copy: loop ownership is marked in the process environment
+// (EACP_ROOT_LOOP), which crosses DLL boundaries. The quit path for an app
+// that lives in a dynamic library while a thin host executable pumps the
+// loop (Apps::run<T> detects that case and rides the host's loop). A loop
+// owned by a foreign host (a DAW) carries no marker, so this is a no-op
+// there: that loop is never ours to stop.
+//
+// On Linux the marker carries the address of the root copy's bridge
+// (EACP_ROOT_LOOP_BRIDGE), which is also how a hosted copy's loop
+// descriptor joins the root copy's poll set — so an eacp host pumps a
+// plugin's timers and callbacks without either side knowing the other.
 void stopProcessRootLoop();
 
-/// True while a loop is running that work handed to callAsync will reach: this
-/// copy's root loop or a nested pump (runEventLoopFor), or another eacp copy's
-/// root loop — the EACP_ROOT_LOOP marker crosses images, so a plugin sees its
-/// host's loop. It answers for the whole process, so a worker asking sees the
-/// loop thread's pumps, nested ones included.
-///
-/// Ask before deferring anything that must actually run. During app teardown —
-/// Apps::run destroys the app once the loop has exited — this is false, and a
-/// callAsync there would sit in the queue forever (see Plugins::unload, which
-/// unmaps on the spot in that case instead of deferring into the void).
+// True while a loop is running that work handed to callAsync will reach: this
+// copy's root loop or a nested pump (runEventLoopFor), or another eacp copy's
+// root loop — the EACP_ROOT_LOOP marker crosses images, so a plugin sees its
+// host's loop. It answers for the whole process, so a worker asking sees the
+// loop thread's pumps, nested ones included.
+//
+// Ask before deferring anything that must actually run. During app teardown —
+// Apps::run destroys the app once the loop has exited — this is false, and a
+// callAsync there would sit in the queue forever (see Plugins::unload, which
+// unmaps on the spot in that case instead of deferring into the void).
 bool isEventLoopRunning();
 
-/// Schedules the app's one-time startup callback (the app/window creation that
-/// runEventLoop kicks off). Most platforms post it to the loop immediately; iOS
-/// defers it to UIScene connection so the window is created with a live scene
-/// after activation, not before. Platform-specific.
+// Schedules the app's one-time startup callback (the app/window creation that
+// runEventLoop kicks off). Most platforms post it to the loop immediately; iOS
+// defers it to UIScene connection so the window is created with a live scene
+// after activation, not before. Platform-specific.
 void scheduleStartup(const Callback& func);
 
-/// Pumps the event loop in short slices until `ready()` returns true or
-/// `timeout` elapses. Returns true if the predicate was met, false on
-/// timeout. Must be called on the main thread, and must not be re-entered
-/// from inside another event-loop callback.
+// Pumps the event loop in short slices until `ready()` returns true or
+// `timeout` elapses. Returns true if the predicate was met, false on
+// timeout. Must be called on the main thread, and must not be re-entered
+// from inside another event-loop callback.
 template <typename Predicate>
 bool runEventLoopUntil(Predicate ready,
                        Time::MS timeout,

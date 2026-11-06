@@ -21,7 +21,7 @@ struct AndroidWindowSurface : LinuxWindowSurface
     int pixelHeight = 0;
 };
 
-/// The window's presenting-view backend; `window` must outlive it.
+// The window's presenting-view backend; `window` must outlive it.
 std::unique_ptr<ViewSurfaceBackend>
     makeAndroidViewSurfaceBackend(AndroidWindowSurface& window);
 } // namespace eacp::Graphics

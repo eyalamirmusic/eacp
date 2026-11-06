@@ -12,33 +12,33 @@ namespace eacp::GPU
 {
 class Device;
 
-/// Times the labelled passes of one off-screen command buffer, and the buffer end
-/// to end. FrameTimer's sibling for work with no frame around it: one slot rather
-/// than a rotation, since a command buffer reads its own numbers rather than an
-/// earlier submission's. Owned by CommandBuffer and driven entirely by it.
+// Times the labelled passes of one off-screen command buffer, and the buffer end
+// to end. FrameTimer's sibling for work with no frame around it: one slot rather
+// than a rotation, since a command buffer reads its own numbers rather than an
+// earlier submission's. Owned by CommandBuffer and driven entirely by it.
 class CommandTimer
 {
 public:
-    /// The pass's ordinal - which samples are its is the backend's layout, two a
-    /// pass on D3D12 and Vulkan and four on Metal - or -1 when the pass is not
-    /// being timed, which is what an unlabelled pass,
-    /// an unsupported device and a buffer already holding maxTimedPasses labelled
-    /// passes all get.
+    // The pass's ordinal - which samples are its is the backend's layout, two a
+    // pass on D3D12 and Vulkan and four on Metal - or -1 when the pass is not
+    // being timed, which is what an unlabelled pass,
+    // an unsupported device and a buffer already holding maxTimedPasses labelled
+    // passes all get.
     int beginPass(std::string_view label, Device& device, void* nativeCommandBuffer);
 
-    /// Where a timed pass writes its samples. Null when nothing is being timed.
+    // Where a timed pass writes its samples. Null when nothing is being timed.
     void* nativeSamples() const;
 
-    /// endRecording before the submission, since it records onto the command
-    /// buffer, and noteSubmitted after it.
+    // endRecording before the submission, since it records onto the command
+    // buffer, and noteSubmitted after it.
     void endRecording(void* nativeCommandBuffer);
     void noteSubmitted(std::uint64_t fenceValue);
 
-    /// Empty until the GPU has finished the buffer, and read off the samples the
-    /// first time it has.
+    // Empty until the GPU has finished the buffer, and read off the samples the
+    // first time it has.
     const FrameTimings& timings(const Device& device);
 
-    /// See GpuTimestamps::isSupported. False until a labelled pass has begun.
+    // See GpuTimestamps::isSupported. False until a labelled pass has begun.
     bool isSupported() const;
 
 private:

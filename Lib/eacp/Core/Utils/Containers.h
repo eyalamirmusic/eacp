@@ -2,11 +2,11 @@
 
 /** @file ea_data_structures containers, re-exported into eacp. */
 
-/// Pulls in the EA container types eacp depends on and re-exports the most-used
-/// ones into the eacp namespace (Vector / Array / Span / OwningPointer /
-/// OwnedVector, plus makeOwned), so eacp::* code can use the unqualified names
-/// instead of EA::Vector, etc. Include this rather than the individual
-/// ea_data_structures headers.
+// Pulls in the EA container types eacp depends on and re-exports the most-used
+// ones into the eacp namespace (Vector / Array / Span / OwningPointer /
+// OwnedVector, plus makeOwned), so eacp::* code can use the unqualified names
+// instead of EA::Vector, etc. Include this rather than the individual
+// ea_data_structures headers.
 
 #include <ea_data_structures/Pointers/OwningPointer.h>
 #include <ea_data_structures/Structures/Array.h>
