@@ -7,6 +7,7 @@ nano_add_executable(GPUCodegenTests
             GroupReductionCodegenTests.cpp
             ShaderCodegenTests.cpp
             ShaderCompilerTests.cpp
+            ShaderEmissionTests.cpp
             SimdMatrixCodegenTests.cpp
         TARGETS eacp-gpu-codegen eacp-cpu-compute eacp-shader-compiler)
 
