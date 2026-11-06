@@ -420,7 +420,7 @@ std::string WebView::getURL() const
     if (!impl->webView)
         return "";
 
-    CoTaskMemString uri;
+    ComAllocatedWideString uri;
     impl->webView->get_Source(&uri);
     return uri.toString();
 }
@@ -430,7 +430,7 @@ std::string WebView::getTitle() const
     if (!impl->webView)
         return "";
 
-    CoTaskMemString title;
+    ComAllocatedWideString title;
     impl->webView->get_DocumentTitle(&title);
     return title.toString();
 }
@@ -618,7 +618,7 @@ WebView* WebView::focused()
 
 bool WebView::isRuntimeAvailable()
 {
-    auto version = CoTaskMemString();
+    auto version = ComAllocatedWideString();
     auto hr = GetAvailableCoreWebView2BrowserVersionString(nullptr, &version);
 
     return SUCCEEDED(hr) && version;
