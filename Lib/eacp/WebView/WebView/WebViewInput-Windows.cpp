@@ -347,7 +347,8 @@ void WebView::performWindowControl(const std::string& action)
 
         // Report the resulting state back so the page's data-eacp-maximized
         // attribute tracks reality instead of guessing.
-        evaluateJavaScript(detail::buildMaximizedStateScript(IsZoomed(root)));
+        evaluateJavaScript(IsZoomed(root) ? "window.__eacpSetMaximized(true)"
+                                          : "window.__eacpSetMaximized(false)");
         return;
     }
 

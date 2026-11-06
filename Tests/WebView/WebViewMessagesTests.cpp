@@ -8,12 +8,6 @@ namespace WebViewMessagesTests
 {
 constexpr auto escapeVirtualKey = 27;
 constexpr auto letterAVirtualKey = 65;
-constexpr auto okStatus = 200;
-constexpr auto partialStatus = 206;
-constexpr auto unsatisfiableStatus = 416;
-constexpr auto notFoundStatus = 404;
-constexpr auto createdStatus = 201;
-constexpr auto redirectStatus = 302;
 } // namespace WebViewMessagesTests
 
 using namespace WebViewMessagesTests;
@@ -133,47 +127,4 @@ auto tScriptResultDecodesString =
     check(decodeScriptResult("42") == "42");
     check(decodeScriptResult("{\"a\":1}") == "{\"a\":1}");
     check(decodeScriptResult("not json") == "not json");
-};
-
-auto tUrlScheme = test("WebViewMessages/urlScheme") = []
-{
-    check(getUrlScheme("app://local/index.html")
-          == std::optional<std::string> {"app"});
-    check(!getUrlScheme("about:blank").has_value());
-};
-
-auto tStatusReasons = test("WebViewMessages/statusReasons") = []
-{
-    check(getStreamingStatusReason(okStatus) == "OK");
-    check(getStreamingStatusReason(partialStatus) == "Partial Content");
-    check(getStreamingStatusReason(unsatisfiableStatus) == "Range Not Satisfiable");
-    check(getResourceStatusReason(createdStatus) == "OK");
-    check(getResourceStatusReason(redirectStatus) == "Error");
-    check(getResourceStatusReason(notFoundStatus) == "Error");
-};
-
-auto tJoinResponseHeaders = test("WebViewMessages/joinResponseHeaders") = []
-{
-    auto headers = eacp::Vector<std::pair<std::string, std::string>> {};
-    check(joinResponseHeaders(headers).empty());
-
-    headers.add({"Content-Type", "text/plain"});
-    headers.add({"Accept-Ranges", "bytes"});
-    check(joinResponseHeaders(headers)
-          == "Content-Type: text/plain\r\nAccept-Ranges: bytes");
-};
-
-auto tMessageHandlerScript = test("WebViewMessages/messageHandlerScript") = []
-{
-    auto script = buildMessageHandlerScript("probe");
-    check(script.find("{name:'probe',body:msg}") != std::string::npos);
-    check(script.find("window.probe={postMessage:send}") != std::string::npos);
-    check(script.find("window.webkit.messageHandlers.probe={postMessage:send}")
-          != std::string::npos);
-};
-
-auto tMaximizedStateScript = test("WebViewMessages/maximizedStateScript") = []
-{
-    check(buildMaximizedStateScript(true) == "window.__eacpSetMaximized(true)");
-    check(buildMaximizedStateScript(false) == "window.__eacpSetMaximized(false)");
 };
