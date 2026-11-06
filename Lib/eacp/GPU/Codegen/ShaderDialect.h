@@ -2,6 +2,8 @@
 
 #include "ShaderGraph.h"
 
+#include <eacp/Core/Utils/Format.h>
+
 #include <string>
 #include <string_view>
 
@@ -31,9 +33,29 @@ constexpr bool isFlatVarying(ValueType type)
     return isSignedInteger(type) || isUnsignedInteger(type);
 }
 
-std::string getAttributeSemantic(Backend backend, int index);
+inline std::string getAttributeSemantic(Backend backend, int index)
+{
+    if (backend == Backend::Vulkan)
+        return {};
 
-std::string getVaryingSemantic(Backend backend, int index, ValueType type);
+    if (backend == Backend::Metal)
+        return Strings::format(" [[attribute({})]]", index);
+
+    return Strings::format(" : TEXCOORD{}", index);
+}
+
+inline // Metal writes the flat qualifier after the member name, so on Metal it is part
+    // of the semantic.
+    std::string getVaryingSemantic(Backend backend, int index, ValueType type)
+{
+    if (backend == Backend::Metal)
+        return isFlatVarying(type) ? " [[flat]]" : std::string {};
+
+    if (backend != Backend::DirectX)
+        return {};
+
+    return Strings::format(" : TEXCOORD{}", index);
+}
 
 constexpr std::string_view getPositionSemantic(Backend backend)
 {
@@ -54,11 +76,30 @@ constexpr std::string_view getFlatQualifier(Backend backend, ValueType type)
     return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
 }
 
-std::string getLocationLayout(int index);
+inline // Attribute i and varying i take location i, which is what the Vulkan
+    // vertex-input state and the vertex/fragment interface match on.
+    std::string getLocationLayout(int index)
+{
+    return Strings::format("layout(location = {}) ", index);
+}
 
-std::string getAttributeName(Backend backend, int slot);
+inline // GLSL reads a stage's I/O out of globals, spelled attrN and varyN because aN
+    // and vN are taken there by a constant array and a mutable local.
+    std::string getAttributeName(Backend backend, int slot)
+{
+    if (backend == Backend::Vulkan)
+        return Strings::format("attr{}", slot);
 
-std::string getVaryingName(Backend backend, int index);
+    return Strings::format("input.a{}", slot);
+}
+
+inline std::string getVaryingName(Backend backend, int index)
+{
+    if (backend == Backend::Vulkan)
+        return Strings::format("vary{}", index);
+
+    return Strings::format("input.v{}", index);
+}
 
 std::string getCallName(Backend backend, const std::string& name);
 bool isGenTypeCall(const std::string& name);

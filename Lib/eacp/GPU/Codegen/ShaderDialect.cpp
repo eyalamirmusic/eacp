@@ -174,55 +174,6 @@ std::string_view getMetalPackedVectorType(ValueType type)
     }
 }
 
-std::string getAttributeSemantic(Backend backend, int index)
-{
-    if (backend == Backend::Vulkan)
-        return {};
-
-    if (backend == Backend::Metal)
-        return Strings::format(" [[attribute({})]]", index);
-
-    return Strings::format(" : TEXCOORD{}", index);
-}
-
-// Metal writes the flat qualifier after the member name, so on Metal it is part
-// of the semantic.
-std::string getVaryingSemantic(Backend backend, int index, ValueType type)
-{
-    if (backend == Backend::Metal)
-        return isFlatVarying(type) ? " [[flat]]" : std::string {};
-
-    if (backend != Backend::DirectX)
-        return {};
-
-    return Strings::format(" : TEXCOORD{}", index);
-}
-
-// Attribute i and varying i take location i, which is what the Vulkan
-// vertex-input state and the vertex/fragment interface match on.
-std::string getLocationLayout(int index)
-{
-    return Strings::format("layout(location = {}) ", index);
-}
-
-// GLSL reads a stage's I/O out of globals, spelled attrN and varyN because aN
-// and vN are taken there by a constant array and a mutable local.
-std::string getAttributeName(Backend backend, int slot)
-{
-    if (backend == Backend::Vulkan)
-        return Strings::format("attr{}", slot);
-
-    return Strings::format("input.a{}", slot);
-}
-
-std::string getVaryingName(Backend backend, int index)
-{
-    if (backend == Backend::Vulkan)
-        return Strings::format("vary{}", index);
-
-    return Strings::format("input.v{}", index);
-}
-
 // A thread index under the name both kernel scaffoldings bind it to: the whole
 // value where the node took the position as one, one lane otherwise.
 std::string
