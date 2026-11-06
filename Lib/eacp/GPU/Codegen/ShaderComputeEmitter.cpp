@@ -93,14 +93,14 @@ std::string printKernelUniformBlock(const ShaderGraph& graph, Backend backend)
     }
     else
     {
-        for (auto i = 0; i < gridExtentCount(rank); ++i)
+        for (auto i = 0; i < getGridExtentCount(rank); ++i)
         {
             uniformTypes.add(ValueType::UInt);
-            uniformNames.add(gridExtentName(i));
+            uniformNames.add(std::string(getGridExtentName(i)));
         }
     }
 
-    return uniformBlock(
+    return formatUniformBlock(
         backend, uniformTypes, uniformNames, vulkanComputeUniformBinding);
 }
 
@@ -116,7 +116,7 @@ std::string printSharedArrays(const ShaderGraph& graph,
 
         source += Strings::format("{} {} s{}[{}];\n",
                                   qualifier,
-                                  typeName(backend, shared.elementType),
+                                  getDialectTypeName(backend, shared.elementType),
                                   i,
                                   shared.elements);
     }
@@ -134,9 +134,9 @@ std::string printReductionScratch(const ShaderGraph& graph,
     for (auto elementType: elementTypes)
         source += Strings::format("{} {} {}[{}];\n",
                                   qualifier,
-                                  typeName(backend, elementType),
-                                  groupScratchName(elementType),
-                                  threadsPerGroup(graph));
+                                  getDialectTypeName(backend, elementType),
+                                  getGroupScratchName(elementType),
+                                  getThreadsPerGroup(graph));
 
     return source;
 }
@@ -150,9 +150,9 @@ std::string printGroupMemoryGlobals(const ShaderGraph& graph,
     auto source = printSharedArrays(graph, backend, qualifier);
     source += printReductionScratch(
         graph, backend, qualifier, graph.groupReductionTypes());
-    source += simdMatrixScratchDeclaration(graph, qualifier);
+    source += formatSimdMatrixScratchDeclaration(graph, qualifier);
 
-    if (declaresGroupMemory(graph))
+    if (doesDeclareGroupMemory(graph))
         source += "\n";
 
     return source;
@@ -162,16 +162,16 @@ std::string printGroupMemoryGlobals(const ShaderGraph& graph,
 // dialect's three-component builtins.
 struct KernelIndexSources
 {
-    const char* typeName;
-    const char* global;
-    const char* local;
-    const char* group;
+    std::string_view typeName;
+    std::string_view global;
+    std::string_view local;
+    std::string_view group;
 };
 
 std::string printKernelIndices(const ShaderGraph& graph,
                                const KernelIndexSources& sources)
 {
-    auto swizzle = indexSwizzle(graph.dispatchRank());
+    auto swizzle = getIndexSwizzle(graph.dispatchRank());
     auto source = Strings::format(
         "    {} gid = {}{};\n", sources.typeName, sources.global, swizzle);
 
@@ -192,11 +192,11 @@ std::string printMetalBufferParameters(const ShaderGraph& graph)
     auto source = std::string {};
 
     for (auto i = 0; i < buffers.size(); ++i)
-        source +=
-            Strings::format("{} buffer{} [[buffer({})]],\n    ",
-                            metalBufferType(buffers[i], graph.storageElementType(i)),
-                            i,
-                            i);
+        source += Strings::format(
+            "{} buffer{} [[buffer({})]],\n    ",
+            getMetalBufferType(buffers[i], graph.storageElementType(i)),
+            i,
+            i);
 
     return source;
 }
@@ -221,7 +221,7 @@ std::string printMetalTextureParameters(const ShaderGraph& graph)
 
         source += Strings::format("{} texture{} [[texture({})]],\n    sampler "
                                   "sampler{} [[sampler({})]],\n    ",
-                                  metalTextureType(graph.textureKind(i)),
+                                  getMetalTextureType(graph.textureKind(i)),
                                   i,
                                   i,
                                   i,
@@ -238,12 +238,12 @@ std::string printMetalTextureParameters(const ShaderGraph& graph)
 // output each SIMD group owns.
 bool needsMetalSimdBuiltins(const ShaderGraph& graph)
 {
-    return metalCombinesPartials(graph) || graph.usesSimdGroups();
+    return doesMetalCombinePartials(graph) || graph.usesSimdGroups();
 }
 
 std::string printMetalIndexParameters(const ShaderGraph& graph)
 {
-    auto indexType = indexTypeName(graph.dispatchRank());
+    auto indexType = getIndexTypeName(graph.dispatchRank());
     auto source = Strings::format("{} gid [[thread_position_in_grid]]", indexType);
 
     if (graph.usesLocalId())
@@ -270,7 +270,7 @@ std::string printMetalGroupMemory(const ShaderGraph& graph)
     constexpr auto qualifier = "    threadgroup";
     auto source = printSharedArrays(graph, Backend::Metal, qualifier);
 
-    if (metalCombinesPartials(graph))
+    if (doesMetalCombinePartials(graph))
         source += printReductionScratch(
             graph, Backend::Metal, qualifier, graph.wholeGroupReductionTypes());
 
@@ -296,10 +296,10 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
     auto source = std::string {};
 
     for (auto i = 0; i < buffers.size(); ++i)
-        source += glslBufferBlock(buffers[i],
-                                  graph.storageElementType(i),
-                                  i,
-                                  vulkanComputeBufferBinding(i));
+        source += formatGlslBufferBlock(buffers[i],
+                                        graph.storageElementType(i),
+                                        i,
+                                        vulkanComputeBufferBinding(i));
 
     if (buffers.size() > 0)
         source += "\n";
@@ -309,9 +309,9 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
         auto binding = vulkanComputeTextureBinding(i);
 
         if (graph.textureAccess(i) == TextureAccess::Write)
-            source += glslWritableTexture(i, binding);
+            source += formatGlslWritableTexture(i, binding);
         else
-            source += glslSampledTexture(graph, i, binding);
+            source += formatGlslSampledTexture(graph, i, binding);
     }
 
     if (graph.textureCount() > 0)
@@ -337,7 +337,7 @@ std::string printGlslKernelOpening(const ShaderGraph& graph)
 
     return source
            + printKernelIndices(graph,
-                                {glslIndexTypeName(graph.dispatchRank()),
+                                {getGlslIndexTypeName(graph.dispatchRank()),
                                  "gl_GlobalInvocationID",
                                  "gl_LocalInvocationID",
                                  "gl_WorkGroupID"});
@@ -354,12 +354,12 @@ std::string printHlslKernelBuffers(const ShaderGraph& graph)
     {
         auto registerSpace = buffers[i] == BufferAccess::Read ? 't' : 'u';
 
-        source +=
-            Strings::format("{} buffer{} : register({}{});\n",
-                            hlslBufferType(buffers[i], graph.storageElementType(i)),
-                            i,
-                            registerSpace,
-                            i);
+        source += Strings::format(
+            "{} buffer{} : register({}{});\n",
+            getHlslBufferType(buffers[i], graph.storageElementType(i)),
+            i,
+            registerSpace,
+            i);
     }
 
     if (buffers.size() > 0)
@@ -390,12 +390,12 @@ std::string printHlslKernelTextures(const ShaderGraph& graph)
         }
 
         source += Strings::format("{} texture{} : register(t{});\n",
-                                  hlslTextureType(graph.textureKind(i)),
+                                  getHlslTextureType(graph.textureKind(i)),
                                   i,
                                   textureRegister);
     }
 
-    source += hlslSamplerDeclarations(graph);
+    source += formatHlslSamplerDeclarations(graph);
 
     if (graph.textureCount() > 0)
         source += "\n";
@@ -442,7 +442,7 @@ std::string printHlslKernelOpening(const ShaderGraph& graph)
 
     return source
            + printKernelIndices(graph,
-                                {indexTypeName(graph.dispatchRank()),
+                                {getIndexTypeName(graph.dispatchRank()),
                                  "threadId",
                                  "localThread",
                                  "groupIndex"});
@@ -472,10 +472,10 @@ std::string printKernelPrologue(const ShaderGraph& graph, Backend backend)
     auto source = std::string {};
 
     if (backend != Backend::Metal && graph.simdMatrixCount() > 0)
-        source += simdMatrixPreamble(backend);
+        source += formatSimdMatrixPreamble(backend);
 
     if (!graph.usesBarrier())
-        source += boundsGuard(graph.dispatchRank());
+        source += formatBoundsGuard(graph.dispatchRank());
 
     return source;
 }
@@ -501,7 +501,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     assertKernelShapeIsValid(graph);
 
-    auto source = sourcePreamble(graph, backend);
+    auto source = getSourcePreamble(graph, backend);
     source += printKernelUniformBlock(graph, backend);
     source += printKernelOpening(graph, backend);
     source += printKernelPrologue(graph, backend);

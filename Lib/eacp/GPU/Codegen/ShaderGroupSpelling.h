@@ -15,22 +15,22 @@ namespace eacp::GPU::ShaderEmission
 // than slotted, like the reduction's, because it is the emitter's own.
 inline constexpr auto simdMatrixScratchName = "sgmScratch";
 
-int threadsPerGroup(const ShaderGraph& graph);
-int reductionStride(int threads);
-int reductionWidth(const ShaderGraph& graph, ReductionScope scope);
-bool spansWholeGroup(const ShaderGraph& graph, ReductionScope scope);
-bool metalFoldsInOneInstruction(ReductionScope scope);
-bool metalCombinesPartials(const ShaderGraph& graph);
+int getThreadsPerGroup(const ShaderGraph& graph);
+int getReductionStride(int threads);
+int getReductionWidth(const ShaderGraph& graph, ReductionScope scope);
+bool doesFoldSpanWholeGroup(const ShaderGraph& graph, ReductionScope scope);
+bool doesMetalFoldInOneInstruction(ReductionScope scope);
+bool doesMetalCombinePartials(const ShaderGraph& graph);
 // The scratch a reduction stages its partials in, one array per element type
 // folded. Named rather than slotted because it is the emitter's own and not
 // something the kernel declared.
-constexpr const char* groupScratchName(ValueType elementType)
+constexpr std::string_view getGroupScratchName(ValueType elementType)
 {
     return elementType == ValueType::UInt ? "groupScratchU" : "groupScratch";
 }
 
 // The MSL SIMD-group reduction each fold starts from.
-constexpr const char* metalSimdReduction(GroupReduction operation)
+constexpr std::string_view getMetalSimdReduction(GroupReduction operation)
 {
     switch (operation)
     {
@@ -46,9 +46,9 @@ constexpr const char* metalSimdReduction(GroupReduction operation)
 }
 
 // Two partials combined, spelled identically in all three dialects.
-constexpr std::string foldedPair(GroupReduction operation,
-                                 const std::string& left,
-                                 const std::string& right)
+constexpr std::string formatFoldedPair(GroupReduction operation,
+                                       const std::string& left,
+                                       const std::string& right)
 {
     switch (operation)
     {
@@ -65,7 +65,8 @@ constexpr std::string foldedPair(GroupReduction operation,
 
 // The barrier itself, shared by the barrier statement and by the reductions
 // that bracket their scratch with one.
-constexpr std::string barrierStatement(Backend backend, const std::string& indent)
+constexpr std::string formatBarrierStatement(Backend backend,
+                                             const std::string& indent)
 {
     if (backend == Backend::Vulkan)
         return indent + "memoryBarrierShared();\n" + indent + "barrier();\n";
@@ -79,25 +80,25 @@ constexpr std::string barrierStatement(Backend backend, const std::string& inden
 // The flat position of a thread within its group, which the tree indexes its
 // scratch by. Both dialects that take the tree have a builtin for it, so
 // neither derives one from the three-component local id.
-constexpr const char* groupLaneName(Backend backend)
+constexpr std::string_view getGroupLaneName(Backend backend)
 {
     return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";
 }
 
 // A SIMD-group matrix fragment's name. Its own numbering, so it collides with
 // neither the variables nor the shared arrays.
-constexpr std::string simdMatrixName(int slot)
+constexpr std::string getSimdMatrixName(int slot)
 {
     return "sgm" + formatDecimal(slot);
 }
 
-std::string simdMatrixMemoryName(const Statement& statement);
+std::string getSimdMatrixMemoryName(const Statement& statement);
 // The MSL type a fragment of each element is, and the element type its load
 // reinterprets the buffer's pointer as. A packed fragment stays packed right
 // through the product: MSL's simdgroup_multiply_accumulate takes mixed operand
 // types into a float accumulator, which is the instruction the hardware has and
 // the reason there is no widening step to emit between the two.
-constexpr const char* metalSimdMatrixType(SimdMatrixElement element)
+constexpr std::string_view getMetalSimdMatrixType(SimdMatrixElement element)
 {
     switch (element)
     {
@@ -112,7 +113,7 @@ constexpr const char* metalSimdMatrixType(SimdMatrixElement element)
     return "simdgroup_float8x8";
 }
 
-constexpr const char* metalPackedElementType(SimdMatrixElement element)
+constexpr std::string_view getMetalPackedElementType(SimdMatrixElement element)
 {
     return element == SimdMatrixElement::Half ? "half" : "bfloat";
 }
@@ -121,7 +122,7 @@ constexpr const char* metalPackedElementType(SimdMatrixElement element)
 // InputBuffer::readHalf or readBFloat16 goes through, so the arithmetic that
 // produces a lane's pair here is the arithmetic every other packed read in the
 // shader uses.
-constexpr const char* packedSimdMatrixHelper(SimdMatrixElement element)
+constexpr std::string_view getPackedSimdMatrixHelper(SimdMatrixElement element)
 {
     return element == SimdMatrixElement::Half ? "eacpReadHalf" : "eacpReadBFloat16";
 }
@@ -130,16 +131,16 @@ constexpr const char* packedSimdMatrixHelper(SimdMatrixElement element)
 // bits are. The buffer is declared float whatever it holds, which is what the
 // packed scalar reads already assume. Metal never asks: a packed patch is a
 // fragment of its own type there, loaded through a reinterpreted pointer.
-constexpr const char* bitsOfFloat(Backend backend)
+constexpr std::string_view getBitsOfFloatFunction(Backend backend)
 {
     return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
 }
 
-const char* simdMatrixLaneType(Backend backend);
-std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
-                                         const std::string& qualifier);
-bool declaresGroupMemory(const ShaderGraph& graph);
-std::string simdMatrixPreamble(Backend backend);
+std::string_view getSimdMatrixLaneType(Backend backend);
+std::string formatSimdMatrixScratchDeclaration(const ShaderGraph& graph,
+                                               const std::string& qualifier);
+bool doesDeclareGroupMemory(const ShaderGraph& graph);
+std::string formatSimdMatrixPreamble(Backend backend);
 
 enum class StagedOperand
 {

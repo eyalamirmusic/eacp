@@ -16,7 +16,7 @@ using namespace eacp::GPU::ShaderEmission;
 
 namespace ShaderEmissionTests
 {
-std::string_view spell(const char* text)
+std::string_view spell(std::string_view text)
 {
     return text;
 }
@@ -59,83 +59,84 @@ static_assert(printStagedSimdMatrixElement(StagedOperand::Right, "i")
 static_assert(printSimdMatrixLaneColumn(0) == "sgmColumn");
 static_assert(printSimdMatrixLaneColumn(1) == "sgmColumn + 1u");
 
-static_assert(attributeSemantic(Backend::Metal, 3) == " [[attribute(3)]]");
-static_assert(attributeSemantic(Backend::DirectX, 3) == " : TEXCOORD3");
-static_assert(attributeSemantic(Backend::Vulkan, 3).empty());
-static_assert(varyingSemantic(Backend::Metal, 1, ValueType::UInt) == " [[flat]]");
-static_assert(varyingSemantic(Backend::Metal, 1, ValueType::Float).empty());
-static_assert(flatQualifier(Backend::Vulkan, ValueType::Int) == "flat ");
-static_assert(flatQualifier(Backend::DirectX, ValueType::UInt)
+static_assert(getAttributeSemantic(Backend::Metal, 3) == " [[attribute(3)]]");
+static_assert(getAttributeSemantic(Backend::DirectX, 3) == " : TEXCOORD3");
+static_assert(getAttributeSemantic(Backend::Vulkan, 3).empty());
+static_assert(getVaryingSemantic(Backend::Metal, 1, ValueType::UInt) == " [[flat]]");
+static_assert(getVaryingSemantic(Backend::Metal, 1, ValueType::Float).empty());
+static_assert(getFlatQualifier(Backend::Vulkan, ValueType::Int) == "flat ");
+static_assert(getFlatQualifier(Backend::DirectX, ValueType::UInt)
               == "nointerpolation ");
-static_assert(locationLayout(2) == "layout(location = 2) ");
-static_assert(attributeName(Backend::Vulkan, 4) == "attr4");
-static_assert(varyingName(Backend::Metal, 4) == "input.v4");
-static_assert(indexReference("gid", DispatchRank::TwoD, 1) == "gid.y");
-static_assert(indexReference("gid", DispatchRank::OneD, 1) == "gid");
-static_assert(bracketed("a + b") == "(a + b)");
+static_assert(getLocationLayout(2) == "layout(location = 2) ");
+static_assert(getAttributeName(Backend::Vulkan, 4) == "attr4");
+static_assert(getVaryingName(Backend::Metal, 4) == "input.v4");
+static_assert(getIndexReference("gid", DispatchRank::TwoD, 1) == "gid.y");
+static_assert(getIndexReference("gid", DispatchRank::OneD, 1) == "gid");
+static_assert(wrapInParentheses("a + b") == "(a + b)");
 
-static_assert(simdMatrixName(5) == "sgm5");
-static_assert(foldedPair(GroupReduction::Max, "a", "b") == "max(a, b)");
-static_assert(foldedPair(GroupReduction::Sum, "a", "b") == "a + b");
-static_assert(barrierStatement(Backend::Vulkan, "  ")
+static_assert(getSimdMatrixName(5) == "sgm5");
+static_assert(formatFoldedPair(GroupReduction::Max, "a", "b") == "max(a, b)");
+static_assert(formatFoldedPair(GroupReduction::Sum, "a", "b") == "a + b");
+static_assert(formatBarrierStatement(Backend::Vulkan, "  ")
               == "  memoryBarrierShared();\n  barrier();\n");
-static_assert(barrierStatement(Backend::DirectX, "")
+static_assert(formatBarrierStatement(Backend::DirectX, "")
               == "GroupMemoryBarrierWithGroupSync();\n");
 
 auto tEmissionBufferTypes = test("ShaderEmission/bufferTypesSpellEachAccess") = []
 {
-    check(spell(metalBufferType(BufferAccess::Read, ValueType::Float))
+    check(spell(getMetalBufferType(BufferAccess::Read, ValueType::Float))
           == "device const float*");
-    check(spell(metalBufferType(BufferAccess::Write, ValueType::UInt))
+    check(spell(getMetalBufferType(BufferAccess::Write, ValueType::UInt))
           == "device uint*");
-    check(spell(metalBufferType(BufferAccess::Atomic, ValueType::Float))
+    check(spell(getMetalBufferType(BufferAccess::Atomic, ValueType::Float))
           == "device atomic_uint*");
 
-    check(spell(hlslBufferType(BufferAccess::Read, ValueType::UInt))
+    check(spell(getHlslBufferType(BufferAccess::Read, ValueType::UInt))
           == "StructuredBuffer<uint>");
-    check(spell(hlslBufferType(BufferAccess::Write, ValueType::Float))
+    check(spell(getHlslBufferType(BufferAccess::Write, ValueType::Float))
           == "RWStructuredBuffer<float>");
-    check(spell(hlslBufferType(BufferAccess::Atomic, ValueType::Float))
+    check(spell(getHlslBufferType(BufferAccess::Atomic, ValueType::Float))
           == "RWStructuredBuffer<uint>");
 };
 
 auto tEmissionTextureTypes = test("ShaderEmission/textureTypesSpellEachKind") = []
 {
-    check(spell(metalTextureType(TextureKind::Texture2D)) == "texture2d<float>");
-    check(spell(metalTextureType(TextureKind::Cube)) == "texturecube<float>");
-    check(spell(metalTextureType(TextureKind::Depth2DArray))
+    check(spell(getMetalTextureType(TextureKind::Texture2D)) == "texture2d<float>");
+    check(spell(getMetalTextureType(TextureKind::Cube)) == "texturecube<float>");
+    check(spell(getMetalTextureType(TextureKind::Depth2DArray))
           == "depth2d_array<float>");
 
-    check(spell(hlslTextureType(TextureKind::Texture2D)) == "Texture2D");
-    check(spell(hlslTextureType(TextureKind::Depth2D)) == "Texture2D<float>");
-    check(spell(hlslTextureType(TextureKind::Texture2DArray)) == "Texture2DArray");
+    check(spell(getHlslTextureType(TextureKind::Texture2D)) == "Texture2D");
+    check(spell(getHlslTextureType(TextureKind::Depth2D)) == "Texture2D<float>");
+    check(spell(getHlslTextureType(TextureKind::Texture2DArray))
+          == "Texture2DArray");
 };
 
 auto tEmissionCallNames = test("ShaderEmission/callNamesRenamePerDialect") = []
 {
-    check(callName(Backend::Metal, "fract") == "fract");
-    check(callName(Backend::DirectX, "fract") == "frac");
-    check(callName(Backend::DirectX, "as_type<uint2>") == "asuint");
-    check(callName(Backend::Vulkan, "rsqrt") == "inversesqrt");
-    check(callName(Backend::Vulkan, "as_type<float4>") == "uintBitsToFloat");
-    check(callName(Backend::Vulkan, "float2") == "vec2");
-    check(callName(Backend::Vulkan, "log10") == "eacpLog10");
-    check(callName(Backend::DirectX, "log10") == "log10");
+    check(getCallName(Backend::Metal, "fract") == "fract");
+    check(getCallName(Backend::DirectX, "fract") == "frac");
+    check(getCallName(Backend::DirectX, "as_type<uint2>") == "asuint");
+    check(getCallName(Backend::Vulkan, "rsqrt") == "inversesqrt");
+    check(getCallName(Backend::Vulkan, "as_type<float4>") == "uintBitsToFloat");
+    check(getCallName(Backend::Vulkan, "float2") == "vec2");
+    check(getCallName(Backend::Vulkan, "log10") == "eacpLog10");
+    check(getCallName(Backend::DirectX, "log10") == "log10");
 };
 
 auto tEmissionComparisons = test("ShaderEmission/glslComparisonsAreFunctions") = []
 {
-    check(spell(glslComparison("<=")) == "lessThanEqual");
-    check(spell(glslComparison("!=")) == "notEqual");
-    check(glslComparison("&&") == nullptr);
+    check(spell(getGlslComparisonFunction("<=")) == "lessThanEqual");
+    check(spell(getGlslComparisonFunction("!=")) == "notEqual");
+    check(getGlslComparisonFunction("&&").empty());
 };
 
 auto tEmissionWantsLocal = test("ShaderEmission/onlyOperationsWantALocal") = []
 {
-    check(wantsLocal(ExprKind::Binary));
-    check(wantsLocal(ExprKind::BufferRead));
-    check(!wantsLocal(ExprKind::Constant));
-    check(!wantsLocal(ExprKind::Swizzle));
+    check(isLocalWanted(ExprKind::Binary));
+    check(isLocalWanted(ExprKind::BufferRead));
+    check(!isLocalWanted(ExprKind::Constant));
+    check(!isLocalWanted(ExprKind::Swizzle));
 };
 
 auto tEmissionLoopConditions =
@@ -172,15 +173,15 @@ auto tEmissionStaleness =
     auto query = StalenessQuery {graph, written, buffersWritten, false, seen};
 
     check(written.contains(1));
-    check(query.readsStale(loop.value));
-    check(!touchesShared(graph, loop));
+    check(query.doesReadStaleValue(loop.value));
+    check(!doesTouchSharedMemory(graph, loop));
 };
 
 auto tEmissionBoundsGuard = test("ShaderEmission/boundsGuardCoversEveryExtent") = []
 {
-    check(boundsGuard(DispatchRank::OneD)
+    check(formatBoundsGuard(DispatchRank::OneD)
           == "    if (gid >= uniforms.count)\n        return;\n");
-    check(boundsGuard(DispatchRank::TwoD)
+    check(formatBoundsGuard(DispatchRank::TwoD)
           == "    if (gid.x >= uniforms.width || gid.y >= uniforms.height)\n"
              "        return;\n");
 };

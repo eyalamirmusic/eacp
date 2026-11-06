@@ -81,7 +81,7 @@ void collectBlockWrites(const ShaderGraph& graph, int block, Vector<char>& writt
 bool blockTouchesShared(const ShaderGraph& graph, int block)
 {
     for (auto index: graph.block(block).statements)
-        if (touchesShared(graph, graph.statement(index)))
+        if (doesTouchSharedMemory(graph, graph.statement(index)))
             return true;
 
     return false;
@@ -98,7 +98,7 @@ void collectBlockBufferWrites(const ShaderGraph& graph,
 // A fragment stored back into a threadgroup tile moves that tile, so any name
 // read out of it beforehand is given up; one stored into a buffer moves no
 // shared memory at all.
-bool storesSimdMatrixTo(const Statement& statement, SimdMatrixMemory memory)
+bool doesStoreSimdMatrixTo(const Statement& statement, SimdMatrixMemory memory)
 {
     return statement.kind == StatementKind::SimdMatrixStore
            && statement.memory == memory;
@@ -108,10 +108,10 @@ bool storesSimdMatrixTo(const Statement& statement, SimdMatrixMemory memory)
 // names the variable the value from before the add lands in. Nor is a fragment
 // store's, `slot` there naming the fragment, and it writes a buffer only when
 // that is where its patch is.
-bool writesBufferSlotField(const Statement& statement)
+bool doesWriteBufferSlotField(const Statement& statement)
 {
     return statement.kind == StatementKind::AtomicAdd
-           || storesSimdMatrixTo(statement, SimdMatrixMemory::Buffer);
+           || doesStoreSimdMatrixTo(statement, SimdMatrixMemory::Buffer);
 }
 
 void addStatementExpressions(const Statement& statement,
@@ -144,7 +144,7 @@ void addStatementExpressions(const Statement& statement,
 // the walk that reached it first found a uniform, in which case it returned
 // true and this one is unreachable, or it did not, in which case there is none
 // under there to find.
-bool referencesUniform(const ShaderGraph& graph, int node, VisitSet& seen)
+bool doesReferenceUniform(const ShaderGraph& graph, int node, VisitSet& seen)
 {
     if (node < 0 || !seen.visit(node))
         return false;
@@ -158,7 +158,7 @@ bool referencesUniform(const ShaderGraph& graph, int node, VisitSet& seen)
         return false;
 
     for (auto argument: expr.args)
-        if (referencesUniform(graph, argument, seen))
+        if (doesReferenceUniform(graph, argument, seen))
             return true;
 
     return false;
@@ -191,7 +191,7 @@ void collectAttributeReads(const ShaderGraph& graph,
 }
 
 // -1 when no declared varying carries `source`.
-int varyingCarrying(const ShaderGraph& graph, int source)
+int findVaryingCarrying(const ShaderGraph& graph, int source)
 {
     for (auto i = 0; i < graph.varyings().size(); ++i)
         if (graph.varyings()[i].sourceNode == source)
@@ -207,7 +207,7 @@ Vector<char> collectFragmentAttributeReads(const ShaderGraph& graph)
 
     auto seen = VisitSet {graph.nodeCount()};
 
-    for (auto root: fragmentStageRoots(graph))
+    for (auto root: getFragmentStageRoots(graph))
         collectAttributeReads(graph, root, reached, seen);
 
     return reached;
@@ -238,7 +238,7 @@ void collectBufferSlots(const ShaderGraph& graph,
 
 // The one thing named whatever its kind is a record write's value, which its
 // element stores all have to be handed rather than evaluate one at a time.
-bool wantsLocal(ExprKind kind)
+bool isLocalWanted(ExprKind kind)
 {
     return isKindAmong<ExprKind>(kind, kindsWorthALocal);
 }
@@ -289,7 +289,7 @@ void LocalOrdering::visit(int node)
     for (auto argument: graph.expr(node).args)
         visit(argument);
 
-    if (uses[node] > 1 && wantsLocal(graph.expr(node).kind))
+    if (uses[node] > 1 && isLocalWanted(graph.expr(node).kind))
         order.add(node);
 }
 
@@ -338,12 +338,12 @@ void collectWrites(const ShaderGraph& graph,
 // following nested bodies the way collectWrites does. What this feeds is the
 // same rule variables get: a name computed from shared memory is given up the
 // moment shared memory may have moved on.
-bool touchesShared(const ShaderGraph& graph, const Statement& statement)
+bool doesTouchSharedMemory(const ShaderGraph& graph, const Statement& statement)
 {
     if (isKindAmong<StatementKind>(statement.kind, sharedMovingStatements))
         return true;
 
-    if (storesSimdMatrixTo(statement, SimdMatrixMemory::Shared))
+    if (doesStoreSimdMatrixTo(statement, SimdMatrixMemory::Shared))
         return true;
 
     for (auto body: getNestedBodies(statement))
@@ -365,48 +365,48 @@ void collectBufferWrites(const ShaderGraph& graph,
     if (isKindAmong<StatementKind>(statement.kind, bufferSlotStoringStatements))
         written[statement.slot] = 1;
 
-    if (writesBufferSlotField(statement))
+    if (doesWriteBufferSlotField(statement))
         written[statement.bufferSlot] = 1;
 
     for (auto body: getNestedBodies(statement))
         collectBlockBufferWrites(graph, body, written);
 }
 
-bool StalenessQuery::readsWrittenVariable(const Expr& expr) const
+bool StalenessQuery::doesReadWrittenVariable(const Expr& expr) const
 {
     return expr.kind == ExprKind::VarRead && variablesWritten[expr.index] != 0;
 }
 
-bool StalenessQuery::readsMovedSharedMemory(const Expr& expr) const
+bool StalenessQuery::doesReadMovedSharedMemory(const Expr& expr) const
 {
     return sharedMoved && expr.kind == ExprKind::SharedRead;
 }
 
-bool StalenessQuery::readsWrittenBuffer(const Expr& expr) const
+bool StalenessQuery::doesReadWrittenBuffer(const Expr& expr) const
 {
     return isKindAmong<ExprKind>(expr.kind, bufferElementReadKinds)
            && buffersWritten[expr.index] != 0;
 }
 
 // The node itself, not what is under it.
-bool StalenessQuery::readsWhatMoved(const Expr& expr) const
+bool StalenessQuery::doesReadWhatMoved(const Expr& expr) const
 {
-    return readsWrittenVariable(expr) || readsMovedSharedMemory(expr)
-           || readsWrittenBuffer(expr);
+    return doesReadWrittenVariable(expr) || doesReadMovedSharedMemory(expr)
+           || doesReadWrittenBuffer(expr);
 }
 
-bool StalenessQuery::readsStale(int node)
+bool StalenessQuery::doesReadStaleValue(int node)
 {
     if (node < 0 || !seen.visit(node))
         return false;
 
     const auto& expr = graph.expr(node);
 
-    if (readsWhatMoved(expr))
+    if (doesReadWhatMoved(expr))
         return true;
 
     for (auto argument: expr.args)
-        if (readsStale(argument))
+        if (doesReadStaleValue(argument))
             return true;
 
     return false;
@@ -440,12 +440,12 @@ void collectStatementExpressions(const ShaderGraph& graph,
 // One visited set across every root, not one per root: a stage's roots share
 // most of their graph, and a node already known to hold no uniform holds none
 // whichever root reached it.
-bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots)
+bool doesAnyReferenceUniform(const ShaderGraph& graph, const Vector<int>& roots)
 {
     auto seen = VisitSet {graph.nodeCount()};
 
     for (auto root: roots)
-        if (referencesUniform(graph, root, seen))
+        if (doesReferenceUniform(graph, root, seen))
             return true;
 
     return false;
@@ -453,7 +453,7 @@ bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots)
 
 // Every expression the vertex stage evaluates: the clip position and each
 // varying it hands the fragment stage.
-Vector<int> vertexStageRoots(const ShaderGraph& graph)
+Vector<int> getVertexStageRoots(const ShaderGraph& graph)
 {
     auto roots = Vector<int> {};
     roots.add(graph.position());
@@ -468,7 +468,7 @@ Vector<int> vertexStageRoots(const ShaderGraph& graph)
 // the statements evaluate. Wider than the roots the colour's locals are planned
 // from, which is why emit() keeps both - a value a statement reads is declared
 // by the stage but named where the statement is emitted.
-Vector<int> fragmentStageRoots(const ShaderGraph& graph)
+Vector<int> getFragmentStageRoots(const ShaderGraph& graph)
 {
     auto roots = Vector<int> {graph.fragment()};
 
@@ -480,7 +480,7 @@ Vector<int> fragmentStageRoots(const ShaderGraph& graph)
     return roots;
 }
 
-PromotedAttributes promotedAttributes(const ShaderGraph& graph)
+PromotedAttributes findPromotedAttributes(const ShaderGraph& graph)
 {
     auto promoted = PromotedAttributes {};
     promoted.varyingOf.resize(graph.inputs().size(), -1);
@@ -494,7 +494,7 @@ PromotedAttributes promotedAttributes(const ShaderGraph& graph)
             continue;
 
         auto slot = graph.expr(node).index;
-        auto carrier = varyingCarrying(graph, node);
+        auto carrier = findVaryingCarrying(graph, node);
 
         if (carrier < 0)
         {
@@ -508,8 +508,8 @@ PromotedAttributes promotedAttributes(const ShaderGraph& graph)
     return promoted;
 }
 
-Vector<StageVarying> stageVaryings(const ShaderGraph& graph,
-                                   const PromotedAttributes& promoted)
+Vector<StageVarying> getStageVaryings(const ShaderGraph& graph,
+                                      const PromotedAttributes& promoted)
 {
     auto slots = Vector<StageVarying> {};
 
@@ -522,7 +522,8 @@ Vector<StageVarying> stageVaryings(const ShaderGraph& graph,
     return slots;
 }
 
-Vector<char> bufferSlotsUsedBy(const ShaderGraph& graph, const Vector<int>& roots)
+Vector<char> findBufferSlotsUsedBy(const ShaderGraph& graph,
+                                   const Vector<int>& roots)
 {
     auto used = Vector<char> {};
     used.resize(graph.storageBuffers().size(), 0);

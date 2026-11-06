@@ -27,11 +27,11 @@ StageEmitter::StageEmitter(const ShaderGraph& graphToUse,
 
 // The locals a standalone run of expressions needs - a stage's outputs, which
 // no statement follows - counted over just those expressions.
-std::string StageEmitter::defineFor(const Vector<int>& roots,
-                                    const std::string& indent)
+std::string StageEmitter::defineLocalsFor(const Vector<int>& roots,
+                                          const std::string& indent)
 {
     auto open = Vector<int> {};
-    return define(roots, indent, countUsesOver(roots), open);
+    return defineLocals(roots, indent, countUsesOver(roots), open);
 }
 
 // The constant arrays a stage subscripts, declared at the top of its function,
@@ -46,7 +46,7 @@ std::string StageEmitter::defineFor(const Vector<int>& roots,
 std::string StageEmitter::declareArrays(const Vector<int>& roots,
                                         const std::string& indent)
 {
-    if (graph().arrays().empty())
+    if (getGraph().arrays().empty())
         return {};
 
     auto used = findUsedArrays(roots);
@@ -62,12 +62,12 @@ std::string StageEmitter::declareArrays(const Vector<int>& roots,
 Vector<char> StageEmitter::findUsedArrays(const Vector<int>& roots) const
 {
     auto used = Vector<char> {};
-    used.resize(graph().arrays().size(), 0);
+    used.resize(getGraph().arrays().size(), 0);
     auto seen = Vector<char> {};
-    seen.resize(graph().nodeCount(), 0);
+    seen.resize(getGraph().nodeCount(), 0);
 
     for (auto root: roots)
-        collectArrays(graph(), root, used, seen);
+        collectArrays(getGraph(), root, used, seen);
 
     return used;
 }
@@ -75,22 +75,23 @@ Vector<char> StageEmitter::findUsedArrays(const Vector<int>& roots) const
 std::string StageEmitter::printArrayDeclaration(int slot,
                                                 const std::string& indent) const
 {
-    const auto& array = graph().arrays()[slot];
+    const auto& array = getGraph().arrays()[slot];
     auto qualifier = printer.backend == Backend::Vulkan ? "" : "const ";
 
-    auto source = Strings::format("{}{}{} a{}[{}] = {{",
-                                  indent,
-                                  qualifier,
-                                  typeName(printer.backend, array.elementType),
-                                  slot,
-                                  array.elements.size());
+    auto source =
+        Strings::format("{}{}{} a{}[{}] = {{",
+                        indent,
+                        qualifier,
+                        getDialectTypeName(printer.backend, array.elementType),
+                        slot,
+                        array.elements.size());
 
     for (auto i = 0; i < array.elements.size(); ++i)
     {
         if (i > 0)
             source += ", ";
 
-        source += printer.ref(array.elements[i]);
+        source += printer.printReference(array.elements[i]);
     }
 
     return source + "};\n";
@@ -98,14 +99,14 @@ std::string StageEmitter::printArrayDeclaration(int slot,
 
 std::string StageEmitter::emitBlock(int block, const std::string& indent)
 {
-    auto uses = blockUses(block);
+    auto uses = countBlockUses(block);
     auto open = Vector<int> {};
     auto source = std::string {};
 
-    for (auto index: graph().block(block).statements)
-        source += emitStatement(graph().statement(index), indent, uses, open);
+    for (auto index: getGraph().block(block).statements)
+        source += emitStatement(getGraph().statement(index), indent, uses, open);
 
-    retire(open);
+    retireLocals(open);
     return source;
 }
 
@@ -152,7 +153,7 @@ std::string StageEmitter::emitStatement(const Statement& statement,
     auto scope = StatementScope {indent, uses, open};
     auto source = (this->*findStatementEmitter(statement.kind))(statement, scope);
 
-    dropStale(statement, open);
+    dropStaleLocals(statement, open);
     return source;
 }
 
@@ -160,9 +161,10 @@ std::string StageEmitter::emitLoop(const Statement& statement,
                                    const std::string& indent,
                                    Vector<int>& open)
 {
-    dropStale(statement, open);
+    dropStaleLocals(statement, open);
 
-    return Strings::format("{}while ({})\n", indent, printer.ref(statement.value))
+    return Strings::format(
+               "{}while ({})\n", indent, printer.printReference(statement.value))
            + printBody(statement.body, indent);
 }
 
@@ -171,10 +173,10 @@ std::string StageEmitter::printBody(int block, const std::string& indent)
     return indent + "{\n" + emitBlock(block, indent + nestedIndent) + indent + "}\n";
 }
 
-std::string StageEmitter::defineInScope(const Vector<int>& roots,
-                                        StatementScope& scope)
+std::string StageEmitter::defineLocalsInScope(const Vector<int>& roots,
+                                              StatementScope& scope)
 {
-    return define(roots, scope.indent, scope.uses, scope.open);
+    return defineLocals(roots, scope.indent, scope.uses, scope.open);
 }
 
 std::string StageEmitter::emitVariableWrite(const Statement& statement,
@@ -183,16 +185,16 @@ std::string StageEmitter::emitVariableWrite(const Statement& statement,
     auto type = std::string {};
 
     if (statement.kind == StatementKind::Declare)
-        type = std::string(
-                   typeName(printer.backend, graph().variables()[statement.slot]))
+        type = std::string(getDialectTypeName(
+                   printer.backend, getGraph().variables()[statement.slot]))
                + " ";
 
-    auto source = defineInScope({statement.value}, scope);
+    auto source = defineLocalsInScope({statement.value}, scope);
     source += Strings::format("{}{}v{} = {};\n",
                               scope.indent,
                               type,
                               statement.slot,
-                              printer.ref(statement.value));
+                              printer.printReference(statement.value));
     return source;
 }
 
@@ -203,10 +205,10 @@ std::string StageEmitter::emitVariableWrite(const Statement& statement,
 // for.
 std::string StageEmitter::emitIf(const Statement& statement, StatementScope& scope)
 {
-    auto source = defineInScope({statement.value}, scope);
+    auto source = defineLocalsInScope({statement.value}, scope);
 
-    auto condition = printer.ref(statement.value);
-    dropStale(statement, scope.open);
+    auto condition = printer.printReference(statement.value);
+    dropStaleLocals(statement, scope.open);
 
     source += Strings::format("{}if ({})\n", scope.indent, condition);
     source += printBody(statement.body, scope.indent);
@@ -236,12 +238,14 @@ std::string StageEmitter::emitContinue(const Statement&, StatementScope& scope)
 std::string StageEmitter::emitStore(const Statement& statement,
                                     StatementScope& scope)
 {
-    auto source = defineInScope({statement.index, statement.value}, scope);
+    auto source = defineLocalsInScope({statement.index, statement.value}, scope);
     source += holdTheRecord(statement, scope.indent, scope.open);
 
-    auto element = printBufferElement(statement.slot, printer.ref(statement.index));
-    auto stored = printer.ref(statement.value);
-    auto atomic = graph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
+    auto element =
+        printBufferElement(statement.slot, printer.printReference(statement.index));
+    auto stored = printer.printReference(statement.value);
+    auto atomic =
+        getGraph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
 
     if (atomic && printer.backend == Backend::Metal)
         source += Strings::format(
@@ -270,18 +274,18 @@ std::string StageEmitter::emitVectorStore(const Statement& statement,
                                           StatementScope& scope)
 {
     const auto& indent = scope.indent;
-    auto source = defineInScope({statement.index, statement.value}, scope);
+    auto source = defineLocalsInScope({statement.index, statement.value}, scope);
     source += holdTheVector(statement, indent, scope.open);
 
-    auto base = printer.ref(statement.index);
-    auto stored = printer.ref(statement.value);
-    auto type = graph().expr(statement.value).type;
+    auto base = printer.printReference(statement.index);
+    auto stored = printer.printReference(statement.value);
+    auto type = getGraph().expr(statement.value).type;
 
     if (printer.backend == Backend::Metal)
         return source
                + Strings::format("{}*((device {}*) (buffer{} + {})) = {};\n",
                                  indent,
-                                 metalPackedVectorType(type),
+                                 getMetalPackedVectorType(type),
                                  statement.slot,
                                  base,
                                  stored);
@@ -294,7 +298,7 @@ std::string StageEmitter::emitVectorStore(const Statement& statement,
             source += Strings::format(" + {}u", component);
 
         source += Strings::format(
-            "] = ({}){};\n", stored, vectorComponentSuffix(component));
+            "] = ({}){};\n", stored, getVectorComponentSuffix(component));
     }
 
     return source;
@@ -307,12 +311,12 @@ std::string StageEmitter::emitAtomicAdd(const Statement& statement,
                                         StatementScope& scope)
 {
     const auto& indent = scope.indent;
-    auto source = defineInScope({statement.index, statement.value}, scope);
+    auto source = defineLocalsInScope({statement.index, statement.value}, scope);
 
     auto name = Strings::format("v{}", statement.slot);
-    auto element =
-        printBufferElement(statement.bufferSlot, printer.ref(statement.index));
-    auto addend = printer.ref(statement.value);
+    auto element = printBufferElement(statement.bufferSlot,
+                                      printer.printReference(statement.index));
+    auto addend = printer.printReference(statement.value);
 
     if (printer.backend == Backend::Metal)
         return source
@@ -340,12 +344,12 @@ std::string StageEmitter::emitAtomicAdd(const Statement& statement,
 std::string StageEmitter::emitSharedStore(const Statement& statement,
                                           StatementScope& scope)
 {
-    auto source = defineInScope({statement.index, statement.value}, scope);
+    auto source = defineLocalsInScope({statement.index, statement.value}, scope);
     source += Strings::format("{}s{}[{}] = {};\n",
                               scope.indent,
                               statement.slot,
-                              printer.ref(statement.index),
-                              printer.ref(statement.value));
+                              printer.printReference(statement.index),
+                              printer.printReference(statement.value));
     return source;
 }
 
@@ -356,7 +360,7 @@ std::string StageEmitter::emitSharedStore(const Statement& statement,
 // written, the execution barrier is where the group meets.
 std::string StageEmitter::emitBarrier(const Statement&, StatementScope& scope)
 {
-    return barrierStatement(printer.backend, scope.indent);
+    return formatBarrierStatement(printer.backend, scope.indent);
 }
 
 // Several statements on every backend, laid down where the reduction was
@@ -365,8 +369,8 @@ std::string StageEmitter::emitBarrier(const Statement&, StatementScope& scope)
 std::string StageEmitter::emitGroupReduce(const Statement& statement,
                                           StatementScope& scope)
 {
-    auto source = defineInScope({statement.value}, scope);
-    return source + groupReduction(statement, scope);
+    auto source = defineLocalsInScope({statement.value}, scope);
+    return source + formatGroupReduction(statement, scope);
 }
 
 // The SIMD-group matrix statements, each one intrinsic on Metal and a lane's
@@ -375,21 +379,21 @@ std::string StageEmitter::emitGroupReduce(const Statement& statement,
 std::string StageEmitter::emitSimdMatrixFill(const Statement& statement,
                                              StatementScope& scope)
 {
-    auto source = defineInScope({statement.value}, scope);
-    return source + simdMatrixFill(statement, scope);
+    auto source = defineLocalsInScope({statement.value}, scope);
+    return source + formatSimdMatrixFill(statement, scope);
 }
 
 std::string StageEmitter::emitSimdMatrixTransfer(const Statement& statement,
                                                  StatementScope& scope)
 {
-    auto source = defineInScope({statement.index, statement.stride}, scope);
-    return source + simdMatrixTransfer(statement, scope);
+    auto source = defineLocalsInScope({statement.index, statement.stride}, scope);
+    return source + formatSimdMatrixTransfer(statement, scope);
 }
 
 std::string StageEmitter::emitSimdMatrixMultiplyAdd(const Statement& statement,
                                                     StatementScope& scope)
 {
-    return simdMatrixMultiplyAdd(statement, scope);
+    return formatSimdMatrixMultiplyAdd(statement, scope);
 }
 
 // GLSL's imageStore takes a *signed* coordinate; MSL takes the colour first,
@@ -398,15 +402,15 @@ std::string StageEmitter::emitTextureStore(const Statement& statement,
                                            StatementScope& scope)
 {
     const auto& indent = scope.indent;
-    auto source =
-        defineInScope({statement.index, statement.indexY, statement.value}, scope);
+    auto source = defineLocalsInScope(
+        {statement.index, statement.indexY, statement.value}, scope);
 
     auto pair = printer.backend == Backend::Vulkan ? "ivec2" : "uint2";
     auto coordinates = Strings::format("{}({}, {})",
                                        pair,
-                                       printer.ref(statement.index),
-                                       printer.ref(statement.indexY));
-    auto color = printer.ref(statement.value);
+                                       printer.printReference(statement.index),
+                                       printer.printReference(statement.indexY));
+    auto color = printer.printReference(statement.value);
 
     if (printer.backend == Backend::Metal)
         return source
@@ -439,7 +443,7 @@ std::string StageEmitter::emitNothing(const Statement&, StatementScope&)
 
 Vector<int> StageEmitter::countUsesOver(const Vector<int>& roots) const
 {
-    auto count = graph().nodeCount();
+    auto count = getGraph().nodeCount();
     auto uses = Vector<int> {};
     auto seen = Vector<char> {};
 
@@ -447,7 +451,7 @@ Vector<int> StageEmitter::countUsesOver(const Vector<int>& roots) const
     seen.resize(count, 0);
 
     for (auto root: roots)
-        countUses(graph(), root, uses, seen);
+        countUses(getGraph(), root, uses, seen);
 
     return uses;
 }
@@ -455,23 +459,23 @@ Vector<int> StageEmitter::countUsesOver(const Vector<int>& roots) const
 // How often the statements of one block reach each node, its nested bodies
 // counted in: a name is handed out only where the statement being emitted
 // evaluates the node anyway, so a body's use of one costs that body nothing.
-Vector<int> StageEmitter::blockUses(int block) const
+Vector<int> StageEmitter::countBlockUses(int block) const
 {
     auto roots = Vector<int> {};
-    collectStatementExpressions(graph(), block, LoopConditions::Excluded, roots);
+    collectStatementExpressions(getGraph(), block, LoopConditions::Excluded, roots);
     return countUsesOver(roots);
 }
 
-std::string StageEmitter::define(const Vector<int>& roots,
-                                 const std::string& indent,
-                                 const Vector<int>& uses,
-                                 Vector<int>& open)
+std::string StageEmitter::defineLocals(const Vector<int>& roots,
+                                       const std::string& indent,
+                                       const Vector<int>& uses,
+                                       Vector<int>& open)
 {
     auto ordered = Vector<char> {};
-    ordered.resize(graph().nodeCount(), 0);
+    ordered.resize(getGraph().nodeCount(), 0);
     auto order = Vector<int> {};
 
-    auto ordering = LocalOrdering {graph(), uses, locals, ordered, order};
+    auto ordering = LocalOrdering {getGraph(), uses, locals, ordered, order};
 
     for (auto root: roots)
         ordering.visit(root);
@@ -479,22 +483,23 @@ std::string StageEmitter::define(const Vector<int>& roots,
     auto source = std::string {};
 
     for (auto node: order)
-        source += bind(node, indent, open);
+        source += bindLocal(node, indent, open);
 
     return source;
 }
 
 std::string
-    StageEmitter::bind(int node, const std::string& indent, Vector<int>& open)
+    StageEmitter::bindLocal(int node, const std::string& indent, Vector<int>& open)
 {
     locals[node] = localCount++;
     open.add(node);
 
-    return Strings::format("{}{} t{} = {};\n",
-                           indent,
-                           typeName(printer.backend, graph().expr(node).type),
-                           locals[node],
-                           printer.print(node));
+    return Strings::format(
+        "{}{} t{} = {};\n",
+        indent,
+        getDialectTypeName(printer.backend, getGraph().expr(node).type),
+        locals[node],
+        printer.print(node));
 }
 
 bool StageEmitter::isRecordStillUnnamed(const Statement& statement) const
@@ -509,10 +514,10 @@ std::string StageEmitter::holdTheRecord(const Statement& statement,
     if (!isRecordStillUnnamed(statement))
         return {};
 
-    if (!readsSlot(statement.record, statement.slot))
+    if (!doesReadSlot(statement.record, statement.slot))
         return {};
 
-    return bind(statement.record, indent, open);
+    return bindLocal(statement.record, indent, open);
 }
 
 // A wide store's operands, named before the store rather than printed into it.
@@ -552,24 +557,25 @@ std::string StageEmitter::holdOperand(int node,
     if (node < 0 || locals[node] >= 0)
         return {};
 
-    if (!wantsLocal(graph().expr(node).kind) && !readsSlot(node, slot))
+    if (!isLocalWanted(getGraph().expr(node).kind) && !doesReadSlot(node, slot))
         return {};
 
-    return bind(node, indent, open);
+    return bindLocal(node, indent, open);
 }
 
-bool StageEmitter::readsSlot(int node, int slot)
+bool StageEmitter::doesReadSlot(int node, int slot)
 {
-    written.assign(graph().variables().size(), char {0});
-    buffersWritten.assign(graph().storageBuffers().size(), char {0});
+    written.assign(getGraph().variables().size(), char {0});
+    buffersWritten.assign(getGraph().storageBuffers().size(), char {0});
     buffersWritten[slot] = 1;
     visited.restart();
 
-    auto query = StalenessQuery {graph(), written, buffersWritten, false, visited};
-    return query.readsStale(node);
+    auto query =
+        StalenessQuery {getGraph(), written, buffersWritten, false, visited};
+    return query.doesReadStaleValue(node);
 }
 
-void StageEmitter::retire(Vector<int>& open)
+void StageEmitter::retireLocals(Vector<int>& open)
 {
     for (auto node: open)
         locals[node] = -1;
@@ -586,32 +592,32 @@ bool StageEmitter::hasNothingStale(bool sharedMoved) const
     return !written.contains(1) && !buffersWritten.contains(1) && !sharedMoved;
 }
 
-void StageEmitter::dropStale(const Statement& statement, Vector<int>& open)
+void StageEmitter::dropStaleLocals(const Statement& statement, Vector<int>& open)
 {
     if (open.empty())
         return;
 
-    auto sharedMoved = touchesShared(graph(), statement);
+    auto sharedMoved = doesTouchSharedMemory(getGraph(), statement);
 
-    written.assign(graph().variables().size(), char {0});
-    collectWrites(graph(), statement, written);
+    written.assign(getGraph().variables().size(), char {0});
+    collectWrites(getGraph(), statement, written);
 
-    buffersWritten.assign(graph().storageBuffers().size(), char {0});
-    collectBufferWrites(graph(), statement, buffersWritten);
+    buffersWritten.assign(getGraph().storageBuffers().size(), char {0});
+    collectBufferWrites(getGraph(), statement, buffersWritten);
 
     if (hasNothingStale(sharedMoved))
         return;
 
     auto heldRecord = statement.recordComponentsLeft > 0 ? statement.record : -1;
     auto query =
-        StalenessQuery {graph(), written, buffersWritten, sharedMoved, visited};
+        StalenessQuery {getGraph(), written, buffersWritten, sharedMoved, visited};
     auto kept = Vector<int> {};
 
     for (auto node: open)
     {
         visited.restart();
 
-        if (node != heldRecord && query.readsStale(node))
+        if (node != heldRecord && query.doesReadStaleValue(node))
             locals[node] = -1;
         else
             kept.add(node);

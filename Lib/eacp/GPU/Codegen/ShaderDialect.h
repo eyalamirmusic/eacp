@@ -4,6 +4,7 @@
 #include "ShaderText.h"
 
 #include <string>
+#include <string_view>
 
 // The spellings the three dialects disagree about, one function per question.
 // MSL and HLSL spell most of an expression identically; GLSL differs in a
@@ -18,8 +19,11 @@ enum class Backend
     Vulkan
 };
 
-const char* typeName(Backend backend, ValueType type);
-std::string floatLiteral(float value);
+constexpr std::string_view getDialectTypeName(Backend backend, ValueType type)
+{
+    return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
+}
+std::string formatShaderFloatLiteral(float value);
 
 // GLSL rejects a non-flat integer stage input outright, HLSL wants
 // nointerpolation and MSL [[flat]]; a float varying takes none of the three.
@@ -28,7 +32,7 @@ constexpr bool isFlatVarying(ValueType type)
     return isSignedInteger(type) || isUnsignedInteger(type);
 }
 
-constexpr std::string attributeSemantic(Backend backend, int index)
+constexpr std::string getAttributeSemantic(Backend backend, int index)
 {
     if (backend == Backend::Vulkan)
         return {};
@@ -41,7 +45,7 @@ constexpr std::string attributeSemantic(Backend backend, int index)
 
 // Metal hangs the flat qualifier off the member rather than putting it in front
 // of the type, so it rides here beside the semantic.
-constexpr std::string varyingSemantic(Backend backend, int index, ValueType type)
+constexpr std::string getVaryingSemantic(Backend backend, int index, ValueType type)
 {
     if (backend == Backend::Metal)
         return isFlatVarying(type) ? " [[flat]]" : std::string {};
@@ -52,7 +56,7 @@ constexpr std::string varyingSemantic(Backend backend, int index, ValueType type
     return " : TEXCOORD" + formatDecimal(index);
 }
 
-constexpr std::string positionSemantic(Backend backend)
+constexpr std::string getPositionSemantic(Backend backend)
 {
     if (backend == Backend::Vulkan)
         return {};
@@ -63,7 +67,7 @@ constexpr std::string positionSemantic(Backend backend)
     return " : SV_Position";
 }
 
-constexpr std::string flatQualifier(Backend backend, ValueType type)
+constexpr std::string getFlatQualifier(Backend backend, ValueType type)
 {
     if (backend == Backend::Metal || !isFlatVarying(type))
         return {};
@@ -73,14 +77,14 @@ constexpr std::string flatQualifier(Backend backend, ValueType type)
 
 // Attribute i and varying i take location i, which is what the Vulkan
 // vertex-input state and the vertex/fragment interface match on.
-constexpr std::string locationLayout(int index)
+constexpr std::string getLocationLayout(int index)
 {
     return "layout(location = " + formatDecimal(index) + ") ";
 }
 
 // GLSL reads a stage's I/O out of globals, spelled attrN and varyN because aN
 // and vN are taken there by a constant array and a mutable local.
-constexpr std::string attributeName(Backend backend, int slot)
+constexpr std::string getAttributeName(Backend backend, int slot)
 {
     if (backend == Backend::Vulkan)
         return "attr" + formatDecimal(slot);
@@ -88,7 +92,7 @@ constexpr std::string attributeName(Backend backend, int slot)
     return "input.a" + formatDecimal(slot);
 }
 
-constexpr std::string varyingName(Backend backend, int index)
+constexpr std::string getVaryingName(Backend backend, int index)
 {
     if (backend == Backend::Vulkan)
         return "vary" + formatDecimal(index);
@@ -96,14 +100,14 @@ constexpr std::string varyingName(Backend backend, int index)
     return "input.v" + formatDecimal(index);
 }
 
-std::string callName(Backend backend, const std::string& name);
+std::string getCallName(Backend backend, const std::string& name);
 bool isGenTypeCall(const std::string& name);
-const char* glslComparison(const std::string& op);
+std::string_view getGlslComparisonFunction(const std::string& op);
 
-std::string hlslSamplerName(const TextureSampling& sampling);
+std::string getHlslSamplerName(const TextureSampling& sampling);
 // The component a 2D or 3D kernel's thread index node asked for, and the
 // uniform its matching grid extent is declared under.
-constexpr const char* componentSuffix(int component)
+constexpr std::string_view getComponentSuffix(int component)
 {
     if (component == 0)
         return ".x";
@@ -111,21 +115,21 @@ constexpr const char* componentSuffix(int component)
     return component == 1 ? ".y" : ".z";
 }
 
-const char* vectorComponentSuffix(int component);
-const char* metalPackedVectorType(ValueType type);
+std::string_view getVectorComponentSuffix(int component);
+std::string_view getMetalPackedVectorType(ValueType type);
 
 // A thread index under the name both kernel scaffoldings bind it to: the whole
 // value where the node took the position as one, one lane otherwise.
 constexpr std::string
-    indexReference(const char* name, DispatchRank rank, int component)
+    getIndexReference(std::string_view name, DispatchRank rank, int component)
 {
     if (rank == DispatchRank::OneD || component == allComponents)
-        return name;
+        return std::string(name);
 
-    return name + std::string(componentSuffix(component));
+    return std::string(name) + std::string(getComponentSuffix(component));
 }
 
-constexpr const char* gridExtentName(int component)
+constexpr std::string_view getGridExtentName(int component)
 {
     if (component == 0)
         return "width";
@@ -133,7 +137,7 @@ constexpr const char* gridExtentName(int component)
     return component == 1 ? "height" : "depth";
 }
 
-constexpr int gridExtentCount(DispatchRank rank)
+constexpr int getGridExtentCount(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
         return 1;
@@ -143,7 +147,7 @@ constexpr int gridExtentCount(DispatchRank rank)
 
 // The type the entry point declares its indices as, and the swizzle HLSL and
 // GLSL take them out of their three-component builtins with.
-constexpr const char* indexTypeName(DispatchRank rank)
+constexpr std::string_view getIndexTypeName(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
         return "uint";
@@ -151,7 +155,7 @@ constexpr const char* indexTypeName(DispatchRank rank)
     return rank == DispatchRank::TwoD ? "uint2" : "uint3";
 }
 
-constexpr const char* glslIndexTypeName(DispatchRank rank)
+constexpr std::string_view getGlslIndexTypeName(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
         return "uint";
@@ -159,7 +163,7 @@ constexpr const char* glslIndexTypeName(DispatchRank rank)
     return rank == DispatchRank::TwoD ? "uvec2" : "uvec3";
 }
 
-constexpr const char* indexSwizzle(DispatchRank rank)
+constexpr std::string_view getIndexSwizzle(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
         return ".x";
@@ -169,7 +173,7 @@ constexpr const char* indexSwizzle(DispatchRank rank)
 
 // A whole expression parenthesised, since an offset or a stride is printed
 // into the middle of an index computation.
-constexpr std::string bracketed(const std::string& expression)
+constexpr std::string wrapInParentheses(const std::string& expression)
 {
     return "(" + expression + ")";
 }

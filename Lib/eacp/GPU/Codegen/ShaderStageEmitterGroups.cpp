@@ -15,34 +15,34 @@ namespace eacp::GPU::ShaderEmission
 // thread's own block of lanes where the scope is the SIMD group. Either way the
 // result lands in the reduction's variable on every thread, and a trailing
 // barrier leaves the scratch free for the next one.
-std::string StageEmitter::groupReduction(const Statement& statement,
-                                         const StatementScope& scope)
+std::string StageEmitter::formatGroupReduction(const Statement& statement,
+                                               const StatementScope& scope)
 {
     if (printer.backend == Backend::Metal)
-        return metalGroupReduction(statement, scope);
+        return formatMetalGroupReduction(statement, scope);
 
-    return treeGroupReduction(statement, scope);
+    return formatTreeGroupReduction(statement, scope);
 }
 
-std::string StageEmitter::metalGroupReduction(const Statement& statement,
-                                              const StatementScope& scope)
+std::string StageEmitter::formatMetalGroupReduction(const Statement& statement,
+                                                    const StatementScope& scope)
 {
     const auto& indent = scope.indent;
 
-    auto elementType = graph().variables()[statement.slot];
+    auto elementType = getGraph().variables()[statement.slot];
     auto name = Strings::format("v{}", statement.slot);
-    auto scratch = std::string(groupScratchName(elementType));
+    auto scratch = std::string(getGroupScratchName(elementType));
     auto step = Strings::format("gr{}", statement.slot);
-    auto barrier = barrierStatement(printer.backend, indent);
+    auto barrier = formatBarrierStatement(printer.backend, indent);
 
     auto source = Strings::format("{}{} {} = {}({});\n",
                                   indent,
-                                  typeName(printer.backend, elementType),
+                                  getDialectTypeName(printer.backend, elementType),
                                   name,
-                                  metalSimdReduction(statement.reduction),
-                                  printer.ref(statement.value));
+                                  getMetalSimdReduction(statement.reduction),
+                                  printer.printReference(statement.value));
 
-    if (metalFoldsInOneInstruction(statement.scope))
+    if (doesMetalFoldInOneInstruction(statement.scope))
         return source;
 
     source += Strings::format("{}if (simdLane == 0u)\n{}    {}[simdIndex] = {};\n",
@@ -58,7 +58,7 @@ std::string StageEmitter::metalGroupReduction(const Statement& statement,
         "{}    {} = {};\n",
         indent,
         name,
-        foldedPair(statement.reduction, name, scratch + "[" + step + "]"));
+        formatFoldedPair(statement.reduction, name, scratch + "[" + step + "]"));
 
     return source + barrier;
 }
@@ -73,39 +73,40 @@ std::string StageEmitter::metalGroupReduction(const Statement& statement,
 // the lane within its block, so a group that is not a whole number of SIMD
 // groups - which the assert in emitCompute refuses, and which a release build
 // does not - would otherwise read past the array.
-std::string StageEmitter::treeGroupReduction(const Statement& statement,
-                                             const StatementScope& scope)
+std::string StageEmitter::formatTreeGroupReduction(const Statement& statement,
+                                                   const StatementScope& scope)
 {
     const auto& indent = scope.indent;
 
-    auto elementType = graph().variables()[statement.slot];
-    auto scratch = std::string(groupScratchName(elementType));
+    auto elementType = getGraph().variables()[statement.slot];
+    auto scratch = std::string(getGroupScratchName(elementType));
     auto step = Strings::format("gr{}", statement.slot);
-    auto barrier = barrierStatement(printer.backend, indent);
+    auto barrier = formatBarrierStatement(printer.backend, indent);
 
-    auto lane = std::string(groupLaneName(printer.backend));
-    auto width = reductionWidth(graph(), statement.scope);
-    auto whole = spansWholeGroup(graph(), statement.scope);
+    auto lane = std::string(getGroupLaneName(printer.backend));
+    auto width = getReductionWidth(getGraph(), statement.scope);
+    auto whole = doesFoldSpanWholeGroup(getGraph(), statement.scope);
     auto widthText = Strings::format("{}u", width);
 
-    auto within = whole ? lane : bracketed(lane + " % " + widthText);
-    auto first = whole ? std::string("0")
-                       : bracketed(lane + " / " + widthText) + " * " + widthText;
+    auto within = whole ? lane : wrapInParentheses(lane + " % " + widthText);
+    auto first =
+        whole ? std::string("0")
+              : wrapInParentheses(lane + " / " + widthText) + " * " + widthText;
     auto bounded =
         whole ? std::string {}
               : Strings::format(
-                    " && {} + {} < {}u", lane, step, threadsPerGroup(graph()));
+                    " && {} + {} < {}u", lane, step, getThreadsPerGroup(getGraph()));
 
     auto element = Strings::format("{}[{}]", scratch, lane);
     auto partner = Strings::format("{}[{} + {}]", scratch, lane, step);
 
     auto source = Strings::format(
-        "{}{} = {};\n", indent, element, printer.ref(statement.value));
+        "{}{} = {};\n", indent, element, printer.printReference(statement.value));
     source += barrier;
     source += Strings::format("{}for (uint {} = {}u; {} > 0u; {} >>= 1u)\n{}{{\n",
                               indent,
                               step,
-                              reductionStride(width),
+                              getReductionStride(width),
                               step,
                               step,
                               indent);
@@ -117,15 +118,16 @@ std::string StageEmitter::treeGroupReduction(const Statement& statement,
                               step,
                               widthText,
                               bounded);
-    source += Strings::format("{}        {} = {};\n",
-                              indent,
-                              element,
-                              foldedPair(statement.reduction, element, partner));
-    source += barrierStatement(printer.backend, indent + "    ");
+    source +=
+        Strings::format("{}        {} = {};\n",
+                        indent,
+                        element,
+                        formatFoldedPair(statement.reduction, element, partner));
+    source += formatBarrierStatement(printer.backend, indent + "    ");
     source += indent + "}\n";
     source += Strings::format("{}{} v{} = {}[{}];\n",
                               indent,
-                              typeName(printer.backend, elementType),
+                              getDialectTypeName(printer.backend, elementType),
                               statement.slot,
                               scratch,
                               first);
@@ -133,7 +135,7 @@ std::string StageEmitter::treeGroupReduction(const Statement& statement,
     return source + barrier;
 }
 
-bool StageEmitter::metal() const
+bool StageEmitter::isMetal() const
 {
     return printer.backend == Backend::Metal;
 }
@@ -153,26 +155,27 @@ bool StageEmitter::metal() const
 // The fallback holds every fragment as a lane's pair of floats, whatever the
 // memory it came out of: what a packed load changes there is the arithmetic
 // that produces the pair, not the fragment.
-std::string StageEmitter::simdMatrixDeclaration(int slot) const
+std::string StageEmitter::formatSimdMatrixDeclaration(int slot) const
 {
-    if (metal())
-        return Strings::format("{} {}",
-                               metalSimdMatrixType(graph().simdMatrixElement(slot)),
-                               simdMatrixName(slot));
+    if (isMetal())
+        return Strings::format(
+            "{} {}",
+            getMetalSimdMatrixType(getGraph().simdMatrixElement(slot)),
+            getSimdMatrixName(slot));
 
     return Strings::format(
-        "{} {}", simdMatrixLaneType(printer.backend), simdMatrixName(slot));
+        "{} {}", getSimdMatrixLaneType(printer.backend), getSimdMatrixName(slot));
 }
 
-std::string StageEmitter::simdMatrixFill(const Statement& statement,
-                                         const StatementScope& scope)
+std::string StageEmitter::formatSimdMatrixFill(const Statement& statement,
+                                               const StatementScope& scope)
 {
     const auto& indent = scope.indent;
 
-    auto value = printer.ref(statement.value);
-    auto declaration = simdMatrixDeclaration(statement.slot);
+    auto value = printer.printReference(statement.value);
+    auto declaration = formatSimdMatrixDeclaration(statement.slot);
 
-    if (metal())
+    if (isMetal())
         return Strings::format(
             "{}{} = make_filled_simdgroup_matrix<float, {}, {}>({});\n",
             indent,
@@ -184,7 +187,7 @@ std::string StageEmitter::simdMatrixFill(const Statement& statement,
     return Strings::format("{}{} = {}({}, {});\n",
                            indent,
                            declaration,
-                           simdMatrixLaneType(printer.backend),
+                           getSimdMatrixLaneType(printer.backend),
                            value,
                            value);
 }
@@ -200,11 +203,11 @@ std::string StageEmitter::simdMatrixFill(const Statement& statement,
 // offset and row stride are the caller's and neither has to be even, so the
 // pair is not reliably inside one word and a walk that assumed it was would
 // read the wrong element on every odd row.
-std::string StageEmitter::simdMatrixLaneElement(const Statement& statement,
-                                                const SimdMatrixPatch& patch,
-                                                int which) const
+std::string StageEmitter::formatSimdMatrixLaneElement(const Statement& statement,
+                                                      const SimdMatrixPatch& patch,
+                                                      int which) const
 {
-    auto element = graph().simdMatrixElement(statement.slot);
+    auto element = getGraph().simdMatrixElement(statement.slot);
     auto position = Strings::format("{} + sgmRow * {} + {}",
                                     patch.offset,
                                     patch.stride,
@@ -213,11 +216,11 @@ std::string StageEmitter::simdMatrixLaneElement(const Statement& statement,
     if (element == SimdMatrixElement::Float)
         return Strings::format("{}[{}]", patch.memory, position);
 
-    auto index = bracketed(position);
+    auto index = wrapInParentheses(position);
 
     return Strings::format("{}({}({}[{} / 2u]), {} % 2u)",
-                           packedSimdMatrixHelper(element),
-                           bitsOfFloat(printer.backend),
+                           getPackedSimdMatrixHelper(element),
+                           getBitsOfFloatFunction(printer.backend),
                            patch.memory,
                            index,
                            index);
@@ -227,30 +230,31 @@ std::string StageEmitter::simdMatrixLaneElement(const Statement& statement,
 // they are one function: what changes is which side of the assignment each is
 // on. Every lane moves the pair it holds, so the store needs no guard to make
 // it once - no lane's share is another's.
-std::string StageEmitter::simdMatrixTransfer(const Statement& statement,
-                                             const StatementScope& scope)
+std::string StageEmitter::formatSimdMatrixTransfer(const Statement& statement,
+                                                   const StatementScope& scope)
 {
     const auto& indent = scope.indent;
 
-    auto patch = SimdMatrixPatch {simdMatrixMemoryName(statement),
-                                  bracketed(printer.ref(statement.index)),
-                                  bracketed(printer.ref(statement.stride))};
+    auto patch = SimdMatrixPatch {
+        getSimdMatrixMemoryName(statement),
+        wrapInParentheses(printer.printReference(statement.index)),
+        wrapInParentheses(printer.printReference(statement.stride))};
 
-    if (metal())
-        return metalSimdMatrixTransfer(statement, patch, scope);
+    if (isMetal())
+        return formatMetalSimdMatrixTransfer(statement, patch, scope);
 
-    auto first = simdMatrixLaneElement(statement, patch, 0);
-    auto second = simdMatrixLaneElement(statement, patch, 1);
+    auto first = formatSimdMatrixLaneElement(statement, patch, 0);
+    auto second = formatSimdMatrixLaneElement(statement, patch, 1);
 
     if (statement.kind == StatementKind::SimdMatrixLoad)
         return Strings::format("{}{} = {}({}, {});\n",
                                indent,
-                               simdMatrixDeclaration(statement.slot),
-                               simdMatrixLaneType(printer.backend),
+                               formatSimdMatrixDeclaration(statement.slot),
+                               getSimdMatrixLaneType(printer.backend),
                                first,
                                second);
 
-    auto name = simdMatrixName(statement.slot);
+    auto name = getSimdMatrixName(statement.slot);
 
     return Strings::format(
         "{}{} = {}.x;\n{}{} = {}.y;\n", indent, first, name, indent, second, name);
@@ -260,18 +264,18 @@ std::string StageEmitter::simdMatrixTransfer(const Statement& statement,
 // its pointer the way the wide packed reads reinterpret one - and then counts
 // in the packed element, which is what makes the offset the caller's own row
 // arithmetic.
-std::string StageEmitter::metalSimdMatrixTransfer(const Statement& statement,
-                                                  const SimdMatrixPatch& patch,
-                                                  const StatementScope& scope)
+std::string StageEmitter::formatMetalSimdMatrixTransfer(const Statement& statement,
+                                                        const SimdMatrixPatch& patch,
+                                                        const StatementScope& scope)
 {
     const auto& indent = scope.indent;
 
-    auto name = simdMatrixName(statement.slot);
-    auto element = graph().simdMatrixElement(statement.slot);
+    auto name = getSimdMatrixName(statement.slot);
+    auto element = getGraph().simdMatrixElement(statement.slot);
 
     auto pointer = element != SimdMatrixElement::Float
                        ? Strings::format("(device const {}*) ({}) + {}",
-                                         metalPackedElementType(element),
+                                         getMetalPackedElementType(element),
                                          patch.memory,
                                          patch.offset)
                        : Strings::format("{} + {}", patch.memory, patch.offset);
@@ -279,7 +283,7 @@ std::string StageEmitter::metalSimdMatrixTransfer(const Statement& statement,
     if (statement.kind == StatementKind::SimdMatrixLoad)
         return Strings::format("{}{};\n{}simdgroup_load({}, {}, {});\n",
                                indent,
-                               simdMatrixDeclaration(statement.slot),
+                               formatSimdMatrixDeclaration(statement.slot),
                                indent,
                                name,
                                pointer,
@@ -295,25 +299,25 @@ std::string StageEmitter::metalSimdMatrixTransfer(const Statement& statement,
 // staging is what makes that safe: what is multiplied is the copy in the
 // scratch, complete before anything is added. The trailing barrier is what lets
 // the next product stage over this one.
-std::string StageEmitter::simdMatrixMultiplyAdd(const Statement& statement,
-                                                const StatementScope& scope)
+std::string StageEmitter::formatSimdMatrixMultiplyAdd(const Statement& statement,
+                                                      const StatementScope& scope)
 {
     const auto& indent = scope.indent;
 
-    auto accumulator = simdMatrixName(statement.slot);
+    auto accumulator = getSimdMatrixName(statement.slot);
 
-    if (metal())
+    if (isMetal())
         return Strings::format("{}simdgroup_multiply_accumulate({}, {}, {}, {});\n",
                                indent,
                                accumulator,
-                               simdMatrixName(statement.left),
-                               simdMatrixName(statement.right),
+                               getSimdMatrixName(statement.left),
+                               getSimdMatrixName(statement.right),
                                accumulator);
 
     auto step = accumulator + "k";
     auto term = accumulator + "l";
     auto side = std::to_string(simdMatrixSize);
-    auto barrier = barrierStatement(printer.backend, indent);
+    auto barrier = formatBarrierStatement(printer.backend, indent);
 
     auto source = stageSimdMatrixOperands(statement, scope);
     source += barrier;
@@ -351,8 +355,8 @@ std::string StageEmitter::stageSimdMatrixOperands(const Statement& statement,
 {
     const auto& indent = scope.indent;
 
-    auto left = simdMatrixName(statement.left);
-    auto right = simdMatrixName(statement.right);
+    auto left = getSimdMatrixName(statement.left);
+    auto right = getSimdMatrixName(statement.right);
     auto held = Strings::format("sgmRow * {}u + sgmColumn", simdMatrixSize);
     auto heldNext = held + " + 1u";
 

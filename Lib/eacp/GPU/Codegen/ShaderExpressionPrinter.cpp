@@ -46,12 +46,12 @@ bool isShiftOperator(const std::string& op)
 
 // -1 when the stage reads the attribute itself; empty outside the fragment
 // stage.
-int ExprPrinter::carryingVarying(int slot) const
+int ExprPrinter::findCarryingVarying(int slot) const
 {
     return slot < attributeVaryings.size() ? attributeVaryings[slot] : -1;
 }
 
-std::string ExprPrinter::ref(int node) const
+std::string ExprPrinter::printReference(int node) const
 {
     if (locals[node] >= 0)
         return "t" + std::to_string(locals[node]);
@@ -60,7 +60,7 @@ std::string ExprPrinter::ref(int node) const
 }
 
 // Float, whose width is one, when nothing is to be broadcast.
-ValueType ExprPrinter::broadcastType(const Expr& call) const
+ValueType ExprPrinter::getBroadcastType(const Expr& call) const
 {
     if (backend != Backend::Vulkan || !isGenTypeCall(call.text))
         return ValueType::Float;
@@ -81,47 +81,50 @@ ValueType ExprPrinter::broadcastType(const Expr& call) const
 // Metal takes the layer as an index and rounds nothing, so a Float layer is
 // rounded to nearest even first - the rule Vulkan and D3D apply to the
 // coordinate's third component, which is how the other two take it.
-std::string ExprPrinter::metalLayer(int node) const
+std::string ExprPrinter::printMetalLayer(int node) const
 {
     if (graph.expr(node).type == ValueType::Int)
-        return "uint(" + ref(node) + ")";
+        return "uint(" + printReference(node) + ")";
 
-    return "uint(rint(" + ref(node) + "))";
+    return "uint(rint(" + printReference(node) + "))";
 }
 
-std::string ExprPrinter::floatLayer(int layer) const
+std::string ExprPrinter::printFloatLayer(int layer) const
 {
     if (graph.expr(layer).type == ValueType::Int)
-        return "float(" + ref(layer) + ")";
+        return "float(" + printReference(layer) + ")";
 
-    return ref(layer);
+    return printReference(layer);
 }
 
-std::string ExprPrinter::layeredCoordinate(int uv, int layer) const
+std::string ExprPrinter::printLayeredCoordinate(int uv, int layer) const
 {
     return Strings::format("{}({}, {})",
-                           typeName(backend, ValueType::Float3),
-                           ref(uv),
-                           floatLayer(layer));
+                           getDialectTypeName(backend, ValueType::Float3),
+                           printReference(uv),
+                           printFloatLayer(layer));
 }
 
-std::string ExprPrinter::layerSample(const Expr& expr,
-                                     const std::string& name,
-                                     const std::string& sampler) const
+std::string ExprPrinter::printLayerSample(const Expr& expr,
+                                          const std::string& name,
+                                          const std::string& sampler) const
 {
     auto uv = expr.args[0];
     auto layer = expr.args[1];
 
     if (backend == Backend::Metal)
-        return Strings::format(
-            "{}.sample({}, {}, {})", name, sampler, ref(uv), metalLayer(layer));
+        return Strings::format("{}.sample({}, {}, {})",
+                               name,
+                               sampler,
+                               printReference(uv),
+                               printMetalLayer(layer));
 
     if (backend == Backend::DirectX)
         return Strings::format(
-            "{}.Sample({}, {})", name, sampler, layeredCoordinate(uv, layer));
+            "{}.Sample({}, {})", name, sampler, printLayeredCoordinate(uv, layer));
 
     auto call =
-        Strings::format("texture({}, {})", name, layeredCoordinate(uv, layer));
+        Strings::format("texture({}, {})", name, printLayeredCoordinate(uv, layer));
 
     return isDepth(graph.textureKind(expr.index)) ? call + ".r" : call;
 }
@@ -129,29 +132,30 @@ std::string ExprPrinter::layerSample(const Expr& expr,
 // HLSL takes the level-zero form because a depth plane has one level and
 // because SampleCmp needs derivatives, which a PCF loop does not have.
 // GLSL folds the reference into the coordinate's last component.
-std::string ExprPrinter::compareSample(const Expr& expr,
-                                       const std::string& name,
-                                       const std::string& sampler) const
+std::string ExprPrinter::printCompareSample(const Expr& expr,
+                                            const std::string& name,
+                                            const std::string& sampler) const
 {
     auto layered = expr.args.size() == 3;
     auto uv = expr.args[0];
-    auto reference = ref(expr.args.back());
+    auto reference = printReference(expr.args.back());
 
     if (backend == Backend::Metal)
     {
-        auto layer = layered ? metalLayer(expr.args[1]) + ", " : std::string {};
+        auto layer = layered ? printMetalLayer(expr.args[1]) + ", " : std::string {};
 
         return Strings::format("{}.sample_compare({}, {}, {}{})",
                                name,
                                sampler,
-                               ref(uv),
+                               printReference(uv),
                                layer,
                                reference);
     }
 
     if (backend == Backend::DirectX)
     {
-        auto coordinate = layered ? layeredCoordinate(uv, expr.args[1]) : ref(uv);
+        auto coordinate =
+            layered ? printLayeredCoordinate(uv, expr.args[1]) : printReference(uv);
 
         return Strings::format("{}.SampleCmpLevelZero({}, {}, {})",
                                name,
@@ -163,24 +167,25 @@ std::string ExprPrinter::compareSample(const Expr& expr,
     if (layered)
         return Strings::format("texture({}, vec4({}, {}, {}))",
                                name,
-                               ref(uv),
-                               floatLayer(expr.args[1]),
+                               printReference(uv),
+                               printFloatLayer(expr.args[1]),
                                reference);
 
-    return Strings::format("texture({}, vec3({}, {}))", name, ref(uv), reference);
+    return Strings::format(
+        "texture({}, vec3({}, {}))", name, printReference(uv), reference);
 }
 
-std::string ExprPrinter::widened(int node, ValueType wide) const
+std::string ExprPrinter::printWidened(int node, ValueType wide) const
 {
-    auto argument = ref(node);
+    auto argument = printReference(node);
 
     if (componentCount(wide) == 1 || componentCount(graph.expr(node).type) > 1)
         return argument;
 
-    return Strings::format("{}({})", typeName(backend, wide), argument);
+    return Strings::format("{}({})", getDialectTypeName(backend, wide), argument);
 }
 
-std::string ExprPrinter::joinArguments(const Expr& expr, ValueType wide) const
+std::string ExprPrinter::printArguments(const Expr& expr, ValueType wide) const
 {
     auto text = std::string {};
 
@@ -189,7 +194,7 @@ std::string ExprPrinter::joinArguments(const Expr& expr, ValueType wide) const
         if (i > 0)
             text += ", ";
 
-        text += widened(expr.args[i], wide);
+        text += printWidened(expr.args[i], wide);
     }
 
     return text;
@@ -239,17 +244,17 @@ std::string ExprPrinter::print(int node) const
 // one reads the varying carrying it across.
 std::string ExprPrinter::printInput(const Expr& expr) const
 {
-    auto carrier = carryingVarying(expr.index);
+    auto carrier = findCarryingVarying(expr.index);
 
     if (carrier >= 0)
-        return varyingName(backend, carrier);
+        return getVaryingName(backend, carrier);
 
-    return attributeName(backend, expr.index);
+    return getAttributeName(backend, expr.index);
 }
 
 std::string ExprPrinter::printVarying(const Expr& expr) const
 {
-    return varyingName(backend, expr.index);
+    return getVaryingName(backend, expr.index);
 }
 
 std::string ExprPrinter::printUniform(const Expr& expr) const
@@ -278,7 +283,7 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
     if (expr.type == ValueType::Bool)
         return expr.index != 0 ? "true" : "false";
 
-    return floatLiteral(expr.value);
+    return formatShaderFloatLiteral(expr.value);
 }
 
 // MSL and GLSL fill a matrix from columns, HLSL from rows, so transpose() is
@@ -286,8 +291,8 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
 std::string ExprPrinter::printConstruct(const Expr& expr) const
 {
     auto text = Strings::format("{}({})",
-                                typeName(backend, expr.type),
-                                joinArguments(expr, ValueType::Float));
+                                getDialectTypeName(backend, expr.type),
+                                printArguments(expr, ValueType::Float));
 
     if (backend == Backend::DirectX && isMatrix(expr.type))
         return "transpose(" + text + ")";
@@ -297,14 +302,14 @@ std::string ExprPrinter::printConstruct(const Expr& expr) const
 
 std::string ExprPrinter::printSwizzle(const Expr& expr) const
 {
-    return Strings::format("({}).{}", ref(expr.args[0]), expr.text);
+    return Strings::format("({}).{}", printReference(expr.args[0]), expr.text);
 }
 
 std::string ExprPrinter::printCall(const Expr& expr) const
 {
     return Strings::format("{}({})",
-                           callName(backend, expr.text),
-                           joinArguments(expr, broadcastType(expr)));
+                           getCallName(backend, expr.text),
+                           printArguments(expr, getBroadcastType(expr)));
 }
 
 // GLSL gives ! to a scalar bool only; the componentwise negation of a mask is
@@ -316,9 +321,9 @@ std::string ExprPrinter::printUnary(const Expr& expr) const
                               && componentCount(expr.type) > 1;
 
     if (isGlslMaskNegation)
-        return "not(" + ref(expr.args[0]) + ")";
+        return "not(" + printReference(expr.args[0]) + ")";
 
-    return Strings::format("({}({}))", expr.op, ref(expr.args[0]));
+    return Strings::format("({}({}))", expr.op, printReference(expr.args[0]));
 }
 
 bool ExprPrinter::isGlslShift(const std::string& op) const
@@ -338,9 +343,9 @@ std::string ExprPrinter::printBinary(const Expr& expr) const
 {
     auto op = getBinaryOperator(expr);
 
-    auto left =
-        isGlslShift(op) ? widened(expr.args[0], expr.type) : ref(expr.args[0]);
-    auto right = ref(expr.args[1]);
+    auto left = isGlslShift(op) ? printWidened(expr.args[0], expr.type)
+                                : printReference(expr.args[0]);
+    auto right = printReference(expr.args[1]);
 
     if (isGlslSignedRemainder(op, expr.type))
         return Strings::format("({} - (({} / {}) * {}))", left, left, right, right);
@@ -351,11 +356,11 @@ std::string ExprPrinter::printBinary(const Expr& expr) const
 // A mask is the operator in two dialects, a function in GLSL.
 std::string ExprPrinter::printCompare(const Expr& expr) const
 {
-    auto left = ref(expr.args[0]);
-    auto right = ref(expr.args[1]);
+    auto left = printReference(expr.args[0]);
+    auto right = printReference(expr.args[1]);
 
     if (backend == Backend::Vulkan && componentCount(expr.type) > 1)
-        if (const auto* name = glslComparison(expr.text))
+        if (auto name = getGlslComparisonFunction(expr.text); !name.empty())
             return Strings::format("{}({}, {})", name, left, right);
 
     return Strings::format("({} {} {})", left, expr.text, right);
@@ -365,8 +370,10 @@ std::string ExprPrinter::printCompare(const Expr& expr) const
 // evaluate it without branching for scalar operands.
 std::string ExprPrinter::printSelect(const Expr& expr) const
 {
-    return Strings::format(
-        "({} ? {} : {})", ref(expr.args[0]), ref(expr.args[1]), ref(expr.args[2]));
+    return Strings::format("({} ? {} : {})",
+                           printReference(expr.args[0]),
+                           printReference(expr.args[1]),
+                           printReference(expr.args[2]));
 }
 
 std::string ExprPrinter::printVarRead(const Expr& expr) const
@@ -378,8 +385,8 @@ std::string ExprPrinter::printVarRead(const Expr& expr) const
 // vector on the left of one as a row.
 std::string ExprPrinter::printMul(const Expr& expr) const
 {
-    auto left = ref(expr.args[0]);
-    auto right = ref(expr.args[1]);
+    auto left = printReference(expr.args[0]);
+    auto right = printReference(expr.args[1]);
 
     if (backend != Backend::DirectX)
         return Strings::format("({} * {})", left, right);
@@ -401,13 +408,13 @@ std::string ExprPrinter::printSample(const Expr& expr) const
     auto name = printNumberedName("texture", expr.index);
     auto sampler = backend == Backend::Metal
                        ? printNumberedName("sampler", expr.index)
-                       : hlslSamplerName(graph.textureSampling(expr.index));
+                       : getHlslSamplerName(graph.textureSampling(expr.index));
 
     if (expr.text == "compare")
-        return compareSample(expr, name, sampler);
+        return printCompareSample(expr, name, sampler);
 
     if (isLayered(graph.textureKind(expr.index)))
-        return layerSample(expr, name, sampler);
+        return printLayerSample(expr, name, sampler);
 
     return printPlainSample(expr, name, sampler);
 }
@@ -418,15 +425,16 @@ std::string ExprPrinter::printPlainSample(const Expr& expr,
                                           const std::string& name,
                                           const std::string& sampler) const
 {
-    auto uv = ref(expr.args[0]);
+    auto uv = printReference(expr.args[0]);
     auto hasLevel = expr.args.size() >= 2;
 
     if (backend == Backend::Vulkan)
     {
-        auto call = hasLevel
-                        ? Strings::format(
-                              "textureLod({}, {}, {})", name, uv, ref(expr.args[1]))
-                        : Strings::format("texture({}, {})", name, uv);
+        auto call = hasLevel ? Strings::format("textureLod({}, {}, {})",
+                                               name,
+                                               uv,
+                                               printReference(expr.args[1]))
+                             : Strings::format("texture({}, {})", name, uv);
 
         if (graph.textureKind(expr.index) == TextureKind::Depth2D)
             return call + ".r";
@@ -440,7 +448,7 @@ std::string ExprPrinter::printPlainSample(const Expr& expr,
         return Strings::format("{}.{}({}, {})", name, method, sampler, uv);
     }
 
-    auto level = ref(expr.args[1]);
+    auto level = printReference(expr.args[1]);
 
     if (backend == Backend::Metal)
         return Strings::format(
@@ -459,11 +467,12 @@ std::string ExprPrinter::printPlainSample(const Expr& expr,
 std::string ExprPrinter::printFetch(const Expr& expr) const
 {
     auto name = printNumberedName("texture", expr.index);
-    auto given = ref(expr.args[0]);
+    auto given = printReference(expr.args[0]);
     auto coordinates =
         graph.expr(expr.args[0]).type == ValueType::Int2
             ? given
-            : Strings::format("{}({})", typeName(backend, ValueType::Int2), given);
+            : Strings::format(
+                  "{}({})", getDialectTypeName(backend, ValueType::Int2), given);
 
     if (backend == Backend::Metal)
         return Strings::format("{}.read(uint2({}))", name, coordinates);
@@ -479,12 +488,12 @@ std::string ExprPrinter::printFetch(const Expr& expr) const
 // the node carries which component it asked for - or the whole of it.
 std::string ExprPrinter::printThreadId(const Expr& expr) const
 {
-    return indexReference("gid", graph.dispatchRank(), expr.index);
+    return getIndexReference("gid", graph.dispatchRank(), expr.index);
 }
 
 std::string ExprPrinter::printBufferRead(const Expr& expr) const
 {
-    return printSubscript("buffer", expr.index, ref(expr.args[0]));
+    return printSubscript("buffer", expr.index, printReference(expr.args[0]));
 }
 
 // One load where the dialect has a spelling for one, and the componentwise
@@ -494,13 +503,13 @@ std::string ExprPrinter::printBufferRead(const Expr& expr) const
 std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
 {
     auto name = printNumberedName("buffer", expr.index);
-    auto base = ref(expr.args[0]);
-    auto type = typeName(backend, expr.type);
+    auto base = printReference(expr.args[0]);
+    auto type = getDialectTypeName(backend, expr.type);
 
     if (backend == Backend::Metal)
         return Strings::format("{}(*((device const {}*) ({} + {})))",
                                type,
-                               metalPackedVectorType(expr.type),
+                               getMetalPackedVectorType(expr.type),
                                name,
                                base);
 
@@ -527,7 +536,8 @@ std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
 // subscript. MSL wraps its atomic_uint, so the value has to be taken out of it.
 std::string ExprPrinter::printAtomicLoad(const Expr& expr) const
 {
-    auto element = printSubscript("buffer", expr.index, ref(expr.args[0]));
+    auto element =
+        printSubscript("buffer", expr.index, printReference(expr.args[0]));
 
     if (backend == Backend::Metal)
         return Strings::format("atomic_load_explicit(&{}, memory_order_relaxed)",
@@ -538,7 +548,7 @@ std::string ExprPrinter::printAtomicLoad(const Expr& expr) const
 
 std::string ExprPrinter::printArrayRead(const Expr& expr) const
 {
-    return printSubscript("a", expr.index, ref(expr.args[0]));
+    return printSubscript("a", expr.index, printReference(expr.args[0]));
 }
 
 // The threadgroup indices ride the same scaffolding as gid: both backends'
@@ -546,12 +556,12 @@ std::string ExprPrinter::printArrayRead(const Expr& expr) const
 // of the rank's width otherwise.
 std::string ExprPrinter::printLocalId(const Expr& expr) const
 {
-    return indexReference("lid", graph.dispatchRank(), expr.index);
+    return getIndexReference("lid", graph.dispatchRank(), expr.index);
 }
 
 std::string ExprPrinter::printGroupId(const Expr& expr) const
 {
-    return indexReference("tgid", graph.dispatchRank(), expr.index);
+    return getIndexReference("tgid", graph.dispatchRank(), expr.index);
 }
 
 // The implicit bound the dispatch appended to the uniform block, under the
@@ -561,12 +571,12 @@ std::string ExprPrinter::printGridExtent(const Expr& expr) const
     if (graph.dispatchRank() == DispatchRank::OneD)
         return "uniforms.count";
 
-    return std::string("uniforms.") + gridExtentName(expr.index);
+    return "uniforms." + std::string(getGridExtentName(expr.index));
 }
 
 std::string ExprPrinter::printSharedRead(const Expr& expr) const
 {
-    return printSubscript("s", expr.index, ref(expr.args[0]));
+    return printSubscript("s", expr.index, printReference(expr.args[0]));
 }
 
 // Metal has the builtin; the other two divide the flat local index by the
@@ -577,7 +587,7 @@ std::string ExprPrinter::printSimdGroupIndex(const Expr&) const
     if (backend == Backend::Metal)
         return "simdIndex";
 
-    return Strings::format("({} / {}u)", groupLaneName(backend), simdGroupWidth);
+    return Strings::format("({} / {}u)", getGroupLaneName(backend), simdGroupWidth);
 }
 
 std::string ExprPrinter::printBuiltInNode(const Expr& expr) const

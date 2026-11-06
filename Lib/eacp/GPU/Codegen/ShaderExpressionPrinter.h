@@ -6,11 +6,11 @@ namespace eacp::GPU::ShaderEmission
 {
 // Prints one stage's expressions. Nodes the stage plan named as locals print
 // as tN references; everything else prints inline. print() spells out a node's
-// own expression (used for both inline nodes and local definitions), ref() is
+// own expression (used for both inline nodes and local definitions), printReference() is
 // what children and outputs go through, so shared subtrees collapse to a name.
 struct ExprPrinter
 {
-    std::string ref(int node) const;
+    std::string printReference(int node) const;
     std::string print(int node) const;
 
     const ShaderGraph& graph;
@@ -19,22 +19,22 @@ struct ExprPrinter
     Vector<int> attributeVaryings; // attribute slot -> varying, -1 = read direct
 
 private:
-    int carryingVarying(int slot) const;
-    ValueType broadcastType(const Expr& call) const;
-    std::string widened(int node, ValueType wide) const;
+    int findCarryingVarying(int slot) const;
+    ValueType getBroadcastType(const Expr& call) const;
+    std::string printWidened(int node, ValueType wide) const;
     bool isGlslShift(const std::string& op) const;
     bool isGlslSignedRemainder(const std::string& op, ValueType type) const;
-    std::string joinArguments(const Expr& expr, ValueType wide) const;
+    std::string printArguments(const Expr& expr, ValueType wide) const;
 
-    std::string metalLayer(int node) const;
-    std::string floatLayer(int layer) const;
-    std::string layeredCoordinate(int uv, int layer) const;
-    std::string layerSample(const Expr& expr,
-                            const std::string& name,
-                            const std::string& sampler) const;
-    std::string compareSample(const Expr& expr,
-                              const std::string& name,
-                              const std::string& sampler) const;
+    std::string printMetalLayer(int node) const;
+    std::string printFloatLayer(int layer) const;
+    std::string printLayeredCoordinate(int uv, int layer) const;
+    std::string printLayerSample(const Expr& expr,
+                                 const std::string& name,
+                                 const std::string& sampler) const;
+    std::string printCompareSample(const Expr& expr,
+                                   const std::string& name,
+                                   const std::string& sampler) const;
 
     std::string printInput(const Expr& expr) const;
     std::string printVarying(const Expr& expr) const;

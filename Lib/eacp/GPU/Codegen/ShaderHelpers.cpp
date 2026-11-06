@@ -575,7 +575,7 @@ const auto shaderHelpers = Array<ShaderHelper, 18> {
 
     ShaderHelper {"log10", nullptr, nullptr, log10HelperGlsl}};
 
-const char* helperDefinition(const ShaderHelper& helper, Backend backend)
+const char* getHelperDefinition(const ShaderHelper& helper, Backend backend)
 {
     switch (backend)
     {
@@ -594,9 +594,9 @@ const char* helperDefinition(const ShaderHelper& helper, Backend backend)
 // packed fragment load is a statement, and it widens each of a lane's two
 // elements through the same helper a scalar packed read goes through. Metal
 // loads such a patch as a packed fragment and calls nothing.
-bool helperWidensPackedSimdMatrix(const ShaderGraph& graph,
-                                  std::string_view name,
-                                  Backend backend)
+bool doesHelperWidenPackedSimdMatrix(const ShaderGraph& graph,
+                                     std::string_view name,
+                                     Backend backend)
 {
     if (backend == Backend::Metal)
         return false;
@@ -608,7 +608,7 @@ bool helperWidensPackedSimdMatrix(const ShaderGraph& graph,
            && graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16);
 }
 
-bool graphCallsHelper(const ShaderGraph& graph, std::string_view name)
+bool doesGraphCallHelper(const ShaderGraph& graph, std::string_view name)
 {
     for (auto node = 0; node < graph.nodeCount(); ++node)
     {
@@ -623,14 +623,14 @@ bool graphCallsHelper(const ShaderGraph& graph, std::string_view name)
 
 bool isHelperUsed(const ShaderGraph& graph, std::string_view name, Backend backend)
 {
-    return helperWidensPackedSimdMatrix(graph, name, backend)
-           || graphCallsHelper(graph, name);
+    return doesHelperWidenPackedSimdMatrix(graph, name, backend)
+           || doesGraphCallHelper(graph, name);
 }
 } // namespace
 
 // Only the helpers a graph actually calls, so a shader that unpacks nothing
 // carries no definition for one.
-std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
+std::string getHelperDefinitions(const ShaderGraph& graph, Backend backend)
 {
     auto definitions = std::string {};
 
@@ -639,14 +639,14 @@ std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
         if (!isHelperUsed(graph, helper.name, backend))
             continue;
 
-        if (const auto* definition = helperDefinition(helper, backend))
+        if (const auto* definition = getHelperDefinition(helper, backend))
             definitions += definition;
     }
 
     return definitions;
 }
 
-std::string sourcePreamble(const ShaderGraph& graph, Backend backend)
+std::string getSourcePreamble(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
 
@@ -656,6 +656,6 @@ std::string sourcePreamble(const ShaderGraph& graph, Backend backend)
     if (backend == Backend::Vulkan)
         source += "#version 450\n\n";
 
-    return source + helperDefinitions(graph, backend);
+    return source + getHelperDefinitions(graph, backend);
 }
 } // namespace eacp::GPU::ShaderEmission

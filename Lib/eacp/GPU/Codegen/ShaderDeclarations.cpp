@@ -90,7 +90,7 @@ const TextureTypeSpelling& findTextureTypeSpelling(TextureKind kind)
 }
 
 // A GLSL storage block is read-write by default; a read one says so.
-const char* glslBufferQualifier(BufferAccess access)
+const char* getGlslBufferQualifier(BufferAccess access)
 {
     return access == BufferAccess::Read ? "readonly " : "";
 }
@@ -98,7 +98,7 @@ const char* glslBufferQualifier(BufferAccess access)
 // The element type on the same terms metalBufferType and hlslBufferType take
 // it: an atomic slot is unsigned integers whatever it was declared with, since
 // atomicAdd acts through nothing else.
-const char* glslBufferElement(BufferAccess access, ValueType elementType)
+const char* getGlslBufferElement(BufferAccess access, ValueType elementType)
 {
     if (access == BufferAccess::Atomic || elementType == ValueType::UInt)
         return "uint";
@@ -109,7 +109,7 @@ const char* glslBufferElement(BufferAccess access, ValueType elementType)
 // A combined image sampler: the sampler travels in the descriptor write, so the
 // sampling configuration never reaches the source - except a comparison, which
 // GLSL spells in the type and which the bound VkSampler must then enable.
-const char* glslTextureType(TextureKind kind, const TextureSampling& sampling)
+const char* getGlslTextureType(TextureKind kind, const TextureSampling& sampling)
 {
     const auto compare = sampling.compare != TextureCompare::None;
 
@@ -134,11 +134,11 @@ constexpr auto uniformPadBytes = 4;
 // that move the next member to where the CPU wrote it.
 struct UniformPadding
 {
-    std::string padTo(int offset, ValueType type)
+    std::string formatPaddingTo(int offset, ValueType type)
     {
         auto source = std::string {};
 
-        while (packedOffset(cursor, type) < offset)
+        while (getPackedOffset(cursor, type) < offset)
         {
             source += Strings::format("    float pad{};\n", padCount++);
             cursor += uniformPadBytes;
@@ -148,7 +148,7 @@ struct UniformPadding
         return source;
     }
 
-    int packedOffset(int at, ValueType type) const
+    int getPackedOffset(int at, ValueType type) const
     {
         return glsl ? std140PackedOffset(at, type) : hlslPackedOffset(at, type);
     }
@@ -158,7 +158,7 @@ struct UniformPadding
     int padCount = 0;
 };
 
-std::string openUniformBlock(Backend backend, int binding)
+std::string formatUniformBlockOpening(Backend backend, int binding)
 {
     if (backend == Backend::Vulkan)
         return Strings::format(
@@ -168,7 +168,7 @@ std::string openUniformBlock(Backend backend, int binding)
 }
 
 // The instance name is what keeps uniforms.uN the one spelling in all three.
-std::string closeUniformBlock(Backend backend)
+std::string formatUniformBlockClosing(Backend backend)
 {
     if (backend == Backend::Vulkan)
         return "} uniforms;\n\n";
@@ -194,7 +194,7 @@ std::array<bool, samplingConfigurations>
     return used;
 }
 
-const char* hlslSamplerStateType(int configuration)
+const char* getHlslSamplerStateType(int configuration)
 {
     const auto compares =
         samplingConfiguration(configuration).compare != TextureCompare::None;
@@ -203,13 +203,13 @@ const char* hlslSamplerStateType(int configuration)
 }
 } // namespace
 
-const char* metalBufferType(BufferAccess access, ValueType elementType)
+std::string_view getMetalBufferType(BufferAccess access, ValueType elementType)
 {
     const auto& spelling = findBufferTypeSpelling(access);
     return elementType == ValueType::UInt ? spelling.metalUInt : spelling.metalFloat;
 }
 
-const char* hlslBufferType(BufferAccess access, ValueType elementType)
+std::string_view getHlslBufferType(BufferAccess access, ValueType elementType)
 {
     const auto& spelling = findBufferTypeSpelling(access);
     return elementType == ValueType::UInt ? spelling.hlslUInt : spelling.hlslFloat;
@@ -218,16 +218,17 @@ const char* hlslBufferType(BufferAccess access, ValueType elementType)
 // The MSL parameters for the storage buffers a render stage reads, always read
 // only: a vertex or fragment function has no writable buffer here, which is the
 // whole of what separates this from the kernel signature.
-std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
+std::string formatBufferParameters(const ShaderGraph& graph,
+                                   const Vector<int>& roots)
 {
-    auto used = bufferSlotsUsedBy(graph, roots);
+    auto used = findBufferSlotsUsedBy(graph, roots);
     auto source = std::string {};
 
     for (auto i = 0; i < used.size(); ++i)
         if (used[i] != 0)
             source += Strings::format(
                 ",\n    {} buffer{} [[buffer({})]]",
-                metalBufferType(BufferAccess::Read, graph.storageElementType(i)),
+                getMetalBufferType(BufferAccess::Read, graph.storageElementType(i)),
                 i,
                 RenderPass::bufferBase + i);
 
@@ -242,12 +243,12 @@ std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
 //
 // std140 disagrees the other way: a vec3 is twelve bytes there, so a scalar
 // after one needs a pad too.
-std::string uniformBlock(Backend backend,
-                         const Vector<ValueType>& types,
-                         const Vector<std::string>& names,
-                         int binding)
+std::string formatUniformBlock(Backend backend,
+                               const Vector<ValueType>& types,
+                               const Vector<std::string>& names,
+                               int binding)
 {
-    auto source = openUniformBlock(backend, binding);
+    auto source = formatUniformBlockOpening(backend, binding);
     auto offsets = uniformOffsets(types);
     auto padding = UniformPadding {backend == Backend::Vulkan};
 
@@ -256,44 +257,45 @@ std::string uniformBlock(Backend backend,
         auto type = types[i];
 
         if (backend != Backend::Metal)
-            source += padding.padTo(offsets[i], type);
+            source += padding.formatPaddingTo(offsets[i], type);
 
-        source += Strings::format("    {} {};\n", typeName(backend, type), names[i]);
+        source += Strings::format(
+            "    {} {};\n", getDialectTypeName(backend, type), names[i]);
     }
 
-    return source + closeUniformBlock(backend);
+    return source + formatUniformBlockClosing(backend);
 }
 
 // The instance name is left off so the run of elements is a global named
 // buffer<slot>, which prints byte-identically to the other two dialects.
-std::string glslBufferBlock(BufferAccess access,
-                            ValueType elementType,
-                            int slot,
-                            int binding)
+std::string formatGlslBufferBlock(BufferAccess access,
+                                  ValueType elementType,
+                                  int slot,
+                                  int binding)
 {
     return Strings::format(
         "layout(std430, set = 0, binding = {}) {}buffer Buffer{}\n{{\n    {} "
         "buffer{}[];\n}};\n",
         binding,
-        glslBufferQualifier(access),
+        getGlslBufferQualifier(access),
         slot,
-        glslBufferElement(access, elementType),
+        getGlslBufferElement(access, elementType),
         slot);
 }
 
-const char* metalTextureType(TextureKind kind)
+std::string_view getMetalTextureType(TextureKind kind)
 {
     return findTextureTypeSpelling(kind).metal;
 }
 
-const char* hlslTextureType(TextureKind kind)
+std::string_view getHlslTextureType(TextureKind kind)
 {
     return findTextureTypeSpelling(kind).hlsl;
 }
 
 // imageStore is all a kernel does with one, so the image needs no format layout
 // qualifier - which keeps it agnostic of the format it was created in.
-std::string glslWritableTexture(int slot, int binding)
+std::string formatGlslWritableTexture(int slot, int binding)
 {
     return Strings::format(
         "layout(set = 0, binding = {}) uniform writeonly image2D texture{};\n",
@@ -301,12 +303,12 @@ std::string glslWritableTexture(int slot, int binding)
         slot);
 }
 
-std::string glslSampledTexture(const ShaderGraph& graph, int slot, int binding)
+std::string formatGlslSampledTexture(const ShaderGraph& graph, int slot, int binding)
 {
     return Strings::format(
         "layout(set = 0, binding = {}) uniform {} texture{};\n",
         binding,
-        glslTextureType(graph.textureKind(slot), graph.textureSampling(slot)),
+        getGlslTextureType(graph.textureKind(slot), graph.textureSampling(slot)),
         slot);
 }
 
@@ -324,7 +326,7 @@ std::string glslSampledTexture(const ShaderGraph& graph, int slot, int binding)
 //
 // A write-access texture is skipped for the same reason it is declared as an
 // RWTexture2D: there is nothing to sample it with.
-std::string hlslSamplerDeclarations(const ShaderGraph& graph)
+std::string formatHlslSamplerDeclarations(const ShaderGraph& graph)
 {
     auto used = findSampledConfigurations(graph);
     auto source = std::string {};
@@ -333,7 +335,7 @@ std::string hlslSamplerDeclarations(const ShaderGraph& graph)
          ++configuration)
         if (used[configuration])
             source += Strings::format("{} samplerConfig{} : register(s{});\n",
-                                      hlslSamplerStateType(configuration),
+                                      getHlslSamplerStateType(configuration),
                                       configuration,
                                       configuration);
 
@@ -342,20 +344,20 @@ std::string hlslSamplerDeclarations(const ShaderGraph& graph)
 
 // The early return the rounded-up dispatch needs, over as many extents as the
 // rank has.
-std::string boundsGuard(DispatchRank rank)
+std::string formatBoundsGuard(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
         return "    if (gid >= uniforms.count)\n        return;\n";
 
     auto condition = std::string {};
 
-    for (auto i = 0; i < gridExtentCount(rank); ++i)
+    for (auto i = 0; i < getGridExtentCount(rank); ++i)
     {
         if (i > 0)
             condition += " || ";
 
         condition += Strings::format(
-            "gid{} >= uniforms.{}", componentSuffix(i), gridExtentName(i));
+            "gid{} >= uniforms.{}", getComponentSuffix(i), getGridExtentName(i));
     }
 
     return Strings::format("    if ({})\n        return;\n", condition);

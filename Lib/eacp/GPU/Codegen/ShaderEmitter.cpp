@@ -28,16 +28,16 @@ public:
     RenderShaderEmitter(const ShaderGraph& graphToUse, Backend backendToUse)
         : graph(graphToUse)
         , backend(backendToUse)
-        , promoted(promotedAttributes(graphToUse))
-        , varyings(stageVaryings(graphToUse, promoted))
-        , vertexRoots(vertexStageRoots(graphToUse))
-        , fragmentStatementRoots(fragmentStageRoots(graphToUse))
+        , promoted(findPromotedAttributes(graphToUse))
+        , varyings(getStageVaryings(graphToUse, promoted))
+        , vertexRoots(getVertexStageRoots(graphToUse))
+        , fragmentStatementRoots(getFragmentStageRoots(graphToUse))
     {
     }
 
     std::string emit() const
     {
-        auto source = sourcePreamble(graph, backend);
+        auto source = getSourcePreamble(graph, backend);
 
         if (!isGlsl())
             source += printStageStructs();
@@ -68,23 +68,23 @@ private:
 
         for (auto i = 0; i < graph.inputs().size(); ++i)
             source += Strings::format("    {} a{}{};\n",
-                                      typeName(backend, graph.inputs()[i]),
+                                      getDialectTypeName(backend, graph.inputs()[i]),
                                       i,
-                                      attributeSemantic(backend, i));
+                                      getAttributeSemantic(backend, i));
 
         source += "};\n\nstruct VertexOut\n{\n";
-        source +=
-            Strings::format("    float4 position{};\n", positionSemantic(backend));
+        source += Strings::format("    float4 position{};\n",
+                                  getPositionSemantic(backend));
 
         for (auto i = 0; i < varyings.size(); ++i)
         {
             auto type = varyings[i].type;
 
             source += Strings::format("    {}{} v{}{};\n",
-                                      flatQualifier(backend, type),
-                                      typeName(backend, type),
+                                      getFlatQualifier(backend, type),
+                                      getDialectTypeName(backend, type),
                                       i,
-                                      varyingSemantic(backend, i, type));
+                                      getVaryingSemantic(backend, i, type));
         }
 
         return source + "};\n\n";
@@ -100,7 +100,7 @@ private:
         for (auto i = 0; i < graph.uniforms().size(); ++i)
             names.add(Strings::format("u{}", i));
 
-        return uniformBlock(backend, graph.uniforms(), names);
+        return formatUniformBlock(backend, graph.uniforms(), names);
     }
 
     // Read-only whatever the slot recorded: a render stage never writes.
@@ -109,16 +109,16 @@ private:
         auto source = std::string {};
 
         for (auto i = 0; i < graph.textureCount(); ++i)
-            source += glslSampledTexture(graph, i, vulkanTextureBinding(i));
+            source += formatGlslSampledTexture(graph, i, vulkanTextureBinding(i));
 
         if (graph.textureCount() > 0)
             source += "\n";
 
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
-            source += glslBufferBlock(BufferAccess::Read,
-                                      graph.storageElementType(i),
-                                      i,
-                                      vulkanBufferBinding(i));
+            source += formatGlslBufferBlock(BufferAccess::Read,
+                                            graph.storageElementType(i),
+                                            i,
+                                            vulkanBufferBinding(i));
 
         if (graph.storageBuffers().size() > 0)
             source += "\n";
@@ -141,11 +141,11 @@ private:
 
         for (auto i = 0; i < graph.textureCount(); ++i)
             source += Strings::format("{} texture{} : register(t{});\n",
-                                      hlslTextureType(graph.textureKind(i)),
+                                      getHlslTextureType(graph.textureKind(i)),
                                       i,
                                       i);
 
-        source += hlslSamplerDeclarations(graph);
+        source += formatHlslSamplerDeclarations(graph);
 
         if (graph.textureCount() > 0)
             source += "\n";
@@ -153,7 +153,7 @@ private:
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
             source += Strings::format(
                 "{} buffer{} : register(t{});\n",
-                hlslBufferType(BufferAccess::Read, graph.storageElementType(i)),
+                getHlslBufferType(BufferAccess::Read, graph.storageElementType(i)),
                 i,
                 RenderPass::bufferRegisterBase + i);
 
@@ -174,10 +174,10 @@ private:
             auto type = varyings[i].type;
 
             source += Strings::format("{}{}{} {} vary{};\n",
-                                      locationLayout(i),
-                                      flatQualifier(backend, type),
+                                      getLocationLayout(i),
+                                      getFlatQualifier(backend, type),
                                       direction,
-                                      typeName(backend, type),
+                                      getDialectTypeName(backend, type),
                                       i);
         }
 
@@ -211,7 +211,7 @@ private:
         if (hasUniforms() && vertexReadsUniforms(graph))
             source += printMetalUniformParameter(", ");
 
-        source += bufferParameters(graph, vertexRoots);
+        source += formatBufferParameters(graph, vertexRoots);
         return source + ")\n{\n";
     }
 
@@ -221,8 +221,8 @@ private:
 
         for (auto i = 0; i < graph.inputs().size(); ++i)
             source += Strings::format("{}in {} attr{};\n",
-                                      locationLayout(i),
-                                      typeName(backend, graph.inputs()[i]),
+                                      getLocationLayout(i),
+                                      getDialectTypeName(backend, graph.inputs()[i]),
                                       i);
 
         source += printGlslVaryings("out");
@@ -265,9 +265,9 @@ private:
         auto stage = StageEmitter {graph, backend};
 
         auto source = stage.declareArrays(vertexRoots, stageIndent);
-        source += stage.defineFor(vertexRoots, stageIndent);
+        source += stage.defineLocalsFor(vertexRoots, stageIndent);
 
-        auto position = stage.printer.ref(graph.position());
+        auto position = stage.printer.printReference(graph.position());
 
         if (isGlsl())
             return source + Strings::format("    gl_Position = {};\n", position)
@@ -297,9 +297,9 @@ private:
                                   const StageVarying& varying) const
     {
         if (varying.sourceNode >= 0)
-            return stage.printer.ref(varying.sourceNode);
+            return stage.printer.printReference(varying.sourceNode);
 
-        return attributeName(backend, varying.attribute);
+        return getAttributeName(backend, varying.attribute);
     }
 
     std::string printMetalFragmentOpening() const
@@ -313,13 +313,13 @@ private:
         for (auto i = 0; i < graph.textureCount(); ++i)
             source += Strings::format(",\n    {} texture{} [[texture({})]],\n    "
                                       "sampler sampler{} [[sampler({})]]",
-                                      metalTextureType(graph.textureKind(i)),
+                                      getMetalTextureType(graph.textureKind(i)),
                                       i,
                                       i,
                                       i,
                                       i);
 
-        source += bufferParameters(graph, fragmentStatementRoots);
+        source += formatBufferParameters(graph, fragmentStatementRoots);
         return source + ")\n{\n";
     }
 
@@ -327,7 +327,7 @@ private:
     {
         auto source = std::string {"#ifdef EACP_FRAGMENT\n"};
         source += printGlslVaryings("in");
-        source += locationLayout(0) + "out vec4 fragColor;\n";
+        source += getLocationLayout(0) + "out vec4 fragColor;\n";
         return source + "\nvoid main()\n{\n";
     }
 
@@ -348,7 +348,7 @@ private:
     // counts towards the stage's uniform declaration, but not towards the
     // colour's locals: a statement's own expressions are named where that
     // statement is emitted.
-    Vector<int> colourRoots() const
+    Vector<int> getColourRoots() const
     {
         auto roots = Vector<int> {graph.fragment()};
 
@@ -366,10 +366,10 @@ private:
 
         auto source = stage.declareArrays(fragmentStatementRoots, stageIndent);
         source += stage.emitBlock(ShaderGraph::rootBlock, stageIndent);
-        source += stage.defineFor(colourRoots(), stageIndent);
+        source += stage.defineLocalsFor(getColourRoots(), stageIndent);
         source += printAlphaTest(stage);
 
-        auto colour = stage.printer.ref(graph.fragment());
+        auto colour = stage.printer.printReference(graph.fragment());
 
         if (isGlsl())
             return source
@@ -386,8 +386,8 @@ private:
         auto kill = backend == Backend::Metal ? "discard_fragment();" : "discard;";
 
         return Strings::format("    if ({} < {})\n        {}\n",
-                               stage.printer.ref(graph.discard()),
-                               floatLiteral(graph.discardThreshold()),
+                               stage.printer.printReference(graph.discard()),
+                               formatShaderFloatLiteral(graph.discardThreshold()),
                                kill);
     }
 
@@ -410,12 +410,12 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
 bool vertexReadsUniforms(const ShaderGraph& graph)
 {
-    return anyReferencesUniform(graph, vertexStageRoots(graph));
+    return doesAnyReferenceUniform(graph, getVertexStageRoots(graph));
 }
 
 bool fragmentReadsUniforms(const ShaderGraph& graph)
 {
-    return anyReferencesUniform(graph, fragmentStageRoots(graph));
+    return doesAnyReferenceUniform(graph, getFragmentStageRoots(graph));
 }
 
 std::string emitMetal(const ShaderGraph& graph)

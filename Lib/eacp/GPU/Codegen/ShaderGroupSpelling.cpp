@@ -5,14 +5,14 @@ namespace eacp::GPU::ShaderEmission
 
 // How many threads one group holds, whatever its rank - what a group reduction
 // folds over and what its scratch is sized for.
-int threadsPerGroup(const ShaderGraph& graph)
+int getThreadsPerGroup(const ShaderGraph& graph)
 {
     return graph.threadGroupShape().threadCount();
 }
 
 // The first halving step of a tree over that many threads: the largest power of
 // two below the count, so a count that is not one still folds its tail in first.
-int reductionStride(int threads)
+int getReductionStride(int threads)
 {
     auto stride = 1;
 
@@ -25,9 +25,9 @@ int reductionStride(int threads)
 // How many threads one fold spans: the whole group, or one SIMD group of it -
 // and a group smaller than a SIMD group is its own SIMD group, so the narrow
 // scope never reaches past what was dispatched.
-int reductionWidth(const ShaderGraph& graph, ReductionScope scope)
+int getReductionWidth(const ShaderGraph& graph, ReductionScope scope)
 {
-    auto threads = threadsPerGroup(graph);
+    auto threads = getThreadsPerGroup(graph);
 
     if (scope == ReductionScope::Group)
         return threads;
@@ -37,9 +37,9 @@ int reductionWidth(const ShaderGraph& graph, ReductionScope scope)
 
 // Whether a fold spans the whole group either because that is its scope or
 // because the group is one SIMD group and the two are the same set of threads.
-bool spansWholeGroup(const ShaderGraph& graph, ReductionScope scope)
+bool doesFoldSpanWholeGroup(const ShaderGraph& graph, ReductionScope scope)
 {
-    return reductionWidth(graph, scope) == threadsPerGroup(graph);
+    return getReductionWidth(graph, scope) == getThreadsPerGroup(graph);
 }
 
 // Whether Metal answers a fold with the SIMD-group intrinsic alone, which is
@@ -53,20 +53,20 @@ bool spansWholeGroup(const ShaderGraph& graph, ReductionScope scope)
 // so a 32-thread group there is two or four SIMD groups and simd_sum alone
 // would fold a quarter of it. The wide fold keeps the combine at every width -
 // simdCount is whatever the hardware gave - which is what it was always for.
-bool metalFoldsInOneInstruction(ReductionScope scope)
+bool doesMetalFoldInOneInstruction(ReductionScope scope)
 {
     return scope == ReductionScope::Simd;
 }
 
 // So a kernel whose folds are all SIMD-scoped on Metal declares neither the
 // scratch nor the three SIMD-group builtins the combine walks.
-bool metalCombinesPartials(const ShaderGraph& graph)
+bool doesMetalCombinePartials(const ShaderGraph& graph)
 {
     return !graph.wholeGroupReductionTypes().empty();
 }
 
 // Where a fragment's patch lives, spelled as the emitted source names it.
-std::string simdMatrixMemoryName(const Statement& statement)
+std::string getSimdMatrixMemoryName(const Statement& statement)
 {
     return (statement.memory == SimdMatrixMemory::Shared ? "s" : "buffer")
            + std::to_string(statement.bufferSlot);
@@ -87,9 +87,9 @@ static_assert(simdMatrixLaneElements == 2,
               "the fallback holds a lane's share of a fragment as a two-vector");
 
 // The two-component type a lane's share is declared as.
-const char* simdMatrixLaneType(Backend backend)
+std::string_view getSimdMatrixLaneType(Backend backend)
 {
-    return typeName(backend, ValueType::Float2);
+    return getDialectTypeName(backend, ValueType::Float2);
 }
 
 // The scratch a product stages its two operands in, whole, so each lane can
@@ -97,7 +97,7 @@ const char* simdMatrixLaneType(Backend backend)
 // one slice per SIMD group of the threadgroup.
 constexpr int simdMatrixScratchPerGroup = 2 * simdMatrixSize * simdMatrixSize;
 
-int simdMatrixScratchElements(const ShaderGraph& graph)
+int getSimdMatrixScratchElementCount(const ShaderGraph& graph)
 {
     return graph.threadGroupShape().threadCount() / simdGroupWidth
            * simdMatrixScratchPerGroup;
@@ -105,19 +105,19 @@ int simdMatrixScratchElements(const ShaderGraph& graph)
 
 // The scratch declared, under the storage qualifier the dialect gives
 // threadgroup memory, in a kernel that holds any fragment at all.
-std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
-                                         const std::string& qualifier)
+std::string formatSimdMatrixScratchDeclaration(const ShaderGraph& graph,
+                                               const std::string& qualifier)
 {
     if (graph.simdMatrixCount() == 0)
         return {};
 
     return qualifier + " float " + simdMatrixScratchName + "["
-           + std::to_string(simdMatrixScratchElements(graph)) + "];\n";
+           + std::to_string(getSimdMatrixScratchElementCount(graph)) + "];\n";
 }
 
 // Whether a kernel declares any threadgroup memory of its own or the
 // emitter's - what the blank line after those declarations is for.
-bool declaresGroupMemory(const ShaderGraph& graph)
+bool doesDeclareGroupMemory(const ShaderGraph& graph)
 {
     return graph.sharedArrays().size() > 0 || graph.usesGroupReduction()
            || graph.simdMatrixCount() > 0;
@@ -127,9 +127,9 @@ bool declaresGroupMemory(const ShaderGraph& graph)
 // kernel that holds one: the lane within its notional SIMD group, the row and
 // the first column of the pair that lane holds, and where that group's slice
 // of the scratch starts.
-std::string simdMatrixPreamble(Backend backend)
+std::string formatSimdMatrixPreamble(Backend backend)
 {
-    auto lane = std::string(groupLaneName(backend));
+    auto lane = std::string(getGroupLaneName(backend));
     auto width = std::to_string(simdGroupWidth);
     auto perRow = std::to_string(simdMatrixLanesPerRow);
 

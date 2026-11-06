@@ -32,9 +32,9 @@ public:
                  Backend backend,
                  Vector<int> attributeVaryings = {});
 
-    const ShaderGraph& graph() const { return printer.graph; }
+    const ShaderGraph& getGraph() const { return printer.graph; }
 
-    std::string defineFor(const Vector<int>& roots, const std::string& indent);
+    std::string defineLocalsFor(const Vector<int>& roots, const std::string& indent);
     std::string declareArrays(const Vector<int>& roots, const std::string& indent);
     std::string emitBlock(int block, const std::string& indent);
 
@@ -98,30 +98,30 @@ private:
     std::string emitTextureStore(const Statement& statement, StatementScope& scope);
     std::string emitNothing(const Statement& statement, StatementScope& scope);
 
-    std::string defineInScope(const Vector<int>& roots, StatementScope& scope);
+    std::string defineLocalsInScope(const Vector<int>& roots, StatementScope& scope);
     std::string printBody(int block, const std::string& indent);
 
-    std::string groupReduction(const Statement& statement,
-                               const StatementScope& scope);
-    std::string metalGroupReduction(const Statement& statement,
-                                    const StatementScope& scope);
-    std::string treeGroupReduction(const Statement& statement,
-                                   const StatementScope& scope);
+    std::string formatGroupReduction(const Statement& statement,
+                                     const StatementScope& scope);
+    std::string formatMetalGroupReduction(const Statement& statement,
+                                          const StatementScope& scope);
+    std::string formatTreeGroupReduction(const Statement& statement,
+                                         const StatementScope& scope);
 
-    bool metal() const;
-    std::string simdMatrixDeclaration(int slot) const;
-    std::string simdMatrixFill(const Statement& statement,
-                               const StatementScope& scope);
-    std::string simdMatrixLaneElement(const Statement& statement,
-                                      const SimdMatrixPatch& patch,
-                                      int which) const;
-    std::string simdMatrixTransfer(const Statement& statement,
-                                   const StatementScope& scope);
-    std::string metalSimdMatrixTransfer(const Statement& statement,
-                                        const SimdMatrixPatch& patch,
-                                        const StatementScope& scope);
-    std::string simdMatrixMultiplyAdd(const Statement& statement,
-                                      const StatementScope& scope);
+    bool isMetal() const;
+    std::string formatSimdMatrixDeclaration(int slot) const;
+    std::string formatSimdMatrixFill(const Statement& statement,
+                                     const StatementScope& scope);
+    std::string formatSimdMatrixLaneElement(const Statement& statement,
+                                            const SimdMatrixPatch& patch,
+                                            int which) const;
+    std::string formatSimdMatrixTransfer(const Statement& statement,
+                                         const StatementScope& scope);
+    std::string formatMetalSimdMatrixTransfer(const Statement& statement,
+                                              const SimdMatrixPatch& patch,
+                                              const StatementScope& scope);
+    std::string formatSimdMatrixMultiplyAdd(const Statement& statement,
+                                            const StatementScope& scope);
     std::string stageSimdMatrixOperands(const Statement& statement,
                                         const StatementScope& scope);
 
@@ -129,12 +129,12 @@ private:
     std::string printArrayDeclaration(int slot, const std::string& indent) const;
     bool isRecordStillUnnamed(const Statement& statement) const;
     Vector<int> countUsesOver(const Vector<int>& roots) const;
-    Vector<int> blockUses(int block) const;
-    std::string define(const Vector<int>& roots,
-                       const std::string& indent,
-                       const Vector<int>& uses,
-                       Vector<int>& open);
-    std::string bind(int node, const std::string& indent, Vector<int>& open);
+    Vector<int> countBlockUses(int block) const;
+    std::string defineLocals(const Vector<int>& roots,
+                             const std::string& indent,
+                             const Vector<int>& uses,
+                             Vector<int>& open);
+    std::string bindLocal(int node, const std::string& indent, Vector<int>& open);
     std::string holdTheRecord(const Statement& statement,
                               const std::string& indent,
                               Vector<int>& open);
@@ -145,10 +145,10 @@ private:
                             int slot,
                             const std::string& indent,
                             Vector<int>& open);
-    bool readsSlot(int node, int slot);
+    bool doesReadSlot(int node, int slot);
     bool hasNothingStale(bool sharedMoved) const;
-    void retire(Vector<int>& open);
-    void dropStale(const Statement& statement, Vector<int>& open);
+    void retireLocals(Vector<int>& open);
+    void dropStaleLocals(const Statement& statement, Vector<int>& open);
 
     // Held by the emitter rather than by the walk, so that naming a stage costs
     // one buffer instead of one per name per statement.

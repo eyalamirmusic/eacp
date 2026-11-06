@@ -41,7 +41,7 @@ struct VisitSet
     int generation = 1;
 };
 
-bool wantsLocal(ExprKind kind);
+bool isLocalWanted(ExprKind kind);
 
 void countUses(const ShaderGraph& graph,
                int node,
@@ -72,7 +72,7 @@ void collectWrites(const ShaderGraph& graph,
                    const Statement& statement,
                    Vector<char>& written);
 
-bool touchesShared(const ShaderGraph& graph, const Statement& statement);
+bool doesTouchSharedMemory(const ShaderGraph& graph, const Statement& statement);
 
 void collectBufferWrites(const ShaderGraph& graph,
                          const Statement& statement,
@@ -84,11 +84,11 @@ void collectBufferWrites(const ShaderGraph& graph,
 // moved.
 struct StalenessQuery
 {
-    bool readsStale(int node);
-    bool readsWhatMoved(const Expr& expr) const;
-    bool readsWrittenVariable(const Expr& expr) const;
-    bool readsMovedSharedMemory(const Expr& expr) const;
-    bool readsWrittenBuffer(const Expr& expr) const;
+    bool doesReadStaleValue(int node);
+    bool doesReadWhatMoved(const Expr& expr) const;
+    bool doesReadWrittenVariable(const Expr& expr) const;
+    bool doesReadMovedSharedMemory(const Expr& expr) const;
+    bool doesReadWrittenBuffer(const Expr& expr) const;
 
     const ShaderGraph& graph;
     const Vector<char>& variablesWritten;
@@ -111,9 +111,9 @@ void collectStatementExpressions(const ShaderGraph& graph,
                                  LoopConditions loopConditions,
                                  Vector<int>& roots);
 
-bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots);
-Vector<int> vertexStageRoots(const ShaderGraph& graph);
-Vector<int> fragmentStageRoots(const ShaderGraph& graph);
+bool doesAnyReferenceUniform(const ShaderGraph& graph, const Vector<int>& roots);
+Vector<int> getVertexStageRoots(const ShaderGraph& graph);
+Vector<int> getFragmentStageRoots(const ShaderGraph& graph);
 
 // A fragment-stage read of a vertex attribute names an identifier no dialect
 // gives that stage, so each is promoted to a varying after the declared ones.
@@ -123,7 +123,7 @@ struct PromotedAttributes
     Vector<int> carried; // implicit varying order -> attribute slot
 };
 
-PromotedAttributes promotedAttributes(const ShaderGraph& graph);
+PromotedAttributes findPromotedAttributes(const ShaderGraph& graph);
 
 struct StageVarying
 {
@@ -132,8 +132,9 @@ struct StageVarying
     int attribute = -1;
 };
 
-Vector<StageVarying> stageVaryings(const ShaderGraph& graph,
-                                   const PromotedAttributes& promoted);
+Vector<StageVarying> getStageVaryings(const ShaderGraph& graph,
+                                      const PromotedAttributes& promoted);
 
-Vector<char> bufferSlotsUsedBy(const ShaderGraph& graph, const Vector<int>& roots);
+Vector<char> findBufferSlotsUsedBy(const ShaderGraph& graph,
+                                   const Vector<int>& roots);
 } // namespace eacp::GPU::ShaderEmission
