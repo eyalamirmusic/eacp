@@ -5,16 +5,206 @@
 
 namespace eacp::GPU::ShaderEmission
 {
+namespace
+{
+constexpr auto simdMatrixScratchName = std::string_view {"sgmScratch"};
 
-// MSL has the SIMD-group intrinsics, so a fold scoped to one is a single
-// instruction and a fold over a wider group is those partials combined through
-// the scratch. HLSL under FXC has no wave intrinsic at cs_5_0, and GLSL's
-// subgroup extension is both unassumable and the wrong width - a subgroup is
-// whatever the device says it is, where eacp's simdWidth is 32 everywhere by
-// construction - so both take the scratch tree, narrowed to the folding
-// thread's own block of lanes where the scope is the SIMD group. Either way the
-// result lands in the reduction's variable on every thread, and a trailing
-// barrier leaves the scratch free for the next one.
+// The largest power of two below the count, so a ragged tail folds in first.
+int getReductionStride(int threads)
+{
+    auto stride = 1;
+
+    while (stride * 2 < threads)
+        stride *= 2;
+
+    return stride;
+}
+
+// A group smaller than a SIMD group is its own SIMD group.
+int getReductionWidth(const ShaderGraph& graph, ReductionScope scope)
+{
+    auto threads = getThreadsPerGroup(graph);
+
+    if (scope == ReductionScope::Group)
+        return threads;
+
+    return threads < simdGroupWidth ? threads : simdGroupWidth;
+}
+
+bool doesFoldSpanWholeGroup(const ShaderGraph& graph, ReductionScope scope)
+{
+    return getReductionWidth(graph, scope) == getThreadsPerGroup(graph);
+}
+
+// Only the narrow scope: the hardware SIMD width is a pipeline property, and
+// an Intel Mac runs eight or sixteen lanes, so a small group may be several.
+bool doesMetalFoldInOneInstruction(ReductionScope scope)
+{
+    return scope == ReductionScope::Simd;
+}
+
+std::string getSimdMatrixMemoryName(const Statement& statement)
+{
+    auto prefix = statement.memory == SimdMatrixMemory::Shared ? "s" : "buffer";
+    return Strings::format("{}{}", prefix, statement.bufferSlot);
+}
+
+// Each lane holds elements 2 * lane and 2 * lane + 1 of the row-major patch.
+// Not the whole 8x8: FXC caps a kernel's per-thread arrays at 4096 registers.
+constexpr int simdMatrixLaneElements =
+    simdMatrixSize * simdMatrixSize / simdGroupWidth;
+constexpr int simdMatrixLanesPerRow = simdMatrixSize / simdMatrixLaneElements;
+
+static_assert(simdMatrixLaneElements == 2,
+              "the fallback holds a lane's share of a fragment as a two-vector");
+
+std::string_view getSimdMatrixLaneType(Backend backend)
+{
+    return getDialectTypeName(backend, ValueType::Float2);
+}
+
+constexpr int simdMatrixScratchPerGroup = 2 * simdMatrixSize * simdMatrixSize;
+
+int getSimdMatrixScratchElementCount(const ShaderGraph& graph)
+{
+    return graph.threadGroupShape().threadCount() / simdGroupWidth
+           * simdMatrixScratchPerGroup;
+}
+
+// simdgroup_multiply_accumulate takes packed operands directly, so nothing widens.
+constexpr std::string_view getMetalSimdMatrixType(SimdMatrixElement element)
+{
+    switch (element)
+    {
+        case SimdMatrixElement::Half:
+            return "simdgroup_half8x8";
+        case SimdMatrixElement::BFloat16:
+            return "simdgroup_bfloat8x8";
+        case SimdMatrixElement::Float:
+            break;
+    }
+
+    return "simdgroup_float8x8";
+}
+
+constexpr std::string_view getMetalPackedElementType(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "half" : "bfloat";
+}
+
+constexpr std::string_view getPackedSimdMatrixHelper(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "eacpReadHalf" : "eacpReadBFloat16";
+}
+
+constexpr std::string_view getBitsOfFloatFunction(Backend backend)
+{
+    return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
+}
+
+} // namespace
+
+int getThreadsPerGroup(const ShaderGraph& graph)
+{
+    return graph.threadGroupShape().threadCount();
+}
+
+bool doesMetalCombinePartials(const ShaderGraph& graph)
+{
+    return !graph.wholeGroupReductionTypes().empty();
+}
+
+std::string formatSimdMatrixScratchDeclaration(const ShaderGraph& graph,
+                                               std::string_view qualifier)
+{
+    if (graph.simdMatrixCount() == 0)
+        return {};
+
+    return Strings::format("{} float {}[{}];\n",
+                           qualifier,
+                           simdMatrixScratchName,
+                           getSimdMatrixScratchElementCount(graph));
+}
+
+bool hasGroupMemoryDeclarations(const ShaderGraph& graph)
+{
+    return graph.sharedArrays().size() > 0 || graph.usesGroupReduction()
+           || graph.simdMatrixCount() > 0;
+}
+
+std::string formatSimdMatrixPreamble(Backend backend)
+{
+    auto lane = getGroupLaneName(backend);
+
+    auto source =
+        Strings::format("    uint sgmLane = {} % {}u;\n", lane, simdGroupWidth);
+    source +=
+        Strings::format("    uint sgmRow = sgmLane / {}u;\n", simdMatrixLanesPerRow);
+    source += Strings::format("    uint sgmColumn = (sgmLane % {}u) * {}u;\n",
+                              simdMatrixLanesPerRow,
+                              simdMatrixLaneElements);
+    source += Strings::format("    uint sgmBase = ({} / {}u) * {}u;\n",
+                              lane,
+                              simdGroupWidth,
+                              simdMatrixScratchPerGroup);
+    return source;
+}
+
+std::string formatFoldedPair(GroupReduction operation,
+                             const std::string& left,
+                             const std::string& right)
+{
+    switch (operation)
+    {
+        case GroupReduction::Sum:
+            return Strings::format("{} + {}", left, right);
+        case GroupReduction::Max:
+            return Strings::format("max({}, {})", left, right);
+        case GroupReduction::Min:
+            return Strings::format("min({}, {})", left, right);
+    }
+
+    return Strings::format("{} + {}", left, right);
+}
+
+std::string formatBarrierStatement(Backend backend, const std::string& indent)
+{
+    if (backend == Backend::Vulkan)
+        return Strings::format(
+            "{}memoryBarrierShared();\n{}barrier();\n", indent, indent);
+
+    auto barrier = backend == Backend::Metal
+                       ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+                       : "GroupMemoryBarrierWithGroupSync();\n";
+    return indent + barrier;
+}
+
+std::string getSimdMatrixName(int slot)
+{
+    return Strings::format("sgm{}", slot);
+}
+
+std::string printStagedSimdMatrixElement(StagedOperand operand,
+                                         std::string_view element)
+{
+    if (operand == StagedOperand::Right)
+        return Strings::format("{}[sgmBase + {}u + {}]",
+                               simdMatrixScratchName,
+                               simdMatrixSize * simdMatrixSize,
+                               element);
+
+    return Strings::format("{}[sgmBase + {}]", simdMatrixScratchName, element);
+}
+
+std::string printSimdMatrixLaneColumn(int which)
+{
+    if (which == 0)
+        return "sgmColumn";
+
+    return Strings::format("sgmColumn + {}u", which);
+}
+// FXC has no wave intrinsics and GLSL subgroups have no fixed width, so both
+// fold through a scratch tree.
 std::string StageEmitter::formatGroupReduction(const Statement& statement,
                                                const StatementScope& scope)
 {
@@ -64,16 +254,8 @@ std::string StageEmitter::formatMetalGroupReduction(const Statement& statement,
     return source + barrier;
 }
 
-// Within the fold, a lane counts from the start of its own block; the answer is
-// read from that block's first slot. Both collapse to the plain lane and slot
-// zero where the block is the whole group, which is what keeps the wide fold
-// spelled exactly as it always was.
-//
-// The bound on the partner is the scratch's own, and it is not implied by the
-// fold's width: a narrow fold indexes with the global lane while it counts with
-// the lane within its block, so a group that is not a whole number of SIMD
-// groups - which the assert in emitCompute refuses, and which a release build
-// does not - would otherwise read past the array.
+// The partner bound is the scratch's own: a group that is not a whole number
+// of SIMD groups, refused only by an assert, would otherwise read past it.
 std::string StageEmitter::formatTreeGroupReduction(const Statement& statement,
                                                    const StatementScope& scope)
 {
@@ -143,21 +325,8 @@ bool StageEmitter::isMetal() const
     return printer.backend == Backend::Metal;
 }
 
-// An 8x8 SIMD-group matrix fragment on Metal is a type MSL has, and each
-// operation on one is a single intrinsic. On the two backends with no
-// wave matrix operation it is spread over the lanes the way Metal spreads it -
-// see simdMatrixLaneElements - so a fill, a load and a store are two scalars of
-// each lane's own, and only the product needs what other lanes hold, which it
-// fetches through the threadgroup scratch between two barriers: the exchange a
-// wave intrinsic does in registers.
-//
-// Correctness at whatever it costs, as the reduction's tree is where there is
-// no wave intrinsic - and unlike that tree, this is not the fastest form the
-// hardware would allow, which is why the README says so.
-//
-// The fallback holds every fragment as a lane's pair of floats, whatever the
-// memory it came out of: what a packed load changes there is the arithmetic
-// that produces the pair, not the fragment.
+// Without wave matrix operations a fragment is spread over the lanes, and the
+// product exchanges through threadgroup scratch between two barriers.
 std::string StageEmitter::formatSimdMatrixDeclaration(int slot) const
 {
     if (isMetal())
@@ -195,17 +364,8 @@ std::string StageEmitter::formatSimdMatrixFill(const Statement& statement,
                            value);
 }
 
-// One of the two elements of a patch a lane holds, as the memory names it: the
-// lane's row at the first of its pair of columns or the one after.
-//
-// Where the patch is packed the index counts sixteen-bit elements, so the word
-// holding one is at half that index and which half of it is the parity -
-// exactly the arithmetic InputBuffer::readHalf and readBFloat16 do, through the
-// same helper. Each element is fetched on its own rather than a lane's pair
-// taken out of one word. The pair is two adjacent columns, but the patch's
-// offset and row stride are the caller's and neither has to be even, so the
-// pair is not reliably inside one word and a walk that assumed it was would
-// read the wrong element on every odd row.
+// Each element is fetched alone: the caller's offset and stride need not be
+// even, so a lane's pair may straddle two words.
 std::string StageEmitter::formatSimdMatrixLaneElement(const Statement& statement,
                                                       const SimdMatrixPatch& patch,
                                                       int which) const
@@ -229,10 +389,6 @@ std::string StageEmitter::formatSimdMatrixLaneElement(const Statement& statement
                            index);
 }
 
-// The load and the store are the same patch walked in the two directions, so
-// they are one function: what changes is which side of the assignment each is
-// on. Every lane moves the pair it holds, so the store needs no guard to make
-// it once - no lane's share is another's.
 std::string StageEmitter::formatSimdMatrixTransfer(const Statement& statement,
                                                    const StatementScope& scope)
 {
@@ -263,10 +419,6 @@ std::string StageEmitter::formatSimdMatrixTransfer(const Statement& statement,
         "{}{} = {}.x;\n{}{} = {}.y;\n", indent, first, name, indent, second, name);
 }
 
-// The buffer is declared float whatever it holds, so a packed load reinterprets
-// its pointer the way the wide packed reads reinterpret one - and then counts
-// in the packed element, which is what makes the offset the caller's own row
-// arithmetic.
 std::string StageEmitter::formatMetalSimdMatrixTransfer(const Statement& statement,
                                                         const SimdMatrixPatch& patch,
                                                         const StatementScope& scope)
@@ -296,12 +448,7 @@ std::string StageEmitter::formatMetalSimdMatrixTransfer(const Statement& stateme
         "{}simdgroup_store({}, {}, {});\n", indent, name, pointer, patch.stride);
 }
 
-// Both operands staged whole, each lane putting down the pair it holds; then,
-// once every pair is there, each lane takes its row of the left against its two
-// columns of the right. The accumulator is allowed to be an operand, and the
-// staging is what makes that safe: what is multiplied is the copy in the
-// scratch, complete before anything is added. The trailing barrier is what lets
-// the next product stage over this one.
+// Staging both operands first is what lets the accumulator be an operand.
 std::string StageEmitter::formatSimdMatrixMultiplyAdd(const Statement& statement,
                                                       const StatementScope& scope)
 {

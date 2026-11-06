@@ -7,10 +7,6 @@
 #include <string>
 #include <string_view>
 
-// The spellings the three dialects disagree about, one function per question.
-// MSL and HLSL spell most of an expression identically; GLSL differs in a
-// countable list, each with one arm here.
-
 namespace eacp::GPU::ShaderEmission
 {
 enum class Backend
@@ -26,8 +22,6 @@ constexpr std::string_view getDialectTypeName(Backend backend, ValueType type)
 }
 std::string formatShaderFloatLiteral(float value);
 
-// GLSL rejects a non-flat integer stage input outright, HLSL wants
-// nointerpolation and MSL [[flat]]; a float varying takes none of the three.
 constexpr bool isFlatVarying(ValueType type)
 {
     return isSignedInteger(type) || isUnsignedInteger(type);
@@ -44,9 +38,8 @@ inline std::string getAttributeSemantic(Backend backend, int index)
     return Strings::format(" : TEXCOORD{}", index);
 }
 
-inline // Metal writes the flat qualifier after the member name, so on Metal it is part
-    // of the semantic.
-    std::string getVaryingSemantic(Backend backend, int index, ValueType type)
+// Metal writes the flat qualifier after the member name, as part of the semantic.
+inline std::string getVaryingSemantic(Backend backend, int index, ValueType type)
 {
     if (backend == Backend::Metal)
         return isFlatVarying(type) ? " [[flat]]" : std::string {};
@@ -76,16 +69,13 @@ constexpr std::string_view getFlatQualifier(Backend backend, ValueType type)
     return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
 }
 
-inline // Attribute i and varying i take location i, which is what the Vulkan
-    // vertex-input state and the vertex/fragment interface match on.
-    std::string getLocationLayout(int index)
+inline std::string getLocationLayout(int index)
 {
     return Strings::format("layout(location = {}) ", index);
 }
 
-inline // GLSL reads a stage's I/O out of globals, spelled attrN and varyN because aN
-    // and vN are taken there by a constant array and a mutable local.
-    std::string getAttributeName(Backend backend, int slot)
+// GLSL names stage I/O attrN and varyN: aN and vN are taken by other locals.
+inline std::string getAttributeName(Backend backend, int slot)
 {
     if (backend == Backend::Vulkan)
         return Strings::format("attr{}", slot);
@@ -106,8 +96,6 @@ bool isGenTypeCall(const std::string& name);
 std::string_view getGlslComparisonFunction(const std::string& op);
 
 std::string getHlslSamplerName(const TextureSampling& sampling);
-// The component a 2D or 3D kernel's thread index node asked for, and the
-// uniform its matching grid extent is declared under.
 constexpr std::string_view getComponentSuffix(int component)
 {
     if (component == 0)
@@ -138,24 +126,6 @@ constexpr int getGridExtentCount(DispatchRank rank)
     return rank == DispatchRank::TwoD ? 2 : 3;
 }
 
-// The type the entry point declares its indices as, and the swizzle HLSL and
-// GLSL take them out of their three-component builtins with.
-constexpr std::string_view getIndexTypeName(DispatchRank rank)
-{
-    if (rank == DispatchRank::OneD)
-        return "uint";
-
-    return rank == DispatchRank::TwoD ? "uint2" : "uint3";
-}
-
-constexpr std::string_view getGlslIndexTypeName(DispatchRank rank)
-{
-    if (rank == DispatchRank::OneD)
-        return "uint";
-
-    return rank == DispatchRank::TwoD ? "uvec2" : "uvec3";
-}
-
 constexpr std::string_view getIndexSwizzle(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
@@ -165,5 +135,4 @@ constexpr std::string_view getIndexSwizzle(DispatchRank rank)
 }
 
 std::string wrapInParentheses(const std::string& expression);
-
 } // namespace eacp::GPU::ShaderEmission

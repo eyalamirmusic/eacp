@@ -4,10 +4,6 @@
 
 namespace eacp::GPU::ShaderEmission
 {
-// Prints one stage's expressions. Nodes the stage plan named as locals print
-// as tN references; everything else prints inline. print() spells out a node's
-// own expression (used for both inline nodes and local definitions), printReference() is
-// what children and outputs go through, so shared subtrees collapse to a name.
 struct ExprPrinter
 {
     std::string printReference(int node) const;

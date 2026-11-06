@@ -5,26 +5,8 @@
 
 namespace eacp::GPU::ShaderEmission
 {
-// Emits one stage: its statements, then the expressions its outputs are.
-//
-// Any operation evaluated more than once becomes a tN local, so a shared
-// subtree is computed - and printed - once instead of being inlined at every
-// use. Control flow is what bounds that sharing, and the two rules it imposes
-// are the whole of what makes this different from printing an expression tree:
-//
-// A name is given up the moment a statement writes a variable the value behind
-// it read - which is what stops `d` computed before an `if` from standing for
-// the same thing after a body that moved what it was computed from. A name
-// neither body moves stays usable inside them both.
-//
-// A loop condition takes no name at all. It is printed into the while header,
-// so binding it to a local ahead of the loop would test a value that never
-// changes again; the names the body can invalidate are given up there too,
-// since the header is re-evaluated after the body has run.
-//
-// A record write is what the rules answer to rather than bound by: its N
-// element stores are one write, so its value takes a name whatever its use
-// count and keeps it until the last of them has run.
+// Any operation evaluated more than once becomes a tN local. A name is given
+// up once a statement writes something it read, and a loop condition takes none.
 class StageEmitter
 {
 public:
@@ -34,17 +16,15 @@ public:
 
     const ShaderGraph& getGraph() const { return printer.graph; }
 
-    std::string defineLocalsFor(const Vector<int>& roots, const std::string& indent);
-    std::string declareArrays(const Vector<int>& roots, const std::string& indent);
-    std::string emitBlock(int block, const std::string& indent);
+    std::string defineLocalsFor(const Vector<int>& roots, std::string_view indent);
+    std::string declareArrays(const Vector<int>& roots, std::string_view indent);
+    std::string emitBlock(int block, std::string_view indentToUse);
 
     Vector<int> locals; // node id -> local index, -1 = inline
     ExprPrinter printer;
     int localCount = 0;
 
 private:
-    // Where a statement is being emitted: its indentation, the use counts of
-    // the block it is in, and the names that block has handed out so far.
     struct StatementScope
     {
         const std::string& indent;
@@ -61,8 +41,6 @@ private:
         StatementEmitFunction emit;
     };
 
-    // The patch a SIMD-group matrix load or store walks, as the emitted source
-    // names it.
     struct SimdMatrixPatch
     {
         std::string memory;
@@ -126,7 +104,7 @@ private:
                                         const StatementScope& scope);
 
     Vector<char> findUsedArrays(const Vector<int>& roots) const;
-    std::string printArrayDeclaration(int slot, const std::string& indent) const;
+    std::string printArrayDeclaration(int slot, std::string_view indent) const;
     bool isRecordStillUnnamed(const Statement& statement) const;
     Vector<int> countUsesOver(const Vector<int>& roots) const;
     Vector<int> countBlockUses(int block) const;
@@ -150,8 +128,6 @@ private:
     void retireLocals(Vector<int>& open);
     void dropStaleLocals(const Statement& statement, Vector<int>& open);
 
-    // Held by the emitter rather than by the walk, so that naming a stage costs
-    // one buffer instead of one per name per statement.
     VisitSet visited;
     Vector<char> written;
     Vector<char> buffersWritten;

@@ -3,15 +3,10 @@
 #include "ShaderBindings.h"
 #include "ShaderDialect.h"
 
-// How each dialect declares what a shader binds: storage buffers, textures,
-// samplers and the uniform block.
-
 namespace eacp::GPU::ShaderEmission
 {
 std::string_view getMetalBufferType(BufferAccess access, ValueType elementType);
 std::string_view getHlslBufferType(BufferAccess access, ValueType elementType);
-std::string formatBufferParameters(const ShaderGraph& graph,
-                                   const Vector<int>& roots);
 
 std::string formatUniformBlock(Backend backend,
                                const Vector<ValueType>& types,

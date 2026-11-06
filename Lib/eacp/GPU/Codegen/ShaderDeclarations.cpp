@@ -1,32 +1,27 @@
 #include "ShaderDeclarations.h"
 
-#include "../Frame/RenderPass.h"
-#include "ShaderGraphAnalysis.h"
 #include "UniformLayout.h"
 
 #include <eacp/Core/Utils/Format.h>
 
 #include <array>
+#include <cassert>
 #include <span>
 
 namespace eacp::GPU::ShaderEmission
 {
 namespace
 {
-// How a buffer slot spells itself: the access decides the qualifier, the
-// element type what is qualified. An atomic slot answers to neither - its
-// elements are the type each language requires an interlocked operation to act
-// through.
 struct BufferTypeSpelling
 {
     BufferAccess access;
-    const char* metalFloat;
-    const char* metalUInt;
-    const char* hlslFloat;
-    const char* hlslUInt;
+    std::string_view metalFloat;
+    std::string_view metalUInt;
+    std::string_view hlslFloat;
+    std::string_view hlslUInt;
 };
 
-constexpr BufferTypeSpelling bufferTypeSpellings[] = {
+constexpr auto bufferTypeSpellings = Array<BufferTypeSpelling, 3> {
     {BufferAccess::Read,
      "device const float*",
      "device const uint*",
@@ -50,30 +45,20 @@ const BufferTypeSpelling& findBufferTypeSpelling(BufferAccess access)
         if (spelling.access == access)
             return spelling;
 
+    assert(false && "eacp: no spelling for this buffer access");
     return bufferTypeSpellings[0];
 }
 
-// What a sampled texture slot is declared as, which is the whole of what a cube
-// changes: every declaration goes through these, so no two can disagree.
-//
-// HLSL's depth forms are `Texture2D<float>` rather than the bare `Texture2D` a
-// colour slot gets: the SRV over the depth resource is a single-channel
-// R32_FLOAT view (see depthShaderResourceFormat), and the typed declaration is
-// what makes Sample return the one float MSL's depth2d does.
-//
-// GLSL is the exception: its sampler2D over a depth image returns four
-// channels, so ExprKind::Sample takes the .r there.
+// HLSL's depth forms are typed so Sample returns one float, as MSL's depth2d.
 struct TextureTypeSpelling
 {
     TextureKind kind;
-    const char* metal;
-    const char* hlsl;
+    std::string_view metal;
+    std::string_view hlsl;
 };
 
-constexpr TextureTypeSpelling plainTextureSpelling = {
-    TextureKind::Texture2D, "texture2d<float>", "Texture2D"};
-
-constexpr TextureTypeSpelling textureTypeSpellings[] = {
+constexpr auto textureTypeSpellings = Array<TextureTypeSpelling, 5> {
+    {TextureKind::Texture2D, "texture2d<float>", "Texture2D"},
     {TextureKind::Cube, "texturecube<float>", "TextureCube"},
     {TextureKind::Depth2D, "depth2d<float>", "Texture2D<float>"},
     {TextureKind::Texture2DArray, "texture2d_array<float>", "Texture2DArray"},
@@ -86,19 +71,16 @@ const TextureTypeSpelling& findTextureTypeSpelling(TextureKind kind)
         if (spelling.kind == kind)
             return spelling;
 
-    return plainTextureSpelling;
+    assert(false && "eacp: no spelling for this texture kind");
+    return textureTypeSpellings[0];
 }
 
-// A GLSL storage block is read-write by default; a read one says so.
-const char* getGlslBufferQualifier(BufferAccess access)
+std::string_view getGlslBufferQualifier(BufferAccess access)
 {
     return access == BufferAccess::Read ? "readonly " : "";
 }
 
-// The element type on the same terms metalBufferType and hlslBufferType take
-// it: an atomic slot is unsigned integers whatever it was declared with, since
-// atomicAdd acts through nothing else.
-const char* getGlslBufferElement(BufferAccess access, ValueType elementType)
+std::string_view getGlslBufferElement(BufferAccess access, ValueType elementType)
 {
     if (access == BufferAccess::Atomic || elementType == ValueType::UInt)
         return "uint";
@@ -106,10 +88,10 @@ const char* getGlslBufferElement(BufferAccess access, ValueType elementType)
     return "float";
 }
 
-// A combined image sampler: the sampler travels in the descriptor write, so the
-// sampling configuration never reaches the source - except a comparison, which
-// GLSL spells in the type and which the bound VkSampler must then enable.
-const char* getGlslTextureType(TextureKind kind, const TextureSampling& sampling)
+// The sampler travels in the descriptor write; only a comparison is spelled in
+// the type, and the bound VkSampler must then enable it.
+std::string_view getGlslTextureType(TextureKind kind,
+                                    const TextureSampling& sampling)
 {
     const auto compare = sampling.compare != TextureCompare::None;
 
@@ -130,8 +112,6 @@ const char* getGlslTextureType(TextureKind kind, const TextureSampling& sampling
 
 constexpr auto uniformPadBytes = 4;
 
-// Where the CPU block and the dialect's packing rules disagree, the pad scalars
-// that move the next member to where the CPU wrote it.
 struct UniformPadding
 {
     std::string formatPaddingTo(int offset, ValueType type)
@@ -167,19 +147,16 @@ std::string formatUniformBlockOpening(Backend backend, int binding)
     return "struct Uniforms\n{\n";
 }
 
-// The instance name is what keeps uniforms.uN the one spelling in all three.
-std::string formatUniformBlockClosing(Backend backend)
+std::string_view formatUniformBlockClosing(Backend backend)
 {
     if (backend == Backend::Vulkan)
         return "} uniforms;\n\n";
 
-    auto source = std::string {"};\n\n"};
-
     if (backend == Backend::DirectX)
-        source += "cbuffer UniformsCB : register(b0)\n{\n"
-                  "    Uniforms uniforms;\n};\n\n";
+        return "};\n\ncbuffer UniformsCB : register(b0)\n{\n"
+               "    Uniforms uniforms;\n};\n\n";
 
-    return source;
+    return "};\n\n";
 }
 
 std::array<bool, samplingConfigurations>
@@ -194,7 +171,7 @@ std::array<bool, samplingConfigurations>
     return used;
 }
 
-const char* getHlslSamplerStateType(int configuration)
+std::string_view getHlslSamplerStateType(int configuration)
 {
     const auto compares =
         samplingConfiguration(configuration).compare != TextureCompare::None;
@@ -215,34 +192,8 @@ std::string_view getHlslBufferType(BufferAccess access, ValueType elementType)
     return elementType == ValueType::UInt ? spelling.hlslUInt : spelling.hlslFloat;
 }
 
-// The MSL parameters for the storage buffers a render stage reads, always read
-// only: a vertex or fragment function has no writable buffer here, which is the
-// whole of what separates this from the kernel signature.
-std::string formatBufferParameters(const ShaderGraph& graph,
-                                   const Vector<int>& roots)
-{
-    auto used = findBufferSlotsUsedBy(graph, roots);
-    auto source = std::string {};
-
-    for (auto i = 0; i < used.size(); ++i)
-        if (used[i] != 0)
-            source += Strings::format(
-                ",\n    {} buffer{} [[buffer({})]]",
-                getMetalBufferType(BufferAccess::Read, graph.storageElementType(i)),
-                i,
-                RenderPass::bufferBase + i);
-
-    return source;
-}
-
-// The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
-// The CPU block is packed with MSL struct alignment (UniformLayout.h); HLSL
-// cbuffer packing only forbids straddling a 16-byte register, so a vector after
-// a scalar would land lower than the CPU wrote it - explicit pad scalars are
-// emitted wherever the two rule sets disagree.
-//
-// std140 disagrees the other way: a vec3 is twelve bytes there, so a scalar
-// after one needs a pad too.
+// The CPU block uses MSL alignment (UniformLayout.h). HLSL cbuffer and std140
+// packing disagree with it in places, so pad scalars are emitted there.
 std::string formatUniformBlock(Backend backend,
                                const Vector<ValueType>& types,
                                const Vector<std::string>& names,
@@ -263,11 +214,11 @@ std::string formatUniformBlock(Backend backend,
             "    {} {};\n", getDialectTypeName(backend, type), names[i]);
     }
 
-    return source + formatUniformBlockClosing(backend);
+    source += formatUniformBlockClosing(backend);
+    return source;
 }
 
-// The instance name is left off so the run of elements is a global named
-// buffer<slot>, which prints byte-identically to the other two dialects.
+// No instance name, so the elements print as buffer<slot> as in the others.
 std::string formatGlslBufferBlock(BufferAccess access,
                                   ValueType elementType,
                                   int slot,
@@ -293,8 +244,6 @@ std::string_view getHlslTextureType(TextureKind kind)
     return findTextureTypeSpelling(kind).hlsl;
 }
 
-// imageStore is all a kernel does with one, so the image needs no format layout
-// qualifier - which keeps it agnostic of the format it was created in.
 std::string formatGlslWritableTexture(int slot, int binding)
 {
     return Strings::format(
@@ -312,20 +261,8 @@ std::string formatGlslSampledTexture(const ShaderGraph& graph, int slot, int bin
         slot);
 }
 
-// The SamplerState globals an HLSL stage needs: one per sampling configuration
-// any of its readable textures asked for, at the register the root signature
-// put that configuration's static sampler on.
-//
-// Declaring them per configuration rather than per texture is what stops the
-// sampler registers from capping maxTextureSlots. HLSL has 16 of them
-// (s0..s15), so one sampler per (slot, configuration) pair - which is what this
-// emitted until a shader needed a fifth texture - ran out at four slots. Metal
-// never had the question, because MSL passes a sampler as a function argument
-// rather than binding it to a register, so the Metal path still declares one
-// per texture.
-//
-// A write-access texture is skipped for the same reason it is declared as an
-// RWTexture2D: there is nothing to sample it with.
+// One sampler per sampling configuration rather than per texture: HLSL has
+// only sixteen sampler registers.
 std::string formatHlslSamplerDeclarations(const ShaderGraph& graph)
 {
     auto used = findSampledConfigurations(graph);
@@ -342,8 +279,6 @@ std::string formatHlslSamplerDeclarations(const ShaderGraph& graph)
     return source;
 }
 
-// The early return the rounded-up dispatch needs, over as many extents as the
-// rank has.
 std::string formatBoundsGuard(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)

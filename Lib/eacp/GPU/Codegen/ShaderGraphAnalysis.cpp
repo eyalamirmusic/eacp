@@ -1,59 +1,40 @@
 #include "ShaderGraphAnalysis.h"
 
-#include <span>
-
 namespace eacp::GPU::ShaderEmission
 {
 namespace
 {
-// Operation nodes are worth naming when evaluated more than once; leaf reads
-// and swizzles stay inline - naming them saves nothing and hurts readability.
-constexpr ExprKind kindsWorthALocal[] = {ExprKind::Construct,
-                                         ExprKind::Call,
-                                         ExprKind::Unary,
-                                         ExprKind::Binary,
-                                         ExprKind::Compare,
-                                         ExprKind::Select,
-                                         ExprKind::Mul,
-                                         ExprKind::Sample,
-                                         ExprKind::Fetch,
-                                         ExprKind::BufferRead,
-                                         ExprKind::BufferVectorRead,
-                                         ExprKind::AtomicLoad,
-                                         ExprKind::ArrayRead,
-                                         ExprKind::SharedRead};
+// Leaf reads and swizzles stay inline: naming them saves nothing.
+constexpr auto kindsWorthALocal = Array<ExprKind, 14> {ExprKind::Construct,
+                                                       ExprKind::Call,
+                                                       ExprKind::Unary,
+                                                       ExprKind::Binary,
+                                                       ExprKind::Compare,
+                                                       ExprKind::Select,
+                                                       ExprKind::Mul,
+                                                       ExprKind::Sample,
+                                                       ExprKind::Fetch,
+                                                       ExprKind::BufferRead,
+                                                       ExprKind::BufferVectorRead,
+                                                       ExprKind::AtomicLoad,
+                                                       ExprKind::ArrayRead,
+                                                       ExprKind::SharedRead};
 
-// Whichever way the buffer was declared: an output a kernel reads back and an
-// atomic counter it loads are both elements a store can have changed.
-constexpr ExprKind bufferElementReadKinds[] = {
+constexpr auto bufferElementReadKinds = Array<ExprKind, 3> {
     ExprKind::BufferRead, ExprKind::BufferVectorRead, ExprKind::AtomicLoad};
 
-constexpr ExprKind bufferSlotReadKinds[] = {ExprKind::BufferRead,
-                                            ExprKind::BufferVectorRead};
+constexpr auto variableWritingStatements =
+    Array<StatementKind, 4> {StatementKind::Declare,
+                             StatementKind::Assign,
+                             StatementKind::AtomicAdd,
+                             StatementKind::GroupReduce};
 
-constexpr StatementKind variableWritingStatements[] = {StatementKind::Declare,
-                                                       StatementKind::Assign,
-                                                       StatementKind::AtomicAdd,
-                                                       StatementKind::GroupReduce};
-
-constexpr StatementKind sharedMovingStatements[] = {
+constexpr auto sharedMovingStatements = Array<StatementKind, 3> {
     StatementKind::SharedStore, StatementKind::Barrier, StatementKind::GroupReduce};
 
-constexpr StatementKind bufferSlotStoringStatements[] = {StatementKind::Store,
-                                                         StatementKind::VectorStore};
+constexpr auto bufferSlotStoringStatements =
+    Array<StatementKind, 2> {StatementKind::Store, StatementKind::VectorStore};
 
-template <typename Kind>
-bool isKindAmong(Kind kind, std::span<const Kind> kinds)
-{
-    for (auto candidate: kinds)
-        if (candidate == kind)
-            return true;
-
-    return false;
-}
-
-// The blocks an if or a loop runs, in the order they appear: what such a
-// statement writes is whatever its bodies write.
 Vector<int> getNestedBodies(const Statement& statement)
 {
     auto bodies = Vector<int> {};
@@ -95,19 +76,14 @@ void collectBlockBufferWrites(const ShaderGraph& graph,
         collectBufferWrites(graph, graph.statement(index), written);
 }
 
-// A fragment stored back into a threadgroup tile moves that tile, so any name
-// read out of it beforehand is given up; one stored into a buffer moves no
-// shared memory at all.
 bool doesStoreSimdMatrixTo(const Statement& statement, SimdMatrixMemory memory)
 {
     return statement.kind == StatementKind::SimdMatrixStore
            && statement.memory == memory;
 }
 
-// The one statement whose buffer is not in `slot` is the atomic add: that field
-// names the variable the value from before the add lands in. Nor is a fragment
-// store's, `slot` there naming the fragment, and it writes a buffer only when
-// that is where its patch is.
+// An atomic add's `slot` names the variable that receives the old value, and a
+// fragment store's names the fragment.
 bool doesWriteBufferSlotField(const Statement& statement)
 {
     return statement.kind == StatementKind::AtomicAdd
@@ -129,122 +105,13 @@ void addStatementExpressions(const Statement& statement,
     roots.add(statement.stride);
 }
 
-// Whether the expression tree under node reads a uniform. A Varying read is the
-// fragment-stage boundary: its vertex-stage source tree is walked separately as
-// part of the vertex stage, so the walk stops there.
-//
-// The visited set is not an optimisation here, it is what makes the walk
-// finite in practice. What this walks is a graph rather than a tree - the
-// emitter's whole reason for existing is that a shared subtree is stored once -
-// and a walk that revisits a shared node once per path through it is
-// exponential in the sharing, not quadratic. It went unnoticed for as long as
-// every shader was small enough that the exponent did not matter.
-//
-// A node reached twice is a node whose answer is already in the result: either
-// the walk that reached it first found a uniform, in which case it returned
-// true and this one is unreachable, or it did not, in which case there is none
-// under there to find.
-bool doesReferenceUniform(const ShaderGraph& graph, int node, VisitSet& seen)
-{
-    if (node < 0 || !seen.visit(node))
-        return false;
-
-    const auto& expr = graph.expr(node);
-
-    if (expr.kind == ExprKind::Uniform)
-        return true;
-
-    if (expr.kind == ExprKind::Varying)
-        return false;
-
-    for (auto argument: expr.args)
-        if (doesReferenceUniform(graph, argument, seen))
-            return true;
-
-    return false;
-}
-
-// A Varying is the stage boundary; an array element is followed, the array
-// being declared inside the stage that subscripts it.
-void collectAttributeReads(const ShaderGraph& graph,
-                           int node,
-                           Vector<char>& reached,
-                           VisitSet& seen)
-{
-    if (node < 0 || !seen.visit(node))
-        return;
-
-    const auto& expr = graph.expr(node);
-
-    if (expr.kind == ExprKind::Varying)
-        return;
-
-    if (expr.kind == ExprKind::Input)
-        reached[node] = 1;
-
-    if (expr.kind == ExprKind::ArrayRead)
-        for (auto element: graph.arrays()[expr.index].elements)
-            collectAttributeReads(graph, element, reached, seen);
-
-    for (auto argument: expr.args)
-        collectAttributeReads(graph, argument, reached, seen);
-}
-
-// -1 when no declared varying carries `source`.
-int findVaryingCarrying(const ShaderGraph& graph, int source)
-{
-    for (auto i = 0; i < graph.varyings().size(); ++i)
-        if (graph.varyings()[i].sourceNode == source)
-            return i;
-
-    return -1;
-}
-
-Vector<char> collectFragmentAttributeReads(const ShaderGraph& graph)
-{
-    auto reached = Vector<char> {};
-    reached.resize(graph.nodeCount(), 0);
-
-    auto seen = VisitSet {graph.nodeCount()};
-
-    for (auto root: getFragmentStageRoots(graph))
-        collectAttributeReads(graph, root, reached, seen);
-
-    return reached;
-}
-
-// Which storage-buffer slots a run of expressions subscripts. A render stage
-// declares only the buffers it reads - unlike a kernel, where every slot is a
-// parameter of the one entry point - so the vertex and fragment functions each
-// need their own answer.
-void collectBufferSlots(const ShaderGraph& graph,
-                        int node,
-                        Vector<char>& used,
-                        VisitSet& seen)
-{
-    if (node < 0 || !seen.visit(node))
-        return;
-
-    const auto& expr = graph.expr(node);
-
-    if (isKindAmong<ExprKind>(expr.kind, bufferSlotReadKinds)
-        && expr.index < used.size())
-        used[expr.index] = 1;
-
-    for (auto argument: expr.args)
-        collectBufferSlots(graph, argument, used, seen);
-}
 } // namespace
 
-// The one thing named whatever its kind is a record write's value, which its
-// element stores all have to be handed rather than evaluate one at a time.
 bool isLocalWanted(ExprKind kind)
 {
-    return isKindAmong<ExprKind>(kind, kindsWorthALocal);
+    return kindsWorthALocal.contains(kind);
 }
 
-// Counts how many references each node receives across the stage's roots: one
-// per root plus one per parent edge, visiting each node's children only once.
 void countUses(const ShaderGraph& graph,
                int node,
                Vector<int>& uses,
@@ -262,10 +129,7 @@ void countUses(const ShaderGraph& graph,
 
     const auto& expr = graph.expr(node);
 
-    // A vector load's index is printed once per component by the backends that
-    // expand it into subscripts, so it earns a name there the way any
-    // subexpression evaluated more than once does - and Metal, which prints it
-    // once, reads the same name and is no worse for it.
+    // A vector load's index prints once per component in some dialects.
     auto perArgument =
         expr.kind == ExprKind::BufferVectorRead ? componentCount(expr.type) : 1;
 
@@ -293,8 +157,6 @@ void LocalOrdering::visit(int node)
         order.add(node);
 }
 
-// Which constant arrays a run of expressions subscripts, following the elements
-// of one that is used in case an element subscripts another.
 void collectArrays(const ShaderGraph& graph,
                    int node,
                    Vector<char>& used,
@@ -319,28 +181,20 @@ void collectArrays(const ShaderGraph& graph,
         collectArrays(graph, argument, used, seen);
 }
 
-// Which variables running a statement can leave holding something else -
-// following the bodies of an if or a loop, since what they write is written
-// just the same.
 void collectWrites(const ShaderGraph& graph,
                    const Statement& statement,
                    Vector<char>& written)
 {
-    if (isKindAmong<StatementKind>(statement.kind, variableWritingStatements))
+    if (variableWritingStatements.contains(statement.kind))
         written[statement.slot] = 1;
 
     for (auto body: getNestedBodies(statement))
         collectBlockWrites(graph, body, written);
 }
 
-// Whether running a statement can change what threadgroup memory holds: a
-// store to it, or the barrier that publishes what other threads stored -
-// following nested bodies the way collectWrites does. What this feeds is the
-// same rule variables get: a name computed from shared memory is given up the
-// moment shared memory may have moved on.
 bool doesTouchSharedMemory(const ShaderGraph& graph, const Statement& statement)
 {
-    if (isKindAmong<StatementKind>(statement.kind, sharedMovingStatements))
+    if (sharedMovingStatements.contains(statement.kind))
         return true;
 
     if (doesStoreSimdMatrixTo(statement, SimdMatrixMemory::Shared))
@@ -353,13 +207,11 @@ bool doesTouchSharedMemory(const ShaderGraph& graph, const Statement& statement)
     return false;
 }
 
-// A name computed from a buffer element is given up once that buffer may have
-// changed, so a kernel that reads back its own output sees what it stored.
 void collectBufferWrites(const ShaderGraph& graph,
                          const Statement& statement,
                          Vector<char>& written)
 {
-    if (isKindAmong<StatementKind>(statement.kind, bufferSlotStoringStatements))
+    if (bufferSlotStoringStatements.contains(statement.kind))
         written[statement.slot] = 1;
 
     if (doesWriteBufferSlotField(statement))
@@ -381,11 +233,10 @@ bool StalenessQuery::doesReadMovedSharedMemory(const Expr& expr) const
 
 bool StalenessQuery::doesReadWrittenBuffer(const Expr& expr) const
 {
-    return isKindAmong<ExprKind>(expr.kind, bufferElementReadKinds)
+    return bufferElementReadKinds.contains(expr.kind)
            && buffersWritten[expr.index] != 0;
 }
 
-// The node itself, not what is under it.
 bool StalenessQuery::doesReadWhatMoved(const Expr& expr) const
 {
     return doesReadWrittenVariable(expr) || doesReadMovedSharedMemory(expr)
@@ -409,10 +260,6 @@ bool StalenessQuery::doesReadStaleValue(int node)
     return false;
 }
 
-// Every expression the statements of a block reach, its nested bodies included.
-// Gathered so a stage sees what its statements read and not only what its
-// output expression does: without it a uniform read only from inside a loop
-// would go undeclared.
 void collectStatementExpressions(const ShaderGraph& graph,
                                  int block,
                                  LoopConditions loopConditions,
@@ -434,101 +281,4 @@ void collectStatementExpressions(const ShaderGraph& graph,
     }
 }
 
-// One visited set across every root, not one per root: a stage's roots share
-// most of their graph, and a node already known to hold no uniform holds none
-// whichever root reached it.
-bool doesAnyReferenceUniform(const ShaderGraph& graph, const Vector<int>& roots)
-{
-    auto seen = VisitSet {graph.nodeCount()};
-
-    for (auto root: roots)
-        if (doesReferenceUniform(graph, root, seen))
-            return true;
-
-    return false;
-}
-
-// Every expression the vertex stage evaluates: the clip position and each
-// varying it hands the fragment stage.
-Vector<int> getVertexStageRoots(const ShaderGraph& graph)
-{
-    auto roots = Vector<int> {};
-    roots.add(graph.position());
-
-    for (const auto& varying: graph.varyings())
-        roots.add(varying.sourceNode);
-
-    return roots;
-}
-
-// Wider than the roots the colour's locals are planned from: a value a
-// statement reads is declared by the stage but named where the statement is
-// emitted.
-Vector<int> getFragmentStageRoots(const ShaderGraph& graph)
-{
-    auto roots = Vector<int> {graph.fragment()};
-
-    if (graph.discard() >= 0)
-        roots.add(graph.discard());
-
-    collectStatementExpressions(
-        graph, ShaderGraph::rootBlock, LoopConditions::Included, roots);
-    return roots;
-}
-
-PromotedAttributes findPromotedAttributes(const ShaderGraph& graph)
-{
-    auto promoted = PromotedAttributes {};
-    promoted.varyingOf.resize(graph.inputs().size(), -1);
-
-    auto reached = collectFragmentAttributeReads(graph);
-
-    // Ascending node order, so the implicit varyings follow declaration order.
-    for (auto node = 0; node < graph.nodeCount(); ++node)
-    {
-        if (reached[node] == 0)
-            continue;
-
-        auto slot = graph.expr(node).index;
-        auto carrier = findVaryingCarrying(graph, node);
-
-        if (carrier < 0)
-        {
-            carrier = graph.varyings().size() + promoted.carried.size();
-            promoted.carried.add(slot);
-        }
-
-        promoted.varyingOf[slot] = carrier;
-    }
-
-    return promoted;
-}
-
-Vector<StageVarying> getStageVaryings(const ShaderGraph& graph,
-                                      const PromotedAttributes& promoted)
-{
-    auto slots = Vector<StageVarying> {};
-
-    for (const auto& varying: graph.varyings())
-        slots.add(StageVarying {varying.type, varying.sourceNode, -1});
-
-    for (auto attribute: promoted.carried)
-        slots.add(StageVarying {graph.inputs()[attribute], -1, attribute});
-
-    return slots;
-}
-
-Vector<char> findBufferSlotsUsedBy(const ShaderGraph& graph,
-                                   const Vector<int>& roots)
-{
-    auto used = Vector<char> {};
-    used.resize(graph.storageBuffers().size(), 0);
-
-    auto seen = VisitSet {graph.nodeCount()};
-
-    for (auto root: roots)
-        collectBufferSlots(graph, root, used, seen);
-
-    return used;
-}
 } // namespace eacp::GPU::ShaderEmission

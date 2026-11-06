@@ -2,21 +2,10 @@
 
 #include "ShaderGraph.h"
 
-// The walks over a graph the emitter plans a stage from: which nodes are worth
-// a name, which statements make a name stale, and which expressions, uniforms,
-// attributes and buffers each stage reaches.
-
 namespace eacp::GPU::ShaderEmission
 {
-// A visited set a walk can have a fresh one of without paying for one. Marking
-// is a stamp rather than a flag, so starting over is a counter increment
-// instead of clearing a buffer the size of the graph.
-//
-// It exists because the staleness walk runs per open name per statement, and a
-// buffer allocated and zeroed each time costs the whole graph however small the
-// subtree walked turns out to be. On an ordinary shader that is invisible; on a
-// large one it is the difference between a shader that compiles and an app that
-// hangs.
+// Restarting is a counter increment: the staleness walk runs per open name per
+// statement, and clearing a graph-sized buffer each time hangs large shaders.
 struct VisitSet
 {
     explicit VisitSet(int nodeCount) { stamps.resize(nodeCount, 0); }
@@ -33,11 +22,6 @@ struct VisitSet
     }
 
     Vector<int> stamps;
-
-    // Ahead of the stamps a fresh buffer holds, so nothing counts as visited
-    // until something visits it. Starting level with them makes every node of a
-    // new set look already seen - which is not a walk that gives the wrong
-    // answer slowly, it is one that gives it immediately.
     int generation = 1;
 };
 
@@ -48,9 +32,7 @@ void countUses(const ShaderGraph& graph,
                Vector<int>& uses,
                Vector<char>& seen);
 
-// Which nodes a run of expressions evaluates more than once, in dependency
-// (post) order so every definition precedes its uses. A node that already holds
-// a name is left alone, and so is everything under it: it is already computed.
+// Post order, so every definition precedes its uses.
 struct LocalOrdering
 {
     void visit(int node);
@@ -78,10 +60,6 @@ void collectBufferWrites(const ShaderGraph& graph,
                          const Statement& statement,
                          Vector<char>& written);
 
-// Whether the value under a node no longer stands for itself after a
-// statement: it read a variable that statement wrote, an element of a storage
-// buffer the statement stored to, or threadgroup memory the statement may have
-// moved.
 struct StalenessQuery
 {
     bool doesReadStaleValue(int node);
@@ -97,9 +75,6 @@ struct StalenessQuery
     VisitSet& seen;
 };
 
-// Whether a loop's condition counts among the expressions a block reaches. The
-// statement emitter leaves it out, since a loop header takes no name of its
-// own; the declarations a stage needs count it in.
 enum class LoopConditions
 {
     Included,
@@ -111,30 +86,4 @@ void collectStatementExpressions(const ShaderGraph& graph,
                                  LoopConditions loopConditions,
                                  Vector<int>& roots);
 
-bool doesAnyReferenceUniform(const ShaderGraph& graph, const Vector<int>& roots);
-Vector<int> getVertexStageRoots(const ShaderGraph& graph);
-Vector<int> getFragmentStageRoots(const ShaderGraph& graph);
-
-// A fragment-stage read of a vertex attribute names an identifier no dialect
-// gives that stage, so each is promoted to a varying after the declared ones.
-struct PromotedAttributes
-{
-    Vector<int> varyingOf; // attribute slot -> varying index, -1 = not read
-    Vector<int> carried; // implicit varying order -> attribute slot
-};
-
-PromotedAttributes findPromotedAttributes(const ShaderGraph& graph);
-
-struct StageVarying
-{
-    ValueType type = ValueType::Float;
-    int sourceNode = -1;
-    int attribute = -1;
-};
-
-Vector<StageVarying> getStageVaryings(const ShaderGraph& graph,
-                                      const PromotedAttributes& promoted);
-
-Vector<char> findBufferSlotsUsedBy(const ShaderGraph& graph,
-                                   const Vector<int>& roots);
 } // namespace eacp::GPU::ShaderEmission

@@ -9,18 +9,220 @@
 
 #include <eacp/Core/Utils/Format.h>
 
-// The single source-of-truth walker. A render graph emits as a vertex and a
-// fragment function in one source; a compute graph as one kernel
-// (ShaderComputeEmitter.cpp). Both stages share the expression printer and the
-// statement emitter, so the three dialects stay in lockstep by construction.
-
 namespace eacp::GPU
 {
 namespace
 {
 using namespace ShaderEmission;
 
-constexpr auto stageIndent = "    ";
+constexpr auto stageIndent = std::string_view {"    "};
+
+// Attributes the fragment stage reads, carried as varyings after the declared ones.
+struct PromotedAttributes
+{
+    Vector<int> varyingOf; // attribute slot -> varying index, -1 = not read
+    Vector<int> carried; // implicit varying order -> attribute slot
+};
+
+struct StageVarying
+{
+    ValueType type = ValueType::Float;
+    int sourceNode = -1;
+    int attribute = -1;
+};
+
+Vector<int> getVertexStageRoots(const ShaderGraph& graph)
+{
+    auto roots = Vector<int> {};
+    roots.add(graph.position());
+
+    for (const auto& varying: graph.varyings())
+        roots.add(varying.sourceNode);
+
+    return roots;
+}
+
+Vector<int> getFragmentStageRoots(const ShaderGraph& graph)
+{
+    auto roots = Vector<int> {graph.fragment()};
+
+    if (graph.discard() >= 0)
+        roots.add(graph.discard());
+
+    collectStatementExpressions(
+        graph, ShaderGraph::rootBlock, LoopConditions::Included, roots);
+    return roots;
+}
+
+// A Varying read is the stage boundary. The visited set keeps the walk linear:
+// shared subtrees would otherwise make it exponential.
+bool doesReferenceUniform(const ShaderGraph& graph, int node, VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return false;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::Uniform)
+        return true;
+
+    if (expr.kind == ExprKind::Varying)
+        return false;
+
+    for (auto argument: expr.args)
+        if (doesReferenceUniform(graph, argument, seen))
+            return true;
+
+    return false;
+}
+
+void collectAttributeReads(const ShaderGraph& graph,
+                           int node,
+                           Vector<char>& reached,
+                           VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::Varying)
+        return;
+
+    if (expr.kind == ExprKind::Input)
+        reached[node] = 1;
+
+    if (expr.kind == ExprKind::ArrayRead)
+        for (auto element: graph.arrays()[expr.index].elements)
+            collectAttributeReads(graph, element, reached, seen);
+
+    for (auto argument: expr.args)
+        collectAttributeReads(graph, argument, reached, seen);
+}
+
+int findVaryingCarrying(const ShaderGraph& graph, int source)
+{
+    for (auto i = 0; i < graph.varyings().size(); ++i)
+        if (graph.varyings()[i].sourceNode == source)
+            return i;
+
+    return -1;
+}
+
+Vector<char> collectFragmentAttributeReads(const ShaderGraph& graph)
+{
+    auto reached = Vector<char> {};
+    reached.resize(graph.nodeCount(), 0);
+
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: getFragmentStageRoots(graph))
+        collectAttributeReads(graph, root, reached, seen);
+
+    return reached;
+}
+
+void collectBufferSlots(const ShaderGraph& graph,
+                        int node,
+                        Vector<char>& used,
+                        VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return;
+
+    const auto& expr = graph.expr(node);
+
+    auto readsSlot =
+        expr.kind == ExprKind::BufferRead || expr.kind == ExprKind::BufferVectorRead;
+
+    if (readsSlot && expr.index < used.size())
+        used[expr.index] = 1;
+
+    for (auto argument: expr.args)
+        collectBufferSlots(graph, argument, used, seen);
+}
+bool doesAnyReferenceUniform(const ShaderGraph& graph, const Vector<int>& roots)
+{
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: roots)
+        if (doesReferenceUniform(graph, root, seen))
+            return true;
+
+    return false;
+}
+
+PromotedAttributes findPromotedAttributes(const ShaderGraph& graph)
+{
+    auto promoted = PromotedAttributes {};
+    promoted.varyingOf.resize(graph.inputs().size(), -1);
+
+    auto reached = collectFragmentAttributeReads(graph);
+
+    // Ascending node order, so the implicit varyings follow declaration order.
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        if (reached[node] == 0)
+            continue;
+
+        auto slot = graph.expr(node).index;
+        auto carrier = findVaryingCarrying(graph, node);
+
+        if (carrier < 0)
+        {
+            carrier = graph.varyings().size() + promoted.carried.size();
+            promoted.carried.add(slot);
+        }
+
+        promoted.varyingOf[slot] = carrier;
+    }
+
+    return promoted;
+}
+
+Vector<StageVarying> getStageVaryings(const ShaderGraph& graph,
+                                      const PromotedAttributes& promoted)
+{
+    auto slots = Vector<StageVarying> {};
+
+    for (const auto& varying: graph.varyings())
+        slots.add(StageVarying {varying.type, varying.sourceNode, -1});
+
+    for (auto attribute: promoted.carried)
+        slots.add(StageVarying {graph.inputs()[attribute], -1, attribute});
+
+    return slots;
+}
+
+Vector<char> findBufferSlotsUsedBy(const ShaderGraph& graph,
+                                   const Vector<int>& roots)
+{
+    auto used = Vector<char> {};
+    used.resize(graph.storageBuffers().size(), 0);
+
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: roots)
+        collectBufferSlots(graph, root, used, seen);
+
+    return used;
+}
+std::string formatBufferParameters(const ShaderGraph& graph,
+                                   const Vector<int>& roots)
+{
+    auto used = findBufferSlotsUsedBy(graph, roots);
+    auto source = std::string {};
+
+    for (auto i = 0; i < used.size(); ++i)
+        if (used[i] != 0)
+            source += Strings::format(
+                ",\n    {} buffer{} [[buffer({})]]",
+                getMetalBufferType(BufferAccess::Read, graph.storageElementType(i)),
+                i,
+                RenderPass::bufferBase + i);
+
+    return source;
+}
 
 class RenderShaderEmitter
 {
@@ -103,7 +305,6 @@ private:
         return formatUniformBlock(backend, graph.uniforms(), names);
     }
 
-    // Read-only whatever the slot recorded: a render stage never writes.
     std::string printGlslBindings() const
     {
         auto source = std::string {};
@@ -126,15 +327,7 @@ private:
         return source;
     }
 
-    // The texture lands on t<slot>. Its sampler does not land beside it: the
-    // root signature declares one static sampler per sampling configuration and
-    // every texture that declared that sampling reads the same one, which is
-    // what keeps a slot count from costing sampler registers. See
-    // TextureSampling, and hlslSamplerDeclarations.
-    //
-    // Storage buffers are globals here like the textures, at registers above
-    // every texture slot - the render signature's mirror of the way a kernel's
-    // textures sit above its buffers. See RenderPass::bufferRegisterBase.
+    // Storage buffers sit at registers above every texture slot.
     std::string printHlslBindings() const
     {
         auto source = std::string {};
@@ -163,9 +356,7 @@ private:
         return source;
     }
 
-    // The varyings as one GLSL stage declares them: out of the vertex stage,
-    // into the fragment stage.
-    std::string printGlslVaryings(const char* direction) const
+    std::string printGlslVaryings(std::string_view direction) const
     {
         auto source = std::string {};
 
@@ -184,19 +375,13 @@ private:
         return source;
     }
 
-    std::string printMetalUniformParameter(const char* separator) const
+    std::string printMetalUniformParameter(std::string_view separator) const
     {
         return Strings::format("{}constant Uniforms& uniforms [[buffer({})]]",
                                separator,
                                RenderPass::uniformBase);
     }
 
-    // On Metal each stage declares the uniform block as a function parameter,
-    // and only when that stage's expressions read one; the HLSL cbuffer is a
-    // global both functions already see. Slot 0 maps to buffer(uniformBase) in
-    // both stages, matching what RenderPass::setVertexBytes / setFragmentBytes
-    // bind. Uniforms live at buffer(uniformBase..) so a vertex layout with
-    // multiple per-instance slots (0..N) never collides with them.
     std::string printMetalVertexOpening() const
     {
         auto source =
@@ -253,13 +438,7 @@ private:
         return printHlslVertexOpening();
     }
 
-    // The vertex stage takes no statements: a mutable local and the control
-    // flow driving it belong to the fragment expression, the way sampling does.
-    // See ShaderBuilder::var.
-    //
-    // Clip y is left as the graph computed it: Vulkan's flipped NDC is a
-    // negative viewport height in RenderPass, not a negation here, which flips
-    // winding.
+    // Clip y is left as computed: Vulkan's flip is a negative viewport height.
     std::string printVertexBody() const
     {
         auto stage = StageEmitter {graph, backend};
@@ -283,7 +462,7 @@ private:
     }
 
     std::string printVaryingAssignments(const StageEmitter& stage,
-                                        const char* prefix) const
+                                        std::string_view prefix) const
     {
         auto source = std::string {};
 
@@ -345,12 +524,7 @@ private:
         return "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
     }
 
-    // The alpha test is a fragment root like the colour is: its subtree is
-    // planned with the colour's, so a value both of them read (the texture
-    // sample, typically) is computed once and shared. What the statements read
-    // counts towards the stage's uniform declaration, but not towards the
-    // colour's locals: a statement's own expressions are named where that
-    // statement is emitted.
+    // The alpha test is planned with the colour so a value both read is shared.
     Vector<int> getColourRoots() const
     {
         auto roots = Vector<int> {graph.fragment()};
@@ -361,8 +535,6 @@ private:
         return roots;
     }
 
-    // The shader's statements run first - they are what the fragment expression
-    // then reads a mutable local out of - and the colour is planned after them.
     std::string printFragmentBody() const
     {
         auto stage = StageEmitter {graph, backend, promoted.varyingOf};

@@ -8,9 +8,8 @@
 
 namespace eacp::GPU::ShaderEmission
 {
-// A decimal point, an exponent, or the n of nan and inf's spelling all keep a
-// number from reading as an integer literal.
-constexpr auto floatLiteralMarkers = ".en";
+// The n is for nan and inf.
+constexpr auto floatLiteralMarkers = std::string_view {".en"};
 
 std::string formatShaderFloatLiteral(float value)
 {
@@ -25,53 +24,50 @@ std::string formatShaderFloatLiteral(float value)
 struct BuiltinRename
 {
     std::string_view canonical;
-    const char* renamed;
+    std::string_view renamed;
 };
 
-// One HLSL name per direction, whatever the width MSL named.
-constexpr BuiltinRename hlslRenames[] = {
+constexpr auto hlslRenames = Array<BuiltinRename, 4> {
     {"fract", "frac"}, {"mix", "lerp"}, {"dfdx", "ddx"}, {"dfdy", "ddy"}};
 
-constexpr BuiltinRename hlslPrefixRenames[] = {{"as_type<uint", "asuint"},
-                                               {"as_type<float", "asfloat"}};
+constexpr auto hlslPrefixRenames = Array<BuiltinRename, 2> {
+    {"as_type<uint", "asuint"}, {"as_type<float", "asfloat"}};
 
 // GLSL has no log10; the helper table carries the definition.
-constexpr BuiltinRename glslRenames[] = {{"atan2", "atan"},
-                                         {"rsqrt", "inversesqrt"},
-                                         {"dfdx", "dFdx"},
-                                         {"dfdy", "dFdy"},
-                                         {"log10", "eacpLog10"}};
+constexpr auto glslRenames = Array<BuiltinRename, 5> {{"atan2", "atan"},
+                                                      {"rsqrt", "inversesqrt"},
+                                                      {"dfdx", "dFdx"},
+                                                      {"dfdy", "dFdy"},
+                                                      {"log10", "eacpLog10"}};
 
-// Both are genType in GLSL, so one name per direction covers every width MSL
-// named.
-constexpr BuiltinRename glslPrefixRenames[] = {{"as_type<uint", "floatBitsToUint"},
-                                               {"as_type<float", "uintBitsToFloat"}};
+constexpr auto glslPrefixRenames = Array<BuiltinRename, 2> {
+    {"as_type<uint", "floatBitsToUint"}, {"as_type<float", "uintBitsToFloat"}};
 
-const char* findExactRename(std::span<const BuiltinRename> renames,
-                            const std::string& name)
+std::string_view findExactRename(std::span<const BuiltinRename> renames,
+                                 const std::string& name)
 {
     for (const auto& rename: renames)
         if (name == rename.canonical)
             return rename.renamed;
 
-    return nullptr;
+    return {};
 }
 
-const char* findPrefixRename(std::span<const BuiltinRename> renames,
-                             const std::string& name)
+std::string_view findPrefixRename(std::span<const BuiltinRename> renames,
+                                  const std::string& name)
 {
     for (const auto& rename: renames)
         if (name.starts_with(rename.canonical))
             return rename.renamed;
 
-    return nullptr;
+    return {};
 }
 
-const char* findRename(std::span<const BuiltinRename> exact,
-                       std::span<const BuiltinRename> prefixed,
-                       const std::string& name)
+std::string_view findRename(std::span<const BuiltinRename> exact,
+                            std::span<const BuiltinRename> prefixed,
+                            const std::string& name)
 {
-    if (const auto* renamed = findExactRename(exact, name))
+    if (auto renamed = findExactRename(exact, name); !renamed.empty())
         return renamed;
 
     return findPrefixRename(prefixed, name);
@@ -79,15 +75,15 @@ const char* findRename(std::span<const BuiltinRename> exact,
 
 // A constructor-style cast is recorded as a call under the target's canonical
 // type name, so float2(v) leaves as vec2(v).
-const char* findDialectRename(Backend backend, const std::string& name)
+std::string_view findDialectRename(Backend backend, const std::string& name)
 {
     if (backend == Backend::DirectX)
         return findRename(hlslRenames, hlslPrefixRenames, name);
 
     if (backend != Backend::Vulkan)
-        return nullptr;
+        return {};
 
-    if (const auto* spelling = glslTypeNameFor(name))
+    if (const auto* spelling = glslTypeNameFor(name); spelling != nullptr)
         return spelling;
 
     return findRename(glslRenames, glslPrefixRenames, name);
@@ -95,14 +91,13 @@ const char* findDialectRename(Backend backend, const std::string& name)
 
 std::string getCallName(Backend backend, const std::string& name)
 {
-    if (const auto* renamed = findDialectRename(backend, name))
-        return renamed;
+    if (auto renamed = findDialectRename(backend, name); !renamed.empty())
+        return std::string(renamed);
 
     return name;
 }
 
-// The builtins GLSL overloads per width: it takes a scalar beside a vector only
-// in a few trailing positions, where MSL converts and HLSL promotes it.
+// GLSL takes a scalar beside a vector only in a few trailing positions.
 bool isGenTypeCall(const std::string& name)
 {
     return name == "min" || name == "max" || name == "clamp" || name == "mix"
@@ -110,55 +105,38 @@ bool isGenTypeCall(const std::string& name)
            || name == "atan2";
 }
 
-constexpr BuiltinRename glslComparisonFunctions[] = {{"<", "lessThan"},
-                                                     {"<=", "lessThanEqual"},
-                                                     {">", "greaterThan"},
-                                                     {">=", "greaterThanEqual"},
-                                                     {"==", "equal"},
-                                                     {"!=", "notEqual"}};
+constexpr auto glslComparisonFunctions =
+    Array<BuiltinRename, 6> {{"<", "lessThan"},
+                             {"<=", "lessThanEqual"},
+                             {">", "greaterThan"},
+                             {">=", "greaterThanEqual"},
+                             {"==", "equal"},
+                             {"!=", "notEqual"}};
 
-// GLSL reserves the relational and equality operators for scalars, so a
-// componentwise mask is a function there. Asked only for a boolean vector;
-// empty for an operator with no such function.
+// GLSL reserves the comparison operators for scalars. Empty for an operator
+// with no componentwise function.
 std::string_view getGlslComparisonFunction(const std::string& op)
 {
-    const auto* function = findExactRename(glslComparisonFunctions, op);
-
-    if (function == nullptr)
-        return {};
-
-    return function;
+    return findExactRename(glslComparisonFunctions, op);
 }
 
-// The HLSL sampler a texture with this sampling reads through. Named for the
-// configuration rather than for the texture, because that is what it is: the
-// root signature declares samplingConfigurations static samplers and every
-// texture sampled that way shares one. See TextureSampling.
+// One static sampler per sampling configuration, shared by every texture.
 std::string getHlslSamplerName(const TextureSampling& sampling)
 {
     return Strings::format("samplerConfig{}", samplingIndex(sampling));
 }
 
-// Nothing in the EDSL is wider than four components, so a fifth is a caller's
-// mistake rather than a lane to name.
 std::string_view getVectorComponentSuffix(int component)
 {
     assert(component >= 0 && component < 4
            && "eacp: a vector has no component past .w");
 
-    constexpr const char* lanes[] = {".x", ".y", ".z", ".w"};
+    constexpr auto lanes = Array<std::string_view, 4> {".x", ".y", ".z", ".w"};
     return lanes[component];
 }
 
-// The MSL type a run of consecutive buffer elements is loaded through.
-//
-// The packed one and not float4, because the alignment is not ours to promise.
-// A plain float4 wants a sixteen-byte-aligned address, and eacp binds a
-// BufferRange at any four-byte offset - Device::storageBufferOffsetAlignment
-// answers four on this backend - so a range starting one float into a buffer
-// would make every such load undefined. packed_float4 is the same sixteen bytes
-// with an alignment of four, which is exactly what the binding guarantees, and
-// it converts to float4 on the way out.
+// packed_float4 rather than float4: a BufferRange may start at any four-byte
+// offset, and float4 needs sixteen-byte alignment.
 std::string_view getMetalPackedVectorType(ValueType type)
 {
     auto integers = isUnsignedInteger(type);
@@ -174,8 +152,6 @@ std::string_view getMetalPackedVectorType(ValueType type)
     }
 }
 
-// A thread index under the name both kernel scaffoldings bind it to: the whole
-// value where the node took the position as one, one lane otherwise.
 std::string
     getIndexReference(std::string_view name, DispatchRank rank, int component)
 {
@@ -185,8 +161,6 @@ std::string
     return Strings::format("{}{}", name, getComponentSuffix(component));
 }
 
-// A whole expression parenthesised, since an offset or a stride is printed
-// into the middle of an index computation.
 std::string wrapInParentheses(const std::string& expression)
 {
     return Strings::format("({})", expression);

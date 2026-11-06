@@ -11,23 +11,18 @@
 
 #include <cassert>
 
-// Compute kernel emission. The expression printer is the render one; only the
-// scaffolding differs: storage buffers and the uniform block are MSL kernel
-// parameters but HLSL globals, and the work-item id arrives as a builtin
-// parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
-// with the implicit grid extents the bounds guard reads - one count for a 1D
-// kernel, a width and a height for a 2D one, a depth as well for a 3D one - and
-// the kernel opens with the guard the rounded-up dispatch needs; ComputeProgram
-// appends the matching CPU values.
-//
-// GLSL takes the HLSL shape, with gl_GlobalInvocationID for the id and no stage
-// macro: a kernel has one entry point, so its main() is unguarded.
-
 namespace eacp::GPU::ShaderEmission
 {
 namespace
 {
-constexpr auto kernelIndent = "    ";
+constexpr auto kernelIndent = std::string_view {"    "};
+
+std::string_view getIndexTypeName(Backend backend, DispatchRank rank)
+{
+    constexpr auto indexTypes =
+        Array<ValueType, 3> {ValueType::UInt, ValueType::UInt2, ValueType::UInt3};
+    return getDialectTypeName(backend, indexTypes[getGridExtentCount(rank) - 1]);
+}
 
 bool isWholeNumberOfSimdGroups(const ShaderGraph& graph)
 {
@@ -44,10 +39,8 @@ bool hasValidSimdGroupShape(const ShaderGraph& graph)
     return !graph.usesSimdGroups() || isWholeNumberOfSimdGroups(graph);
 }
 
-// A SIMD-scoped fold takes the same rule with one allowance: a group narrower
-// than a SIMD group *is* its own SIMD group, and folding it is well defined.
-// What is not is a group that leaves a partial one at its end, where two
-// threads a lane apart would fold over different sets.
+// A group narrower than one SIMD group is its own SIMD group; only a partial
+// trailing one makes a fold undefined.
 bool hasValidSimdReductionShape(const ShaderGraph& graph)
 {
     return !graph.usesSimdReduction() || isNarrowerThanOneSimdGroup(graph)
@@ -76,7 +69,6 @@ void assertKernelShapeIsValid(const ShaderGraph& graph)
     (void) graph;
 }
 
-// The kernel's own uniforms, then the implicit grid extents.
 std::string printKernelUniformBlock(const ShaderGraph& graph, Backend backend)
 {
     auto rank = graph.dispatchRank();
@@ -106,7 +98,7 @@ std::string printKernelUniformBlock(const ShaderGraph& graph, Backend backend)
 
 std::string printSharedArrays(const ShaderGraph& graph,
                               Backend backend,
-                              const char* qualifier)
+                              std::string_view qualifier)
 {
     auto source = std::string {};
 
@@ -126,7 +118,7 @@ std::string printSharedArrays(const ShaderGraph& graph,
 
 std::string printReductionScratch(const ShaderGraph& graph,
                                   Backend backend,
-                                  const char* qualifier,
+                                  std::string_view qualifier,
                                   const Vector<ValueType>& elementTypes)
 {
     auto source = std::string {};
@@ -141,26 +133,21 @@ std::string printReductionScratch(const ShaderGraph& graph,
     return source;
 }
 
-// Threadgroup memory as the two fallback dialects declare it, globals both,
-// followed by the blank line any of it earns.
 std::string printGroupMemoryGlobals(const ShaderGraph& graph,
                                     Backend backend,
-                                    const char* qualifier)
+                                    std::string_view qualifier)
 {
     auto source = printSharedArrays(graph, backend, qualifier);
     source += printReductionScratch(
         graph, backend, qualifier, graph.groupReductionTypes());
     source += formatSimdMatrixScratchDeclaration(graph, qualifier);
 
-    // A blank line separates threadgroup memory from the entry point below it.
     if (hasGroupMemoryDeclarations(graph))
         source += "\n";
 
     return source;
 }
 
-// The names the entry point declares its indices under, taken out of the
-// dialect's three-component builtins.
 struct KernelIndexSources
 {
     std::string_view typeName;
@@ -202,9 +189,6 @@ std::string printMetalBufferParameters(const ShaderGraph& graph)
     return source;
 }
 
-// Textures are kernel parameters like the buffers, on an index space of their
-// own. A written one takes the write access qualifier and no sampler: there is
-// nothing to sample it with and nothing to read.
 std::string printMetalTextureParameters(const ShaderGraph& graph)
 {
     auto source = std::string {};
@@ -232,19 +216,9 @@ std::string printMetalTextureParameters(const ShaderGraph& graph)
     return source;
 }
 
-// What a group reduction folds through: the SIMD-group intrinsics run per SIMD
-// group, so combining their partials takes the lane, the SIMD group's index and
-// how many of them the threadgroup was given. A kernel holding SIMD-group
-// matrices takes the same three, the index being what places the block of the
-// output each SIMD group owns.
-bool needsMetalSimdBuiltins(const ShaderGraph& graph)
-{
-    return doesMetalCombinePartials(graph) || graph.usesSimdGroups();
-}
-
 std::string printMetalIndexParameters(const ShaderGraph& graph)
 {
-    auto indexType = getIndexTypeName(graph.dispatchRank());
+    auto indexType = getIndexTypeName(Backend::Metal, graph.dispatchRank());
     auto source = Strings::format("{} gid [[thread_position_in_grid]]", indexType);
 
     if (graph.usesLocalId())
@@ -255,7 +229,7 @@ std::string printMetalIndexParameters(const ShaderGraph& graph)
         source += Strings::format(",\n    {} tgid [[threadgroup_position_in_grid]]",
                                   indexType);
 
-    if (needsMetalSimdBuiltins(graph))
+    if (doesMetalCombinePartials(graph) || graph.usesSimdGroups())
         source += ",\n    uint simdLane [[thread_index_in_simdgroup]],\n    "
                   "uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
                   "uint simdCount [[simdgroups_per_threadgroup]]";
@@ -263,12 +237,9 @@ std::string printMetalIndexParameters(const ShaderGraph& graph)
     return source;
 }
 
-// Threadgroup arrays are body-scope declarations on Metal, ahead of everything
-// that subscripts them. Only the wide folds stage anything, and only where the
-// group is more than one SIMD group: everything else is the intrinsic alone.
 std::string printMetalGroupMemory(const ShaderGraph& graph)
 {
-    constexpr auto qualifier = "    threadgroup";
+    constexpr auto qualifier = std::string_view {"    threadgroup"};
     auto source = printSharedArrays(graph, Backend::Metal, qualifier);
 
     if (doesMetalCombinePartials(graph))
@@ -290,7 +261,6 @@ std::string printMetalKernelOpening(const ShaderGraph& graph)
     return source + printMetalGroupMemory(graph);
 }
 
-// One descriptor set carries the lot, at the Metal indices.
 std::string printGlslKernelBindings(const ShaderGraph& graph)
 {
     const auto& buffers = graph.storageBuffers();
@@ -321,8 +291,6 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
     return source;
 }
 
-// The three builtins are uvec3 whatever the rank, so each index is the swizzle
-// of its own, exactly as the HLSL semantics are.
 std::string printGlslKernelOpening(const ShaderGraph& graph)
 {
     const auto group = graph.threadGroupShape();
@@ -337,15 +305,14 @@ std::string printGlslKernelOpening(const ShaderGraph& graph)
     source += "void main()\n{\n";
 
     return source
-           + printKernelIndices(graph,
-                                {getGlslIndexTypeName(graph.dispatchRank()),
-                                 "gl_GlobalInvocationID",
-                                 "gl_LocalInvocationID",
-                                 "gl_WorkGroupID"});
+           + printKernelIndices(
+               graph,
+               {getIndexTypeName(Backend::Vulkan, graph.dispatchRank()),
+                "gl_GlobalInvocationID",
+                "gl_LocalInvocationID",
+                "gl_WorkGroupID"});
 }
 
-// SRV t<slot> / UAV u<slot> with one shared slot counter, matching the flat
-// Metal indices ComputePass binds both backends with.
 std::string printHlslKernelBuffers(const ShaderGraph& graph)
 {
     const auto& buffers = graph.storageBuffers();
@@ -369,10 +336,7 @@ std::string printHlslKernelBuffers(const ShaderGraph& graph)
     return source;
 }
 
-// Textures are globals here, and their registers start above every buffer
-// slot's: a texture and a storage buffer share the t and u spaces on this
-// backend, while their slots are counted separately. See
-// ComputePass::textureRegisterBase.
+// Texture registers start above every buffer slot: both share t and u here.
 std::string printHlslKernelTextures(const ShaderGraph& graph)
 {
     auto source = std::string {};
@@ -404,16 +368,6 @@ std::string printHlslKernelTextures(const ShaderGraph& graph)
     return source;
 }
 
-// The flattened local index the scratch tree walks, which cs_5_0 hands over as
-// a semantic of its own rather than leaving it to be derived. A kernel holding
-// SIMD-group matrices needs it too: with no wave matrix operation to lower to,
-// it is what stands in for the SIMD group's index and what picks the lane that
-// makes a fragment's store.
-bool needsHlslGroupLane(const ShaderGraph& graph)
-{
-    return graph.usesGroupReduction() || graph.usesSimdGroups();
-}
-
 std::string printHlslKernelSignature(const ShaderGraph& graph)
 {
     const auto group = graph.threadGroupShape();
@@ -428,7 +382,7 @@ std::string printHlslKernelSignature(const ShaderGraph& graph)
     if (graph.usesGroupId())
         source += ", uint3 groupIndex : SV_GroupID";
 
-    if (needsHlslGroupLane(graph))
+    if (graph.usesGroupReduction() || graph.usesSimdGroups())
         source += ", uint groupLane : SV_GroupIndex";
 
     return source + ")\n{\n";
@@ -442,11 +396,12 @@ std::string printHlslKernelOpening(const ShaderGraph& graph)
     source += printHlslKernelSignature(graph);
 
     return source
-           + printKernelIndices(graph,
-                                {getIndexTypeName(graph.dispatchRank()),
-                                 "threadId",
-                                 "localThread",
-                                 "groupIndex"});
+           + printKernelIndices(
+               graph,
+               {getIndexTypeName(Backend::DirectX, graph.dispatchRank()),
+                "threadId",
+                "localThread",
+                "groupIndex"});
 }
 
 std::string printKernelOpening(const ShaderGraph& graph, Backend backend)
@@ -460,14 +415,8 @@ std::string printKernelOpening(const ShaderGraph& graph, Backend backend)
     return printHlslKernelOpening(graph);
 }
 
-// Where the fallback keeps a fragment is fixed by the lane, so the two backends
-// that take it work that out once, ahead of the body.
-//
-// The early-return bounds guard the rounded-up dispatch needs - except in a
-// kernel that barriers, where a return some threads take ahead of a barrier the
-// rest sit at is undefined on both backends. There every thread runs the whole
-// body, and the kernel bounds its own stores against
-// gridCount()/gridWidth()/gridHeight()/gridDepth() instead.
+// No early return in a kernel that barriers: threads returning ahead of a
+// barrier the rest wait at is undefined, so such a kernel bounds its own stores.
 std::string printKernelPrologue(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
@@ -481,9 +430,6 @@ std::string printKernelPrologue(const ShaderGraph& graph, Backend backend)
     return source;
 }
 
-// Stores ride the statement stream like everything else, so the body is one
-// block walk: a write records where it was made, inside whatever loop or branch
-// was open, and the emitter has no end-of-kernel step.
 std::string printKernelBody(const ShaderGraph& graph, Backend backend)
 {
     auto stageRoots = Vector<int> {};

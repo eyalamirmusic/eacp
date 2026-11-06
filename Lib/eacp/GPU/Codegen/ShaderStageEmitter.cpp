@@ -8,7 +8,7 @@ namespace eacp::GPU::ShaderEmission
 {
 namespace
 {
-constexpr auto nestedIndent = "    ";
+constexpr auto nestedIndent = std::string_view {"    "};
 
 std::string printBufferElement(int slot, const std::string& index)
 {
@@ -25,25 +25,17 @@ StageEmitter::StageEmitter(const ShaderGraph& graphToUse,
     locals.resize(graphToUse.nodeCount(), -1);
 }
 
-// For a stage's outputs, which no statement follows.
 std::string StageEmitter::defineLocalsFor(const Vector<int>& roots,
-                                          const std::string& indent)
+                                          std::string_view indent)
 {
     auto open = Vector<int> {};
-    return defineLocals(roots, indent, countUsesOver(roots), open);
+    return defineLocals(roots, std::string(indent), countUsesOver(roots), open);
 }
 
-// The constant arrays a stage subscripts, declared at the top of its function,
-// before any name has been handed out - so an element may read a uniform or a
-// varying but not a mutable local.
-//
-// The GLSL form drops the const: an element read from a uniform is not a
-// constant expression, which is all GLSL lets one initialise a const with.
-//
-// Emitted in slot order, so an array whose elements read another one finds it
-// already there.
+// Declared before any name exists, in slot order. GLSL drops the const: an
+// element read from a uniform is not a constant expression there.
 std::string StageEmitter::declareArrays(const Vector<int>& roots,
-                                        const std::string& indent)
+                                        std::string_view indent)
 {
     if (getGraph().arrays().empty())
         return {};
@@ -72,7 +64,7 @@ Vector<char> StageEmitter::findUsedArrays(const Vector<int>& roots) const
 }
 
 std::string StageEmitter::printArrayDeclaration(int slot,
-                                                const std::string& indent) const
+                                                std::string_view indent) const
 {
     const auto& array = getGraph().arrays()[slot];
     auto qualifier = printer.backend == Backend::Vulkan ? "" : "const ";
@@ -96,8 +88,9 @@ std::string StageEmitter::printArrayDeclaration(int slot,
     return source + "};\n";
 }
 
-std::string StageEmitter::emitBlock(int block, const std::string& indent)
+std::string StageEmitter::emitBlock(int block, std::string_view indentToUse)
 {
+    const auto indent = std::string(indentToUse);
     auto uses = countBlockUses(block);
     auto open = Vector<int> {};
     auto source = std::string {};
@@ -112,7 +105,7 @@ std::string StageEmitter::emitBlock(int block, const std::string& indent)
 StageEmitter::StatementEmitFunction
     StageEmitter::findStatementEmitter(StatementKind kind)
 {
-    static constexpr StatementEmitEntry emitters[] = {
+    static constexpr auto emitters = Array<StatementEmitEntry, 16> {
         {StatementKind::Declare, &StageEmitter::emitVariableWrite},
         {StatementKind::Assign, &StageEmitter::emitVariableWrite},
         {StatementKind::If, &StageEmitter::emitIf},
@@ -139,8 +132,6 @@ StageEmitter::StatementEmitFunction
     return &StageEmitter::emitNothing;
 }
 
-// Afterwards either way, for the names a statement's own expressions
-// introduced: a value read out of the variable it then wrote.
 std::string StageEmitter::emitStatement(const Statement& statement,
                                         const std::string& indent,
                                         const Vector<int>& uses,
@@ -170,7 +161,10 @@ std::string StageEmitter::emitLoop(const Statement& statement,
 std::string StageEmitter::printBody(int block, const std::string& indent)
 {
     return Strings::format(
-        "{}{{\n{}{}}}\n", indent, emitBlock(block, indent + nestedIndent), indent);
+        "{}{{\n{}{}}}\n",
+        indent,
+        emitBlock(block, Strings::format("{}{}", indent, nestedIndent)),
+        indent);
 }
 
 std::string StageEmitter::defineLocalsInScope(const Vector<int>& roots,
@@ -199,11 +193,6 @@ std::string StageEmitter::emitVariableWrite(const Statement& statement,
     return source;
 }
 
-// The condition is evaluated before either body runs, so it is printed while
-// every name still stands; the ones a body moves on from are given up between
-// it and them. An assignment needs no such pass first: its right-hand side is
-// what the variable held before it, which is what the open names still stand
-// for.
 std::string StageEmitter::emitIf(const Statement& statement, StatementScope& scope)
 {
     auto source = defineLocalsInScope({statement.value}, scope);
@@ -233,9 +222,6 @@ std::string StageEmitter::emitContinue(const Statement&, StatementScope& scope)
     return scope.indent + "continue;\n";
 }
 
-// An atomic buffer's element is an atomic_uint on Metal and has to be stored
-// through rather than assigned. HLSL's UAV element is an ordinary uint, so the
-// plain assignment is already right there.
 std::string StageEmitter::emitStore(const Statement& statement,
                                     StatementScope& scope)
 {
@@ -260,17 +246,8 @@ std::string StageEmitter::emitStore(const Statement& statement,
     return source;
 }
 
-// The write mirror of a vector read: one store where the dialect has a
-// spelling for one, and the N subscripts it stands in for where it has not.
-// Metal reinterprets the address being stored to rather than the binding, so an
-// output stays a run of floats and nothing it was bindable as is given up.
-//
-// Both operands are named first - see holdTheVector - so each is evaluated once
-// and in full before any part of the record reaches memory. That is what lets
-// write4(out, i, f(out.read4(i))) mean what it says, and what keeps an index
-// computed from the buffer being written - write4(out, toUInt(out[i]), v) -
-// addressing the element it was aimed at rather than the one the first
-// component just landed on.
+// Both operands are named first, so write4(out, i, f(out.read4(i))) reads
+// before any component lands.
 std::string StageEmitter::emitVectorStore(const Statement& statement,
                                           StatementScope& scope)
 {
@@ -305,9 +282,7 @@ std::string StageEmitter::emitVectorStore(const Statement& statement,
     return source;
 }
 
-// GLSL's atomicAdd returns the old value, like MSL's. HLSL takes two lines
-// rather than one: InterlockedAdd hands the old value back through an out
-// parameter, so the name has to exist before the call that fills it.
+// HLSL's InterlockedAdd returns the old value through an out parameter.
 std::string StageEmitter::emitAtomicAdd(const Statement& statement,
                                         StatementScope& scope)
 {
@@ -354,19 +329,11 @@ std::string StageEmitter::emitSharedStore(const Statement& statement,
     return source;
 }
 
-// The synchronisation point itself. The names it invalidates - anything
-// computed from shared memory - are given up by the dropStale that follows
-// every statement, the same pass an assignment retires its variable's readers
-// through. GLSL says it in two calls: the memory barrier publishes what was
-// written, the execution barrier is where the group meets.
 std::string StageEmitter::emitBarrier(const Statement&, StatementScope& scope)
 {
     return formatBarrierStatement(printer.backend, scope.indent);
 }
 
-// Several statements on every backend, laid down where the reduction was
-// written so the barriers inside it keep their place among the stores around
-// them.
 std::string StageEmitter::emitGroupReduce(const Statement& statement,
                                           StatementScope& scope)
 {
@@ -374,9 +341,6 @@ std::string StageEmitter::emitGroupReduce(const Statement& statement,
     return source + formatGroupReduction(statement, scope);
 }
 
-// The SIMD-group matrix statements, each one intrinsic on Metal and a lane's
-// two elements of the fragment everywhere else, the product staging its
-// operands through the threadgroup scratch.
 std::string StageEmitter::emitSimdMatrixFill(const Statement& statement,
                                              StatementScope& scope)
 {
@@ -397,8 +361,7 @@ std::string StageEmitter::emitSimdMatrixMultiplyAdd(const Statement& statement,
     return formatSimdMatrixMultiplyAdd(statement, scope);
 }
 
-// GLSL's imageStore takes a *signed* coordinate; MSL takes the colour first,
-// HLSL subscripts the texture like an array.
+// GLSL's imageStore takes a signed coordinate.
 std::string StageEmitter::emitTextureStore(const Statement& statement,
                                            StatementScope& scope)
 {
@@ -457,9 +420,6 @@ Vector<int> StageEmitter::countUsesOver(const Vector<int>& roots) const
     return uses;
 }
 
-// How often the statements of one block reach each node, its nested bodies
-// counted in: a name is handed out only where the statement being emitted
-// evaluates the node anyway, so a body's use of one costs that body nothing.
 Vector<int> StageEmitter::countBlockUses(int block) const
 {
     auto roots = Vector<int> {};
@@ -521,19 +481,8 @@ std::string StageEmitter::holdTheRecord(const Statement& statement,
     return bindLocal(statement.record, indent, open);
 }
 
-// A wide store's operands, named before the store rather than printed into it.
-//
-// The index is the one the backends disagree about. Metal stores the whole
-// vector through one pointer and prints the address once; HLSL and GLSL print
-// it into every subscript, so an index inlined there is evaluated N times - and
-// if it reads the buffer being written, every evaluation after the first reads
-// back what this very store has already put there.
-// write4(out, toUInt(out[i]), v) is exactly that shape, and inlined it would
-// mean one thing on Metal and another on the other two.
-//
-// The value is named on every backend all the same, for the reason
-// holdTheRecord names a record's: a wide store is one write of one record, and
-// the record is worth a name wherever it is an operation rather than a leaf.
+// HLSL and GLSL print the index into every subscript, so an index that reads
+// the buffer being written would see this store's own earlier components.
 std::string StageEmitter::holdTheVector(const Statement& statement,
                                         const std::string& indent,
                                         Vector<int>& open)
@@ -546,8 +495,7 @@ std::string StageEmitter::holdTheVector(const Statement& statement,
     return source + holdOperand(statement.value, statement.slot, indent, open);
 }
 
-// A leaf costs nothing however often it is repeated, unless it reads the
-// buffer being written, which is a matter of correctness rather than cost.
+// A leaf is repeated freely unless it reads the buffer being written.
 std::string StageEmitter::holdOperand(int node,
                                       int slot,
                                       const std::string& indent,
@@ -582,10 +530,6 @@ void StageEmitter::retireLocals(Vector<int>& open)
     open.clear();
 }
 
-// A statement that leaves no variable and no buffer holding something else and
-// moves no shared memory cannot have staled a name, and most do not: a break, a
-// continue, and an if whose bodies only compute. Asking each open name about an
-// empty set is the same walk for a guaranteed no.
 bool StageEmitter::hasNothingStale(bool sharedMoved) const
 {
     return !written.contains(1) && !buffersWritten.contains(1) && !sharedMoved;

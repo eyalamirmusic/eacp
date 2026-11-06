@@ -23,7 +23,6 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ShaderEmitter.cpp
         Codegen/ShaderExpressionPrinter.cpp
         Codegen/ShaderGraphAnalysis.cpp
-        Codegen/ShaderGroupSpelling.cpp
         Codegen/ShaderHelpers.cpp
         Codegen/ShaderStageEmitter.cpp
         Codegen/ShaderStageEmitterGroups.cpp
