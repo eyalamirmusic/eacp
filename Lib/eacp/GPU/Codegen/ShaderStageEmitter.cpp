@@ -46,48 +46,54 @@ std::string StageEmitter::defineFor(const Vector<int>& roots,
 std::string StageEmitter::declareArrays(const Vector<int>& roots,
                                         const std::string& indent)
 {
-    const auto& arrays = graph().arrays();
-
-    if (arrays.empty())
+    if (graph().arrays().empty())
         return {};
 
+    auto used = findUsedArrays(roots);
+    auto source = std::string {};
+
+    for (auto slot = 0; slot < used.size(); ++slot)
+        if (used[slot] != 0)
+            source += printArrayDeclaration(slot, indent);
+
+    return source;
+}
+
+Vector<char> StageEmitter::findUsedArrays(const Vector<int>& roots) const
+{
     auto used = Vector<char> {};
-    used.resize(arrays.size(), 0);
+    used.resize(graph().arrays().size(), 0);
     auto seen = Vector<char> {};
     seen.resize(graph().nodeCount(), 0);
 
     for (auto root: roots)
         collectArrays(graph(), root, used, seen);
 
+    return used;
+}
+
+std::string StageEmitter::printArrayDeclaration(int slot,
+                                                const std::string& indent) const
+{
+    const auto& array = graph().arrays()[slot];
     auto qualifier = printer.backend == Backend::Vulkan ? "" : "const ";
-    auto source = std::string {};
 
-    for (auto slot = 0; slot < arrays.size(); ++slot)
-    {
-        if (used[slot] == 0)
-            continue;
-
-        const auto& array = arrays[slot];
-
-        source += Strings::format("{}{}{} a{}[{}] = {{",
+    auto source = Strings::format("{}{}{} a{}[{}] = {{",
                                   indent,
                                   qualifier,
                                   typeName(printer.backend, array.elementType),
                                   slot,
                                   array.elements.size());
 
-        for (auto i = 0; i < array.elements.size(); ++i)
-        {
-            if (i > 0)
-                source += ", ";
+    for (auto i = 0; i < array.elements.size(); ++i)
+    {
+        if (i > 0)
+            source += ", ";
 
-            source += printer.ref(array.elements[i]);
-        }
-
-        source += "};\n";
+        source += printer.ref(array.elements[i]);
     }
 
-    return source;
+    return source + "};\n";
 }
 
 std::string StageEmitter::emitBlock(int block, const std::string& indent)
@@ -360,7 +366,7 @@ std::string StageEmitter::emitGroupReduce(const Statement& statement,
                                           StatementScope& scope)
 {
     auto source = defineInScope({statement.value}, scope);
-    return source + groupReduction(statement, scope.indent);
+    return source + groupReduction(statement, scope);
 }
 
 // The SIMD-group matrix statements, each one intrinsic on Metal and a lane's
@@ -370,20 +376,20 @@ std::string StageEmitter::emitSimdMatrixFill(const Statement& statement,
                                              StatementScope& scope)
 {
     auto source = defineInScope({statement.value}, scope);
-    return source + simdMatrixFill(statement, scope.indent);
+    return source + simdMatrixFill(statement, scope);
 }
 
 std::string StageEmitter::emitSimdMatrixTransfer(const Statement& statement,
                                                  StatementScope& scope)
 {
     auto source = defineInScope({statement.index, statement.stride}, scope);
-    return source + simdMatrixTransfer(statement, scope.indent);
+    return source + simdMatrixTransfer(statement, scope);
 }
 
 std::string StageEmitter::emitSimdMatrixMultiplyAdd(const Statement& statement,
                                                     StatementScope& scope)
 {
-    return simdMatrixMultiplyAdd(statement, scope.indent);
+    return simdMatrixMultiplyAdd(statement, scope);
 }
 
 // GLSL's imageStore takes a *signed* coordinate; MSL takes the colour first,
@@ -491,12 +497,19 @@ std::string
                            printer.print(node));
 }
 
+bool StageEmitter::isRecordStillUnnamed(const Statement& statement) const
+{
+    return statement.recordComponentsLeft > 0 && locals[statement.record] < 0;
+}
+
 std::string StageEmitter::holdTheRecord(const Statement& statement,
                                         const std::string& indent,
                                         Vector<int>& open)
 {
-    if (statement.recordComponentsLeft <= 0 || locals[statement.record] >= 0
-        || !readsSlot(statement.record, statement.slot))
+    if (!isRecordStillUnnamed(statement))
+        return {};
+
+    if (!readsSlot(statement.record, statement.slot))
         return {};
 
     return bind(statement.record, indent, open);

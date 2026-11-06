@@ -6,6 +6,7 @@
 
 #include <eacp/Core/Utils/Format.h>
 
+#include <array>
 #include <span>
 
 namespace eacp::GPU::ShaderEmission
@@ -181,6 +182,18 @@ std::string closeUniformBlock(Backend backend)
     return source;
 }
 
+std::array<bool, samplingConfigurations>
+    findSampledConfigurations(const ShaderGraph& graph)
+{
+    auto used = std::array<bool, samplingConfigurations> {};
+
+    for (auto i = 0; i < graph.textureCount(); ++i)
+        if (graph.textureAccess(i) != TextureAccess::Write)
+            used[samplingIndex(graph.textureSampling(i))] = true;
+
+    return used;
+}
+
 const char* hlslSamplerStateType(int configuration)
 {
     const auto compares =
@@ -313,12 +326,7 @@ std::string glslSampledTexture(const ShaderGraph& graph, int slot, int binding)
 // RWTexture2D: there is nothing to sample it with.
 std::string hlslSamplerDeclarations(const ShaderGraph& graph)
 {
-    bool used[samplingConfigurations] = {};
-
-    for (auto i = 0; i < graph.textureCount(); ++i)
-        if (graph.textureAccess(i) != TextureAccess::Write)
-            used[samplingIndex(graph.textureSampling(i))] = true;
-
+    auto used = findSampledConfigurations(graph);
     auto source = std::string {};
 
     for (auto configuration = 0; configuration < samplingConfigurations;

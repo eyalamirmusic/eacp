@@ -22,6 +22,8 @@ private:
     int carryingVarying(int slot) const;
     ValueType broadcastType(const Expr& call) const;
     std::string widened(int node, ValueType wide) const;
+    bool isGlslShift(const std::string& op) const;
+    bool isGlslSignedRemainder(const std::string& op, ValueType type) const;
     std::string joinArguments(const Expr& expr, ValueType wide) const;
 
     std::string metalLayer(int node) const;

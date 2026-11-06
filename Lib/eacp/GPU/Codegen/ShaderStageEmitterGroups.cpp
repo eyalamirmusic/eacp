@@ -16,17 +16,19 @@ namespace eacp::GPU::ShaderEmission
 // result lands in the reduction's variable on every thread, and a trailing
 // barrier leaves the scratch free for the next one.
 std::string StageEmitter::groupReduction(const Statement& statement,
-                                         const std::string& indent)
+                                         const StatementScope& scope)
 {
     if (printer.backend == Backend::Metal)
-        return metalGroupReduction(statement, indent);
+        return metalGroupReduction(statement, scope);
 
-    return treeGroupReduction(statement, indent);
+    return treeGroupReduction(statement, scope);
 }
 
 std::string StageEmitter::metalGroupReduction(const Statement& statement,
-                                              const std::string& indent)
+                                              const StatementScope& scope)
 {
+    const auto& indent = scope.indent;
+
     auto elementType = graph().variables()[statement.slot];
     auto name = Strings::format("v{}", statement.slot);
     auto scratch = std::string(groupScratchName(elementType));
@@ -72,8 +74,10 @@ std::string StageEmitter::metalGroupReduction(const Statement& statement,
 // groups - which the assert in emitCompute refuses, and which a release build
 // does not - would otherwise read past the array.
 std::string StageEmitter::treeGroupReduction(const Statement& statement,
-                                             const std::string& indent)
+                                             const StatementScope& scope)
 {
+    const auto& indent = scope.indent;
+
     auto elementType = graph().variables()[statement.slot];
     auto scratch = std::string(groupScratchName(elementType));
     auto step = Strings::format("gr{}", statement.slot);
@@ -161,8 +165,10 @@ std::string StageEmitter::simdMatrixDeclaration(int slot) const
 }
 
 std::string StageEmitter::simdMatrixFill(const Statement& statement,
-                                         const std::string& indent)
+                                         const StatementScope& scope)
 {
+    const auto& indent = scope.indent;
+
     auto value = printer.ref(statement.value);
     auto declaration = simdMatrixDeclaration(statement.slot);
 
@@ -222,14 +228,16 @@ std::string StageEmitter::simdMatrixLaneElement(const Statement& statement,
 // on. Every lane moves the pair it holds, so the store needs no guard to make
 // it once - no lane's share is another's.
 std::string StageEmitter::simdMatrixTransfer(const Statement& statement,
-                                             const std::string& indent)
+                                             const StatementScope& scope)
 {
+    const auto& indent = scope.indent;
+
     auto patch = SimdMatrixPatch {simdMatrixMemoryName(statement),
                                   bracketed(printer.ref(statement.index)),
                                   bracketed(printer.ref(statement.stride))};
 
     if (metal())
-        return metalSimdMatrixTransfer(statement, patch, indent);
+        return metalSimdMatrixTransfer(statement, patch, scope);
 
     auto first = simdMatrixLaneElement(statement, patch, 0);
     auto second = simdMatrixLaneElement(statement, patch, 1);
@@ -254,8 +262,10 @@ std::string StageEmitter::simdMatrixTransfer(const Statement& statement,
 // arithmetic.
 std::string StageEmitter::metalSimdMatrixTransfer(const Statement& statement,
                                                   const SimdMatrixPatch& patch,
-                                                  const std::string& indent)
+                                                  const StatementScope& scope)
 {
+    const auto& indent = scope.indent;
+
     auto name = simdMatrixName(statement.slot);
     auto element = graph().simdMatrixElement(statement.slot);
 
@@ -286,8 +296,10 @@ std::string StageEmitter::metalSimdMatrixTransfer(const Statement& statement,
 // scratch, complete before anything is added. The trailing barrier is what lets
 // the next product stage over this one.
 std::string StageEmitter::simdMatrixMultiplyAdd(const Statement& statement,
-                                                const std::string& indent)
+                                                const StatementScope& scope)
 {
+    const auto& indent = scope.indent;
+
     auto accumulator = simdMatrixName(statement.slot);
 
     if (metal())
@@ -303,7 +315,7 @@ std::string StageEmitter::simdMatrixMultiplyAdd(const Statement& statement,
     auto side = std::to_string(simdMatrixSize);
     auto barrier = barrierStatement(printer.backend, indent);
 
-    auto source = stageSimdMatrixOperands(statement, indent);
+    auto source = stageSimdMatrixOperands(statement, scope);
     source += barrier;
     source += Strings::format(
         "{}for (uint {} = 0u; {} < {}u; ++{})\n", indent, step, step, side, step);
@@ -335,8 +347,10 @@ std::string StageEmitter::simdMatrixMultiplyAdd(const Statement& statement,
 }
 
 std::string StageEmitter::stageSimdMatrixOperands(const Statement& statement,
-                                                  const std::string& indent)
+                                                  const StatementScope& scope)
 {
+    const auto& indent = scope.indent;
+
     auto left = simdMatrixName(statement.left);
     auto right = simdMatrixName(statement.right);
     auto held = Strings::format("sgmRow * {}u + sgmColumn", simdMatrixSize);

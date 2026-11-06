@@ -102,29 +102,32 @@ private:
     std::string printBody(int block, const std::string& indent);
 
     std::string groupReduction(const Statement& statement,
-                               const std::string& indent);
+                               const StatementScope& scope);
     std::string metalGroupReduction(const Statement& statement,
-                                    const std::string& indent);
+                                    const StatementScope& scope);
     std::string treeGroupReduction(const Statement& statement,
-                                   const std::string& indent);
+                                   const StatementScope& scope);
 
     bool metal() const;
     std::string simdMatrixDeclaration(int slot) const;
     std::string simdMatrixFill(const Statement& statement,
-                               const std::string& indent);
+                               const StatementScope& scope);
     std::string simdMatrixLaneElement(const Statement& statement,
                                       const SimdMatrixPatch& patch,
                                       int which) const;
     std::string simdMatrixTransfer(const Statement& statement,
-                                   const std::string& indent);
+                                   const StatementScope& scope);
     std::string metalSimdMatrixTransfer(const Statement& statement,
                                         const SimdMatrixPatch& patch,
-                                        const std::string& indent);
+                                        const StatementScope& scope);
     std::string simdMatrixMultiplyAdd(const Statement& statement,
-                                      const std::string& indent);
+                                      const StatementScope& scope);
     std::string stageSimdMatrixOperands(const Statement& statement,
-                                        const std::string& indent);
+                                        const StatementScope& scope);
 
+    Vector<char> findUsedArrays(const Vector<int>& roots) const;
+    std::string printArrayDeclaration(int slot, const std::string& indent) const;
+    bool isRecordStillUnnamed(const Statement& statement) const;
     Vector<int> countUsesOver(const Vector<int>& roots) const;
     Vector<int> blockUses(int block) const;
     std::string define(const Vector<int>& roots,

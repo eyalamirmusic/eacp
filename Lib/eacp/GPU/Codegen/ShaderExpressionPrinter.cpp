@@ -321,19 +321,28 @@ std::string ExprPrinter::printUnary(const Expr& expr) const
     return Strings::format("({}({}))", expr.op, ref(expr.args[0]));
 }
 
+bool ExprPrinter::isGlslShift(const std::string& op) const
+{
+    return backend == Backend::Vulkan && isShiftOperator(op);
+}
+
+bool ExprPrinter::isGlslSignedRemainder(const std::string& op, ValueType type) const
+{
+    return backend == Backend::Vulkan && op == "%" && isSignedInteger(type);
+}
+
 // GLSL refuses a scalar on the left of a shift whose right operand is a vector;
 // MSL and HLSL broadcast it themselves. GLSL also leaves % undefined on a
 // negative operand, so the truncating remainder is written out of the division.
 std::string ExprPrinter::printBinary(const Expr& expr) const
 {
     auto op = getBinaryOperator(expr);
-    auto glsl = backend == Backend::Vulkan;
 
-    auto left = glsl && isShiftOperator(op) ? widened(expr.args[0], expr.type)
-                                            : ref(expr.args[0]);
+    auto left =
+        isGlslShift(op) ? widened(expr.args[0], expr.type) : ref(expr.args[0]);
     auto right = ref(expr.args[1]);
 
-    if (glsl && op == "%" && isSignedInteger(expr.type))
+    if (isGlslSignedRemainder(op, expr.type))
         return Strings::format("({} - (({} / {}) * {}))", left, left, right, right);
 
     return Strings::format("({} {} {})", left, op, right);

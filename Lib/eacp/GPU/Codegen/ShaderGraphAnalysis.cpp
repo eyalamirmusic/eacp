@@ -274,9 +274,14 @@ void countUses(const ShaderGraph& graph,
             countUses(graph, argument, uses, seen);
 }
 
+bool LocalOrdering::isAlreadyPlanned(int node) const
+{
+    return seen[node] != 0 || locals[node] >= 0;
+}
+
 void LocalOrdering::visit(int node)
 {
-    if (node < 0 || seen[node] || locals[node] >= 0)
+    if (node < 0 || isAlreadyPlanned(node))
         return;
 
     seen[node] = 1;
@@ -367,6 +372,29 @@ void collectBufferWrites(const ShaderGraph& graph,
         collectBlockBufferWrites(graph, body, written);
 }
 
+bool StalenessQuery::readsWrittenVariable(const Expr& expr) const
+{
+    return expr.kind == ExprKind::VarRead && variablesWritten[expr.index] != 0;
+}
+
+bool StalenessQuery::readsMovedSharedMemory(const Expr& expr) const
+{
+    return sharedMoved && expr.kind == ExprKind::SharedRead;
+}
+
+bool StalenessQuery::readsWrittenBuffer(const Expr& expr) const
+{
+    return isKindAmong<ExprKind>(expr.kind, bufferElementReadKinds)
+           && buffersWritten[expr.index] != 0;
+}
+
+// The node itself, not what is under it.
+bool StalenessQuery::readsWhatMoved(const Expr& expr) const
+{
+    return readsWrittenVariable(expr) || readsMovedSharedMemory(expr)
+           || readsWrittenBuffer(expr);
+}
+
 bool StalenessQuery::readsStale(int node)
 {
     if (node < 0 || !seen.visit(node))
@@ -374,14 +402,7 @@ bool StalenessQuery::readsStale(int node)
 
     const auto& expr = graph.expr(node);
 
-    if (expr.kind == ExprKind::VarRead && variablesWritten[expr.index] != 0)
-        return true;
-
-    if (sharedMoved && expr.kind == ExprKind::SharedRead)
-        return true;
-
-    if (isKindAmong<ExprKind>(expr.kind, bufferElementReadKinds)
-        && buffersWritten[expr.index] != 0)
+    if (readsWhatMoved(expr))
         return true;
 
     for (auto argument: expr.args)

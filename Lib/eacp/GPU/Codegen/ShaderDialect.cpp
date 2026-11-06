@@ -13,12 +13,15 @@ const char* typeName(Backend backend, ValueType type)
     return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
 }
 
+// A decimal point, an exponent, or the n of nan and inf's spelling all keep a
+// number from reading as an integer literal.
+constexpr auto floatLiteralMarkers = ".en";
+
 std::string floatLiteral(float value)
 {
     auto text = Strings::shortestRoundTrip(value);
 
-    if (text.find('.') == std::string::npos && text.find('e') == std::string::npos
-        && text.find('n') == std::string::npos)
+    if (text.find_first_of(floatLiteralMarkers) == std::string::npos)
         text += ".0";
 
     return text;
@@ -81,23 +84,18 @@ const char* findRename(std::span<const BuiltinRename> exact,
 
 // A constructor-style cast is recorded as a call under the target's canonical
 // type name, so float2(v) leaves as vec2(v).
-const char* findGlslRename(const std::string& name)
-{
-    if (const auto* spelling = glslTypeNameFor(name))
-        return spelling;
-
-    return findRename(glslRenames, glslPrefixRenames, name);
-}
-
 const char* findDialectRename(Backend backend, const std::string& name)
 {
     if (backend == Backend::DirectX)
         return findRename(hlslRenames, hlslPrefixRenames, name);
 
-    if (backend == Backend::Vulkan)
-        return findGlslRename(name);
+    if (backend != Backend::Vulkan)
+        return nullptr;
 
-    return nullptr;
+    if (const auto* spelling = glslTypeNameFor(name))
+        return spelling;
+
+    return findRename(glslRenames, glslPrefixRenames, name);
 }
 
 // Call nodes carry the canonical (MSL) builtin name; renamed here per dialect.

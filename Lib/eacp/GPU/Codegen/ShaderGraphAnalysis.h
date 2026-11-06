@@ -54,6 +54,7 @@ void countUses(const ShaderGraph& graph,
 struct LocalOrdering
 {
     void visit(int node);
+    bool isAlreadyPlanned(int node) const;
 
     const ShaderGraph& graph;
     const Vector<int>& uses;
@@ -84,6 +85,10 @@ void collectBufferWrites(const ShaderGraph& graph,
 struct StalenessQuery
 {
     bool readsStale(int node);
+    bool readsWhatMoved(const Expr& expr) const;
+    bool readsWrittenVariable(const Expr& expr) const;
+    bool readsMovedSharedMemory(const Expr& expr) const;
+    bool readsWrittenBuffer(const Expr& expr) const;
 
     const ShaderGraph& graph;
     const Vector<char>& variablesWritten;
