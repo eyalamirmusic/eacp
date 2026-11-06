@@ -2,8 +2,6 @@
 
 #include <Miro/Miro.h>
 
-#include <eacp/Core/Utils/Strings.h>
-
 namespace eacp::Graphics::detail
 {
 namespace
@@ -14,49 +12,43 @@ constexpr auto altModifierBit = 4;
 constexpr auto commandModifierBit = 8;
 constexpr auto firstNonAsciiByte = 0x80;
 
-constexpr auto keyVerdictFieldCount = 6;
-
-constexpr auto kindField = 0;
-constexpr auto consumedField = 1;
-constexpr auto virtualKeyField = 2;
-constexpr auto modifiersField = 3;
-constexpr auto repeatField = 4;
-constexpr auto keyField = 5;
-
-std::string getField(const Vector<std::string>& fields, int field)
-{
-    if (field >= fields.size())
-        return {};
-
-    return fields[field];
-}
-
-int getIntegerField(const Vector<std::string>& fields, int field)
-{
-    return Strings::parseOr<int>(getField(fields, field), 0);
-}
-
-bool getFlagField(const Vector<std::string>& fields, int field)
-{
-    return getField(fields, field) == "1";
-}
-
 // Typed text only when event.key is a single code point; named keys ("Enter",
 // "ArrowUp") are multi-char ASCII and carry no characters, matching the host
 // window's WM_CHAR-derived text.
-std::string getTypedCharacters(const Vector<std::string>& fields)
+std::string getTypedCharacters(const KeyEventReport& report)
 {
-    auto key = getField(fields, keyField);
-
-    if (key.empty())
+    if (report.key.empty())
         return {};
 
-    auto firstByte = static_cast<unsigned char>(key[0]);
+    auto firstByte = static_cast<unsigned char>(report.key[0]);
 
-    if (key.size() == 1 || firstByte >= firstNonAsciiByte)
-        return key;
+    if (report.key.size() == 1 || firstByte >= firstNonAsciiByte)
+        return report.key;
 
     return {};
+}
+
+std::optional<KeyEventReport> readKeyEventReport(const std::string& json)
+{
+    try
+    {
+        auto value = Miro::Json::parse(json);
+        if (!value.isObject())
+            return std::nullopt;
+
+        auto report = KeyEventReport {};
+        Miro::fromJSON(report, value);
+        return report;
+    }
+    catch (const Miro::Json::ParseError&)
+    {
+        return std::nullopt;
+    }
+}
+
+bool isKnownKeyEventKind(const std::string& kind)
+{
+    return kind == "down" || kind == "up";
 }
 
 ModifierKeys modifiersFromMask(int mask)
@@ -104,22 +96,19 @@ WebMessage readWebMessage(const Miro::Json::Value& envelope)
 }
 } // namespace
 
-std::optional<KeyVerdict> parseKeyVerdict(const std::string& message)
+std::optional<KeyVerdict> parseKeyVerdict(const std::string& json)
 {
-    auto fields = Strings::split(message, ':', keyVerdictFieldCount);
-
-    auto kind = getField(fields, kindField);
-    if (kind != "down" && kind != "up")
+    auto report = readKeyEventReport(json);
+    if (!report || !isKnownKeyEventKind(report->kind))
         return std::nullopt;
 
     auto verdict = KeyVerdict {};
-    verdict.isDown = kind == "down";
-    verdict.consumed = getFlagField(fields, consumedField);
-    verdict.virtualKey = getIntegerField(fields, virtualKeyField);
-    verdict.modifiers = modifiersFromMask(getIntegerField(fields, modifiersField));
-    verdict.isRepeat = getFlagField(fields, repeatField);
-    verdict.characters = getTypedCharacters(fields);
-
+    verdict.isDown = report->kind == "down";
+    verdict.consumed = report->consumed;
+    verdict.virtualKey = report->keyCode;
+    verdict.modifiers = modifiersFromMask(report->modifiers);
+    verdict.isRepeat = report->repeat;
+    verdict.characters = getTypedCharacters(*report);
     return verdict;
 }
 

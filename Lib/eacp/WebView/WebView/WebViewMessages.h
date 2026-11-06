@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Graphics/Graphics/Keyboard.h>
+#include <Miro/Miro.h>
 
 #include <optional>
 #include <string>
@@ -21,10 +22,23 @@ struct KeyVerdict
     std::string characters;
 };
 
-// Parses key-events.js's "<down|up>:<0|1>:<keyCode>:<mods>:<repeat>:<key>".
-// event.key sits last so a literal ':' key can't split the message. Empty only
-// when the kind/verdict prefix is missing or malformed.
-std::optional<KeyVerdict> parseKeyVerdict(const std::string& message);
+// The object key-events.js posts for every key event the page saw. keyCode is
+// a Win32 virtual key and modifiers a bitmask (shift 1, ctrl 2, alt 4, meta 8).
+struct KeyEventReport
+{
+    std::string kind;
+    bool consumed = false;
+    int keyCode = 0;
+    int modifiers = 0;
+    bool repeat = false;
+    std::string key;
+
+    MIRO_REFLECT(kind, consumed, keyCode, modifiers, repeat, key)
+};
+
+// Reads key-events.js's report. Empty when the text is not a JSON object or
+// its kind is neither "down" nor "up".
+std::optional<KeyVerdict> parseKeyVerdict(const std::string& json);
 
 struct WebMessage
 {
