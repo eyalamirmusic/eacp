@@ -284,7 +284,7 @@ auto tPrecompiledKeyIsTheSourceHash = test("Precompiled/theKeyIsTheSourceHash") 
     auto source = ShaderSource::msl("kernel void k() {}");
 
     check(Precompiled::keyFor(source)
-          == Hashing::toHex(Hashing::fnv1a64("kernel void k() {}")));
+          == Strings::formatHex(Hashing::fnv1a64("kernel void k() {}")));
     check(Precompiled::keyFor(source).size() == 16);
 
     check(Precompiled::spirvResourceName("0123456789abcdef",
