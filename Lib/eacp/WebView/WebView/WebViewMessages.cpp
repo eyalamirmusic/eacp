@@ -46,9 +46,9 @@ std::optional<KeyEventReport> readKeyEventReport(const std::string& json)
     }
 }
 
-bool isKnownKeyEventKind(const std::string& kind)
+bool hasKnownKind(const KeyEventReport& report)
 {
-    return kind == "down" || kind == "up";
+    return report.kind == "down" || report.kind == "up";
 }
 
 ModifierKeys modifiersFromMask(int mask)
@@ -99,7 +99,7 @@ WebMessage readWebMessage(const Miro::Json::Value& envelope)
 std::optional<KeyVerdict> parseKeyVerdict(const std::string& json)
 {
     auto report = readKeyEventReport(json);
-    if (!report || !isKnownKeyEventKind(report->kind))
+    if (!report || !hasKnownKind(*report))
         return std::nullopt;
 
     auto verdict = KeyVerdict {};
