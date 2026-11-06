@@ -5,36 +5,6 @@
 
 namespace eacp::GPU::ShaderEmission
 {
-namespace
-{
-enum class StagedOperand
-{
-    Left,
-    Right
-};
-
-// An element of an operand a product staged in the scratch: the left fragment
-// at the start of this SIMD group's slice, the right one a fragment further on.
-std::string printStagedSimdMatrixElement(StagedOperand operand,
-                                         const std::string& element)
-{
-    auto base = std::string("sgmBase + ");
-
-    if (operand == StagedOperand::Right)
-        base += Strings::format("{}u + ", simdMatrixSize * simdMatrixSize);
-
-    return Strings::format("{}[{}{}]", simdMatrixScratchName, base, element);
-}
-
-// The first or second of the pair of columns a lane holds.
-std::string printSimdMatrixLaneColumn(int which)
-{
-    if (which == 0)
-        return "sgmColumn";
-
-    return Strings::format("sgmColumn + {}u", which);
-}
-} // namespace
 
 // MSL has the SIMD-group intrinsics, so a fold scoped to one is a single
 // instruction and a fold over a wider group is those partials combined through

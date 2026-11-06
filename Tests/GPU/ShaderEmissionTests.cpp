@@ -3,6 +3,7 @@
 #include <eacp/GPU/Codegen/ShaderDeclarations.h>
 #include <eacp/GPU/Codegen/ShaderDialect.h>
 #include <eacp/GPU/Codegen/ShaderGraphAnalysis.h>
+#include <eacp/GPU/Codegen/ShaderGroupSpelling.h>
 
 // The pieces the emitter is built from, each checked on its own: the type
 // spellings the dialects share a table for, the builtin renames, and the graph
@@ -46,6 +47,40 @@ int findStatement(const ShaderGraph& graph, StatementKind kind)
 } // namespace ShaderEmissionTests
 
 using namespace ShaderEmissionTests;
+
+static_assert(formatDecimal(0) == "0");
+static_assert(formatDecimal(-42) == "-42");
+static_assert(formatDecimal(2147483647) == "2147483647");
+
+static_assert(printStagedSimdMatrixElement(StagedOperand::Left, "i")
+              == "sgmScratch[sgmBase + i]");
+static_assert(printStagedSimdMatrixElement(StagedOperand::Right, "i")
+              == "sgmScratch[sgmBase + 64u + i]");
+static_assert(printSimdMatrixLaneColumn(0) == "sgmColumn");
+static_assert(printSimdMatrixLaneColumn(1) == "sgmColumn + 1u");
+
+static_assert(attributeSemantic(Backend::Metal, 3) == " [[attribute(3)]]");
+static_assert(attributeSemantic(Backend::DirectX, 3) == " : TEXCOORD3");
+static_assert(attributeSemantic(Backend::Vulkan, 3).empty());
+static_assert(varyingSemantic(Backend::Metal, 1, ValueType::UInt) == " [[flat]]");
+static_assert(varyingSemantic(Backend::Metal, 1, ValueType::Float).empty());
+static_assert(flatQualifier(Backend::Vulkan, ValueType::Int) == "flat ");
+static_assert(flatQualifier(Backend::DirectX, ValueType::UInt)
+              == "nointerpolation ");
+static_assert(locationLayout(2) == "layout(location = 2) ");
+static_assert(attributeName(Backend::Vulkan, 4) == "attr4");
+static_assert(varyingName(Backend::Metal, 4) == "input.v4");
+static_assert(indexReference("gid", DispatchRank::TwoD, 1) == "gid.y");
+static_assert(indexReference("gid", DispatchRank::OneD, 1) == "gid");
+static_assert(bracketed("a + b") == "(a + b)");
+
+static_assert(simdMatrixName(5) == "sgm5");
+static_assert(foldedPair(GroupReduction::Max, "a", "b") == "max(a, b)");
+static_assert(foldedPair(GroupReduction::Sum, "a", "b") == "a + b");
+static_assert(barrierStatement(Backend::Vulkan, "  ")
+              == "  memoryBarrierShared();\n  barrier();\n");
+static_assert(barrierStatement(Backend::DirectX, "")
+              == "GroupMemoryBarrierWithGroupSync();\n");
 
 auto tEmissionBufferTypes = test("ShaderEmission/bufferTypesSpellEachAccess") = []
 {

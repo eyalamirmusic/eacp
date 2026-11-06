@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ShaderDialect.h"
+#include "ShaderText.h"
+
+#include <string_view>
 
 // The spellings of the group-wide kernel operations: reductions over a
 // threadgroup or a SIMD group, and the SIMD-group matrix fragments with the
@@ -18,23 +21,153 @@ int reductionWidth(const ShaderGraph& graph, ReductionScope scope);
 bool spansWholeGroup(const ShaderGraph& graph, ReductionScope scope);
 bool metalFoldsInOneInstruction(ReductionScope scope);
 bool metalCombinesPartials(const ShaderGraph& graph);
-const char* groupScratchName(ValueType elementType);
-const char* metalSimdReduction(GroupReduction operation);
-std::string foldedPair(GroupReduction operation,
-                       const std::string& left,
-                       const std::string& right);
-std::string barrierStatement(Backend backend, const std::string& indent);
-const char* groupLaneName(Backend backend);
+// The scratch a reduction stages its partials in, one array per element type
+// folded. Named rather than slotted because it is the emitter's own and not
+// something the kernel declared.
+constexpr const char* groupScratchName(ValueType elementType)
+{
+    return elementType == ValueType::UInt ? "groupScratchU" : "groupScratch";
+}
 
-std::string simdMatrixName(int slot);
+// The MSL SIMD-group reduction each fold starts from.
+constexpr const char* metalSimdReduction(GroupReduction operation)
+{
+    switch (operation)
+    {
+        case GroupReduction::Sum:
+            return "simd_sum";
+        case GroupReduction::Max:
+            return "simd_max";
+        case GroupReduction::Min:
+            return "simd_min";
+    }
+
+    return "simd_sum";
+}
+
+// Two partials combined, spelled identically in all three dialects.
+constexpr std::string foldedPair(GroupReduction operation,
+                                 const std::string& left,
+                                 const std::string& right)
+{
+    switch (operation)
+    {
+        case GroupReduction::Sum:
+            return left + " + " + right;
+        case GroupReduction::Max:
+            return "max(" + left + ", " + right + ")";
+        case GroupReduction::Min:
+            return "min(" + left + ", " + right + ")";
+    }
+
+    return left + " + " + right;
+}
+
+// The barrier itself, shared by the barrier statement and by the reductions
+// that bracket their scratch with one.
+constexpr std::string barrierStatement(Backend backend, const std::string& indent)
+{
+    if (backend == Backend::Vulkan)
+        return indent + "memoryBarrierShared();\n" + indent + "barrier();\n";
+
+    return indent
+           + std::string(backend == Backend::Metal
+                             ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+                             : "GroupMemoryBarrierWithGroupSync();\n");
+}
+
+// The flat position of a thread within its group, which the tree indexes its
+// scratch by. Both dialects that take the tree have a builtin for it, so
+// neither derives one from the three-component local id.
+constexpr const char* groupLaneName(Backend backend)
+{
+    return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";
+}
+
+// A SIMD-group matrix fragment's name. Its own numbering, so it collides with
+// neither the variables nor the shared arrays.
+constexpr std::string simdMatrixName(int slot)
+{
+    return "sgm" + formatDecimal(slot);
+}
+
 std::string simdMatrixMemoryName(const Statement& statement);
-const char* metalSimdMatrixType(SimdMatrixElement element);
-const char* metalPackedElementType(SimdMatrixElement element);
-const char* packedSimdMatrixHelper(SimdMatrixElement element);
-const char* bitsOfFloat(Backend backend);
+// The MSL type a fragment of each element is, and the element type its load
+// reinterprets the buffer's pointer as. A packed fragment stays packed right
+// through the product: MSL's simdgroup_multiply_accumulate takes mixed operand
+// types into a float accumulator, which is the instruction the hardware has and
+// the reason there is no widening step to emit between the two.
+constexpr const char* metalSimdMatrixType(SimdMatrixElement element)
+{
+    switch (element)
+    {
+        case SimdMatrixElement::Half:
+            return "simdgroup_half8x8";
+        case SimdMatrixElement::BFloat16:
+            return "simdgroup_bfloat8x8";
+        case SimdMatrixElement::Float:
+            break;
+    }
+
+    return "simdgroup_float8x8";
+}
+
+constexpr const char* metalPackedElementType(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "half" : "bfloat";
+}
+
+// What the fallback widens one packed element with - the same helper a scalar
+// InputBuffer::readHalf or readBFloat16 goes through, so the arithmetic that
+// produces a lane's pair here is the arithmetic every other packed read in the
+// shader uses.
+constexpr const char* packedSimdMatrixHelper(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "eacpReadHalf" : "eacpReadBFloat16";
+}
+
+// How the two fallback dialects read a buffer's float element as the word its
+// bits are. The buffer is declared float whatever it holds, which is what the
+// packed scalar reads already assume. Metal never asks: a packed patch is a
+// fragment of its own type there, loaded through a reinterpreted pointer.
+constexpr const char* bitsOfFloat(Backend backend)
+{
+    return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
+}
+
 const char* simdMatrixLaneType(Backend backend);
 std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
                                          const std::string& qualifier);
 bool declaresGroupMemory(const ShaderGraph& graph);
 std::string simdMatrixPreamble(Backend backend);
+
+enum class StagedOperand
+{
+    Left,
+    Right
+};
+
+// An element of an operand a product staged in the scratch: the left fragment
+// at the start of this SIMD group's slice, the right one a fragment further on.
+constexpr std::string printStagedSimdMatrixElement(StagedOperand operand,
+                                                   std::string_view element)
+{
+    auto text = std::string(simdMatrixScratchName) + "[sgmBase + ";
+
+    if (operand == StagedOperand::Right)
+        text += formatDecimal(simdMatrixSize * simdMatrixSize) + "u + ";
+
+    text += element;
+    text += "]";
+    return text;
+}
+
+// The first or second of the pair of columns a lane holds.
+constexpr std::string printSimdMatrixLaneColumn(int which)
+{
+    if (which == 0)
+        return "sgmColumn";
+
+    return "sgmColumn + " + formatDecimal(which) + "u";
+}
 } // namespace eacp::GPU::ShaderEmission
