@@ -18,8 +18,6 @@ void removeEventHandlerIfAdded(ICoreWebView2* view,
         (view->*removeMethod)(token);
 }
 
-// Adds a WebView2 event handler that hands the event's arguments to
-// `handleArguments` and always answers S_OK.
 template <typename Handler, typename AddMethod, typename HandleArguments>
 void forwardEventToMember(ICoreWebView2* view,
                           AddMethod addMethod,

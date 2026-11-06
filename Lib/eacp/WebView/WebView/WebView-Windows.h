@@ -67,12 +67,11 @@ struct WebView::PopupInit
     std::function<void(ICoreWebView2*)> onReady;
 };
 
-// What respondWith hands CreateWebResourceResponse.
 struct WebResourceAnswer
 {
     IStream* body = nullptr;
     int statusCode = 0;
-    std::wstring reason;
+    LPCWSTR reason = nullptr;
     std::wstring headers;
 };
 
@@ -81,7 +80,6 @@ struct WebView::Native
     Native(WebView& ownerToUse, WebView::Options optionsToUse);
     ~Native();
 
-    // WebView-Windows.cpp
     void updateBounds();
     float getDpiScale();
     void notifyParentWindowMoved();
@@ -95,7 +93,6 @@ struct WebView::Native
                         const WebView::JSCallback& callback);
     void detachRenderVisual();
 
-    // WebViewCreation-Windows.cpp
     void ensureInitialized();
     void createRenderVisual();
     void createWebView2();
@@ -113,7 +110,6 @@ struct WebView::Native
     void applyUserAgent(const ComPtr<ICoreWebView2Settings>& settings);
     void applyBackground();
 
-    // WebViewResources-Windows.cpp
     void registerSchemeHandlers();
     void addWebResourceFilter(const std::string& pattern);
     void ensureWebResourceHandler();
@@ -140,7 +136,6 @@ struct WebView::Native
                              int statusCode,
                              LPCWSTR reason);
 
-    // WebViewEvents-Windows.cpp
     bool isFromTrustedSender(ICoreWebView2WebMessageReceivedEventArgs* args);
     void setupEventHandlers();
     void removeEventHandlers();
@@ -156,7 +151,6 @@ struct WebView::Native
     HRESULT
     handleNewWindowRequested(ICoreWebView2NewWindowRequestedEventArgs* args);
 
-    // WebViewInput-Windows.cpp
     void sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND kind,
                    const Point& localPos,
                    uint32_t mouseData = 0,

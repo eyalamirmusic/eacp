@@ -30,7 +30,6 @@ void deliverScriptResult(const WebView::JSCallback& callback,
     callback(result, "");
 }
 
-// Reads a stream the capture has just written back from its start.
 std::optional<Bytes> readStreamFromStart(IStream* stream)
 {
     LARGE_INTEGER zero = {};
@@ -519,7 +518,18 @@ void WebView::addScriptMessageHandler(const std::string& name,
     // WebKit `window.webkit.messageHandlers.<name>` form. macOS only offers the
     // latter, so mirroring it here lets the same page code post messages on
     // both platforms without branching.
-    auto script = Strings::widen(detail::buildMessageHandlerScript(name));
+    auto script = Strings::widen(
+        "(function(){var send=function(msg){window.chrome.webview.postMessage("
+        "{name:'"
+        + name
+        + "',body:msg});};"
+          "window."
+        + name
+        + "={postMessage:send};"
+          "window.webkit=window.webkit||{};"
+          "window.webkit.messageHandlers=window.webkit.messageHandlers||{};"
+          "window.webkit.messageHandlers."
+        + name + "={postMessage:send};})();");
 
     impl->ensureInitialized();
 

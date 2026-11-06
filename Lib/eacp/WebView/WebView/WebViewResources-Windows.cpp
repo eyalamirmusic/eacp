@@ -173,23 +173,19 @@ const Provider*
     return &found->second;
 }
 
-ComPtr<ICoreWebView2WebResourceRequest>
-    getWebResourceRequest(ICoreWebView2WebResourceRequestedEventArgs* args)
+LPCWSTR statusReason(int statusCode)
 {
-    ComPtr<ICoreWebView2WebResourceRequest> request;
-    if (FAILED(args->get_Request(&request)))
-        return nullptr;
-
-    return request;
-}
-
-std::optional<std::string> readRequestUri(ICoreWebView2WebResourceRequest* request)
-{
-    ComAllocatedWideString uri;
-    if (FAILED(request->get_Uri(&uri)) || !uri)
-        return std::nullopt;
-
-    return uri.toString();
+    switch (statusCode)
+    {
+        case 200:
+            return L"OK";
+        case 206:
+            return L"Partial Content";
+        case 416:
+            return L"Range Not Satisfiable";
+        default:
+            return L"OK";
+    }
 }
 } // namespace
 
@@ -272,15 +268,15 @@ HRESULT WebView::Native::handleWebResourceRequested(
     if (!args || !environment)
         return S_OK;
 
-    auto request = getWebResourceRequest(args);
-    if (!request)
+    ComPtr<ICoreWebView2WebResourceRequest> request;
+    if (FAILED(args->get_Request(&request)) || !request)
         return S_OK;
 
-    auto url = readRequestUri(request.Get());
-    if (!url)
+    ComAllocatedWideString uriRaw;
+    if (FAILED(request->get_Uri(&uriRaw)) || !uriRaw)
         return S_OK;
 
-    return serveRequestedUrl(args, request.Get(), *url);
+    return serveRequestedUrl(args, request.Get(), uriRaw.toString());
 }
 
 HRESULT WebView::Native::serveRequestedUrl(
@@ -291,14 +287,16 @@ HRESULT WebView::Native::serveRequestedUrl(
     if (auto inlineIt = inlineDocuments.find(url); inlineIt != inlineDocuments.end())
         return serveInlineDocument(args, inlineIt->second);
 
-    auto scheme = detail::getUrlScheme(url);
-    if (!scheme)
+    auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos)
         return S_OK;
 
-    if (auto* streamingProvider = findNonEmptyProvider(streamingProviders, *scheme))
+    auto scheme = url.substr(0, schemeEnd);
+
+    if (auto* streamingProvider = findNonEmptyProvider(streamingProviders, scheme))
         return handleStreamingRequest(args, request, url, *streamingProvider);
 
-    if (auto* provider = findNonEmptyProvider(schemeProviders, *scheme))
+    if (auto* provider = findNonEmptyProvider(schemeProviders, scheme))
         return handleProviderRequest(args, url, *provider);
 
     return S_OK;
@@ -327,8 +325,9 @@ HRESULT WebView::Native::handleProviderRequest(
                    + Strings::widen(response->mimeType)
                    + L"\r\nAccess-Control-Allow-Origin: *";
 
-    auto reason =
-        Strings::widen(detail::getResourceStatusReason(response->statusCode));
+    auto reason = (response->statusCode >= 200 && response->statusCode < 300)
+                      ? L"OK"
+                      : L"Error";
 
     respondWith(args, {stream.Get(), response->statusCode, reason, headers});
     return S_OK;
@@ -351,7 +350,7 @@ void WebView::Native::respondWith(ICoreWebView2WebResourceRequestedEventArgs* ar
 
     if (SUCCEEDED(environment->CreateWebResourceResponse(answer.body,
                                                          answer.statusCode,
-                                                         answer.reason.c_str(),
+                                                         answer.reason,
                                                          answer.headers.c_str(),
                                                          &webResponse)))
         args->put_Response(webResponse.Get());
@@ -398,14 +397,20 @@ HRESULT WebView::Native::handleStreamingRequest(
     auto plan =
         planStreamingResponse(readRequestHeader(request, L"Range"), *resource);
 
-    auto headers = Strings::widen(detail::joinResponseHeaders(plan.headers));
+    auto headers = std::wstring {};
+    for (const auto& [name, value]: plan.headers)
+    {
+        if (!headers.empty())
+            headers += L"\r\n";
+        headers += Strings::widen(name) + L": " + Strings::widen(value);
+    }
 
     ComPtr<IStream> body;
     if (plan.hasBody)
         body = Microsoft::WRL::Make<ReaderStream>(
             std::move(*resource), plan.served.start, plan.served.length);
 
-    auto reason = Strings::widen(detail::getStreamingStatusReason(plan.statusCode));
+    auto reason = statusReason(plan.statusCode);
     respondWith(args, {body.Get(), plan.statusCode, reason, headers});
 
     return S_OK;

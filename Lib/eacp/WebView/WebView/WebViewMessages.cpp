@@ -6,6 +6,20 @@ namespace eacp::Graphics::detail
 {
 namespace
 {
+// The object key-events.js posts for every key event the page saw. keyCode is
+// a Win32 virtual key and modifiers a bitmask (shift 1, ctrl 2, alt 4, meta 8).
+struct KeyEventReport
+{
+    std::string kind;
+    bool consumed = false;
+    int keyCode = 0;
+    int modifiers = 0;
+    bool repeat = false;
+    std::string key;
+
+    MIRO_REFLECT(kind, consumed, keyCode, modifiers, repeat, key)
+};
+
 constexpr auto shiftModifierBit = 0b0001;
 constexpr auto controlModifierBit = 0b0010;
 constexpr auto altModifierBit = 0b0100;
@@ -139,72 +153,4 @@ std::string decodeScriptResult(const std::string& resultJson)
     }
 }
 
-std::optional<std::string> getUrlScheme(const std::string& url)
-{
-    auto schemeEnd = url.find("://");
-    if (schemeEnd == std::string::npos)
-        return std::nullopt;
-
-    return url.substr(0, schemeEnd);
-}
-
-std::string getStreamingStatusReason(int statusCode)
-{
-    switch (statusCode)
-    {
-        case 206:
-            return "Partial Content";
-        case 416:
-            return "Range Not Satisfiable";
-        default:
-            return "OK";
-    }
-}
-
-std::string getResourceStatusReason(int statusCode)
-{
-    constexpr auto firstSuccessStatus = 200;
-    constexpr auto firstRedirectStatus = 300;
-
-    if (statusCode >= firstSuccessStatus && statusCode < firstRedirectStatus)
-        return "OK";
-
-    return "Error";
-}
-
-std::string
-    joinResponseHeaders(const Vector<std::pair<std::string, std::string>>& headers)
-{
-    auto joined = std::string {};
-
-    for (const auto& [name, value]: headers)
-    {
-        if (!joined.empty())
-            joined += "\r\n";
-        joined += name + ": " + value;
-    }
-
-    return joined;
-}
-
-std::string buildMessageHandlerScript(const std::string& name)
-{
-    return "(function(){var send=function(msg){window.chrome.webview.postMessage("
-           "{name:'"
-           + name
-           + "',body:msg});};"
-             "window."
-           + name
-           + "={postMessage:send};"
-             "window.webkit=window.webkit||{};"
-             "window.webkit.messageHandlers=window.webkit.messageHandlers||{};"
-             "window.webkit.messageHandlers."
-           + name + "={postMessage:send};})();";
-}
-
-std::string buildMaximizedStateScript(bool isMaximized)
-{
-    return isMaximized ? "window.__eacpSetMaximized(true)"
-                       : "window.__eacpSetMaximized(false)";
-}
 } // namespace eacp::Graphics::detail
