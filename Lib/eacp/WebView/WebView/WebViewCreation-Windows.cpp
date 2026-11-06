@@ -118,8 +118,8 @@ void WebView::Native::createWebView2()
 
     if (FAILED(hr))
     {
-        LOG("WebView2: CreateCoreWebView2EnvironmentWithOptions failed hr=0x"
-            + formatHresultAsHex(hr));
+        LOG("WebView2: CreateCoreWebView2EnvironmentWithOptions failed hr="
+            + Strings::format("0x{:08X}", static_cast<std::uint32_t>(hr)));
         initInProgress = false;
     }
 }
@@ -129,7 +129,8 @@ HRESULT WebView::Native::handleEnvironmentCreated(HRESULT result,
 {
     if (FAILED(result) || !env)
     {
-        LOG("WebView2: env create failed hr=0x" + formatHresultAsHex(result));
+        LOG("WebView2: env create failed hr="
+            + Strings::format("0x{:08X}", static_cast<std::uint32_t>(result)));
         return handleCreateFailure(result);
     }
 
@@ -215,8 +216,8 @@ HRESULT WebView::Native::handleCompositionControllerCreated(
 {
     if (FAILED(result) || !ctrl)
     {
-        LOG("WebView2: composition controller create failed hr=0x"
-            + formatHresultAsHex(result));
+        LOG("WebView2: composition controller create failed hr="
+            + Strings::format("0x{:08X}", static_cast<std::uint32_t>(result)));
         return handleCreateFailure(result);
     }
 
@@ -270,11 +271,6 @@ void WebView::Native::finishInitialization()
         onCoreWebViewReady = nullptr;
         ready(webView.Get());
     }
-}
-
-std::string formatHresultAsHex(HRESULT hr)
-{
-    return Strings::format("{:08x}", static_cast<unsigned long>(hr));
 }
 
 Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions>

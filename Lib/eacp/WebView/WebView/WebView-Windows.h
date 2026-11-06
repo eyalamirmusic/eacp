@@ -56,8 +56,6 @@ struct ComAllocatedWideString
     LPWSTR ptr = nullptr;
 };
 
-std::string formatHresultAsHex(HRESULT hr);
-
 // Carries what a window.open popup needs to splice into WebView2's
 // NewWindowRequested flow: the opener's environment (the adopted CoreWebView2
 // must share it), the opener's options (so the popup serves the same schemes),
