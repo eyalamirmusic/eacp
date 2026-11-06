@@ -56,8 +56,8 @@ std::function<FilePath()> onlineResourceLocator(OnlineResource::Info info,
                                                 FilePath directory)
 {
     if constexpr (Platform::isWindows())
-        return [info = std::move(info), directory = std::move(directory)]
-        { return fetchRelease(info, directory); };
+        return [release = std::move(info), folder = std::move(directory)]
+        { return fetchRelease(release, folder); };
     else
         return [] { return FilePath {}; };
 }

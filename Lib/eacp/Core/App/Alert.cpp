@@ -72,9 +72,8 @@ struct AnswerState
         if (answered.exchange(true))
             return;
 
-        Threads::callAsync(
-            [onDismissed = std::move(onDismissed), button = unanswered]
-            { finishAlert(onDismissed, button); });
+        Threads::callAsync([callback = std::move(onDismissed), button = unanswered]
+                           { finishAlert(callback, button); });
     }
 
     AnswerState(const AnswerState&) = delete;
@@ -85,8 +84,8 @@ struct AnswerState
         if (answered.exchange(true))
             return;
 
-        runOnMainThread([onDismissed = onDismissed, button]
-                        { finishAlert(onDismissed, button); });
+        runOnMainThread([callback = onDismissed, button]
+                        { finishAlert(callback, button); });
     }
 
     AlertCallback onDismissed;
@@ -152,8 +151,8 @@ void showNextAlert()
     auto state = std::make_shared<AnswerState>(
         std::move(next.onDismissed), Detail::unansweredButton(next.options));
     auto weakState = std::weak_ptr<AnswerState>(state);
-    auto answer = AlertCallback {[state = std::move(state)](int button)
-                                 { state->answer(button); }};
+    auto answer = AlertCallback {[answerState = std::move(state)](int button)
+                                 { answerState->answer(button); }};
 
     auto [presenter, generation] = currentPresenter();
 

@@ -1890,8 +1890,8 @@ void WebView::takeSnapshot(SnapshotCallback callback)
                         }
 
                         Threads::callAsync(
-                            [callback, bytes = std::move(bytes), error]() mutable
-                            { callback(std::move(bytes), error); });
+                            [callback, pngBytes = std::move(bytes), error]() mutable
+                            { callback(std::move(pngBytes), error); });
                         return S_OK;
                     })
                     .Get());

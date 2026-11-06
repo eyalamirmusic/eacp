@@ -449,11 +449,11 @@ void Server::Impl::startStreamingThread(int fd,
         [this,
          fd,
          hasFinished,
-         head = std::move(head),
-         bytesAfterHeaders = std::move(bytesAfterHeaders),
-         streamingHandler = std::move(streamingHandler)]() mutable
+         requestHead = std::move(head),
+         leftoverBytes = std::move(bytesAfterHeaders),
+         handler = std::move(streamingHandler)]() mutable
         {
-            serveStreamingFd(fd, head, std::move(bytesAfterHeaders), streamingHandler);
+            serveStreamingFd(fd, requestHead, std::move(leftoverBytes), handler);
             *hasFinished = true;
         });
 
