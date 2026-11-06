@@ -29,6 +29,8 @@ else
     gcloud storage rsync --recursive "$site_dir" "$bucket/$sha"
     gcloud storage objects update "$bucket/$sha/**.md" \
         --content-type="text/markdown; charset=utf-8" > /dev/null
+    gcloud storage objects update "$bucket/$sha/llms.txt" \
+        --content-type="text/plain; charset=utf-8" > /dev/null
 fi
 
 for alias in "$@"; do

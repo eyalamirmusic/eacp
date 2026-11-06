@@ -4,7 +4,7 @@
 Every X.md is also rendered to X.html beside it, with links between pages
 pointing at the .html; that needs Python-Markdown (Scripts/llm-docs-requirements.txt).
 
-Usage: Scripts/generate-llm-docs.py [--out build/llm-docs] [--html [--html-out DIR] [--open]]
+Usage: Scripts/generate-llm-docs.py [--out build/llm-docs] [--base-url URL] [--html [--html-out DIR] [--open]]
 """
 
 import argparse
@@ -1113,18 +1113,37 @@ def render_slim_symbols_table(modules):
     return "\n".join(lines) + "\n"
 
 
-def render_llms_txt(modules, module_preambles):
+def render_llms_txt_task_lines(symbol_lookup, base_url):
+    lines = []
+    for task, symbols in read_task_rows():
+        names = [name.strip().strip("`") for name in symbols.split(" + ")]
+        known = [name for name in names if name in symbol_lookup]
+        if known:
+            symbol = known[0]
+            lines.append(f"- [{symbol.removeprefix('eacp::')}]"
+                         f"({base_url}/{symbol_lookup[symbol]}): {task}")
+    return lines
+
+
+def render_llms_txt(modules, module_preambles, symbol_lookup, base_url):
     lines = ["# eacp", "",
              "> Cross-platform C++20 framework: app lifecycle, graphics, GPU, text, "
              "UI, networking. API reference generated from the headers.", "",
-             "## Docs", "", f"- [Getting started]({GETTING_STARTED_PAGE}): read first",
-             "- [Index](index.md): find by task, modules",
-             "- [Types](symbols.md): every public class and struct and its page", "",
+             "Each page is markdown. Header pages list types, public members with "
+             "their comments, free functions and the apps and tests that use them. "
+             "Search here for an existing helper before writing one.", "",
+             "## Docs", "",
+             f"- [Getting started]({base_url}/{GETTING_STARTED_PAGE}): read first",
+             f"- [Index]({base_url}/index.md): find by task, modules",
+             f"- [Types]({base_url}/symbols.md): every public class and struct "
+             "and its page", "",
              "## Modules", ""]
     for module in modules:
         summary = get_first_sentence(module_preambles[module])
-        lines.append(f"- [{module}]({module}/index.md)" +
+        lines.append(f"- [{module}]({base_url}/{module}/index.md)" +
                      (f": {summary}" if summary else ""))
+    lines += ["", "## Find by task", ""]
+    lines += render_llms_txt_task_lines(symbol_lookup, base_url)
     return "\n".join(lines) + "\n"
 
 
@@ -1175,17 +1194,18 @@ def render_markdown_pages_as_html(out_dir):
             markdown_module, markdown_path.read_text(), page_path))
 
 
-def generate_markdown_atomically(headers, module_preambles_by_directory, out_dir):
+def generate_markdown_atomically(headers, module_preambles_by_directory, out_dir,
+                                 base_url):
     # Built beside the output and swapped in, so a reader never sees half a tree.
     staging_dir = out_dir.with_name(out_dir.name + ".building")
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
-    generate_markdown(headers, module_preambles_by_directory, staging_dir)
+    generate_markdown(headers, module_preambles_by_directory, staging_dir, base_url)
     render_markdown_pages_as_html(staging_dir)
     replace_directory_atomically(staging_dir, out_dir)
 
 
-def generate_markdown(headers, module_preambles_by_directory, out_dir):
+def generate_markdown(headers, module_preambles_by_directory, out_dir, base_url):
     usage_files = read_usage_source_files()
     ordered = sorted(headers.values(), key=lambda header: header.include_path)
     type_lookup = build_type_page_lookup(ordered)
@@ -1202,14 +1222,16 @@ def generate_markdown(headers, module_preambles_by_directory, out_dir):
                    render_module_index(module, module_headers, module_preambles[module]))
         write_file(out_dir, f"{module}/symbols.md",
                    render_module_symbols_table(module, module_headers))
-    write_file(out_dir, "index.md", render_root_index(
-        modules, module_preambles, build_symbol_page_lookup(ordered)))
+    symbol_lookup = build_symbol_page_lookup(ordered)
+    write_file(out_dir, "index.md",
+               render_root_index(modules, module_preambles, symbol_lookup))
     write_file(out_dir, "symbols.md", render_slim_symbols_table(modules))
     if GETTING_STARTED_FILE.exists():
         write_file(out_dir, GETTING_STARTED_PAGE, GETTING_STARTED_FILE.read_text())
     else:
         print(f"warning: {GETTING_STARTED_FILE} missing", file=sys.stderr)
-    write_file(out_dir, "llms.txt", render_llms_txt(modules, module_preambles))
+    write_file(out_dir, "llms.txt", render_llms_txt(modules, module_preambles,
+                                                    symbol_lookup, base_url))
 
 
 def open_with_platform_opener(path):
@@ -1235,12 +1257,14 @@ def main():
     parser.add_argument("--html-out",
                         default=str(REPO_ROOT / "build" / "llm-docs-html"))
     parser.add_argument("--open", action="store_true")
+    parser.add_argument("--base-url", default="https://pond.audio/eacp/latest",
+                        help="absolute prefix for the links in llms.txt")
     args = parser.parse_args()
     xml_dir = Path(args.xml).resolve()
     run_doxygen(xml_dir)
     headers, module_preambles_by_directory = collect_headers_and_module_preambles(xml_dir)
     generate_markdown_atomically(headers, module_preambles_by_directory,
-                                 Path(args.out).resolve())
+                                 Path(args.out).resolve(), args.base_url.rstrip("/"))
     if args.html:
         generate_html_reference(Path(args.html_out).resolve(), args.open)
 
