@@ -17,7 +17,8 @@ set(webview_test_sources
         AsyncBridgeTests.cpp
         FileProviderTests.cpp
         MessageOriginPolicyTests.cpp
-        StreamingRangeTests.cpp)
+        StreamingRangeTests.cpp
+        WebViewMessagesTests.cpp)
 
 # The drag-out drop source/target that stream onFileDragMoved / onFileDragEnded
 # through SHDoDragDrop's modal loop (FileDrag-Windows.h). The cursor reader is

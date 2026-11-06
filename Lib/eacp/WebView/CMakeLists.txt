@@ -70,7 +70,8 @@ target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
         WebView/DevServerProbe.cpp
         WebView/MenuHelpers.cpp
-        WebView/MessageOrigin.cpp)
+        WebView/MessageOrigin.cpp
+        WebView/WebViewMessages.cpp)
 
 # Page-side scripts, embedded for ResEmbed::get("<name>.js", "EacpWebView").
 res_embed_add(eacp-webview
@@ -103,6 +104,10 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-webview PRIVATE
             WebView/WebView-Windows.cpp
+            WebView/WebViewCreation-Windows.cpp
+            WebView/WebViewEvents-Windows.cpp
+            WebView/WebViewInput-Windows.cpp
+            WebView/WebViewResources-Windows.cpp
             WebView/FileDrag-Windows.cpp)
 
     find_package(WebView2 REQUIRED)
