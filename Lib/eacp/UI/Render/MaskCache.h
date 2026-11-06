@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: coverage masks for paths and clips, kept in the atlas across frames. */
+
 #include "CoverageAtlas.h"
 
 #include <cstdint>

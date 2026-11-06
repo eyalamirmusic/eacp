@@ -30,7 +30,7 @@ constexpr auto snapshotDeadline = Time::MS {5000};
 // handler of a snapshot taken against a hidden, throttled web process, and
 // WebView2's CapturePreview never completes if the browser process dies mid
 // capture — and everything downstream settles only when the callback runs, so
-// an unanswered snapshot used to hang the caller rather than fail it. Applied
+// without a deadline an unanswered snapshot would hang the caller. Applied
 // by each backend's takeSnapshot, so the guarantee is stated once. The deadline
 // is a parameter only so a test can assert the behaviour without waiting out
 // the real one.

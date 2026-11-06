@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Apple only: the Core Graphics Context and the off-screen
+    view snapshot functions. */
+
 #include "../Primitives/GraphicUtils.h"
 #include "GraphicsContext.h"
 #include "../Primitives/Path.h"
@@ -29,6 +32,7 @@ Image renderLayerToImage(View& view, const Rect& bounds, float scale);
 Threads::Async<Image>
     renderViewToImageAsync(View& view, const Rect& bounds, float scale);
 
+// The Context over a CGContextRef, on macOS and iOS. Does not own it.
 class MacOSContext final : public Context
 {
 public:

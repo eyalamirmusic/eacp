@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: the hook a Linux window-system backend installs its clipboard through.
+*/
+
 #include "Clipboard.h"
 
 // Linux has no clipboard without a windowing connection, and eacp-core links

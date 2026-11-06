@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Graphics::WebView, the native web view, and its resource, script and snapshot API. */
+
 #include "../Common.h"
 
 #include "ScriptHost.h"
@@ -17,6 +19,7 @@ using ByteView = Span<const std::uint8_t>;
 using RangeSize = std::uint64_t;
 using ByteRange = Range<RangeSize>;
 
+// A whole resource served from memory to a custom scheme.
 struct ResourceResponse
 {
     std::string mimeType;
@@ -51,6 +54,7 @@ struct StreamingResource
 using StreamingProvider =
     std::function<std::optional<StreamingResource>(std::string_view url)>;
 
+// The MIME type for a file extension, case-insensitive; application/octet-stream when unknown.
 std::string mimeForPath(std::string_view path);
 
 std::string pathFromURL(std::string_view url,
@@ -62,6 +66,7 @@ std::string pathFromURL(std::string_view url,
 // Empty if the URL has no path.
 std::string fileURLToPath(std::string_view url);
 
+// A FileProvider over the ResEmbed resources in `category`; empty for a missing path.
 FileProvider fromResEmbed(std::string category);
 
 // A StreamingProvider that serves files straight off disk for a custom scheme,
@@ -75,6 +80,7 @@ StreamingProvider fileStreamProvider(
 
 struct WebViewNativeAccess;
 
+// A native web view (WKWebView or WebView2) that is also the ScriptHost the bridge talks to.
 class WebView
     : public View
     , public ScriptHost
@@ -115,17 +121,10 @@ public:
         // desktop browser, and an embedded web view is exactly that.
         std::string userAgent;
 
-        // Windows only: a suffix that isolates this WebView's WebView2
-        // user-data-folder (%LOCALAPPDATA%\<exe>\WebView2[-<suffix>]). WebView2
-        // requires every environment sharing a user-data-folder to register the
-        // SAME custom URL schemes; two WebViews in one executable that declare
-        // different `schemes`/`streamingSchemes` (e.g. an updater UI and the
-        // main app, only one of which serves a local-audio:// scheme) otherwise
-        // collide — the second CreateCoreWebView2EnvironmentWithOptions fails
-        // with ERROR_INVALID_STATE and the view never navigates (blank window).
-        // Give such WebViews distinct suffixes so each gets its own folder.
-        // Empty (the default) keeps the shared per-exe folder. No-op on macOS,
-        // where scheme handlers are per-WKWebViewConfiguration, not per-folder.
+        // Windows only: gives this WebView its own WebView2 user-data folder
+        // (`%LOCALAPPDATA%\<exe>\WebView2-<suffix>`). WebViews sharing a folder
+        // must declare the same custom schemes, or the second one stays blank;
+        // give them distinct suffixes. Empty keeps the shared folder.
         std::string userDataFolderSuffix;
 
         // Windows: WebView2's status bar — the hover-link URL overlay in the
@@ -418,5 +417,6 @@ private:
     std::shared_ptr<Native> impl;
 };
 
+// Options that serve the page from the ResEmbed resources in `category`.
 WebView::Options embeddedOptions(std::string category);
 } // namespace eacp::Graphics

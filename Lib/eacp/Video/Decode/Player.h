@@ -1,3 +1,6 @@
+/** @file
+    Player: a play/pause/rate/loop clock over a FrameStream that the caller advances.
+*/
 #pragma once
 
 #include "FrameStream.h"

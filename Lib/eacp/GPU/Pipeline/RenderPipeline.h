@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Render pipeline descriptors (formats, blending, depth, stencil, rasterizer)
+    and the compiled pipeline.
+*/
+
 #include "../Common.h"
 
 #include "../Texture/Texture.h"
@@ -396,6 +400,8 @@ struct ColorTargetState
     ColorWriteMask writeMask;
 };
 
+// Everything Device::makeRenderPipeline builds a pipeline from. The library is
+// borrowed and must outlive the call.
 struct RenderPipelineDescriptor
 {
     const ShaderLibrary* library = nullptr;

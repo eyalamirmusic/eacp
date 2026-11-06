@@ -1,9 +1,13 @@
 #pragma once
 
+/** @file The portable menu model (Menu, MenuItem, MenuBar) and installing it as a
+    window's native menu bar. */
+
 #include "../Graphics/Keyboard.h"
 
 namespace eacp::Graphics
 {
+// Runs on the main thread when the item is chosen.
 using MenuAction = std::function<void()>;
 
 // Asked each time the menu is about to be shown, so an item greys itself out
@@ -19,18 +23,21 @@ using MenuEnabled = std::function<bool()>;
 // with no menu bar.
 using MenuChecked = std::function<bool()>;
 
+// A menu shortcut: the key's character ("s") plus modifiers.
 struct KeyEquivalent
 {
     std::string key;
     ModifierKeys modifiers;
 };
 
+// Cmd+key on macOS; rendered as Ctrl+key in a Windows menu label.
 KeyEquivalent commandKey(std::string key);
 KeyEquivalent commandShiftKey(std::string key);
 KeyEquivalent commandAltKey(std::string key);
 
 class Menu;
 
+// One entry of a Menu; build it with the static factories.
 struct MenuItem
 {
     static MenuItem separator();
@@ -82,6 +89,7 @@ struct MenuItem
     bool isSeparator = false;
 };
 
+// A titled list of items: one top-level menu or a submenu.
 class Menu
 {
 public:
@@ -95,6 +103,7 @@ public:
     Vector<MenuItem> items;
 };
 
+// The top-level menus, left to right.
 class MenuBar
 {
 public:
@@ -114,9 +123,10 @@ class Window;
 // has to be told which one. An app with several windows calls this per window
 // on Windows and once on macOS — passing any of them.
 //
-// Ignored entirely on iOS, which has no menu bar of either kind.
+// Ignored on iOS and Android, which have no menu bar, and on Linux.
 void setApplicationMenuBar(const MenuBar& bar, Window& window);
 
+// The macOS application menu. Elsewhere an empty menu with that title.
 Menu standardApplicationMenu(std::string applicationName);
 
 // The standard Edit menu. An app that hosts a WebView needs this in its menu

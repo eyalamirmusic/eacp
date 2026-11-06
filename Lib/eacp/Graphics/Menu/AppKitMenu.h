@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file macOS only: builds NSMenus from the portable Menu model, and the action
+    targets that keep them working. */
+
 #import <AppKit/AppKit.h>
 #include "Menu.h"
 #include <eacp/Core/ObjC/ObjC.h>
@@ -17,7 +20,7 @@ using MenuTargets = Vector<ObjC::Ptr<NSObject>>;
 NSMenu* buildAppKitMenu(const Menu& menu, MenuTargets& targets);
 
 // Wraps a single MenuAction in a target so a plain NSButton (e.g. a status
-// item's button) can forward its click to C++ via @selector(trigger:). The
+// item's button) can forward its click to C++ via `@selector(trigger:)`. The
 // returned target must be kept alive for as long as the button references it.
 //
 // The target also answers validateMenuItem:, so a menu item built on one greys

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The JavaScript agent AppDriver installs in the page. */
+
 #include "../Common.h"
 
 namespace eacp::WebView::Test

@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: compute kernel that sums each pixel row's backdrop
+    winding. */
+
 #include "CoverageKernel.h"
 
 namespace eacp::GPUWidgets

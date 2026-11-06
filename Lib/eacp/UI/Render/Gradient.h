@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Linear and radial gradients: stops, spread mode and geometry. */
+
 #include "../Common.h"
 
 #include <eacp/GPUWidgets/Path/AffineTransform.h>

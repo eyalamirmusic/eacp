@@ -6,10 +6,10 @@
 
 #include <memory>
 
-// wl_seat, translated into the events View.h already knows about. The protocol
-// only: what the seat's events mean is in LinuxInput-Linux.h, and shared with
-// every other Linux backend. Every entry point tolerates there being no seat:
-// a headless Weston advertises none.
+/** @file Internal: Linux only. wl_seat, translated into the events View.h
+    already knows about. The protocol only: what the seat's events mean is in
+    LinuxInput-Linux.h, and shared with every other Linux backend. Every entry
+    point tolerates there being no seat: a headless Weston advertises none. */
 
 struct wl_cursor_theme;
 

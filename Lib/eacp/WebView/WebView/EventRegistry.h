@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The process-wide registry of bridge events, read by TypeScript codegen. */
+
 #include <Miro/Reflect.h>
 #include <Miro/TypeExport/Context.h>
 

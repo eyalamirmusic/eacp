@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Internal: the Direct3D 12 (D3D12) backend's per-process and per-Device state. Not
+    part of GPU.h.
+*/
+
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/WinInclude.h>

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: header, redirect, range and request-parsing helpers the HTTP backends and the server share. */
+
 #include "Http.h"
 
 namespace eacp::HTTP

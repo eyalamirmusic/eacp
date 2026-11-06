@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file WebView-era aliases for the async command helpers now in eacp::Rpc. */
+
 #include "../Common.h"
 
 #include <eacp/Network/Rpc/AsyncCommand.h>

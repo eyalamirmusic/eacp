@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Checking and requesting Android runtime permissions. */
+
 #include <functional>
 
 // Runtime permissions, named in full, such as "android.permission.CAMERA". The

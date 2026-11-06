@@ -1,4 +1,5 @@
 #pragma once
+/** @file Export macros for plugin and hot-reload module entry points. */
 
 // Marks a C function as exported from an eacp plugin. The host resolves
 // them with DynamicLibrary::findFunction after enumerating via

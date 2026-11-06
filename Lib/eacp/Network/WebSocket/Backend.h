@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the interface each platform's WebSocket client transport implements. */
+
 #include "WebSocket.h"
 
 #include <memory>

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The painter handed to Component::paint, which records shapes, text, images and layers. */
+
 #include "../Common.h"
 #include "../Render/DrawList.h"
 #include "../Render/GradientRamps.h"
@@ -9,6 +11,7 @@
 
 namespace eacp::UI
 {
+// Horizontal placement of text within a rect.
 enum class Justification
 {
     Left,

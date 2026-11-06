@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Instanced drawing of glyphs from a GlyphAtlas, one draw call per batch. */
+
 #include "Common.h"
 
 #include <eacp/Core/Utils/Containers.h>

@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file A set of occlusion query slots a render pass counts passing samples into,
+    read back on the CPU.
+*/
+
 #include <eacp/Core/Utils/Pimpl.h>
 
 #include <cstdint>

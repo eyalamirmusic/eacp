@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file GPU buffers, sub-ranges of them, and memory adopted from the caller. */
+
 #include "../Common.h"
 
 #include <cstdint>
@@ -189,12 +191,11 @@ public:
     // see the new contents, and commands already recorded but not yet
     // submitted are not held back.
     //
-    // That wait is new, and it is a cost every existing caller now pays: an
-    // update that used to be a bare memcpy on Metal is a memcpy behind a wait
-    // for the newest submission. Code that was already right by construction —
-    // a per-frame write, or one after a wait of its own — gets its old cost
-    // back by asking for updateUnordered below by name, which is what the
-    // renderers and StreamingBuffers in this tree were changed to do.
+    // That wait is a cost every caller pays: on Metal an update is a memcpy
+    // behind a wait for the newest submission. Code that is already right by
+    // construction — a per-frame write, or one after a wait of its own — skips
+    // it by asking for updateUnordered below by name, which is what the
+    // renderers and StreamingBuffers in this tree do.
     void update(const void* data, std::int64_t bytes, std::int64_t offset = 0);
 
     // The same write with that wait given up: the caller states that no work

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A Miro::Bridge served to this user's other processes over a named channel. */
+
 #include "../IPC/Messenger.h"
 #include "../Rpc/AsyncCommand.h"
 
@@ -52,6 +54,8 @@ private:
     MessageServer server;
 };
 
+// Constructs an RpcServer, logging and returning null instead of throwing
+// when the name cannot be claimed.
 OwningPointer<RpcServer> createRPCServer(std::string_view name,
                                          Miro::Bridge& bridgeToUse);
 

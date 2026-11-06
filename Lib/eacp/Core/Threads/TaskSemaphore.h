@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Binary semaphores for handing a signal from one thread to another. */
+
 #include "../Utils/Time.h"
 
 #include <mutex>

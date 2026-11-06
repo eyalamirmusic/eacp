@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Resolving HTTP Range headers for streamed WebView resources. */
+
 #include "../Common.h"
 
 #include "WebView.h"

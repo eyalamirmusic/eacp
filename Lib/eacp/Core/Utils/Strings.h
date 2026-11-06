@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Trim, case, split, hex, UTF-8/wide, toString and tryParse. */
+
 #include "Containers.h"
 
 #include <charconv>
@@ -114,7 +116,7 @@ bool parseFloating(std::string_view s, double& out);
 } // namespace Detail
 
 // string → number, the counterpart to toString. Integers go through from_chars
-// and float/double through Detail::parseFloating, so neither throws nor depends
+// and float/double through a locale-free parser, so neither throws nor depends
 // on the locale, and both reject trailing junk. Returns nullopt unless the
 // whole string is a valid T.
 template <typename T>

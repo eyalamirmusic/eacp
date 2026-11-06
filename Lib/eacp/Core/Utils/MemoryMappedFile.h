@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Read-only memory mapping of a file or a byte range of one. */
+
 #include "Common.h"
 #include "FilePath.h"
 

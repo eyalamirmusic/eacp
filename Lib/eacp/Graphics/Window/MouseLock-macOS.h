@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: macOS only. The flag that drops the motion a mouse-lock
+    cursor warp produces. */
+
 namespace eacp::Graphics::detail
 {
 // Warping the cursor moves it without the user having moved it, and the next

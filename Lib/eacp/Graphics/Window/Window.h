@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file A native top-level window: WindowOptions to configure it, WindowEvents
+    to observe it, Window to own it. */
+
 #include "../Image/Image.h"
 #include "../Primitives/Primitives.h"
 #include "../View/View.h"
@@ -9,6 +12,8 @@
 namespace eacp::Graphics
 {
 
+// Window styles, named after AppKit's style masks; most map to Win32 styles
+// too.
 enum class WindowFlags
 {
     Borderless,
@@ -64,6 +69,8 @@ struct WindowEvents
     WindowInputTap input;
 };
 
+// Everything a Window is made with. Sizes are content points, not the outer
+// frame.
 struct WindowOptions
 {
     WindowOptions();
@@ -265,11 +272,15 @@ struct WindowOptions
     // value is ignored there; earlier Windows stays square.
     std::optional<float> cornerRadius;
 
+    // Default: Titled, Closable, Miniaturizable, Resizable.
     EA::Vector<WindowFlags> flags;
 };
 
 struct ModifierKeys;
 
+// A native top-level window. Main thread only. Does not own its content
+// view: declare the view before the window so it outlives it. For one view in
+// one window, use ViewWindow or runWindowedApp instead.
 class Window
 {
 public:
@@ -321,14 +332,9 @@ public:
     // front. {0, 0} on iOS, which has no window to place.
     Point getPosition() const;
 
-    // Moves the window's top-left to `position`, in the same space. Unlike
-    // initialPosition this does not contain the window within the display: an
-    // app moving a window on purpose is told where to put it, and a value
-    // restored from disk should go through initialPosition, which does clamp.
-    //
-    // Fires WindowEvents::onMoved, like a move by the user does — the window
-    // moved, and an app saving its position wants to hear about it however it
-    // happened. No-op on iOS.
+    // Moves the window's top-left to `position`, in the same space, without
+    // clamping to the display (initialPosition clamps); fires
+    // WindowEvents::onMoved. No-op on iOS.
     void setPosition(Point position);
 
     // The content size in points - the measure WindowOptions::width/height,
@@ -337,19 +343,9 @@ public:
     // so this reads a real size there too. The screen on iOS.
     Point getSize() const;
 
-    // Resizes the content to `size`, keeping the top-left where it is.
-    //
-    // The one rule the window has is asked as on every other path: the size
-    // goes through sizeConstraint as a corner resize (ResizeAxis::Both) and
-    // is floored at minWidth/minHeight, so a constrained window cannot be
-    // put into a shape it would refuse to be dragged into. The size it took
-    // may therefore differ from the one asked for; getSize says which. Nothing
-    // contains it within the display: an app resizing a window on purpose is
-    // told what size to make it.
-    //
-    // Fires WindowOptions::onResize like a drag does - the window resized,
-    // and the content that lays out from that callback wants to hear about
-    // it however it happened. No-op on iOS.
+    // Resizes the content to `size`, keeping the top-left where it is. The size
+    // goes through sizeConstraint and minWidth/minHeight, so it may differ from
+    // the one asked for (getSize says which); fires onResize. No-op on iOS.
     void setSize(Point size);
 
     // Minimizes to the Dock / taskbar (macOS miniaturize, Windows

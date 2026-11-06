@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A tab bar, and a component that shows one page per tab. */
+
 #include "Widgets.h"
 
 #include <string>

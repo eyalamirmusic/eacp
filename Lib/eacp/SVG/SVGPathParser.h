@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Parsing an SVG path `d` attribute into a path. */
+
 #include "Common.h"
 
 #include <eacp/GPUWidgets/Path/Path.h>

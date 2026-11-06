@@ -1,4 +1,8 @@
 #pragma once
+/** @file
+    Internal: EACP_RELOADABLE and the table of type-erased functions a hot-reload module
+    exports.
+*/
 
 #include "PluginExport.h"
 

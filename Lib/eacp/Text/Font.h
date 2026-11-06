@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Font requests, faces, variants and metrics the rasterizer and atlas key on. */
+
 #include "Common.h"
 
 #include <cstdint>

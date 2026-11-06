@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A component listing the OnlineResources registry with fetch, cancel and delete controls. */
+
 #include <eacp/Network/OnlineResource/OnlineResources.h>
 #include <eacp/UI/Widgets/ListBox.h>
 #include <eacp/UI/Widgets/Widgets.h>

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A captured snapshot of a DOM element subtree, returned by AppDriver queries. */
+
 #include "../Common.h"
 
 #include <map>

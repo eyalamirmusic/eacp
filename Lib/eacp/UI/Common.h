@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Shared types for the UI tier: rects, points, colours and rounded-rect corner radii. */
+
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/Text/Text.h>
 

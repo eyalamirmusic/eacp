@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: uploads images to GPU textures once, keyed by content, and hands out references. */
+
 #include "ImageTexture.h"
 
 #include <unordered_map>

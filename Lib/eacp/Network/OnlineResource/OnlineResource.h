@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A file an app needs from the network, downloaded once and kept on disk. */
+
 #include "../Common.h"
 
 #include <eacp/Core/Threads/Async.h>
@@ -10,7 +12,7 @@ namespace eacp
 // A file an app needs from the network, kept on disk and fetched at most
 // once: a fetch finds the local copy, asks the server whether it changed
 // when the server gave it something to ask with, and downloads only when it
-// has to. Each successful download leaves a sidecar (<path>.resource.json)
+// has to. Each successful download leaves a sidecar (`<path>.resource.json`)
 // recording the URL, the version and the server's validators; a later fetch
 // reads it back to decide. A .zip is unpacked and path() is the folder.
 //
@@ -24,7 +26,7 @@ namespace eacp
 //  * fetch(Options): the same, blocking until the resource is on disk. For a
 //    console app that needs the file before it does anything else.
 //
-// The transfer runs on a worker thread. It writes to <path>.part and renames
+// The transfer runs on a worker thread. It writes to `<path>.part` and renames
 // into place only once whole, so an interrupted download never passes for a
 // complete one. Destroying the object cancels a transfer in flight and
 // abandons its Async, so no continuation runs into a view that is gone.

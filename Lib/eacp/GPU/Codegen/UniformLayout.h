@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Uniform block offsets and sizes under the MSL and std140 rules, shared by
+    the upload walk and emitters.
+*/
+
 #include "../Common.h"
 
 #include "ShaderTypes.h"

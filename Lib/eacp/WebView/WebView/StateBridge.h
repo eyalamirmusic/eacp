@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file EACP_STATE and EACP_KEYED_STATE: C++ state mirrored into the page. */
+
 #include "EventRegistry.h"
 
 #include <Miro/Bridge.h>

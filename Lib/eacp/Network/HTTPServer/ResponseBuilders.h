@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Shorthand for building common HTTP responses. */
+
 #include "../HTTP/Http.h"
 
 namespace eacp::HTTP

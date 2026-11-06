@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Internal: checks an indirect draw's buffer, offset and stride before a
+    backend records it.
+*/
+
 #include "../Buffer/Buffer.h"
 
 #include <cstdint>

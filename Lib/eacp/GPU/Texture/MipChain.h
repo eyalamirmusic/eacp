@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Mip level counts and sizes, and a CPU-built mip chain for upload. */
+
 #include "Texture.h"
 
 #include <eacp/Core/Utils/Containers.h>

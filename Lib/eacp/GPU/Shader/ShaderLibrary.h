@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    ShaderLibrary, a ShaderSource compiled on a Device, or loaded from a binary
+    compiled at build time.
+*/
+
 #include "../Common.h"
 
 #include "ShaderSource.h"
@@ -13,6 +18,9 @@ class Device;
 class ShaderLibrary
 {
 public:
+    // Loads the build-time binary for `source` when one is embedded, else
+    // compiles the source on `device`. Failure, an invalid device or an empty
+    // source leaves isValid() false; nothing throws.
     ShaderLibrary(Device& device, const ShaderSource& source);
 
     const std::string& vertexEntry() const;

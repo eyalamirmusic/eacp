@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Windows only: the hooks a window procedure calls to route its menu bar
+    messages. */
+
 #include <eacp/Core/Utils/WinInclude.h>
 
 namespace eacp::Graphics::detail

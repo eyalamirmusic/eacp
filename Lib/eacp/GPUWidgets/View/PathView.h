@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A GPUView that fills and strokes one Path. */
+
 #include "../Path/Path.h"
 
 #include <eacp/Core/Utils/Pimpl.h>

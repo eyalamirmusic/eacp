@@ -1,3 +1,4 @@
+/** @file The audio block and spec a VideoRecorder takes alongside the picture. */
 #pragma once
 
 #include <eacp/Core/Core.h>

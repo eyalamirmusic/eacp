@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Time::MS durations, sleeping, wall-clock timestamps and Deadline. */
+
 #include <compare>
 #include <cstdint>
 #include <string>
@@ -7,8 +9,8 @@
 namespace eacp::Time
 {
 // A duration in milliseconds. The framework's time currency: public APIs take
-// this instead of std::chrono types so headers stay free of <chrono> (the
-// same boundary FilePath draws around <filesystem>).
+// this instead of std::chrono types so headers stay free of `<chrono>` (the
+// same boundary FilePath draws around `<filesystem>`).
 struct MS
 {
     std::int64_t count = 0;
@@ -26,7 +28,7 @@ constexpr MS operator*(MS duration, std::int64_t factor)
     return MS {duration.count * factor};
 }
 
-// Blocks the calling thread, keeping <thread> and <chrono> out of callers
+// Blocks the calling thread, keeping `<thread>` and `<chrono>` out of callers
 // that just need to sleep.
 void sleep(MS duration);
 
@@ -39,7 +41,7 @@ MS sinceEpoch();
 std::string formatIso8601(MS sinceUnixEpoch);
 
 // A point in the future, for pump-until loops. Wraps the steady clock behind
-// out-of-line methods so headers using it stay free of <chrono>.
+// out-of-line methods so headers using it stay free of `<chrono>`.
 class Deadline
 {
 public:

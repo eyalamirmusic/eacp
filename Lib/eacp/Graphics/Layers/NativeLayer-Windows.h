@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: Windows only: the DirectComposition visual behind every Layer. */
+
 #include "../DComp-Windows.h"
 
 #include "../Primitives/Primitives.h"

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Typed client for the JSON remote procedure call endpoint HTTP::Rpc::Server serves. */
+
 #include <eacp/Network/Network.h>
 
 #include <Miro/Reflect.h>

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Base64 encoding and decoding (RFC 4648, padded). */
+
 #include <optional>
 #include <string>
 #include <string_view>

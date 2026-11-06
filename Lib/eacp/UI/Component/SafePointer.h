@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A component pointer that turns null when the component is destroyed. */
+
 #include "Component.h"
 
 #include <type_traits>

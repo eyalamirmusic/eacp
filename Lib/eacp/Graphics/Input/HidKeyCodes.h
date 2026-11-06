@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Maps USB HID keyboard usages (GameController's GCKeyCode) to KeyCodes. */
+
 #include "../Graphics/Keyboard.h"
 
 namespace eacp::Graphics

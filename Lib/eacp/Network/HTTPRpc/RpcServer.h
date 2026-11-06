@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A Miro::Bridge served over HTTP as one POST endpoint. */
+
 #include <eacp/Network/Network.h>
 
 #include <Miro/Bridge.h>
@@ -9,7 +11,7 @@ namespace eacp::HTTP::Rpc
 
 // Mounts a Miro::Bridge onto an HTTP::Server as a single POST endpoint at
 // `basePath` (default "/rpc"). Wire protocol mirrors the WebView bridge:
-// request { "command", "payload" }, success { "result": <JSON> }, error the
+// request { "command", "payload" }, success { "result": `<JSON>` }, error the
 // handler's status code (404 for unknown commands) with { "error": "..." }.
 //
 // The caller owns the Bridge and can wire it to a WebView transport at the

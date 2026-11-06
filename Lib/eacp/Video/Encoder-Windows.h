@@ -1,3 +1,7 @@
+/** @file
+    Internal: Windows-only Media Foundation encoder shared by the encoder and the Screen tier;
+    not for app code.
+*/
 #pragma once
 
 #include <eacp/Core/Utils/WinInclude.h>

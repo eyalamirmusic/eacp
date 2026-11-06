@@ -1,3 +1,9 @@
+/** @file
+    CameraView: a GPUView that draws a Camera's live feed, with an overlay hook
+    in the same render pass. Built where EACP_HAS_CAPTURE is on (Apple,
+    Windows, Android). The view does not own the Camera: keep it alive while
+    attached, or detach() first.
+*/
 #pragma once
 
 #include <eacp/Camera/Camera.h>
@@ -17,7 +23,8 @@ namespace eacp::Cameras
 // wrapped zero-copy as a texture (macOS) and drawn through the sprite
 // renderer, then drawOverlay composites AI results (landmarks, boxes) in the
 // same GPU pass. The view does not own the camera; keep the camera alive
-// while it is attached (or detach() it).
+// while it is attached (or detach() it). It is a native GPUView: put it in a
+// window, not inside a UI component tree.
 class CameraView : public GPU::GPUView
 {
 public:

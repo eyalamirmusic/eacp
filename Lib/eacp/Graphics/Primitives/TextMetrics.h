@@ -1,10 +1,14 @@
 #pragma once
 
+/** @file Measuring text in a Font. EACP_HAS_CONTEXT only (Apple and Windows). */
+
 #include "Font.h"
 
 namespace eacp::Graphics
 {
 
+// Static measurements in points, through Core Text on Apple and DirectWrite on
+// Windows. Indices are byte offsets into the UTF-8 string.
 struct TextMetrics
 {
     static float measureWidth(const std::string& text, const Font& font);

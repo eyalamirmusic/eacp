@@ -1,5 +1,14 @@
 #pragma once
 
+/** @file The EDSL value handles (Float, Float2, UInt, Bool, matrices...) whose
+    operators record graph nodes.
+
+    The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
+    handles into a ShaderGraph: operators and the free float2/float3/float4()
+    constructors record IR nodes instead of touching strings. Nothing here knows
+    about a backend - the graph it builds is emitted later by ShaderEmitter.
+*/
+
 #include "Forward.h"
 #include "ShaderGraph.h"
 #include "ShaderTypes.h"

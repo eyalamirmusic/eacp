@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file How a Miro bridge command runs (main thread or worker) and becomes a typed Async. */
+
 #include "../Common.h"
 
 #include <Miro/Bridge.h>
@@ -14,7 +16,7 @@ namespace eacp::Rpc
 
 // Runs `work` on a detached worker thread. The seam runCommand uses for
 // CommandExecution::WorkerThread, defined out of line so this header
-// doesn't need <thread>.
+// doesn't need `<thread>`.
 void runOnWorkerThread(Callback work);
 
 // Selects how a bridge executes a command when turning a caller's request

@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: shader that paints a solid colour through a PathRasterizer
+    coverage mask. */
+
 #include "../Common.h"
 
 #include "Vertices.h"

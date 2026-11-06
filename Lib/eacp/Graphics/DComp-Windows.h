@@ -1,20 +1,24 @@
 #pragma once
 
-// DirectComposition — the compositor behind Windows.UI.Composition, reached
-// directly as classic COM instead of through the WinRT projection. Same engine,
-// same visual tree, same D2D-drawn surfaces, but no cppwinrt (a multi-second
-// per-TU include) and, crucially, no DispatcherQueue: WinRT's Compositor demands
-// one on its thread, which is the only reason eacp ever had that subsystem.
-//
-// Two behavioural differences the callers must respect:
-//
-//   * Nothing reaches the screen until commitComposition(). WinRT committed
-//     implicitly; DComp batches until the device is told to flush.
-//
-//   * The rendering device is bound at device-creation time and there is no
-//     SetRenderingDevice(). A lost device therefore invalidates every target,
-//     visual and surface, not just their pixels. Objects stamp themselves with
-//     getCompositionGeneration() and rebuild when it moves.
+/** @file Internal: Windows only: the DirectComposition device, shared Direct3D and Direct2D
+    devices, and device-loss recovery.
+
+    DirectComposition — the compositor behind Windows.UI.Composition, reached
+    directly as classic COM instead of through the WinRT projection. Same engine,
+    same visual tree, same D2D-drawn surfaces, but no cppwinrt (a multi-second
+    per-TU include) and, crucially, no DispatcherQueue: WinRT's Compositor demands
+    one on its thread, which is the only reason eacp ever had that subsystem.
+
+    Two behavioural differences the callers must respect:
+
+      * Nothing reaches the screen until commitComposition(). WinRT committed
+        implicitly; DComp batches until the device is told to flush.
+
+      * The rendering device is bound at device-creation time and there is no
+        SetRenderingDevice(). A lost device therefore invalidates every target,
+        visual and surface, not just their pixels. Objects stamp themselves with
+        getCompositionGeneration() and rebuild when it moves.
+*/
 
 #include "D2D-Windows.h"
 

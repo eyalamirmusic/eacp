@@ -1,3 +1,7 @@
+/** @file
+    The Model.proto and MIL.proto subset an ML Program uses, as plain data, and its
+    protobuf encoding.
+*/
 #pragma once
 
 #include "Protobuf.h"

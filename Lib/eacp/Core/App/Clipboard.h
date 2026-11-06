@@ -1,9 +1,13 @@
 #pragma once
 
+/** @file Plain-text and file-list access to the system clipboard. */
+
 #include "../Utils/Common.h"
 
 namespace eacp::Clipboard
 {
+// Replaces the clipboard's contents. False when the platform refused or has no
+// clipboard.
 bool copyText(std::string_view text);
 bool copyFiles(const Vector<std::string>& paths);
 

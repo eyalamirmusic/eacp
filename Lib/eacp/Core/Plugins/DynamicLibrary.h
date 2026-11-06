@@ -1,4 +1,7 @@
 #pragma once
+/** @file
+    Load a shared library at run time, look up its symbols and unload it safely.
+*/
 
 #include "../Utils/Common.h"
 #include "../Utils/FilePath.h"
@@ -33,16 +36,19 @@ public:
     DynamicLibrary(const DynamicLibrary&) = delete;
     DynamicLibrary& operator=(const DynamicLibrary&) = delete;
 
+    // Returns false on failure; lastError() then says why.
     bool open(const FilePath& path);
     void close();
 
     [[nodiscard]] bool isOpen() const;
+    // Returns nullptr when the symbol is missing or nothing is open.
     [[nodiscard]] void* findSymbol(const std::string& name) const;
 
     // The loader's own message for the last failed open(), empty after a
     // successful one: dlerror() on POSIX, GetLastError() as text on Windows.
     [[nodiscard]] const std::string& lastError() const;
 
+    // findSymbol cast to a function pointer type; nullptr when missing.
     template <typename FunctionType>
     FunctionType findFunction(const std::string& name) const
     {

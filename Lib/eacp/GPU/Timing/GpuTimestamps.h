@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    GpuTimestamps, the backend half of pass timing: slots of raw GPU timestamps.
+*/
+
 #include "PassShares.h"
 
 #include <eacp/Core/Utils/Pimpl.h>

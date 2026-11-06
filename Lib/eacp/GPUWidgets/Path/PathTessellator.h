@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Turning a Path into triangle lists on the CPU: plain fills, strokes
+    and feathered meshes. */
+
 #include "Path.h"
 
 namespace eacp::GPUWidgets

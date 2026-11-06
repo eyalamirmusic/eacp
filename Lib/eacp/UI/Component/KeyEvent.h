@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Key events as components receive them, aliased from Graphics. */
+
 #include "../Common.h"
 
 namespace eacp::UI

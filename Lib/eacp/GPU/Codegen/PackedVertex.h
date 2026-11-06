@@ -1,5 +1,37 @@
 #pragma once
 
+/** @file Compact CPU storage types for vertex attributes: UNorm8x4, Float16x2/x4 and
+    SNorm16x2/x4.
+
+    CPU storage types for packed vertex attributes.
+
+    vertexInput(&Vertex::field) reads the wire format off the field's C++ type: a
+    float[4] member is a Float4 attribute, sixteen bytes of it. That is the right
+    default and the wrong storage for most real vertex data, where a colour is
+    four bytes, a UV pair is two halves and a normal is a packed triple. Unpacked
+    to float everywhere, a typical mesh vertex is roughly twice the size it needs
+    to be, and vertex fetch is a real cost in a scene renderer in a way it is not
+    in a UI.
+
+    Each type below says "this many bytes on the wire, that type in the shader":
+    a ShaderValue, which is what define() sees, and a vertexFormat, which is what
+    the pipeline is told. The shader body is unchanged and there is no unpacking
+    in it - both backends widen the attribute as the vertex is fetched, in
+    hardware, for free.
+
+        struct Vertex
+        {
+            float position[2];
+            GPU::Float16x2 uv;    // 4 bytes, Float2 in define()
+            GPU::UNorm8x4 color;  // 4 bytes, Float4 in define()
+        };
+
+    Named for what they hold rather than after the VertexFormat entries, which
+    keep the graphics-API spelling (UByte4Norm, Half2) that anyone reading a
+    Metal or D3D12 table will recognise. The scalar conversions they are built
+    on (halfFromFloat and friends) are in PackedScalars.h.
+*/
+
 #include "../Pipeline/VertexLayout.h"
 #include "PackedScalars.h"
 #include "ShaderValue.h"

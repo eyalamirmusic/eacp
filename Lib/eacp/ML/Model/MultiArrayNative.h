@@ -1,3 +1,4 @@
+/** @file Internal: Apple-only bridge between MultiArray and MLMultiArray; not for app code. */
 #pragma once
 
 #import <CoreML/CoreML.h>

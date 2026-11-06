@@ -1,11 +1,14 @@
 #pragma once
 
+/** @file Whole-file reads and writes, file operations and the directory walk. */
+
 #include "Common.h"
 #include "File.h"
 #include "FilePath.h"
 
 namespace eacp::Files
 {
+// The whole file as bytes. Empty when it cannot be opened; never throws.
 std::string readFile(const FilePath& path);
 
 // Writes bytes to path, creating parent directories first. Throws
@@ -75,7 +78,7 @@ bool moveFile(const FilePath& from, const FilePath& to);
 bool removeFile(const FilePath& path);
 
 // Adds bytes or text to the end of the file, creating it (and its parent
-// directories) if it is missing.
+// directories) if it is missing. False when it cannot be opened or written.
 bool appendFile(const FilePath& path, Span<const std::uint8_t> bytes);
 bool appendFile(const FilePath& path, std::string_view text);
 

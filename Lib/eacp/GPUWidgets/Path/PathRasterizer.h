@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Rasterizing a Path's fill into an antialiased coverage texture with
+    compute kernels. */
+
 #include "CoverageBatch.h"
 #include "Path.h"
 

@@ -1,5 +1,17 @@
 #pragma once
 
+/** @file ComputeKernel, the device-free base for struct-authored compute kernels
+    that the CPU interpreter and ComputeProgram share.
+
+    The device-free half of a struct-authored compute kernel: the members, the
+    recorded body, and the source and graph generated from it. ComputeProgram
+    derives from it and adds the device - the library, the pipeline and the
+    bind - so a kernel written against ComputeKernel instead is declared exactly
+    as the ScaleKernel in ComputeProgram.h is, records and emits the same graph,
+    and links against eacp-gpu-codegen alone. It cannot be prepared or dispatched
+    on a GPU; that is what ComputeProgram is for.
+*/
+
 #include "../Frame/ComputePass.h"
 #include "ShaderMembers.h"
 

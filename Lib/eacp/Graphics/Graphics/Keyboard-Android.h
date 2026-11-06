@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Android only: the Android key code table, key text and the keyboard state
+    fed by window events. */
+
 #include "Keyboard.h"
 
 // Both directions of the Android key table, the text a key types, and the

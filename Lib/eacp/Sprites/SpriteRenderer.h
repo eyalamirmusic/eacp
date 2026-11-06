@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The batched sprite renderer and its per-quad data. */
+
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/Pimpl.h>
 #include <eacp/GPU/Frame/RenderPass.h>
@@ -185,6 +187,7 @@ public:
                       const Color& tint = Color::white(),
                       GPU::TextureSampling sampling = {});
 
+    // A solid rect in logical units, drawn with the 1x1 white texture.
     void fillRect(const Rect& rect, const Color& color);
 
     // An outline drawn inside the rect's edges, `thickness` logical units wide.

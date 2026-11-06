@@ -1,4 +1,5 @@
 #pragma once
+/** @file Float constants, degree/radian conversion and tolerant float comparison. */
 
 #include <concepts>
 
@@ -26,12 +27,14 @@ constexpr auto epsilon = 1.e-6f;
 // being nothing at all.
 constexpr auto tolerance = 1.e-5f;
 
+// Degrees to radians.
 template <std::floating_point T>
 constexpr T radians(T degreeValue)
 {
     return degreeValue * (T) (detail::exactPi / 180.L);
 }
 
+// Radians to degrees.
 template <std::floating_point T>
 constexpr T degrees(T radianValue)
 {

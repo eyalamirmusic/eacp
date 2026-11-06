@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Starts and stops a GPUView's display link as continuous mode and window
+    visibility change.
+*/
+
 #include <eacp/Core/Utils/Common.h>
 
 namespace eacp::GPU

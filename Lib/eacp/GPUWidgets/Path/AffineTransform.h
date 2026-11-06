@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A 2D affine transform in SVG's matrix(a b c d e f) layout. */
+
 #include "../Common.h"
 
 namespace eacp::GPUWidgets
@@ -28,8 +30,12 @@ struct AffineTransform
         return {x, 0.f, 0.f, y, 0.f, 0.f};
     }
 
+    // Positive radians turn +x towards +y, which is clockwise on a y-down
+    // screen.
     static AffineTransform rotation(float radians);
 
+    // SVG's skewX and skewY combined: x gains y * tan(radiansX), y gains
+    // x * tan(radiansY).
     static AffineTransform skew(float radiansX, float radiansY);
 
     static AffineTransform rotationAbout(float radians,

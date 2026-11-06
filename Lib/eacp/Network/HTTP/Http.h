@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file HTTP client requests and downloads, and the URL and query-string helpers. */
+
 #include "../Common.h"
 
 #include <atomic>
@@ -8,6 +10,8 @@
 namespace eacp::HTTP
 {
 
+// What a request returned. A transport failure leaves statusCode 0 and
+// sets error; an HTTP error status is not an error.
 struct Response
 {
     void setContent(const std::string& contentToUse, const std::string& contentType);
@@ -25,6 +29,8 @@ struct Response
     int statusCode = 0;
 };
 
+// Shared with a running request to watch or cancel it; every field may be
+// read or written from any thread. totalBytes is -1 while unknown.
 struct DownloadProgress
 {
     std::atomic<std::int64_t> bytesReceived {0};
@@ -76,6 +82,8 @@ enum class CachePolicy
     UseLocalCache
 };
 
+// An HTTP request, also what HTTP::Server hands a handler (params,
+// remoteAddr and remotePort are filled only there).
 struct Request
 {
     Request(const std::string& urlToUse = "");
@@ -94,7 +102,9 @@ struct Request
                      std::string bytes,
                      const std::string& contentType = "application/octet-stream");
 
+    // httpRequest(*this): blocks the calling thread.
     Response perform() const;
+    // downloadFile(*this, filePath): blocks the calling thread.
     Response downloadTo(const std::string& filePath) const;
 
     bool hasHeader(const std::string& key) const;
@@ -115,9 +125,9 @@ struct Request
 
     std::map<std::string, std::string> headers;
 
-    // Wall-clock limit for the whole request. Zero, the default, leaves each
-    // backend's own behaviour in place. A parallel download applies it to
-    // every chunk separately.
+    // Wall-clock limit for the whole request; a parallel download applies it
+    // to each chunk. Zero, the default, leaves every backend (NSURLSession,
+    // WinHTTP, curl, HttpURLConnection) at the platform's own default.
     Time::MS timeout {0};
 
     // Limit on establishing the connection. Zero, the default, leaves it to
@@ -173,11 +183,20 @@ struct Request
     std::string remoteAddr;
     int remotePort = -1;
 
+    // Not owned; must outlive the request.
     DownloadProgress* progress = nullptr;
+
+    // Downloads only: splits the body into this many ranged requests (at most
+    // 8) when the server accepts byte ranges.
     int parallelChunks = 1;
 };
 
+// Performs the request, blocking the calling thread until it ends. Never
+// throws; failures come back in Response::error.
 Response httpRequest(const Request& req);
+
+// Streams the body into filePath, blocking the calling thread. Never
+// throws; failures come back in Response::error.
 Response downloadFile(const Request& req, const std::string& filePath);
 
 // "eacp/<version>": the User-Agent sent by default where the platform has

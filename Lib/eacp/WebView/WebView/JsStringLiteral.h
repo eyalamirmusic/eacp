@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Escaping strings for injection into evaluated script. */
+
 #include <string>
 #include <string_view>
 

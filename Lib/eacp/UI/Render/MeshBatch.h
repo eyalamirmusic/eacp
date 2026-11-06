@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the batched triangle renderer behind filled paths built as meshes. */
+
 #include "../Common.h"
 #include "ClipMask.h"
 #include "CoverageAtlas.h"

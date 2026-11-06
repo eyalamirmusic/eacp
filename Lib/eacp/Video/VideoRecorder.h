@@ -1,3 +1,6 @@
+/** @file
+    VideoRecorder: record a View to an H.264 movie, optionally with app-pushed audio.
+*/
 #pragma once
 
 #include "Audio.h"

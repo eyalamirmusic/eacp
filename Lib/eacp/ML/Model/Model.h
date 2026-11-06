@@ -1,3 +1,6 @@
+/** @file
+    ML::Model: load, cache and run a Core ML model, blocking or on its own queue.
+*/
 #pragma once
 
 #include "MultiArray.h"
@@ -82,7 +85,7 @@ struct Prediction : Result
 // A Core ML model compiled from an ML Program package and loaded for one set
 // of compute units.
 //
-// The compile is cached under the cache directory as <hash>.mlmodelc, the
+// The compile is cached under the cache directory as `<hash>.mlmodelc`, the
 // hash taken over the program's bytes, the weights' identity and the OS
 // build. A hit is loaded where it lies and never recompiled or replaced,
 // because Core ML keys its engine cache on that directory: the first load onto
@@ -91,7 +94,7 @@ struct Prediction : Result
 // renames it into place; one that loses that race to another process loads
 // the winner's copy and deletes its own. A hit that fails to load twice is
 // taken for damaged, moved out of the way and recompiled. Each use touches a
-// <hash>.used stamp beside the model, and a compile then evicts the least
+// `<hash>.used` stamp beside the model, and a compile then evicts the least
 // recently used models beyond Options::cacheBudgetBytes.
 //
 // The blocking forms run on the caller's thread and pump no loop, so a worker

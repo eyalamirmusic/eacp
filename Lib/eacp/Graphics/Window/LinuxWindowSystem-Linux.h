@@ -7,10 +7,10 @@
 #include <optional>
 #include <string>
 
-// Which window system this copy of eacp talks to, and the process-wide
-// questions that have no window to hang off. A copy whose preferred backend
-// has no connection to reach gets surfaceless windows, exactly as a headless
-// one does.
+/** @file Internal: Linux only. Which window system this copy of eacp talks to,
+    and the process-wide questions that have no window to hang off. A copy whose
+    preferred backend has no connection to reach gets surfaceless windows,
+    exactly as a headless one does. */
 
 namespace eacp::Graphics
 {

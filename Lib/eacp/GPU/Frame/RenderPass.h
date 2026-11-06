@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Records draws, binds and render state for one render pass, obtained from
+    Frame::beginPass.
+*/
+
 #include "../Buffer/Buffer.h"
 #include "IndirectDraw.h"
 #include "OcclusionQueries.h"
@@ -229,7 +233,7 @@ public:
     // One slice of a target's depth plane - a layer of an array target, a
     // face of a cube (layer * 6 + face on a cube array) - bound as a plain 2D
     // depth texture, level 0, for a shader that declares depth2d (Texture2D
-    // <float>, sampler2D) rather than the array or cube the whole-plane binds
+    // `<float>`, sampler2D) rather than the array or cube the whole-plane binds
     // above hand it. Slice 0 of a 2D target is the same bind as those. A slice
     // the plane lacks, or a target without sampleableDepth, binds nothing.
     //

@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Per-frame arenas for data rewritten every frame, so writes never race
+    frames still in flight.
+*/
+
 #include "Buffer.h"
 
 #include <eacp/Core/Utils/Containers.h>

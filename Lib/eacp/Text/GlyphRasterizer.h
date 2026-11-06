@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Shaping strings into glyph runs and rasterizing glyphs through the platform's text engine. */
+
 #include "Font.h"
 #include "GlyphBitmap.h"
 
@@ -104,22 +106,17 @@ public:
 };
 
 // The whole platform surface of this module: turn a string into glyphs, and
-// a glyph into pixels and metrics. CoreText on Apple, DirectWrite on Windows.
+// a glyph into pixels and metrics. CoreText on Apple, DirectWrite on Windows,
+// FreeType and HarfBuzz on Linux, android.graphics on Android.
 //
 // Everything else — packing, caching, growth, GPU upload — is portable and sits
 // on top of this interface, which is what lets the atlas be tested against a
 // fake rasterizer rather than against whatever fonts a machine happens to have.
 //
-// Rasterization is grayscale on both platforms, never subpixel/LCD: the atlas
-// stores coverage and the colour arrives at draw time, so subpixel antialiasing
-// would bake one particular text colour into the cache. It also cannot coexist
-// with a transparent window background, and macOS dropped it in Mojave. What
-// Apple still calls font smoothing is on: since Mojave that is no LCD fringe
-// but the slight thickening of every stem the rest of the system's text is
-// drawn with — a sixth more ink for dark text at 16px, a third for light,
-// the fill's lightness deciding which — and without it text reads thin
-// beside a native view. Which is why a mask is drawn in the lightness of the
-// text it is for: see RasterRequest::lightText.
+// Rasterization is grayscale everywhere, never subpixel/LCD: the atlas stores
+// coverage and the colour arrives at draw time. On macOS font smoothing (stem
+// thickening) is on and depends on the text's lightness, so a mask is drawn in
+// the lightness of the text it is for: see RasterRequest::lightText.
 class GlyphRasterizer final : public GlyphSource
 {
 public:
@@ -171,7 +168,7 @@ private:
 
 // What registering a font made visible: the family the platform filed the
 // face under, which is the name a FontRequest resolves - and not necessarily
-// the one the caller knew it by, since a page's @font-face names a family of
+// the one the caller knew it by, since a page's `@font-face` names a family of
 // its own choosing - and the face's PostScript name, which names that face
 // alone and which both platforms resolve too.
 struct RegisteredFont

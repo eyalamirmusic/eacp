@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A scrolling view onto a larger content component, with scrollbars. */
+
 #include "Widgets.h"
 
 #include <functional>

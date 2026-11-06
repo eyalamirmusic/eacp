@@ -7,11 +7,11 @@
 #include <memory>
 #include <span>
 
-// What a seat's events mean, with none of the protocol that carried them: the
-// keymap, the repeat, the click count, the scroll a frame adds up to and the
-// cursor shape. Wayland and X11 both feed these; the evdev keycode is the unit
-// throughout, being what wl_keyboard.key carries and what an X11 keycode is
-// once 8 has been subtracted.
+/** @file Internal: Linux only. What a seat's events mean, with none of the
+    protocol that carried them: the keymap, the repeat, the click count, the
+    scroll a frame adds up to and the cursor shape. Wayland and X11 both feed
+    these; the evdev keycode is the unit throughout, being what wl_keyboard.key
+    carries and what an X11 keycode is once 8 has been subtracted. */
 
 namespace eacp::Threads
 {

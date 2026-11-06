@@ -1,4 +1,7 @@
 #pragma once
+/** @file
+    Mat4: a column-major 4x4 transform with right-handed, [0, 1]-depth projections.
+*/
 
 #include "../Utils/Containers.h"
 #include "Vec.h"
@@ -25,10 +28,12 @@ struct Mat4
     static constexpr Mat4 scale(const Vec3& factors);
     static constexpr Mat4 scale(float factor);
 
+    // Rotations take radians.
     static Mat4 rotationX(float radians);
     static Mat4 rotationY(float radians);
     static Mat4 rotationZ(float radians);
 
+    // fovY is the vertical field of view in radians; aspect is width over height.
     static Mat4 perspective(float aspect, float fovY, float nearZ, float farZ);
 
     // The same frustum with depth reversed: near lands on 1 and far on 0, for a
@@ -47,6 +52,7 @@ struct Mat4
     // point roughly upward; the part of it along the view direction is removed.
     static Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
 
+    // Column first, then row.
     constexpr float& at(int column, int row) { return values[column * 4 + row]; }
 
     constexpr const float& at(int column, int row) const

@@ -1,9 +1,12 @@
 #pragma once
+/** @file CFRef: move-only owner of a Core Foundation reference. Apple only. */
 
 #import <Foundation/Foundation.h>
 
 namespace eacp
 {
+// Takes ownership of a +1 reference without retaining it and calls CFRelease on
+// destruction.
 template <typename T>
 class CFRef
 {
@@ -42,6 +45,7 @@ public:
         return *this;
     }
 
+    // Releases now and leaves the CFRef empty; safe to call twice.
     void release()
     {
         if (ref)

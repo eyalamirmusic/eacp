@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The geometry of SVG shape elements as paths. */
+
 #include "Common.h"
 
 #include <eacp/GPUWidgets/Path/Path.h>
@@ -10,7 +12,7 @@ struct SVGElement;
 struct Viewport;
 
 // The elements that are a shape rather than a container or a definition: the
-// six primitives and <path>.
+// six primitives and `<path>`.
 bool isShapeTag(const std::string& tag);
 
 // The element's geometry in its own units, flattened to `flatness`. An empty

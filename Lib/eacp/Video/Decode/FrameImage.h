@@ -1,3 +1,4 @@
+/** @file Copy a decoded VideoFrame into a CPU-side Image. */
 #pragma once
 
 #include "VideoFrame.h"

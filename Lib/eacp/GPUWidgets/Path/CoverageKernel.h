@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file The compute kernel that writes per-pixel coverage, and the shared
+    kernel instances. */
+
 #include "../Common.h"
 
 #include <eacp/GPU/Codegen/Codegen.h>

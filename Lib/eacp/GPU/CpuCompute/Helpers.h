@@ -1,5 +1,21 @@
 #pragma once
 
+/** @file C++ twins of the eacp* shader helpers (half and bfloat16 packing, erf,
+    tanh), used by the interpreter and tests.
+
+    The C++ twins of the eacp* shader helpers (ShaderEmitter.cpp's shaderHelpers
+    table): the same operations in the same order, in float32 with no
+    contraction, so the executor and every test reference share one definition.
+    Each takes and returns what the helper does in the shader - a packed word is
+    a uint32_t, a float2/float4 a std::array - and the vector forms of eacpErf,
+    eacpErfc and eacpSaturatingTanh are the scalar applied per component, as there.
+
+    Where the three dialects disagree, the twin follows Metal: packHalf2 rounds
+    to nearest even and takes a finite value past 65504 to an infinity (D3D
+    truncates and saturates instead). A shift amount is taken modulo 32, as the
+    hardware does, so a parity or byte index out of range reads what a GPU reads.
+*/
+
 #include <array>
 #include <cstdint>
 

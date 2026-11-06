@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Linux and Android only: the window-system interface that makes presenting
+    views' native children. */
+
 #include "View-Linux.h"
 
 #include <memory>

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A blocking, listening TCP socket that accepts Connections. */
+
 #include "Connection.h"
 
 namespace eacp::TCP

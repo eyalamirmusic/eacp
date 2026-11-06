@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    FrameTimer, the per-Device pass timer that Frame drives; apps read the results
+    through Device.
+*/
+
 #include "FrameTimings.h"
 #include "GpuTimestamps.h"
 

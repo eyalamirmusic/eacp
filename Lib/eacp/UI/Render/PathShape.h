@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A vector path owned by a component, filled from the coverage atlas or as a mesh. */
+
 #include "CoverageAtlas.h"
 
 namespace eacp::UI

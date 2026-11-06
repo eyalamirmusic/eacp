@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: shader PathView fills a 2D triangle mesh with in one flat
+    colour. */
+
 #include "../Common.h"
 
 #include "Vertices.h"

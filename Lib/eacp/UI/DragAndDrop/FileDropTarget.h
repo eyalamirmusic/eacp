@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Accepting files dropped onto a component from the operating system. */
+
 #include "../Component/Component.h"
 
 #include <string>

@@ -1,4 +1,8 @@
 #pragma once
+/** @file
+    Compile-time hot-reload mode and target, read from the including app's own
+    definitions.
+*/
 
 #include "HotReloadTarget.h"
 
@@ -39,11 +43,13 @@
 
 namespace eacp::Plugins
 {
+// True when the app was configured with hot reload on (dev mode).
 constexpr bool isHotReload()
 {
     return EACP_HOT_RELOAD != 0;
 }
 
+// The module, build command and sources eacp_add_hot_reload described for this app.
 constexpr HotReloadTarget hotReloadTarget()
 {
     return {EACP_HOT_RELOAD_LIBRARY,

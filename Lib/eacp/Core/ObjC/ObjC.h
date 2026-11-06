@@ -1,19 +1,29 @@
 #pragma once
+/** @file
+    ObjC::Ptr, a reference-counted owner for Objective-C objects, and allocation
+    helpers. Apple only.
+*/
+
 
 #import <Foundation/Foundation.h>
 
 namespace eacp::ObjC
 {
+// Tag asking Ptr to retain the object it is given instead of adopting it.
 struct RetainMode
 {
 };
 
+// Releases its object on destruction; copies retain.
 template <typename T>
 class Ptr
 {
 public:
     Ptr() = default;
+    // Adopts an owned (+1) object without retaining it, such as the result of
+    // alloc/init.
     Ptr(T* obj) { set(obj); }
+    // Retains the object, for one you do not own.
     Ptr(T* obj, RetainMode) { reset(obj); }
     Ptr(const Ptr& obj) { reset(obj.ptr); }
 
@@ -51,6 +61,7 @@ public:
         }
     }
 
+    // Adopts without retaining, like the one-argument constructor.
     Ptr& operator=(T* other)
     {
         set(other);
@@ -93,18 +104,21 @@ T* alloc()
     return [T alloc];
 }
 
+// `[[T alloc] init]`; the caller owns the result.
 template <typename T>
 T* createNew()
 {
     return [alloc<T>() init];
 }
 
+// A Ptr that retains `object`, for one you do not own.
 template <typename T>
 Ptr<T> attachPtr(T* object)
 {
     return {object, RetainMode()};
 }
 
+// A Ptr owning a new `[[T alloc] init]`.
 template <typename T>
 Ptr<T> makePtr()
 {

@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: macOS only: AppKit dragging items and result mapping behind
+    View::startFileDrag. */
+
 #import <AppKit/AppKit.h>
 
 #include "FileDrag.h"

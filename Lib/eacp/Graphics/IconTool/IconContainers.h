@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Writes .icns, .ico and iOS .appiconset icon files from one source image. */
+
 #include "../Common.h"
 
 #include "../Image/Image.h"

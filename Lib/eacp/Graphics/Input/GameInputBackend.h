@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: the interface a platform game input feed implements to
+    push into a GameInput's queue. */
+
 #include "GameInputQueue.h"
 
 namespace eacp::Graphics

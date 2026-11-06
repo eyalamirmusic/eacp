@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A vector path that stores its geometry as flattened polylines. */
+
 #include "AffineTransform.h"
 
 namespace eacp::GPUWidgets
@@ -103,6 +105,12 @@ public:
                        float toRadians,
                        float innerCircleProportionalSize);
 
+    // Another path's sub-paths added to this one's, which under the non-zero
+    // rule is the union of the two regions -- what a clip path made of several
+    // shapes is, and what a stroke and the shape it outlines are not, those
+    // being wound against each other on purpose.
+    void append(const Path& other);
+
     // The same geometry with every point mapped through `transform`.
     //
     // It maps the polyline, not the curves it was flattened from, so the segment
@@ -113,12 +121,6 @@ public:
     // *result* needs - the authored tolerance divided by
     // transform.getScaleFactor() - before building anything meant to be
     // transformed.
-    // Another path's sub-paths added to this one's, which under the non-zero
-    // rule is the union of the two regions -- what a clip path made of several
-    // shapes is, and what a stroke and the shape it outlines are not, those
-    // being wound against each other on purpose.
-    void append(const Path& other);
-
     Path transformed(const AffineTransform& transform) const;
 
     // transformed, in place - juce::Path::applyTransform.

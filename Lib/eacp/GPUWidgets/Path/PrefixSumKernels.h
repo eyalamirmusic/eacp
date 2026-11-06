@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the two compute kernels PrefixSum dispatches. */
+
 #include "../Common.h"
 
 #include <eacp/GPU/Codegen/Codegen.h>

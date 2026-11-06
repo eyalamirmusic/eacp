@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Laying out and drawing strings through a GlyphAtlas and GlyphRenderer. */
+
 #include "GlyphRasterizer.h"
 #include "GlyphRenderer.h"
 
@@ -15,17 +17,9 @@ class GlyphAtlas;
 // One glyph a layout placed: its pen in the caller's own points, and which
 // glyph of which face to draw there.
 //
-// What a caller keeps when it wants the layout done once rather than once per
-// frame. Laying a string out is a walk over its bytes with an atlas lookup per
-// glyph, and a string that has not changed produces the same glyphs every time
-// -- so a caller drawing an unchanged interface should be able to hold these and
-// hand them straight back. See layoutInto and drawGlyph.
-//
-// It names the glyph rather than its texels because which bitmap it needs --
-// the glyph rasterized at which of the positions within a pixel -- is only
-// known once whatever the caller adds to the pen at draw time has been added
-// and the pen is snapped; the atlas is asked then. Which also means a recorded
-// layout survives the atlas being cleared underneath it.
+// Hold these (layoutInto, drawGlyph) to lay out an unchanged string once
+// instead of every frame. They name glyphs, not texels, so they stay valid
+// after the atlas is cleared.
 struct PlacedGlyph
 {
     // x at the glyph's left edge, y on the baseline.
@@ -55,6 +49,7 @@ struct SnappedPen
     int phase = 0;
 };
 
+// Converts a pen in points to device pixels at `scale` and splits x into pixel and subpixel phase.
 SnappedPen snapPen(Graphics::Point pen, float scale);
 
 // Draws strings. An atlas, a glyph renderer and the layout loop that walks a

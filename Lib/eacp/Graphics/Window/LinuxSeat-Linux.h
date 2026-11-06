@@ -5,10 +5,11 @@
 
 #include <string>
 
-// What the seat can be asked with no window in hand: the polled keyboard
-// state Keyboard's window-less queries read, and the pointer's window,
-// position and cursor a View asks about. Wayland's wl_seat and X11's core
-// devices both answer it, so nothing above this has to know which is under it.
+/** @file Internal: Linux only. What the seat can be asked with no window in
+    hand: the polled keyboard state Keyboard's window-less queries read, and the
+    pointer's window, position and cursor a View asks about. Wayland's wl_seat
+    and X11's core devices both answer it, so nothing above this has to know
+    which is under it. */
 
 namespace eacp::Graphics
 {

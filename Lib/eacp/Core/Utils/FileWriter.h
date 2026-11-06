@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Streaming and positional writes to one file. */
+
 #include "Common.h"
 #include "FilePath.h"
 

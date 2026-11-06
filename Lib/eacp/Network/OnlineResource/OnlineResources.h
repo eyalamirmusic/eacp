@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The process-wide registry of every OnlineResource: what is on disk, fetching or failed. */
+
 #include "OnlineResource.h"
 
 #include <functional>

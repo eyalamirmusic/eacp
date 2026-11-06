@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file SHA-256 digests of bytes, text and files. */
+
 #include "Common.h"
 #include "FilePath.h"
 

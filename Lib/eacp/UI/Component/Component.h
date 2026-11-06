@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The base class of every node in a ComponentHost's tree: bounds, children, painting and input. */
+
 #include "../Graphics/Graphics.h"
 #include "KeyEvent.h"
 #include "MouseEvent.h"

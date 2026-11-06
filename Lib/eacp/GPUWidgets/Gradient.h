@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Sampling a linear gradient's colour at a point, on the CPU. */
+
 #include "Common.h"
 
 namespace eacp::GPUWidgets

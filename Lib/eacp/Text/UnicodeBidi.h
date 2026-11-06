@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Generated Unicode 16.0 tables read by the bidirectional algorithm in Bidi.h. */
+
 #include <cstdint>
 
 namespace eacp::Text

@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Args::Parser, a command-line parser that binds options to variables the caller
+    already has.
+*/
+
 #include "../Utils/Containers.h"
 #include "../Utils/FilePath.h"
 #include "../Utils/Strings.h"
@@ -562,7 +567,8 @@ private:
 // is skipped only with unique()); the first replaces whatever the Vector held
 // as its default. A value is the next argument unless that is
 // missing or is itself an option ("--" anything, or a declared name), so
-// "--offset -5" works. Parsing stops at the first error.
+// "--offset -5" works. Parsing stops at the first error and never throws; the
+// error comes back in Result.
 class Parser
 {
 public:

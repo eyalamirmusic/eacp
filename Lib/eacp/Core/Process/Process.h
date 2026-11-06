@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Launching child processes, capturing their output and waiting for them. */
+
 #include "../Threads/Async.h"
 #include "../Utils/Common.h"
 
@@ -63,10 +65,15 @@ struct ProcessOptions
     bool noWindow = false;
 };
 
+// What run() or a BuildRunner run returns.
 struct ProcessResult
 {
+    // False when the child could not be started; the other fields are unset.
     bool launched = false;
+    // True once the wait for the child returned, whatever the exit code. False
+    // when it did not launch, or when a BuildRunner run was cancelled.
     bool exited = false;
+    // The child's exit code, as wait() reports it; -1 when it did not exit.
     int exitCode = -1;
     std::string output;
     std::string errorOutput;
@@ -95,10 +102,16 @@ public:
     [[nodiscard]] bool isRunning() const;
     [[nodiscard]] long id() const;
 
+    // False when stdin is already closed or the write failed.
     bool writeToInput(const std::string& data);
     void closeInput();
 
+    // Blocks until the child exits and returns its exit code, -1 when unknown.
+    // On POSIX a child killed by a signal gives 128 plus the signal number and
+    // a failed exec gives 127; on Windows terminate() and kill() leave 1.
     int wait();
+    // Asks the child to stop (SIGTERM on POSIX); on Windows it is TerminateProcess,
+    // the same as kill().
     void terminate();
     void kill();
 

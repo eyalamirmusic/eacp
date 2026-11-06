@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: the sprite and NV12 video shaders SpriteRenderer draws
+    with. */
+
 #include <eacp/GPU/Codegen/Codegen.h>
 
 namespace eacp::Sprites

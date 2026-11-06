@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: Android only. The android_app handed to android_main. */
+
 struct android_app;
 
 namespace eacp::Graphics::Android

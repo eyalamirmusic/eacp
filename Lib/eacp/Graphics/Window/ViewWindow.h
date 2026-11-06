@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file ViewWindow pairs one view with the window showing it; runWindowedApp
+    runs such a pair as the whole app. */
+
 #include "../../Core/App/App.h"
 #include "Window.h"
 
@@ -8,7 +11,7 @@ namespace eacp::Graphics
 // A view and the window showing it, owned together in the order the pair
 // needs: the view is built first, from `args`, and the window is built with it
 // as its content. `ViewWindow<MyView> shown {options, viewArgs...};` is the
-// whole of what a struct holding one view in one window used to spell out.
+// whole of a struct holding one view in one window.
 template <typename ViewType>
 struct ViewWindow
 {

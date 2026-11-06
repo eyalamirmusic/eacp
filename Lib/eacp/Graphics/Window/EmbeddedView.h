@@ -1,10 +1,14 @@
 #pragma once
 
+/** @file EmbeddedView: a surface of ours inside a native view or window a host
+    owns (plugin editors). */
+
 #include "../View/View.h"
 
 namespace eacp::Graphics
 {
 
+// The surface's initial size in points, used until the host resizes it.
 struct EmbeddedViewOptions
 {
     int width = 640;
@@ -19,13 +23,8 @@ struct EmbeddedViewOptions
 // everything inside the surface built against it is ours: a content View, its
 // subviews, its GPU content, its input.
 //
-// Two kinds of host embed a surface, and they want opposite things from it.
-// One hands over its whole window and has no layout of its own; that is what
-// this defaults to, and it needs saying nothing — the surface fills the host
-// and goes on filling it as the host resizes. The other has a layout: controls
-// of its own around the surface, or several surfaces in one window. That host
-// knows where the surface belongs and nothing else does, which is what
-// setBounds is for.
+// By default the surface fills the host and follows its resizes. A host with
+// its own layout places it with setBounds instead.
 class EmbeddedView
 {
 public:
@@ -35,21 +34,10 @@ public:
 
     void setContentView(View& view);
 
-    // Places the surface inside its host: `newBounds` in points, y-down from
-    // the host's top-left, which is the space the rest of eacp measures in
-    // (see Primitives.h) whatever the host platform's own convention is. A
-    // superview that is not flipped measures its subviews up from its bottom
-    // edge and this converts; a child window is placed in physical pixels and
-    // this scales, rounding outwards so no seam of the host's window is left
-    // showing along an edge.
-    //
-    // The first call takes the surface off the automatic sizing above, for
-    // good. A host with a layout is the authority on where the surface goes,
-    // and the two cannot both be writing the frame: the platform's own
-    // resizing would win the next time the host window changed size, and it
-    // would win during a live resize, where it runs and the host's layout has
-    // not caught up. So from here the surface stays where it is put — and
-    // placing it again whenever the host's layout moves is the host's job.
+    // Places the surface in the host, in points, y-down from the host's
+    // top-left on every platform (converted and rounded outwards to pixels as
+    // needed). The first call turns off automatic fill for good; from then on
+    // the host must call it again whenever its layout changes.
     void setBounds(const Rect& newBounds);
 
     // Where the surface is, in that same space: what was last set, or the

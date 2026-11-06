@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Plain stdout and stderr lines for command-line tools. */
+
 #include <string_view>
 
 // Plain program output for command-line tools: what LOG is not, since LOG

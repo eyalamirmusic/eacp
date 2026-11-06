@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file An off-screen command buffer for compute, copy and fill work with no
+    drawable.
+*/
+
 #include "../Common.h"
 
 #include "../Frame/ComputePass.h"

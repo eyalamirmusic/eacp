@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Splits overlapping pass intervals into per-pass shares of a frame that can be
+    summed.
+*/
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <algorithm>

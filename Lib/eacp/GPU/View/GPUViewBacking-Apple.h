@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Internal: the per-platform half of the Apple GPUView (scale, visibility, live
+    resize).
+*/
+
 // Internal seam between the shared Apple GPUView (GPUView-Apple.mm) and the
 // per-platform piece. The CAMetalLayer drawable size is logical points times the
 // backing scale, which macOS and iOS read from different places.

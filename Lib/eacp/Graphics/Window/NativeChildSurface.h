@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file NativeChildSurface: a View that a foreign toolkit parents its own
+    native view into (plugin hosts). macOS and Windows. */
+
 #include "KeyForwarding.h"
 #include "../View/View.h"
 

@@ -1,5 +1,14 @@
 #pragma once
 
+/** @file Bilinear resize, affine warp and mirrored crop on Image, matching OpenCV
+    exactly.
+
+    Reproduces cv::resize INTER_LINEAR with half-pixel centres and
+    cv::warpAffine INTER_LINEAR | WARP_INVERSE_MAP with BORDER_REPLICATE, so
+    pipelines validated against OpenCV can drop it. All operate on
+    straight-alpha 8-bit RGBA.
+*/
+
 #include "Image.h"
 
 // Bilinear resampling on Graphics::Image, reproducing the exact OpenCV semantics

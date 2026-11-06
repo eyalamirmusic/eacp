@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Registers Maths::Vec2/Vec3/Vec4/Mat4 as shader values, so they work as
+    vertex fields and uniforms.
+*/
+
 #include <eacp/Core/Maths/Maths.h>
 
 #include "ShaderMembers.h"

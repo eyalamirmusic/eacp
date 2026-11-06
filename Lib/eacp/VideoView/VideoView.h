@@ -1,3 +1,10 @@
+/** @file
+    VideoView: a GPUView that draws decoded video, with an overlay hook in the
+    same render pass. Built where EACP_HAS_CAPTURE is on, except iOS and
+    Android. attach(Player&) lets the view run the clock from the display
+    link; attach(FrameStream&) draws whatever time setTime() names. The view
+    owns neither: keep it alive while attached, or detach() first.
+*/
 #pragma once
 
 #include <eacp/GPU/Texture/Texture.h>

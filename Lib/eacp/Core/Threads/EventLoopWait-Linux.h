@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: linux event loop internals. */
+
 namespace eacp::Threads
 {
 enum class WaitResult

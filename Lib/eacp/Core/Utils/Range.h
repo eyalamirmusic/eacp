@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Range, a half-open interval stored as start and length. */
+
 namespace eacp
 {
 // A half-open interval [start, start + length). Stored as start + length (no

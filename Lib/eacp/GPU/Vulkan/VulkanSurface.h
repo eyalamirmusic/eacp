@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Internal: creates a Vulkan surface for a window-system handle, one file per
+    platform.
+*/
+
 #include "VulkanContext.h"
 
 #include <eacp/Graphics/View/View-Linux.h>

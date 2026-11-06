@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file OnlineResourceMonitor in a host of its own, and that host in a window of its own. */
+
 #include "OnlineResourceMonitor.h"
 
 #include <eacp/UI/Host/ComponentHost.h>

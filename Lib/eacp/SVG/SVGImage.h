@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Rendering an SVG document into an Image off screen. */
+
 #include "SVGElement.h"
 
 #include <eacp/Graphics/Image/Image.h>

@@ -16,8 +16,9 @@
 
 #include <memory>
 
-// The process's one connection to the compositor. File-scope names carry a
-// wayland/Wayland prefix: this is one unity TU under EACP_CI_BUILD.
+/** @file Internal: Linux only. The process's one connection to the compositor.
+    File-scope names carry a wayland/Wayland prefix: this is one unity TU under
+    EACP_CI_BUILD. */
 
 namespace eacp::Graphics
 {

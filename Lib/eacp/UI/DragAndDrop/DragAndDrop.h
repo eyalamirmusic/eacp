@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Dragging a value between components of one tree, with a drag image. */
+
 #include "../Component/Component.h"
 
 #include <string>

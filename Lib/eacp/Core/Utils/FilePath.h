@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file FilePath, a UTF-8 path, and the well-known directories. */
+
 #include <string>
 #include <string_view>
 
@@ -13,7 +15,7 @@ concept FilesystemPathLike = requires(const T& path) {
 };
 
 // A filesystem path carried as UTF-8 text, so public headers never need
-// <filesystem>. Deliberately minimal: it stores, joins and inspects text;
+// `<filesystem>`. Deliberately minimal: it stores, joins and inspects text;
 // everything that touches the filesystem converts at the boundary via
 // StdPath.h.
 class FilePath
@@ -26,7 +28,7 @@ public:
 
     // Accepts std::filesystem::path without this header naming it: the
     // template only instantiates at call sites that already include
-    // <filesystem>. Not generic_u8string(), which throws on names that are
+    // `<filesystem>`. Not generic_u8string(), which throws on names that are
     // not valid UTF-16 (NTFS permits unpaired surrogates): this conversion
     // never throws, mapping invalid units to U+FFFD, and keeps non-ASCII
     // intact on Windows.
@@ -58,11 +60,12 @@ public:
 
     // Per-user application data and cache roots: Application Support and
     // Caches on Apple platforms, Roaming and Local AppData on Windows, the
-    // XDG data and cache homes on Linux.
+    // XDG data and cache homes on Linux, getFilesDir() and getCacheDir() on
+    // Android.
     static FilePath appDataDirectory();
     static FilePath cacheDirectory();
 
-    // This app's own folder under those roots: <root>/<Company>/<App>, e.g.
+    // This app's own folder under those roots: `<root>/<Company>/<App>`, e.g.
     // ~/Library/Application Support/Acme/My App. The names come from the
     // embedded AppInfo (Platform::getAppName / getCompanyName); the company
     // level is left out when there is none, and an app with no AppInfo is
@@ -168,7 +171,7 @@ public:
 
     bool operator==(const FilePath& other) const = default;
 
-    //Reads the contents of the file to a std::string
+    // Files::readFile: the whole file, empty when it cannot be opened.
     std::string read() const;
 
 private:

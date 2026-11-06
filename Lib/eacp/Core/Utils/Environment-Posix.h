@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the POSIX environment copied under setEnv's lock; internal. */
+
 #include "Common.h"
 
 namespace eacp

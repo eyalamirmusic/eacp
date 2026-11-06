@@ -1,4 +1,8 @@
 #pragma once
+/** @file
+    Plugins::start/stop/get: the one object a plugin module owns between the host's
+    start and stop calls.
+*/
 
 #include "../Utils/Common.h"
 

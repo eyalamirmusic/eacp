@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Options and result for dragging files out of a view to the OS. */
+
 #include "../Image/Image.h"
 
 #include <functional>
@@ -14,6 +16,7 @@ enum class FileDragResult
     Moved
 };
 
+// Options for View::startFileDrag. `imageScale` is image pixels per point.
 struct FileDragOptions
 {
     bool canMove = false;

@@ -3,8 +3,9 @@
 #include "../Primitives/Primitives.h"
 #include "../View/ViewSurfaceBackend-Linux.h"
 
-// What the input and view-surface code need of a Window, whatever window
-// system is under it. Every backend's Window::Native derives from this.
+/** @file Internal: Linux only. What the input and view-surface code need of a
+    Window, whatever window system is under it. Every backend's Window::Native
+    derives from this. */
 
 namespace eacp::Graphics
 {

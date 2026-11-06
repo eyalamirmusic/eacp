@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: Windows only: Image to HICON and HCURSOR. */
+
 #include <eacp/Core/Utils/WinInclude.h>
 
 namespace eacp::Graphics

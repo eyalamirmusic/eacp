@@ -1,0 +1,73 @@
+# Read by jamierpond/eacp-agent-docs (generate.py) to build the agent API
+# reference. See that repository's README for every key.
+name = "eacp"
+slug = "eacp"
+summary = "Cross-platform C++20 framework: app lifecycle, graphics, GPU, text, UI, networking."
+source_url = "https://github.com/eyalamirmusic/eacp/blob/develop/"
+include_root = "Lib"
+header_roots = ["Lib/eacp"]
+exclude_patterns = ["*-Windows*", "*-Linux*", "*-Android*", "*-iOS*", "*-Apple*",
+                    "*-Posix*", "*-macOS*", "*/Detail/*", "*/detail/*", "*/Spirv/*",
+                    "*/UnicodeBidi.h"]
+exclude_symbols = ["Detail", "detail", "*::Detail::*", "*::detail::*", "*::Test::*"]
+internal_marker = "Internal:"
+tasks_file = "Docs/LLMDocs/Tasks.md"
+getting_started_file = "Docs/LLMDocs/GettingStarted.md"
+examples_dirs = ["Apps"]
+index_links = [{ label = "Hand-written reuse map", path = "Docs/Toolbox.md" }]
+
+[external_repositories]
+Miro = "https://github.com/eyalamirmusic/Miro"
+
+[platforms]
+file_suffixes = ["Windows", "Linux", "Android", "iOS", "Apple", "Posix", "macOS", "Default"]
+
+[platforms.directories]
+ObjC = "Apple (Objective-C)"
+Android = "Android (JNI)"
+Windows = "Windows (Direct3D 12)"
+Apple = "Apple"
+Linux = "Linux"
+
+[[platforms.header_gates]]
+platforms = "Apple and Windows (EACP_HAS_CONTEXT)"
+patterns = ['eacp/Graphics/Graphics/GraphicsContext.*\.h', 'eacp/Graphics/Layers/.*',
+            'eacp/Graphics/Primitives/Font\.h', 'eacp/Graphics/Primitives/TextMetrics\.h',
+            'eacp/Graphics/Widgets/TextInput\.h']
+
+[[platforms.path_gates]]
+pattern = 'eacp/ML/Model/.*'
+platforms = "Apple (EACP_HAS_COREML)"
+
+[[platforms.path_gates]]
+pattern = 'eacp/ML/.*'
+platforms = "macOS, Windows and Linux (eacp-ml-graph)"
+
+[[platforms.path_gates]]
+pattern = 'eacp/(Camera|CameraView)/.*'
+platforms = "Apple, Windows and Android (EACP_HAS_CAPTURE)"
+
+[[platforms.path_gates]]
+pattern = 'eacp/(Video|VideoView)/.*'
+platforms = "macOS and Windows (EACP_HAS_CAPTURE)"
+
+[[platforms.path_gates]]
+pattern = 'eacp/WebView/.*'
+platforms = "Apple and Windows (EACP_HAS_WEBVIEW)"
+
+[platforms.modules]
+Core = "every platform"
+Network = "every platform"
+Graphics = "Apple, Windows, Linux and Android (EACP_HAS_DRAW)"
+GPU = "Apple, Windows, Linux and Android (EACP_HAS_GPU)"
+GPUWidgets = "Apple, Windows, Linux and Android (EACP_HAS_GPU)"
+Sprites = "Apple, Windows, Linux and Android (EACP_HAS_GPU)"
+Text = "Apple, Windows, Linux and Android (EACP_HAS_TEXT)"
+UI = "Apple, Windows, Linux and Android (EACP_HAS_TEXT)"
+SVG = "Apple, Windows, Linux and Android (EACP_HAS_TEXT)"
+Camera = "Apple, Windows and Android (EACP_HAS_CAPTURE)"
+CameraView = "Apple, Windows and Android (EACP_HAS_CAPTURE)"
+Video = "macOS and Windows (EACP_HAS_CAPTURE)"
+VideoView = "macOS and Windows (EACP_HAS_CAPTURE)"
+WebView = "Apple and Windows (EACP_HAS_WEBVIEW)"
+ML = "Graph on macOS, Windows and Linux; Model on Apple (EACP_HAS_COREML)"

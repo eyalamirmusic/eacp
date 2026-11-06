@@ -1,3 +1,4 @@
+/** @file Where Core ML placed each op of a loaded model. */
 #pragma once
 
 #include "../Common.h"

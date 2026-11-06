@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the clip coverage function both shape renderers' shaders call. */
+
 #include "ClipMask.h"
 
 #include <eacp/GPU/GPU.h>

@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file A single-line text field built from layers. EACP_HAS_CONTEXT only (Apple
+    and Windows). */
+
 #include "../View/View.h"
 #include "../Layers/ShapeLayer.h"
 #include "../Layers/TextLayer.h"
@@ -7,6 +10,8 @@
 namespace eacp::Graphics
 {
 
+// A single-line editable field with a blinking cursor. For component trees, use
+// the UI module's text editing instead.
 class TextInput : public View
 {
 public:
@@ -27,7 +32,9 @@ public:
     void setBorderColor(const Color& color);
     void setPadding(float padding);
 
+    // Called on the main thread after every edit, with the whole text.
     void onChange(std::function<void(const std::string&)> callback);
+    // Called on the main thread when Return is pressed.
     void onSubmit(std::function<void(const std::string&)> callback);
 
     void resized() override;

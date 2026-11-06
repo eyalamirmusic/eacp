@@ -1,0 +1,21 @@
+name: Agent Docs
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+
+concurrency:
+  group: agent-docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    permissions:
+      contents: read
+      id-token: write
+    uses: jamierpond/eacp-agent-docs/.github/workflows/publish.yml@v1
+    with:
+      workload_identity_provider: ${{ vars.AGENT_DOCS_WORKLOAD_IDENTITY_PROVIDER }}
+      service_account: ${{ vars.AGENT_DOCS_SERVICE_ACCOUNT }}
+      bucket: ${{ vars.AGENT_DOCS_BUCKET }}

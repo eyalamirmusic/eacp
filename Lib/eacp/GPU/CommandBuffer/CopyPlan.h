@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Internal: checks a copy against both resources and reduces it to numbers
+    every backend records.
+*/
+
 #include "Copy.h"
 
 #include "../Buffer/Buffer.h"

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: FNV-1a hashing of cached content, used to key gradients, paths and images. */
+
 #include <bit>
 #include <cstdint>
 

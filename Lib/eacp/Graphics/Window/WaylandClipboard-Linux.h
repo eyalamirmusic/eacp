@@ -5,15 +5,15 @@
 
 #include <memory>
 
-// wl_data_device, behind the Clipboard::Backend hooks. Owned by WaylandDisplay,
-// which offers the backend to LinuxWindowSystem as soon as the connection is
-// up and takes it away again on the way down, so a build with no compositor
-// keeps Core's empty answers.
-//
-// Wayland has no clipboard the way X11 has none either: the selection belongs
-// to whichever client owns it, and a paste is a pipe the owner writes into. So
-// a copy is a wl_data_source this process serves until something replaces it,
-// and a paste blocks the message thread while the connection is pumped by hand.
+/** @file Internal: Linux only. wl_data_device, behind the Clipboard::Backend
+    hooks. Owned by WaylandDisplay, which offers the backend to LinuxWindowSystem
+    as soon as the connection is up and takes it away again on the way down, so a
+    build with no compositor keeps Core's empty answers.
+
+    Wayland has no clipboard the way X11 has none either: the selection belongs
+    to whichever client owns it, and a paste is a pipe the owner writes into. So
+    a copy is a wl_data_source this process serves until something replaces it,
+    and a paste blocks the message thread while the connection is pumped by hand. */
 
 namespace eacp::Graphics
 {

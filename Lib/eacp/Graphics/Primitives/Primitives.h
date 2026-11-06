@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Point, Rect, Insets, Color and LinearGradient: the value types every module
+    draws with. */
+
 #include "../Common.h"
 
 #include <cstdint>
@@ -7,6 +10,7 @@
 
 namespace eacp::Graphics
 {
+// A position or offset in points, y down.
 struct Point
 {
     Point() = default;
@@ -42,11 +46,8 @@ struct Insets
 //
 // That is what the rest of eacp means by y. The backing views set isFlipped, so
 // View::setBounds and MouseEvent::pos are both measured from the top, and the
-// sprite, glyph and scissor paths all map y = 0 to the top of their target. The
-// splitters below came from JUCE, where views really are y-up, and keeping that
-// sense here meant `removeFromTop` handed you the bottom slice — a header laid
-// out with it landed along the bottom edge of its window, which is silent
-// because it still compiles and still draws something.
+// sprite, glyph and scissor paths all map y = 0 to the top of their target.  The
+// splitters below follow it: `removeFromTop` takes the top slice.
 struct Rect
 {
     Rect() = default;
@@ -231,12 +232,14 @@ private:
     }
 };
 
+// A colour at `position`, 0..1 along the gradient.
 struct GradientStop
 {
     Color color;
     float position = 0.f;
 };
 
+// A gradient from `start` to `end`, in the coordinates of the shape it fills.
 struct LinearGradient
 {
     LinearGradient() = default;

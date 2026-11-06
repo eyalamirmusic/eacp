@@ -1,9 +1,14 @@
 #pragma once
 
+/** @file Vertex attribute formats and buffer layouts a render pipeline reads
+    vertices with.
+*/
+
 #include "../Common.h"
 
 namespace eacp::GPU
 {
+// The type of one vertex attribute as stored in its buffer.
 enum class VertexFormat
 {
     Float,
@@ -171,6 +176,7 @@ enum class StepRate
     PerInstance
 };
 
+// One attribute: its format, byte offset in the element, and buffer slot.
 struct VertexAttribute
 {
     VertexFormat format = VertexFormat::Float3;

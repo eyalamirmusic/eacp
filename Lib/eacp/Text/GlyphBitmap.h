@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file One rasterized glyph in coverage or colour form, before it enters an atlas. */
+
 #include "Common.h"
 
 #include <eacp/Core/Utils/Containers.h>

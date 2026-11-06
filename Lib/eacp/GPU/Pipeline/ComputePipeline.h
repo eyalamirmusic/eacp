@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A compiled compute pipeline built from a shader library's kernel. */
+
 #include "../Common.h"
 
 #include "../Shader/ShaderSource.h"

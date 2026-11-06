@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: Linux and Android only: the command list a Path records there. */
+
 #include "Path.h"
 
 namespace eacp::Graphics
@@ -30,6 +32,7 @@ struct PathGeometry
     Vector<PathCommand> commands;
 };
 
+// The commands recorded so far; valid while the Path lives and is unchanged.
 const PathGeometry& getPathGeometry(const Path& path);
 
 } // namespace eacp::Graphics

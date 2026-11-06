@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The texture each gradient's stops are baked into as one row. */
+
 #include "Gradient.h"
 
 #include <eacp/GPU/GPU.h>

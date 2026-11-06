@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: the D3D12 structs behind the public GPU classes' native handles.
+*/
+
 #include "D3D12Context.h"
 
 #include "../Codegen/ShaderBindings.h"

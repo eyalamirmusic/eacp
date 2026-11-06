@@ -4,21 +4,22 @@
 #include "LinuxSeat-Linux.h"
 #include "X11Connection-Linux.h"
 
-// The core pointer and keyboard of one X11 connection, turned into the events
-// View.h already knows about. The protocol only: what a device's events mean
-// is in LinuxInput-Linux.h, and shared with the Wayland backend.
-//
-// A window's handleEvent hands the raw events straight here, because the
-// window has nothing to add: unlike Wayland, where every surface is its own
-// coordinate space, an X11 event that reached the toplevel is already in the
-// toplevel's points, whether it was selected there or propagated up from a
-// view's child window.
-//
-// Where the server has XInput 2.1 the pointer half of that arrives as XI2
-// GenericEvents instead, routed straight here by the connection rather than
-// through a window, and the core handlers below are what a server without it
-// falls back to. The two never run together: a window selecting XI2 pointer
-// events leaves the core pointer bits unselected.
+/** @file Internal: Linux only. The core pointer and keyboard of one X11
+    connection, turned into the events View.h already knows about. The protocol
+    only: what a device's events mean is in LinuxInput-Linux.h, and shared with
+    the Wayland backend.
+
+    A window's handleEvent hands the raw events straight here, because the window
+    has nothing to add: unlike Wayland, where every surface is its own coordinate
+    space, an X11 event that reached the toplevel is already in the toplevel's
+    points, whether it was selected there or propagated up from a view's child
+    window.
+
+    Where the server has XInput 2.1 the pointer half of that arrives as XI2
+    GenericEvents instead, routed straight here by the connection rather than
+    through a window, and the core handlers below are what a server without it
+    falls back to. The two never run together: a window selecting XI2 pointer
+    events leaves the core pointer bits unselected. */
 
 namespace eacp::Graphics
 {

@@ -1,4 +1,5 @@
 #pragma once
+/** @file Which image (executable, dylib or DLL) this eacp copy lives in. */
 
 #include "../Utils/Common.h"
 #include "../Utils/FilePath.h"

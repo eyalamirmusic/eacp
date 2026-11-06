@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    The main-thread event loop: running it, posting work to it, and attaching to a
+    host's loop.
+*/
+
 #include "../Utils/Common.h"
 
 namespace eacp::Threads
@@ -12,10 +17,14 @@ struct EventLoop
     void call(Callback func);
 };
 
+// The main thread's loop. Prefer the free functions below.
 EventLoop& getEventLoop();
 
 void runEventLoop(const Callback& func = [] {});
+// Pumps the loop on the calling (main) thread for at most timeout.
 bool runEventLoopFor(Time::MS timeout, const Callback& func = [] {});
+// Runs func once on the main thread, from any thread. Never blocks. With no
+// loop running it waits in the queue; see isEventLoopRunning().
 void callAsync(const Callback& func);
 
 // callAsync, delayed: runs func on the message thread once, after `delay`.
@@ -24,7 +33,7 @@ void callAsync(const Callback& func);
 //
 // Every pending callback shares one scheduler thread, so a rate limiter
 // holding a deadline per bucket costs one thread rather than one per bucket
-// (which is what Threads::delay, a detached sleeper per call, would cost).
+// (Threads::delay is built on it).
 void callAfter(Time::MS delay, Callback func);
 
 void stopEventLoop();

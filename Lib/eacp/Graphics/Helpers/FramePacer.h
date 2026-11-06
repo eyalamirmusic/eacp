@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The tick divider behind every frame-rate cap in eacp. */
+
 #include <atomic>
 
 namespace eacp::Threads

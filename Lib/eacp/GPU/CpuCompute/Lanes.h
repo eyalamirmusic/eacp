@@ -1,5 +1,11 @@
 #pragma once
 
+/** @file Internal: branch-free per-lane loops the CPU interpreter is built from; not
+    for callers.
+
+    One word per lane per component; loops are branch-free so they vectorise (D5).
+*/
+
 #include <bit>
 #include <cstdint>
 #include <cstring>

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Apple only: conversions between eacp primitives and Core Graphics types. */
+
 #include <CoreGraphics/CoreGraphics.h>
 
 #include <eacp/Core/ObjC/CFRef.h>

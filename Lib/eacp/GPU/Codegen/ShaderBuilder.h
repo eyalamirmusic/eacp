@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file ShaderBuilder, the call-order shader authoring API, and buildShader for
+    emitting a graph in any backend's dialect.
+*/
+
 #include "../Shader/ShaderSource.h"
 #include "GeneratedShader.h"
 #include "ShaderGraph.h"
@@ -17,8 +21,8 @@ ShaderBackend nativeShaderBackend();
 } // namespace detail
 
 // What ShaderBuilder::build() returns for a graph, in the dialect `backend`
-// compiles rather than the platform's own: build() is this with
-// detail::nativeShaderBackend(), so an offline compiler that hashes this text
+// compiles rather than the platform's own: build() is this with the
+// platform's own backend, so an offline compiler that hashes this text
 // hashes exactly what the runtime will be handed.
 GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend);
 

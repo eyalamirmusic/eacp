@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the gradient evaluation both shape renderers' shaders call. */
+
 #include "Gradient.h"
 
 #include <eacp/GPU/GPU.h>

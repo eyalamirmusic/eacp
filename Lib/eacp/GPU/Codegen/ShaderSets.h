@@ -1,5 +1,26 @@
 #pragma once
 
+/** @file EACP_SHADER_SET, which lists the shaders an app precompiles at build time.
+
+    The shaders an app compiles at build time, listed in any of its shader
+    translation units (the SOURCES of eacp_add_precompiled_shaders):
+
+      EACP_SHADER_SET()
+      {
+          visit<RotatingShader>();
+          visit<GainKernel, BlurKernel, SumKernel>();
+          visit<SpriteShader>(TextureSampling::nearest);
+          UI::LayerRenderer::forEachShaderGraph(visitor());
+      }
+
+    The braces are the body of a ShaderSetDefinition's define(), and the macro
+    registers one instance of it before main(), so a translation unit can hold
+    any number of sets and nothing names them. The build's shader host
+    executable (CMake/ShaderHostMain.cpp.in) links those translation units into
+    itself and ShaderCompiler::runMain compiles every graph every registered set
+    shows it.
+*/
+
 #include "Forward.h"
 
 #include <eacp/Core/Utils/Containers.h>

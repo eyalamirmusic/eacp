@@ -1,3 +1,6 @@
+/** @file
+    Mp4Demuxer: reads the video and audio tracks' samples out of an MP4 file.
+*/
 #pragma once
 
 #include <eacp/Core/Core.h>

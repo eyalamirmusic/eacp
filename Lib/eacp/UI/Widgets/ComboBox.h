@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A drop-down list of text choices. */
+
 #include "Widgets.h"
 
 #include <optional>

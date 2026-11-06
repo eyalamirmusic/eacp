@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: where a timed pass's samples sit in a Metal counter sample buffer.
+*/
+
 #import <Metal/Metal.h>
 
 // Where a timed pass's samples sit in a Metal counter sample buffer: four to a

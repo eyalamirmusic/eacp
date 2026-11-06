@@ -1,5 +1,15 @@
 #pragma once
 
+/** @file Workspace, the scratch memory one thread needs to run part of a CPU
+    dispatch.
+
+    Every word a run writes: the lanes of each node, the variables, the arrays,
+    the shared arrays, the SIMD-group fragments and the reduction scratch, the
+    mask frames and the local coordinates. Allocated once, to the plan's layout,
+    and never resized; a plan can have any number of these, one per thread that
+    runs Executor::dispatchGroups.
+*/
+
 #include "Plan.h"
 
 // Every word a run writes: the lanes of each node, the variables, the arrays,
@@ -10,6 +20,7 @@
 
 namespace eacp::GPU::CpuCompute
 {
+// Scratch for one thread, sized to one plan and never resized.
 class Workspace
 {
 public:

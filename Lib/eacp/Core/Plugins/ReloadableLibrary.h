@@ -1,4 +1,7 @@
 #pragma once
+/** @file
+    A DynamicLibrary over a module file that is rebuilt while the process runs.
+*/
 
 #include "DynamicLibrary.h"
 
@@ -68,6 +71,8 @@ public:
 
     [[nodiscard]] void* findSymbol(const std::string& name) const;
 
+    // Returns a non-empty reason to refuse an image before it replaces the current
+    // one.
     ValidateFunc validate = [](const DynamicLibrary&) { return std::string {}; };
 
 private:

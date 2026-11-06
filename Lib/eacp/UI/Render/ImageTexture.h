@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: an image uploaded to a GPU texture. */
+
 #include "../Common.h"
 
 #include <eacp/GPU/GPU.h>

@@ -1,3 +1,6 @@
+/** @file
+    Load options for ML::Model, and the Result every load and prediction returns.
+*/
 #pragma once
 
 #include "../Common.h"

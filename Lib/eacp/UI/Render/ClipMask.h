@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: a clip region and its coverage in the atlas, as the renderers read it. */
+
 #include "../Common.h"
 
 namespace eacp::UI

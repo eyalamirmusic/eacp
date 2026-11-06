@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A WebSocket client connection whose callbacks run on the main thread. */
+
 #include "../Common.h"
 
 #include <map>
@@ -59,7 +61,10 @@ struct Callbacks
 };
 
 // A client connection: constructing one starts the handshake, destroying it
-// closes the socket. Used from the message thread only.
+// closes the socket. Used from the message thread only. There is no automatic
+// reconnect. Never destroy or replace a Connection inside its own callbacks:
+// reconnect only from onClose, deferred with Threads::callAfter, never from
+// onError (onClose follows it).
 class Connection
 {
 public:

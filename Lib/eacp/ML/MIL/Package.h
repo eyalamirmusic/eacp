@@ -1,3 +1,4 @@
+/** @file An .mlpackage as bytes in memory, and writing it to disk. */
 #pragma once
 
 #include "Protobuf.h"

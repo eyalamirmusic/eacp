@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file A menu bar or notification area icon with a menu; real on macOS and
+    Windows, a no-op on Linux, iOS and
+    Android. */
+
 #include "../Image/Image.h"
 #include "../Menu/Menu.h"
 
@@ -7,8 +11,10 @@ namespace eacp::Graphics
 {
 
 // A status item living in the macOS menu bar / Windows notification area
-// ("system tray"). Construct one and keep it alive for as long as the icon
-// should be visible; destroying it removes the icon.
+// ("system tray"). On Linux, iOS and Android every method is a
+// no-op. Construct one
+// and keep it alive for as long as the icon should be visible; destroying it
+// removes the icon.
 //
 // A TrayIcon needs no Window of its own. Combine it with
 // Apps::setDockIconVisible(false) to build a menu-bar / tray-only app that

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A scrolling list of rows, optionally with columns, painted by a ListBoxModel. */
+
 #include "Widgets.h"
 
 #include <string>

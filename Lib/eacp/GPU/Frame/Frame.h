@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file One frame of GPU work: begins render and compute passes, presents the
+    drawable or renders off-screen.
+*/
+
 #include "../CommandBuffer/Copy.h"
 #include "ComputePass.h"
 #include "RenderPass.h"
@@ -73,6 +77,7 @@ struct DepthTarget
     int slice = 0;
 };
 
+// What Frame::beginPass draws into and how: clear colour, timing label, targets.
 struct RenderPassDescriptor
 {
     Graphics::Color clearColor = Graphics::Color::black();
@@ -260,6 +265,8 @@ public:
     // sprite and glyph renderers all work in.
     Graphics::Point logicalSize() const;
 
+    // A pass over this frame's target: the drawable, or the redirect texture
+    // while a Redirect is alive.
     RenderPass beginPass(const RenderPassDescriptor& descriptor = {});
 
     // Renders into an app-owned texture instead of the frame's own target: the

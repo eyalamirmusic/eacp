@@ -1,3 +1,4 @@
+/** @file A minimal protobuf wire-format writer. */
 #pragma once
 
 #include "../Common.h"

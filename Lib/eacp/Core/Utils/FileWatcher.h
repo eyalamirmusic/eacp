@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Polling watcher that reports changed files on the main thread. */
+
 #include "Common.h"
 #include "FilePath.h"
 

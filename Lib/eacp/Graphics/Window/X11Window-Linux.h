@@ -2,9 +2,9 @@
 
 #include "LinuxWindowNative-Linux.h"
 
-// The X11 toplevel: an InputOutput child of the root carrying the ICCCM and
-// EWMH properties a window manager reads, and behaving the same under Xvfb,
-// where there is nobody to read them.
+/** @file Internal: Linux only. The X11 toplevel: an InputOutput child of the
+    root carrying the ICCCM and EWMH properties a window manager reads, and
+    behaving the same under Xvfb, where there is nobody to read them. */
 
 namespace eacp::Graphics
 {

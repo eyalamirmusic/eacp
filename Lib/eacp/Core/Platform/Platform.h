@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Compile-time platform queries and the running app's embedded name, company and
+    version.
+*/
+
 #include <string_view>
 
 #if defined(__APPLE__)
@@ -9,6 +14,7 @@
 namespace eacp::Platform
 {
 
+// Use the constexpr queries below instead of platform macros.
 enum class OS
 {
     MacOS,

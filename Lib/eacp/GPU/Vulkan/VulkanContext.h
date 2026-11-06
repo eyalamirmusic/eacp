@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Internal: the Vulkan backend's per-process and per-Device state. Not part of
+    GPU.h.
+*/
+
 #include "../Spirv/SpirvCompiler.h"
 #include "../Texture/Texture.h"
 

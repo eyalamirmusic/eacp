@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A WebSocket server over TCP::Listener whose callbacks run on the main thread. */
+
 #include "WebSocket.h"
 
 #include <cstdint>

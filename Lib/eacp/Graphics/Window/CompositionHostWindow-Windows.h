@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Windows only. The HWND that hosts a content view, and the
+    per-HWND state composition needs. */
+
 #include "../DComp-Windows.h"
 
 #include "../View/View.h"

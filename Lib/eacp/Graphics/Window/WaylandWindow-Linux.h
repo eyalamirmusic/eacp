@@ -2,7 +2,8 @@
 
 #include "LinuxWindowNative-Linux.h"
 
-// The Wayland toplevel: a wl_surface under a libdecor frame.
+/** @file Internal: Linux only. The Wayland toplevel: a wl_surface under a
+    libdecor frame. */
 
 namespace eacp::Graphics
 {

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Mouse and touch events, with positions in the receiving component's points. */
+
 #include "../Common.h"
 
 namespace eacp::UI

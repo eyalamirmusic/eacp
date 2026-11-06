@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Whole messages between two of this user's processes, delivered on the main thread. */
+
 #include "Channel.h"
 
 namespace eacp::IPC

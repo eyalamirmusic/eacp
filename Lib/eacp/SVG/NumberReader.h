@@ -1,10 +1,13 @@
 #pragma once
 
+/** @file A cursor over SVG number and flag lists, as path data and attributes write them. */
+
 #include "Common.h"
 
 namespace eacp::SVG
 {
 
+// Reads numbers and flags in sequence from `src`, advancing `pos`.
 struct NumberReader
 {
     bool atEnd() const;

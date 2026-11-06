@@ -1,3 +1,7 @@
+/** @file
+    The Screen capture tier: records a view's whole window from the system
+    compositor.
+*/
 #pragma once
 
 #include "VideoRecorder.h"

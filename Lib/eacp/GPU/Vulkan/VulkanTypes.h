@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: the Vulkan structs behind the public GPU classes' native handles.
+*/
+
 #include "VulkanContext.h"
 
 #include "../Codegen/ShaderBindings.h"

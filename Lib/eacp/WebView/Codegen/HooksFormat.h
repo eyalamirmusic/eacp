@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Emitting the TypeScript React hooks module for registered bridge events. */
+
 #include "../WebView/EventRegistry.h"
 
 #include <Miro/CommandExport/CommandEntry.h>

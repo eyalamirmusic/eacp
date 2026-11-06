@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: compute kernels that sort a batch's segments into the
+    tiles that walk them. */
+
 #include "CoverageKernel.h"
 
 namespace eacp::GPUWidgets

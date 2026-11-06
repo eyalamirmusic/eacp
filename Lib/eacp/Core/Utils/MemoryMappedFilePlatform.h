@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: per-platform mapping calls behind MemoryMappedFile; not for direct use.
+*/
+
 #include "FilePath.h"
 
 #include <cstddef>

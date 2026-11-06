@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Apple-only access to the WKWebView inside a WebView, for the platform sources. */
+
 #include "WebView.h"
 #include "WebViewDetail.h"
 

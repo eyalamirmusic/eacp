@@ -1,5 +1,47 @@
 #pragma once
 
+/** @file ComputeProgram, a struct-authored compute kernel that builds its pipeline
+    on a Device and dispatches through ComputePass.
+
+    A compute kernel authored as a struct, the compute sibling of ShaderProgram.
+    Uniforms are named, typed members set by name; storage buffers are members
+    assigned the GPU::Buffer to bind - or a BufferRange, to bind a slice of one
+    with the kernel's element zero at the offset - with slots taken from
+    declaration order.
+    define() writes the kernel body: read inputs at threadId() (or, over a grid,
+    at threadPosition(), or over a volume at threadPosition3()), write the result
+    with write(). The generated kernel guards against the rounded-up dispatch
+    with implicit extents, supplied automatically at dispatch - one count for a
+    1D kernel, a width and a height for a 2D one, a depth as well for a 3D one.
+
+      struct ScaleKernel final : ComputeProgram
+      {
+          Uniform<InputBuffer> input;
+          Uniform<OutputBuffer> output;
+          Uniform<Float> scale;
+          EACP_SHADER(input, output, scale)
+
+          ScaleKernel() { compile(); }
+
+          void define() override
+          {
+              auto i = threadId();
+              write(output, i, input[i] * scale);
+          }
+      };
+
+      ScaleKernel kernel;
+      kernel.input = inputBuffer;     // GPU::Buffer, Storage usage
+      kernel.output = outputBuffer;   // or BufferRange {&cache, row * bytes, bytes}
+      kernel.scale = 3.0f;
+      kernel.prepare();               // builds library + compute pipeline
+      ...
+      pass.dispatch(kernel, count);   // pipeline + buffers + uniforms + dispatch
+
+    Everything above prepare() - the members, define(), compile(), graph() and
+    source() - is ComputeKernel's, which needs no device (see ComputeKernel.h).
+*/
+
 #include "../Pipeline/ComputePipeline.h"
 #include "ComputeKernel.h"
 #include "ShaderProgram.h"
@@ -69,6 +111,7 @@ public:
     // compiled on that Device rather than on the process-wide one.
     void prepare(Device& device);
 
+    // prepare(Device::shared()).
     void prepare();
 
     // Whether threadgroupMemoryBytes() is inside what the device allows. The

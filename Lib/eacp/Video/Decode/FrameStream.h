@@ -1,3 +1,7 @@
+/** @file
+    FrameStream: a decoder run ahead on its own thread, queried for the frame at a
+    time.
+*/
 #pragma once
 
 #include "Decoder.h"

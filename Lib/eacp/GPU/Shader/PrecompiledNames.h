@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    How a precompiled shader blob is named, shared by the build-time compiler and the
+    runtime.
+*/
+
 #include "../Spirv/SpirvCompiler.h"
 #include "ShaderSource.h"
 
@@ -8,7 +13,7 @@
 #include <string>
 #include <string_view>
 
-// How a precompiled shader blob is named: <keyFor(source)><suffix>, under
+// How a precompiled shader blob is named: keyFor(source) then the backend suffix, under
 // resourceCategory. Inline and free of ResEmbed, so the build-time compiler
 // (eacp-shader-compiler, linking only eacp-gpu-codegen) names what it writes
 // through the very functions the runtime (PrecompiledShaders.h) looks it up by.
@@ -58,7 +63,7 @@ constexpr std::string_view spirvStageSuffix(Spirv::Stage stage)
     return {};
 }
 
-// <key>.<target>.<stage>.spv, e.g. "0123456789abcdef.vk13spv16.frag.spv".
+// `<key>.<target>.<stage>.spv`, e.g. "0123456789abcdef.vk13spv16.frag.spv".
 inline std::string
     spirvResourceName(std::string_view key, Spirv::Target target, Spirv::Stage stage)
 {

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A guard against the WebView2 shutdown crash so tests report their real exit code. */
+
 namespace eacp::WebView::Test
 {
 

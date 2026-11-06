@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file An offscreen texture a component renders into and draws as one quad. */
+
 #include "../Common.h"
 
 #include <eacp/GPU/GPU.h>

@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Records compute dispatches, binds and indirect dispatch arguments for one
+    compute pass.
+*/
+
 #include "../Common.h"
 
 #include "../Buffer/Buffer.h"

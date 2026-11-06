@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The stock widgets: Label, Button, Checkbox, TextEditor, Slider, Knob and ScrollPanel. */
+
 #include "../Component/Component.h"
 #include "ThemeKeys.h"
 #include "TouchScroller.h"
@@ -55,6 +57,7 @@ private:
     std::optional<FontStyle> style;
 };
 
+// A clickable text button, optionally toggleable.
 class Button final : public Component
 {
 public:

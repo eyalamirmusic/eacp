@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The theme keys eacp's stock widgets draw with. */
+
 #include "Theme.h"
 
 // The keys eacp's own components read, with defaultTheme() holding a value for

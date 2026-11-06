@@ -4,11 +4,11 @@
 
 #include "../Primitives/Primitives.h"
 
-// The geometry behind the placement rules a Win32 surface has to enforce for
-// itself, kept apart from the HWND that feeds them so all of it can be checked
-// without a display: where a point lands on a window's own resize band, how a
-// window too big for its display is brought back within reach, and which
-// pixels a rect measured in points covers.
+/** @file Internal: Windows only. The geometry behind the placement rules a Win32
+    surface has to enforce for itself, kept apart from the HWND that feeds them
+    so all of it can be checked without a display: where a point lands on a
+    window's own resize band, how a window too big for its display is brought
+    back within reach, and which pixels a rect measured in points covers. */
 namespace eacp::Graphics::detail
 {
 // The pixels a rect of ours covers, for placing and sizing a window in the

@@ -1,3 +1,11 @@
+/** @file
+    Camera capture (namespace eacp::Cameras). Built where EACP_HAS_CAPTURE is
+    on: Apple (macOS, iOS), Windows and Android. Camera opens one device and delivers frames
+    on a background capture thread, never the main one; a CameraFrame is valid
+    only inside its callback. Check permissionStatus() before start(); on
+    Android it is a runtime permission and the manifest needs CAMERA. To show
+    the feed, use CameraView rather than uploading frames yourself.
+*/
 #pragma once
 
 #include <eacp/Core/Utils/Common.h>
@@ -202,10 +210,12 @@ public:
     // path (CameraView) claims it while attached. Passing {} clears it.
     void setFrameArrivedCallback(Callback callback);
 
-    // Opens and configures the device, then starts the capture session on a
-    // background thread (device warm-up can block). Returns false if the device
-    // can't be opened or configured; otherwise frames begin arriving shortly
-    // after — poll isRunning() or wait for the first frame. Check
+    // Does not block on device warm-up. Apple and Android open and configure
+    // the device on the caller's thread and return false if that fails, then
+    // start capture in the background; Windows does all of it on a worker
+    // thread and returns true at once, so a device that fails to open there
+    // shows only as no frames. Frames begin arriving shortly after - poll
+    // isRunning() or wait for the first frame. Check
     // permissionStatus() first, since capture needs Granted.
     bool start(const CameraConfig& config = {});
     void stop();

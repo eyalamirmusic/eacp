@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file A tap on a window's raw key, mouse and focus events, for input layers
+    beside the view tree. */
+
 #include "../View/View.h"
 
 namespace eacp::Graphics

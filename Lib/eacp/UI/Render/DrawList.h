@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: a component's recorded drawing, replayed every frame until it repaints. */
+
 #include "ClipMask.h"
 #include "Gradient.h"
 #include "ImageTexture.h"
@@ -34,10 +36,8 @@ struct ShadowShape
 // them, in the painting component's own points.
 //
 // Recorded rather than drawn, so that a component whose drawing has not changed
-// is replayed instead of being asked again. That is the whole difference from
-// what this tier used to do -- every paint() in the tree ran on every frame,
-// because the only record of what a component drew was the frame it drew it
-// into, and a frame is thrown away.
+// is replayed instead of being asked again. Only a component that called
+// repaint() runs paint() again.
 //
 // What that buys is not the primitives, which are cheap; it is everything a
 // paint() does *around* them. A string is laid out glyph by glyph, a gradient is
@@ -205,6 +205,7 @@ struct DrawCommand
     int count = 0;
 };
 
+// The commands one component recorded, replayed by DrawPlayer each frame.
 class DrawList
 {
 public:

@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    The app lifecycle: run<T>() and runConsole() entry points, quit, restart, file
+    pickers and app-level OS hooks.
+*/
+
 #include "../Platform/Platform.h"
 #include "../Threads/EventLoop.h"
 #include "../Utils/Common.h"
@@ -251,6 +256,9 @@ AppFactory makeAppFactory(Args&&... args)
 }
 } // namespace Detail
 
+// Runs T as the app: blocks on the main thread's event loop, constructs T on
+// its first tick and destroys it after quit(), then returns getReturnValue().
+// In a dynamic library it schedules T onto the host's loop and returns 0 at once.
 template <typename T, typename... Args>
 int run(Args&&... args)
 {
@@ -302,8 +310,9 @@ int run(const Callback& func);
 // macOS the Dock icon is hidden as the body starts (it cannot be before: the
 // loop's bootstrap sets the activation policy from the bundle). A
 // std::exception escaping `body` is printed to stderr as
-// "<program>: <what()>", <program> being argv[0]'s file name less any ".exe",
-// and the exit code is 1. `body` reads the command line from there (commandLineArgs(),
+// `"<program>`: <what()>", `<program>` being argv[0]'s file name less any ".exe",
+// and the exit code is 1. `body` reads the command line from there
+// (commandLineArgs(),
 // Args::Parser::parse()), so it needs no captures.
 int runConsole(int argc, char* argv[], const std::function<int()>& body);
 

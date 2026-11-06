@@ -1,4 +1,7 @@
 #pragma once
+/** @file
+    Vec2, Vec3 and Vec4: plain float vectors laid out exactly as shader float2/3/4.
+*/
 
 #include "Constants.h"
 

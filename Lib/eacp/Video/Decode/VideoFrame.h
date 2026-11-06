@@ -1,3 +1,4 @@
+/** @file VideoFrame: one decoded frame, its pixel format and colour coding. */
 #pragma once
 
 #include <eacp/Core/Core.h>

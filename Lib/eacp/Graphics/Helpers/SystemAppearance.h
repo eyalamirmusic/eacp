@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Whether the operating system is in dark mode. */
+
 namespace eacp::Graphics
 {
 // True when the OS is currently using a dark interface theme. Reflects the

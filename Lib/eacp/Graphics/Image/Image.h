@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A decoded RGBA image with PNG and JPEG decode and encode. */
+
 #include "../Common.h"
 
 #include "../Primitives/Primitives.h"
@@ -12,6 +14,7 @@ namespace eacp::Graphics
 // Tightly packed 8-bit RGBA pixel storage (R,G,B,A per pixel).
 using ImageData = Vector<std::uint8_t>;
 
+// Encoding format for Image::encode and Image::save.
 enum class ImageFormat
 {
     png,
@@ -75,19 +78,10 @@ public:
     Color at(int x, int y) const;
     void set(int x, int y, const Color& color);
 
-    // Reuse this image's storage as a width*height RGBA render target for an
-    // external writer that fills every byte (an esimd image kernel, a
-    // camera colour-convert, ...). Only (re)allocates when the pixel count
-    // changes or the buffer is shared with another copy; when it is unshared
-    // and already matches, there is no allocation and no zero-fill -- the
-    // previous bytes are left for the writer to overwrite in full. A shared
-    // buffer is left to its other copies and replaced by a fresh one without
-    // copying the old pixels. This lets a per-frame pipeline recycle one Image
-    // instead of allocating (and zero-filling) a fresh buffer each frame, as
-    // long as it does not keep copies of it. Returns the writable pixel buffer
-    // (width*height*4 bytes), or nullptr for a non-positive / oversized size
-    // (leaving the image empty). Prefer the ImageOps reuse overloads and
-    // CameraFrame::toImage(Image&) over calling this directly.
+    // Returns this image's buffer resized to width*height RGBA for a writer that
+    // fills every byte; reallocates only when the size changes or the buffer is
+    // shared, and never zero-fills. Null (image left empty) for a non-positive
+    // or oversized size.
     std::uint8_t* prepareForOverwrite(int width, int height);
 
     // Encode into an in-memory buffer. quality (0..1) applies to JPEG

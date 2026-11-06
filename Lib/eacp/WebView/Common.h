@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Shared includes for the WebView module. */
+
 // Core rather than the Graphics.h umbrella: the page bridge runs over a
 // ScriptHost and links no graphics library. WebView.h includes the umbrella.
 #include <eacp/Core/Core.h>

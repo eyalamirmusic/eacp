@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    ShaderSource, native shader text plus the entry points and bindings a pipeline
+    needs.
+*/
+
 #include "../Common.h"
 
 namespace eacp::GPU
@@ -59,7 +64,7 @@ struct ShaderSource
 
     static ShaderSource hlsl(std::string sourceToUse);
 
-    // Both stages share one string behind #ifdef EACP_VERTEX / EACP_FRAGMENT, so
+    // Both stages share one string behind `#ifdef EACP_VERTEX`/`EACP_FRAGMENT`, so
     // the entry is always main; only computeEntry is still read, by isCompute().
     static ShaderSource glsl(std::string sourceToUse);
 

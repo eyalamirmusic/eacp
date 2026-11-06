@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Texture origins, extents and region descriptions for buffer and texture
+    copies.
+*/
+
 #include <cstdint>
 
 namespace eacp::GPU

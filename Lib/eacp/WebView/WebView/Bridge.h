@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The transport that carries page-to-C++ commands and events over a Miro::Bridge. */
+
 #include "AsyncBridge.h"
 #include "ScriptHost.h"
 

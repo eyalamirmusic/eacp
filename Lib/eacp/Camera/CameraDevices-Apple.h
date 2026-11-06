@@ -1,3 +1,6 @@
+/** @file
+    Internal: Apple-only seam listing the capture device types per platform; not for app code.
+*/
 #pragma once
 
 #import <AVFoundation/AVFoundation.h>

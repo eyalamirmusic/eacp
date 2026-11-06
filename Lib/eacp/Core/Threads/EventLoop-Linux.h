@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Linux only: extra descriptors in the event loop, and the hosted-loop descriptor
+    and pump for plugin hosts.
+*/
+
 #include "EventLoop.h"
 
 namespace eacp::Threads

@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Texture formats, descriptors and GPU textures of every kind: 2D, arrays,
+    cubes and volumes.
+*/
+
 #include "../CommandBuffer/Copy.h"
 #include "../Common.h"
 
@@ -10,6 +14,8 @@ namespace eacp::GPU
 {
 class Device;
 
+// The pixel format of a Texture. Support varies by device; see the
+// Device::supports* queries.
 enum class TextureFormat
 {
     RGBA8Unorm,
@@ -62,8 +68,8 @@ enum class TextureFormat
     // promised to, like the other full floats. R16Unorm is R8Unorm with 65536
     // steps rather than 256: a height map, a 16-bit depth copy.
     //
-    // R32Uint is an *integer* texture: the shader declares it texture2d<uint>,
-    // Texture2D<uint> or usampler2D/uimage2D and reads it with read(), Load or
+    // R32Uint is an *integer* texture: the shader declares it `texture2d<uint>`,
+    // `Texture2D<uint>` or usampler2D/uimage2D and reads it with read(), Load or
     // texelFetch, never through a filtering sample, and a pass rendering into
     // one writes a uint. It has no mip chain eacp could average - an id is not
     // a number to take a mean of - so `mipmapped` gives it one level, exactly
@@ -128,8 +134,8 @@ enum class TextureFormat
     // generators wanting a format they can render into.
     RGB9E5Float,
 
-    // The integer formats beside R32Uint, each read as integers - texture2d<uint>
-    // or texture2d<int>, Texture2D<uint4> or Texture2D<int4>, usampler2D or
+    // The integer formats beside R32Uint, each read as integers - `texture2d<uint>`
+    // or `texture2d<int>`, Texture2D<uint4> or Texture2D<int4>, usampler2D or
     // isampler2D - with read(), Load or texelFetch rather than a filtering
     // sample, rendered into by a pass whose fragment returns uint or int, and
     // never blended or mipmapped. An 8-bit Uint is the stored number, not a
@@ -214,7 +220,7 @@ enum class TextureFormat
 
 // What a format's texels are, as the shader sees them once they are sampled
 // or read: a fraction (Unorm 0..1, Snorm -1..1), a float, or an integer. The
-// last two pick the shader's declaration - texture2d<float>, <uint> or <int>.
+// last two pick the shader's declaration - texture2d<float>, `<uint>` or `<int>`.
 enum class TextureFormatKind
 {
     Unorm,
@@ -291,7 +297,7 @@ bool isWithin(int origin, int extent, int limit);
 bool isFloatFormat(TextureFormat format);
 
 // Whether a shader reads this format as integers rather than as floats:
-// texture2d<uint> or <int>, Texture2D<uint> or <int>, usampler2D or isampler2D.
+// `texture2d<uint>` or `<int>`, `Texture2D<uint>` or `<int>`, usampler2D or isampler2D.
 // Unsigned and signed alike; the two below tell them apart.
 bool isIntegerFormat(TextureFormat format);
 
@@ -325,12 +331,14 @@ TextureFormat linearFormatFor(TextureFormat format);
 // create rather than binding as a kernel output that quietly does nothing.
 bool supportsComputeWrite(TextureFormat format);
 
+// Filtering for the fixed TextureSampling configurations.
 enum class TextureFilter
 {
     Linear,
     Nearest
 };
 
+// Addressing outside 0..1 for the fixed TextureSampling configurations.
 enum class TextureAddressMode
 {
     Clamp,
@@ -353,9 +361,8 @@ enum class TextureAddressMode
 // static sampler per configuration - s0..s(samplingConfigurations - 1) - and
 // the emitter points every texture at the one its declared sampling picks. Two
 // textures sampled the same way share a sampler, which is exactly what a
-// sampler is; the alternative, one per (slot, configuration) pair, was what
-// this used to be and it made the sampler registers the thing that capped how
-// many textures a shader could bind. Metal has no such bug, but declares a
+// sampler is; one per (slot, configuration) pair would make the sampler
+// registers cap how many textures a shader could bind. Metal has no such bug, but declares a
 // sampler per texture because MSL passes them as function arguments rather
 // than binding them to registers.
 //
@@ -378,6 +385,8 @@ enum class TextureCompare
     LessEqual
 };
 
+// One of the samplingConfigurations fixed samplers a texture bind selects.
+// For any other sampler, use SamplerDescriptor and Device::makeSampler.
 struct TextureSampling
 {
     TextureFilter filter = TextureFilter::Nearest;

@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file ShaderGraph, the backend-neutral expression and statement tree the EDSL
+    records into.
+*/
+
 #include "../Common.h"
 
 #include "ShaderTypes.h"

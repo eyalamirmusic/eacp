@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Emitters that turn a ShaderGraph into Metal, HLSL or GLSL source on any
+    host.
+*/
+
 #include "../Common.h"
 
 namespace eacp::GPU
@@ -14,7 +18,7 @@ std::string emitMetal(const ShaderGraph& graph);
 std::string emitHlsl(const ShaderGraph& graph);
 
 // GLSL 450 for Vulkan. Both render stages share one string, each behind
-// #ifdef EACP_VERTEX / EACP_FRAGMENT; a kernel has one unguarded main().
+// `#ifdef EACP_VERTEX` / `EACP_FRAGMENT`; a kernel has one unguarded main().
 std::string emitGlsl(const ShaderGraph& graph);
 
 // Whether a stage's expressions read a uniform at all - the same answer the

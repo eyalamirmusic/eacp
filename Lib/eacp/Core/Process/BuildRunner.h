@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file BuildRunner, one command rerun on demand on a background thread. */
+
 #include "../Threads/Thread.h"
 #include "Process.h"
 
@@ -27,7 +29,9 @@ public:
 
     void run();
 
-    // A cancelled run still finishes, with ProcessResult::exited false.
+    // Kills the running command and drops a pending rerun. Only the direct
+    // child is killed, so ninja under cmake keeps running. A cancelled run
+    // still finishes, with ProcessResult::exited false.
     void cancel();
 
     [[nodiscard]] bool isRunning() const;

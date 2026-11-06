@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file FNV-1a 64-bit hashing, stable across platforms and runs. */
+
 #include <cstdint>
 #include <string>
 #include <string_view>

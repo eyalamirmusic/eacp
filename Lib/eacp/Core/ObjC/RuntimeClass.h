@@ -1,4 +1,9 @@
 #pragma once
+/** @file
+    Objective-C classes built at run time under process-unique names, so host and
+    plugin copies never collide. Apple only.
+*/
+
 
 #include <objc/message.h>
 #include <objc/runtime.h>
@@ -8,7 +13,7 @@ namespace eacp::ObjC
 {
 // Builds and registers an Objective-C class at runtime under a
 // process-unique name: the ObjC class registry is global to the process, so
-// a compile-time @implementation collides as soon as a host and a
+// a compile-time `@implementation` collides as soon as a host and a
 // dlopen-loaded plugin both carry this eacp copy's classes ("Class X is
 // implemented in both..."). Probing objc_lookUpClass and suffixing _1, _2...
 // keeps every eacp copy's classes distinct while staying readable in crash
@@ -49,6 +54,7 @@ public:
     RuntimeClass(const RuntimeClass&) = delete;
     RuntimeClass& operator=(const RuntimeClass&) = delete;
 
+    // Call before registerClass(); the type encoding comes from the signature.
     template <typename ReturnType, typename... Args>
     void addMethod(SEL selector, ReturnType (*implementation)(id, SEL, Args...))
     {
@@ -71,6 +77,8 @@ public:
                       @encode(T));
     }
 
+    // Registers the class with the runtime; add methods, protocols and ivars before
+    // this.
     Class registerClass()
     {
         objc_registerClassPair(cls);
@@ -108,6 +116,7 @@ ReturnType sendSuper(id self, Class superclass, SEL selector, Args... args)
     return function(&super, selector, args...);
 }
 
+// An instance variable added with addIvar<T>, by name. The name must exist.
 template <typename T>
 T& getIvar(id object, const char* name)
 {

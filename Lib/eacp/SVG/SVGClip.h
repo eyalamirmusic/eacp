@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Resolving a clip-path reference into the region it clips to. */
+
 #include "SVGAttributes.h"
 
 #include <eacp/GPUWidgets/Path/PathRasterizer.h>
@@ -11,7 +13,7 @@ namespace eacp::SVG
 // The region a clip-path names: one path, in the coordinates of whatever
 // referenced it.
 //
-// One path and not a list, because a <clipPath> holding several shapes clips to
+// One path and not a list, because a `<clipPath>` holding several shapes clips to
 // their *union* -- and a union of contours wound the same way is what the
 // non-zero rule already computes, so the shapes are appended into one region
 // rather than intersected afterwards by anything.
@@ -20,7 +22,7 @@ struct ClipRegion
     GPUWidgets::Path path;
     GPUWidgets::FillRule rule = GPUWidgets::FillRule::NonZero;
 
-    // Whether the reference named a <clipPath> at all, which is what tells the
+    // Whether the reference named a `<clipPath>` at all, which is what tells the
     // two empty regions apart -- and they mean opposite things. A reference to
     // nothing, or to something that is not a clipPath, is ignored and the
     // element draws unclipped; a clipPath holding no geometry is a region of
@@ -34,7 +36,7 @@ struct ClipRegion
 // own units -- so the caller maps it by the same transform it maps the element's
 // geometry by, and the clip travels with what it clips.
 //
-// Empty when the id names nothing, names something that is not a <clipPath>, or
+// Empty when the id names nothing, names something that is not a `<clipPath>`, or
 // names one with no geometry in it, and every one of those means the element is
 // drawn unclipped rather than not drawn.
 //
@@ -55,7 +57,7 @@ struct ClipRegion
 // region comes out in, and `viewport` is what the percentages inside it are
 // fractions of -- the one in force where the clip-path was written, the region
 // belonging to the referencing element's space rather than to wherever in the
-// tree the <clipPath> happens to sit.
+// tree the `<clipPath>` happens to sit.
 ClipRegion resolveClipPath(const std::string& reference,
                            const ElementsById& byId,
                            const Graphics::Rect& objectBounds,

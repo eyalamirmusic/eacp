@@ -1,11 +1,14 @@
 #pragma once
 
+/** @file Row-based rectangle packing for the glyph atlas. */
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <optional>
 
 namespace eacp::Text
 {
+// Top-left corner of a packed rectangle, in atlas pixels.
 struct PackedRect
 {
     int x = 0;

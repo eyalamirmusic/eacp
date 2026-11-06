@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file The lock-free queue and per-frame snapshot types behind GameInput: events,
+    keys, mouse and gamepads. */
+
 #include "../Primitives/Primitives.h"
 
 #include <atomic>
@@ -11,6 +14,7 @@ namespace eacp::Graphics
 
 enum class MouseButton;
 
+// What an InputEvent records.
 enum class InputEventType : uint8_t
 {
     KeyDown,

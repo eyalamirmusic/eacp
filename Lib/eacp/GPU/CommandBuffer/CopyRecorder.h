@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Each backend's recording of a copy plan onto a native recording. */
+
 #include "CopyPlan.h"
 
 namespace eacp::GPU

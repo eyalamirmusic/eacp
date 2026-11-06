@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The GPUView that owns a component tree and draws it in one pass per frame. */
+
 #include "../Component/Component.h"
 #include "../DragAndDrop/FileDropTarget.h"
 #include "../Render/DrawPlayer.h"

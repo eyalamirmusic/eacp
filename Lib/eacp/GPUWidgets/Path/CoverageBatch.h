@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Rasterizing every path of a frame in one set of buffers and one run
+    of dispatches. */
+
 #include "PrefixSum.h"
 
 namespace eacp::GPU

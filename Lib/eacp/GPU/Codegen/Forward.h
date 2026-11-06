@@ -1,5 +1,12 @@
 #pragma once
 
+/** @file Forward declarations of the shader EDSL types, for headers that name them
+    without including the EDSL.
+
+    Names from the shader codegen layer, for headers that mention them without
+    needing the EDSL itself.
+*/
+
 #include <functional>
 
 // Names from the shader codegen layer, for headers that mention them without

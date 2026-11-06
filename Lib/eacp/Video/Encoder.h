@@ -1,3 +1,4 @@
+/** @file The portable H.264 encoder interface the recorder's capture tiers feed. */
 #pragma once
 
 #include "Audio.h"

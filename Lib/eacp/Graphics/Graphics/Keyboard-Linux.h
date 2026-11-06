@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Linux only: the evdev key code table shared by the Wayland and X11
+    backends. */
+
 #include "Keyboard.h"
 
 // Both directions of the Linux key table. An evdev keycode is what a Wayland

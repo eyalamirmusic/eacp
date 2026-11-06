@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The Unicode Bidirectional Algorithm (UAX #9): embedding levels and visual order for a paragraph. */
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <cstdint>
@@ -11,13 +13,10 @@ namespace eacp::Text
 // paragraph of logically ordered text into embedding levels and from those
 // into the visual order a shaper is to place runs in.
 //
-// It lives here rather than in a rasterizer because only one of the three
-// backends needs it. CoreText and DirectWrite run their own bidi inside
-// CTLine and IDWriteTextLayout, so GlyphRasterizer::shape() already hands
-// back visually ordered glyphs on Apple and Windows; the Linux backend hands
-// HarfBuzz one run at a time and had nothing above it doing the reordering.
-// Running this there makes the seam mean the same thing on all three, and
-// running it on the other two would reorder what is already reordered.
+// Of the four rasterizer backends only Linux runs it: CoreText and DirectWrite
+// reorder inside CTLine and IDWriteTextLayout, the Android backend does not
+// call it, and the Linux backend hands HarfBuzz one run at a time, so this
+// pass gives it the visual order the others already return.
 enum class BidiBaseDirection
 {
     // P2/P3: the first strong character outside an isolate decides.

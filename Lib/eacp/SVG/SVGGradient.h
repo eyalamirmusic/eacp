@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Reading SVG gradient elements into UI gradient stops and spread modes. */
+
 #include "SVGElement.h"
 
 #include <eacp/GPUWidgets/Path/AffineTransform.h>
@@ -11,7 +13,7 @@ namespace eacp::SVG
 // default is pad, and it is what a document that says nothing means.
 UI::GradientSpread parseSpreadMethod(const std::string& value);
 
-// The <stop> children of a gradient element, in the order written: offset,
+// The `<stop>` children of a gradient element, in the order written: offset,
 // stop-color and stop-opacity, each of which may be a presentation attribute or
 // a style declaration. Elements that are not stops are skipped rather than
 // refused, a gradient being allowed to carry other children.

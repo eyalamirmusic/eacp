@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A blocking, connected TCP stream and its addressing, timeouts and errors. */
+
 #include "../Common.h"
 
 namespace eacp::TCP

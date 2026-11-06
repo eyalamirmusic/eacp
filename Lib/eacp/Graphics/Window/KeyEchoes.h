@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: recognises a forwarded key that a host bounced back in, so it is not
+    forwarded twice. */
+
 #include "KeyForwarding.h"
 
 namespace eacp::Graphics

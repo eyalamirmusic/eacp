@@ -1,3 +1,6 @@
+/** @file
+    Writes a synthetic H.264 test clip whose frames can be identified after decoding.
+*/
 #pragma once
 
 #include "Audio.h"

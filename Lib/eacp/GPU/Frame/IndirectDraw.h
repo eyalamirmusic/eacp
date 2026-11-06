@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The argument records RenderPass's indirect draws read out of a buffer. */
+
 #include <cstdint>
 
 namespace eacp::GPU

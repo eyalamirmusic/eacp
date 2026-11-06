@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: Linux only: the Wayland subsurface backend for presenting views. */
+
 #include "ViewSurfaceBackend-Linux.h"
 
 // The Wayland half of a presenting view: a wl_subsurface of the window's own

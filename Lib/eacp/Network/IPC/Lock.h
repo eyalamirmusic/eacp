@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A named lock shared by every process of this user on this machine. */
+
 #include "../Common.h"
 
 namespace eacp::IPC

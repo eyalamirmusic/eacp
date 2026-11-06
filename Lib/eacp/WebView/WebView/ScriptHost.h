@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file ScriptHost, the page-side interface the bridge runs over, and file drag-out payloads. */
+
 #include "../Common.h"
 
 namespace eacp::Graphics
@@ -39,7 +41,7 @@ struct DraggableFileList
 //  - addUserScript runs `source` in the page's own global scope for every
 //    document this host loads, including the ones it navigates to later.
 //    At document start that is before any of the page's own markup is
-//    parsed, so `window.eacp` exists before the first inline <script>.
+//    parsed, so `window.eacp` exists before the first inline `<script>`.
 //  - addScriptMessageHandler routes a page's posts on `name` to `handler`,
 //    replacing whatever was routed there before. The body is a raw string:
 //    a page that posts an object sends its JSON, and a page that posts a

@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file GeneratedShader, the native source and vertex layout the EDSL emits for one
+    graph.
+*/
+
 #include "../Pipeline/VertexLayout.h"
 #include "../Shader/ShaderSource.h"
 #include "ShaderGraph.h"

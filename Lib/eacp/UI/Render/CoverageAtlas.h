@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The shared texture that rasterized path and clip coverage is packed into. */
+
 #include "../Common.h"
 
 #include <eacp/GPUWidgets/GPUWidgets.h>

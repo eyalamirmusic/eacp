@@ -1,3 +1,4 @@
+/** @file Conversion between float and IEEE half-precision bits. */
 #pragma once
 
 #include "../Common.h"

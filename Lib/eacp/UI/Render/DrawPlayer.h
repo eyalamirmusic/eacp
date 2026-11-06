@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: plays draw lists into the shape, mesh and image batches in recorded order. */
+
 #include "DrawList.h"
 #include "ImageBatch.h"
 #include "LayerRenderer.h"

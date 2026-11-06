@@ -1,3 +1,4 @@
+/** @file Writer for MILBlob, the weight file inside an .mlpackage. */
 #pragma once
 
 #include "Protobuf.h"

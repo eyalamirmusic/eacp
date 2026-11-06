@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The batched instanced renderer for rects, rounded rects, lines, shadows and masked shapes. */
+
 #include "../Common.h"
 #include "ClipMask.h"
 #include "CoverageAtlas.h"
@@ -31,13 +33,8 @@ struct ShapeInstance
     float color[4];
 
     // Corner radius, border width (both in points), and whether this is a
-    // border at all. The last is a flag the CPU already knows rather than
-    // something the shader rederives from the width: comparing a float against
-    // zero per fragment to answer a question settled per shape is work, and the
-    // fourth slot was going spare anyway.
-    //
-    // The fourth is no longer spare: it carries which kind of gradient fills
-    // this shape, 0 for none.
+    // border at all (set on the CPU, so the shader need not test the width),
+    // and which kind of gradient fills this shape, 0 for none.
     float shape[4];
 
     // The four of the affine that takes a fragment into the gradient's own

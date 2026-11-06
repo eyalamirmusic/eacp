@@ -1,3 +1,7 @@
+/** @file
+    Internal: Apple-only AVAssetWriter encoder shared by the encoder and the Screen tier; not
+    for app code.
+*/
 #pragma once
 
 #import <AVFoundation/AVFoundation.h>

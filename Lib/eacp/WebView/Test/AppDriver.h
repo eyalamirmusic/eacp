@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file AppDriver, which drives and inspects a live WebView page from a test. */
+
 #include "../Common.h"
 
 #include "DomNode.h"

@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file A main-thread callback once per display refresh, with an optional frame-
+    rate cap. */
+
 #include "../Common.h"
 #include "FramePacer.h"
 

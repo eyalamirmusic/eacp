@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Brace-pattern string formatting (Strings::format), checked at runtime. */
+
 #include "Strings.h"
 
 #include <array>
@@ -65,6 +67,8 @@ FormatArg toFormatArg(const T& value)
 
 std::string vformat(std::string_view pattern, std::span<const FormatArg> args);
 
+// format("{} of {:08X}", n, code): fmt syntax checked at run time. A bad
+// pattern returns "[format error: ...] <pattern>" instead of throwing.
 template <typename... Args>
 std::string format(std::string_view pattern, const Args&... args)
 {

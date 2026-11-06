@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: macOS only: Image to NSImage. */
+
 #import <Cocoa/Cocoa.h>
 
 namespace eacp::Graphics

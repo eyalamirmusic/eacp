@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Rules for which content sizes a window may take, including
+    AspectRatioLock. */
+
 #include "../Primitives/Primitives.h"
 
 #include <functional>

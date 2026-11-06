@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Encoding and decoding single UTF-8 codepoints. */
+
 #include <string_view>
 
 // UTF-8 in and out, for the seams of this module that speak codepoints: the

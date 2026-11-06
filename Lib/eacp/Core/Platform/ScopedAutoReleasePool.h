@@ -1,10 +1,12 @@
 #pragma once
 
+/** @file An autorelease pool scope that compiles to nothing off Apple platforms. */
+
 namespace eacp
 {
 // An autorelease pool where the platform has one, and an empty object where it
 // doesn't — so portable code can bound the lifetime of the OS's deferred
-// releases without an #ifdef at the call site.
+// releases without an `#ifdef` at the call site.
 //
 // On Apple platforms the frameworks hand back autoreleased objects constantly:
 // they are released not when you drop them, but when the enclosing pool drains

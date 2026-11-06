@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file LOG and LOGF: timestamped diagnostics to stdout and a log file. */
+
 #include "Format.h"
 #include "Strings.h"
 
@@ -17,8 +19,7 @@ namespace eacp
 void logMessage(std::string_view text);
 
 // Logs any mix of strings, numbers and bools — e.g. LOG("status ", code, "/",
-// total) — converting each argument via Strings::toString. Callers no longer
-// need std::to_string (or manual concatenation) at the call site.
+// total) — converting each argument via Strings::toString.
 template <typename... Args>
 void LOG(const Args&... args)
 {

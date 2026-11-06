@@ -1,11 +1,15 @@
 #pragma once
 
+/** @file Function-local static singletons, including one that is never destroyed. */
+
 #include <cstddef>
 #include <new>
 #include <utility>
 
 namespace eacp::Singleton
 {
+// The one T for this binary, built on first call (thread-safe) and
+// destroyed at exit.
 template <typename T>
 T& get()
 {

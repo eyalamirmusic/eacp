@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file ValueType, the scalar, vector and matrix types the shader EDSL understands.
+*/
+
 #include <string_view>
 
 namespace eacp::GPU

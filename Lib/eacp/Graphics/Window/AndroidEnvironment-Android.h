@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Android only. Imports environment variables into a debug
+    build at launch. */
+
 struct ANativeActivity;
 
 namespace eacp::Graphics

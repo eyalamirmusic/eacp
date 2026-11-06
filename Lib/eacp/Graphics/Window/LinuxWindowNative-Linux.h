@@ -8,8 +8,8 @@
 #include <optional>
 #include <string>
 
-// The toplevel behind a Window, whatever window system is under it, and the
-// half of one that no window system decides.
+/** @file Internal: Linux only. The toplevel behind a Window, whatever window
+    system is under it, and the half of one that no window system decides. */
 
 namespace eacp::Graphics
 {

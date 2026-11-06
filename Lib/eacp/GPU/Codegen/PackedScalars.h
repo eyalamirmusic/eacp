@@ -1,5 +1,13 @@
 #pragma once
 
+/** @file Host-side packing of half, bfloat16, 8-bit and 4-bit values into the bit
+    layouts shaders read.
+
+    Host-side scalar packing: the bit layouts the GPU reads, written and read
+    back on the CPU. No shader types, so texture and buffer code that only
+    needs the encoding can include this without the shader EDSL.
+*/
+
 #include <array>
 #include <cstdint>
 

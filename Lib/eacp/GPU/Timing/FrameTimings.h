@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    FrameTimings and PassTiming: what one frame's labelled passes cost the GPU.
+*/
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <cstdint>

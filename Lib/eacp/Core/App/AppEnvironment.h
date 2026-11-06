@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Process-wide app options: headless mode and the stored command line. */
+
 #include "../Utils/Common.h"
 
 #include "../Utils/Environment.h"

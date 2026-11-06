@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the Windows WebView's native file drag-out source and target. */
+
 // Internal to the Windows WebView backend (WebView-Windows.cpp): the drop
 // source + target for a native file drag-out. A header rather than part of the
 // translation unit only so the logic is unit-testable without a live

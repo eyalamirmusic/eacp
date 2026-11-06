@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file The GPU device: creates buffers, textures, pipelines and command buffers,
+    and answers capability queries.
+*/
+
 #include "../Buffer/Buffer.h"
 #include "../CommandBuffer/CommandBuffer.h"
 #include "../Pipeline/ComputePipeline.h"
@@ -35,7 +39,7 @@ struct FrameNesting;
 //     auto worker = GPU::Device();
 //
 // Everything that Device creates belongs to it — a Buffer, a Texture and a
-// CommandBuffer made from one are not usable from another, on either backend
+// CommandBuffer made from one are not usable from another, on any of the three backends
 // (an MTLBuffer belongs to its MTLDevice; a D3D12 recording to its queue's
 // pool). Using a Device off the thread that constructed it is a debug assertion
 // rather than a race left to be found later.
@@ -56,8 +60,12 @@ struct FrameNesting;
 class Device
 {
 public:
+    // A device of its own, owned by the thread that constructs it; prefer
+    // shared() unless a worker thread needs the GPU.
     Device();
 
+    // The process-wide device, created on first call and bound to the main
+    // thread whichever thread asks first.
     static Device& shared();
 
     // Fires a debug assertion when this Device is used from a thread that does
@@ -65,6 +73,7 @@ public:
     // an app may call it at the top of its own, on the same terms.
     void assertOwningThread() const;
 
+    // A buffer of bytes copied from data.
     Buffer makeBuffer(const void* data,
                       std::int64_t bytes,
                       BufferUsage usage = BufferUsage::Vertex,
@@ -134,14 +143,18 @@ public:
     // registers hold one fixed static sampler and a Sampler bind is dropped.
     bool supportsPerBindSamplers() const;
 
+    // A compile failure yields a library whose isValid() is false.
     ShaderLibrary makeShaderLibrary(const ShaderSource& source);
 
+    // A failure yields a pipeline whose isValid() is false.
     RenderPipeline makeRenderPipeline(const RenderPipelineDescriptor& descriptor);
 
+    // A failure yields a pipeline whose isValid() is false.
     ComputePipeline makeComputePipeline(const ShaderLibrary& library);
 
     CommandBuffer makeCommandBuffer();
 
+    // False when no GPU came up, e.g. Linux with no Vulkan driver.
     bool isValid() const;
 
     // What the GPU this Device runs on calls itself — the MTLDevice's name on
@@ -401,7 +414,7 @@ public:
     // nothing to forget - see StreamingBuffers for why that matters.
     std::uint64_t frameIndex() const;
 
-    // Called by Frame's constructor on both backends, including the off-screen
+    // Called by Frame's constructor on every backend, including the off-screen
     // one. An off-screen frame blocks until the GPU is done, so nothing it
     // wrote is in flight afterwards and the advance is not needed for
     // correctness - but without it a loop of off-screen renders is one endless
@@ -409,7 +422,7 @@ public:
     // never reclaims one.
     //
     // Out of line because it also starts the frame timer, which is the one
-    // thing both backends want done identically at this moment.
+    // thing every backend wants done identically at this moment.
     void beginFrame();
 
     // Called by Frame's constructor before anything else, and by its
@@ -461,7 +474,7 @@ public:
     // what the assertions in Tests/GPU are there to catch.
     int buffersCreated() const;
 
-    // Called by Buffer's constructor on both backends, for buffers that got
+    // Called by Buffer's constructor on every backend, for buffers that got
     // real storage.
     void noteBufferCreated();
 

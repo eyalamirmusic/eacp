@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The build-time shader compiler behind eacp_add_precompiled_shaders. */
+
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
@@ -21,9 +23,9 @@
 // The names, spelled by Shader/PrecompiledNames.h for both halves, `<key>` being
 // Precompiled::keyFor of the text ShaderBuilder::build() hands the runtime for
 // that dialect:
-//   Metal   <key>.metallib, <key>.ios.metallib, <key>.iossim.metallib
-//   D3D12   <key>.vs.dxbc and <key>.ps.dxbc, or <key>.cs.dxbc
-//   Vulkan  <key>.<target>.vert.spv and .frag.spv, or .comp.spv, for each of
+//   Metal   `<key>.metallib`, `<key>.ios.metallib`, `<key>.iossim.metallib`
+//   D3D12   `<key>.vs.dxbc` and `<key>.ps.dxbc`, or `<key>.cs.dxbc`
+//   Vulkan  `<key>.<target>.vert.spv` and .frag.spv, or .comp.spv, for each of
 //           vk11spv13, vk11spv14 and vk13spv16
 namespace eacp::GPU::ShaderCompiler
 {
@@ -58,7 +60,7 @@ struct Options
 
     // The oldest OS each metallib must load on, which also picks the Metal
     // language version: a plain version ("12.0") for every SDK, or
-    // "<sdk>=<version>" for one. Unnamed SDKs take the deployment floor in
+    // `"<sdk>=<version>"` for one. Unnamed SDKs take the deployment floor in
     // CMake/AppleSetup.cmake: macOS 11.0, iOS 15.0.
     Vector<std::string> metalMinimumOs;
 
@@ -74,6 +76,7 @@ struct Options
 // log, removes the manifest and deletes nothing.
 struct Report
 {
+    // True when `error` is empty.
     bool succeeded() const;
 
     Vector<FilePath> blobs;
@@ -96,8 +99,8 @@ int run(const Options& options, const Vector<ShaderSet>& sets);
 int run(const Options& options);
 
 // Parses the command line into Options and runs:
-//   --out <dir> --manifest <file> [--metal-sdk macosx|iphoneos|iphonesimulator]...
-//   [--metal-min-os <version>|<sdk>=<version>]... [--no-metal] [--no-dxbc]
+//   --out `<dir>` --manifest `<file>` [--metal-sdk macosx|iphoneos|iphonesimulator]...
+//   [--metal-min-os `<version>|<sdk>=<version>]`... [--no-metal] [--no-dxbc]
 //   [--no-spirv] [--verbose]
 int runMain(int argc, const char* const* argv, const Vector<ShaderSet>& sets);
 int runMain(int argc, const char* const* argv);

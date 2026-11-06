@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Keyboard, mouse and gamepad state polled once a frame for a game loop. */
+
 #include "GameInputQueue.h"
 #include "../Window/WindowInput.h"
 
@@ -11,6 +13,7 @@ namespace eacp::Graphics
 struct GameInputBackend;
 class Window;
 
+// Where a GameInput takes its events from.
 enum class GameInputSource
 {
     // The platform's game input API where there is one (GameController on
@@ -40,7 +43,9 @@ enum class GameInputSource
 // while the main thread is busy drawing; elsewhere, and on Apple until a
 // GameController device shows up, from the window's key and mouse events.
 // Either way only while the window has key focus: losing it releases every
-// key and button. Construct it on the main thread; the window must outlive it.
+// key and button. Construct it on the main thread; the window must outlive it. A component
+// that needs one is handed the Window& by whoever owns the window, and calls
+// snapshot() once per frame in its update().
 class GameInput : WindowInputListener
 {
 public:

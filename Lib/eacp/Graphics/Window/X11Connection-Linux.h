@@ -13,8 +13,9 @@
 #include <memory>
 #include <optional>
 
-// The process's one connection to the X server. File-scope names carry an
-// x11/X11 prefix: this is one unity TU under EACP_CI_BUILD.
+/** @file Internal: Linux only. The process's one connection to the X server.
+    File-scope names carry an x11/X11 prefix: this is one unity TU under
+    EACP_CI_BUILD. */
 
 namespace eacp::Graphics
 {

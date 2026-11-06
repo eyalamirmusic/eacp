@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Vertex types for the path shaders, and Point and Color registered as
+    shader values. */
+
 #include "../Common.h"
 
 #include <eacp/GPU/Codegen/Codegen.h>

@@ -1,5 +1,20 @@
 #pragma once
 
+/** @file Executor, which runs a compute kernel or graph on the calling thread over
+    plain arrays.
+
+    Runs a compute kernel on the calling thread: one plan, one workspace, and
+    the dispatch forms ComputePass has, indirect included. Everything is
+    allocated by the constructor; a dispatch takes no lock, makes no system call
+    and allocates nothing, so it can run on an audio thread.
+
+    A dispatch can also be split over the caller's own threads: prepareDispatch
+    takes the bindings and copies the uniforms once, and dispatchGroups then runs
+    any range of its thread groups, each thread with a Workspace of its own made
+    from plan(). Disjoint ranges of a race-free kernel give exactly what one
+    dispatch gives, whichever thread runs which.
+*/
+
 #include "Bindings.h"
 #include "Plan.h"
 #include "Workspace.h"
@@ -61,6 +76,8 @@ private:
     bool valid = false;
 };
 
+// Runs one kernel on the calling thread. Construction allocates and validates;
+// a dispatch allocates, locks and logs nothing. Not copyable.
 class Executor
 {
 public:
@@ -76,6 +93,8 @@ public:
     Executor(const Executor&) = delete;
     Executor& operator=(const Executor&) = delete;
 
+    // False when the graph could not be planned; reason() says why and every
+    // dispatch then returns false.
     constexpr bool isValid() const { return executionPlan.isValid(); }
     constexpr const std::string& reason() const { return executionPlan.reason(); }
     constexpr const Plan& plan() const { return executionPlan; }

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A unique temporary path deleted when its owner goes out of scope. */
+
 #include "FilePath.h"
 
 #include <string_view>

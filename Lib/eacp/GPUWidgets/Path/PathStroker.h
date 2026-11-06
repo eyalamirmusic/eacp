@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Stroke styles, dashing, and turning a stroke into a Path to fill. */
+
 #include "Path.h"
 
 namespace eacp::GPUWidgets
@@ -26,6 +28,7 @@ enum class LineJoin
     Bevel
 };
 
+// How strokeToFill outlines a path; width is in path units.
 struct StrokeStyle
 {
     float width = 1.f;

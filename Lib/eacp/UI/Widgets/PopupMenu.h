@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Popup menus with items, submenus, ticks and separators, drawn in the component tree. */
+
 #include "Widgets.h"
 
 #include <memory>
@@ -67,6 +69,7 @@ struct PopupMenuStyle
     float scrollArrowHeight = 14.f;
 };
 
+// Which side of the anchor a PopupMenu opens on.
 enum class PopupMenuPlacement
 {
     // Under the anchor, or over it when there is no room under and more room
@@ -81,6 +84,7 @@ enum class PopupMenuPlacement
     Right
 };
 
+// Where and how wide PopupMenu shows, and the font it draws in.
 struct PopupMenuOptions
 {
     // The panel is at least this wide, and otherwise as wide as its widest

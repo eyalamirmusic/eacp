@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Binding slot limits and the Vulkan binding numbers the codegen layer
+    assigns.
+*/
+
 #include "../Frame/ComputePass.h"
 #include "../Frame/RenderPass.h"
 

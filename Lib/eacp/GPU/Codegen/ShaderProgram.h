@@ -1,5 +1,77 @@
 #pragma once
 
+/** @file ShaderProgram, a struct-authored render shader that owns its vertex buffer,
+    library and pipeline.
+
+    A shader authored as a struct. Uniforms are named, typed members you set by
+    name; vertex inputs are pulled straight out of the CPU vertex struct inside
+    define(), so that struct is the single source of the vertex layout. The program
+    also owns its realized GPU resources (vertex buffer, library, pipeline), so a
+    view feeds data and draws without juggling loose handles.
+
+      struct Vertex { Maths::Vec2 position; Maths::Vec3 color; };
+
+      struct MyShader final : ShaderProgram
+      {
+          Uniform<Float> angle;
+          EACP_SHADER(angle)
+
+          MyShader() { compile(); }
+
+          void define() override
+          {
+              auto position = vertexInput(&Vertex::position);   // -> Float2
+              auto color    = vertexInput(&Vertex::color);      // -> Float3
+              auto c = cos(angle);
+              auto s = sin(angle);
+              auto rotated = float2(position.x() * c - position.y() * s,
+                                    position.x() * s + position.y() * c);
+              setPosition(float4(rotated, 0.0f, 1.0f));
+              setFragment(float4(varying(color), 1.0f));
+          }
+      };
+
+      struct TriangleView final : GPUView
+      {
+          TriangleView()
+          {
+              shader.setVertices(vertices);       // typed; owns the buffer
+              shader.prepare(sampleCount());      // builds library + pipeline
+              setContinuous(true);
+          }
+
+          void update(Threads::FrameTime time) override
+          {
+              angle += static_cast<float>(time.delta);
+          }
+
+          void render(Frame& frame) override
+          {
+              shader.angle = angle;
+              auto pass = frame.beginPass({});
+              pass.draw(shader);                  // pipeline + vertices + uniforms
+          }
+
+          static inline const Vertex vertices[] = {
+              {{0.0f, 0.8f}, {1.0f, 0.2f, 0.2f}},
+              {{-0.8f, -0.8f}, {0.2f, 1.0f, 0.2f}},
+              {{0.8f, -0.8f}, {0.2f, 0.2f, 1.0f}},
+          };
+
+          MyShader shader;
+          float angle = 0.0f;
+      };
+
+    Instancing follows the same shape: pull per-instance fields with
+    instanceInput(&Instance::field, slot), feed them with setInstances(slot, ...),
+    and draw with pass.drawInstanced(shader, instanceCount [, firstInstance]). The
+    per-vertex geometry stays at slot 0; each instanceInput slot becomes a
+    PerInstance vertex-buffer binding.
+
+          auto pos    = vertexInput(&Vertex::position);       // slot 0, per vertex
+          auto centre = instanceInput(&Instance::centre, 1);  // slot 1, per instance
+*/
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <array>
@@ -203,8 +275,7 @@ public:
     // Each call gets storage no earlier call's draw is still reading, so one
     // program can be flushed many times in a frame - which SpriteRenderer and
     // Text::GlyphRenderer both do, on every texture, sampling and scissor
-    // change. That used to hold by accident, because every call allocated a
-    // fresh GPU buffer; it is now a property of StreamingBuffers, which hands
+    // change. StreamingBuffers hands
     // each call its own slice of one arena per frame in flight, and so
     // allocates nothing once its pools are warm.
     template <typename I, std::size_t N>

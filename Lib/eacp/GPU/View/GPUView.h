@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file GPUView, a View drawn by the GPU on demand or every display refresh. */
+
 #include "../Common.h"
 
 #include <eacp/Core/Utils/Pimpl.h>
@@ -28,6 +30,7 @@ public:
     GPUView();
     ~GPUView() override;
 
+    // Draws one frame on the main thread. The default draws nothing.
     virtual void render(Frame&);
 
     // Called once per display refresh while continuous mode is on; the view

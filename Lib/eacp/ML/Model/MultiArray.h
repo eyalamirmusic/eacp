@@ -1,3 +1,7 @@
+/** @file
+    MultiArray: a model input or output tensor in storage Core ML uses without
+    copying.
+*/
 #pragma once
 
 #include "../Graph/Tensor.h"

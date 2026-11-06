@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Apple only: CALayer subclasses whose property changes skip
+    implicit animation. */
+
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #import <QuartzCore/QuartzCore.h>
 

@@ -1,5 +1,11 @@
 #pragma once
 
+/** @file Plan, a compute graph decoded once into the immutable form the CPU executor
+    runs.
+
+    A compute graph decoded once; immutable, and holds no pointer to the graph.
+*/
+
 #include "Lanes.h"
 
 #include <eacp/GPU/Codegen/ShaderGraph.h>
@@ -161,6 +167,8 @@ struct PlanOptions
     std::size_t maxBatchBytes = defaultBatchBytes;
 };
 
+// Immutable once built; Executor owns one.
+// A graph the interpreter cannot run gives an invalid plan, never a throw.
 class Plan
 {
 public:

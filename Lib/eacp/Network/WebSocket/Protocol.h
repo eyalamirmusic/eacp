@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file RFC 6455 WebSocket framing and handshake, shared by the server and the Android client. */
+
 #include "WebSocket.h"
 
 #include <optional>

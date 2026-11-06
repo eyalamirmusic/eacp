@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Parsers for SVG attribute values: colours, transforms, lengths, viewports and paint references. */
+
 #include "Common.h"
 #include "SVGElement.h"
 
@@ -8,12 +10,14 @@
 namespace eacp::SVG
 {
 
+// A parsed paint colour; `isNone` is true for "none" or an empty value.
 struct ColorResult
 {
     Graphics::Color color;
     bool isNone = false;
 };
 
+// Reads hex, rgb() and named colours; an unrecognised value is black.
 ColorResult parseColor(const std::string& value);
 
 // The same list as the matrix it actually denotes: every function of the
@@ -53,8 +57,8 @@ PreserveAspectRatio parsePreserveAspectRatio(const std::string& value);
 
 // The map from a viewBox onto the viewport it fills: the box's origin to zero,
 // scaled by the fit, and shifted by whatever the alignment does with the spare
-// space. What an <svg> does with its own viewBox and what a <symbol> does with
-// the size its <use> gave it, which is why it is a free function rather than
+// space. What an `<svg>` does with its own viewBox and what a `<symbol>` does with
+// the size its `<use>` gave it, which is why it is a free function rather than
 // something the component keeps to itself.
 GPUWidgets::AffineTransform viewBoxTransform(const Graphics::Rect& viewBox,
                                              const Graphics::Rect& viewport,
@@ -72,7 +76,7 @@ enum class LengthAxis
 };
 
 // What a percentage is a percentage *of*: the nearest viewport, which is the
-// viewBox of the closest enclosing <svg> where it brought one and that <svg>'s
+// viewBox of the closest enclosing `<svg>` where it brought one and that `<svg>'s`
 // own width and height where it did not.
 //
 // Carried down the tree by whoever is walking it rather than looked up, because
@@ -106,7 +110,7 @@ float lengthAttr(const SVGElement& element,
                  LengthAxis axis,
                  float fallback = 0.f);
 
-// Whether a root <svg>'s width or height says how big the *document* is.
+// Whether a root `<svg>'s` width or height says how big the *document* is.
 //
 // A percentage says how big whatever is showing it is, which is not something
 // the document knows anything about, so it is exactly as intrinsic a size as no
@@ -122,7 +126,7 @@ bool namesAnIntrinsicLength(const std::string& value);
 // style attribute is what every drawing program emits.
 //
 // Selectors are a different project: this reads a declaration block and nothing
-// else, so a <style> element in the document is still ignored.
+// else, so a `<style>` element in the document is still ignored.
 std::unordered_map<std::string, std::string>
     parseStyleDeclarations(const std::string& value);
 

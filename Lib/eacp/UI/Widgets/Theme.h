@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Typed, named theme values that widgets read their colours and sizes from. */
+
 #include "../Common.h"
 
 #include <concepts>

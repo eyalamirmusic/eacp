@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: PNG snapshots of a WKWebView on macOS and iOS. */
+
 #include "WebView.h"
 
 @class WKWebView;

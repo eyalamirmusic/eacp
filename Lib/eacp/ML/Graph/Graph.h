@@ -1,3 +1,8 @@
+/** @file
+    ML::Graph: record a tensor program op by op and build it into a Core ML package.
+    Building the package (eacp-ml-graph) is portable; running it needs ML::Model
+    (eacp-ml), which is Apple only.
+*/
 #pragma once
 
 #include "Tensor.h"

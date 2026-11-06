@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Runtime lookup of shader binaries compiled at build time and embedded with
+    ResEmbed.
+*/
+
 #include "PrecompiledNames.h"
 
 #include <ResEmbed/ResEmbed.h>
@@ -10,8 +15,8 @@
 
 // The runtime half of ahead-of-time shader compilation: a ShaderLibrary looks
 // for the native binary a build compiled from the very source it was handed,
-// embedded under resourceCategory as <keyFor(source)><suffix>
-// (PrecompiledNames.h), and loads that instead of compiling the text. A miss,
+// embedded under resourceCategory as keyFor(source) followed by the
+// backend suffix (PrecompiledNames.h), and loads that instead of compiling the text. A miss,
 // or a binary that will not load, falls back to the source compile unless
 // EACP_REQUIRE_PRECOMPILED_SHADERS=1.
 namespace eacp::GPU::Precompiled

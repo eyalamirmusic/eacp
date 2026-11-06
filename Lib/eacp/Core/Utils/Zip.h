@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Zip archive reading and writing, and raw deflate, over vendored miniz. */
+
 #include "Common.h"
 #include "FilePath.h"
 
@@ -60,6 +62,7 @@ inline constexpr std::size_t extractChunkSize = std::size_t {1} << 20;
 class Reader
 {
 public:
+    // Opens the archive; never throws. Check isValid() and errorMessage().
     explicit Reader(const FilePath& path);
     explicit Reader(Bytes bytes);
 
@@ -167,7 +170,7 @@ Bytes compress(Span<const std::uint8_t> bytes, Level level = Level::normal);
 Bytes compress(std::string_view text, Level level = Level::normal);
 
 // A single blob as a gzip member (RFC 1952), what an HTTP upload or a .gz file
-// carries.
+// carries. Both are empty on failure.
 Bytes gzip(Span<const std::uint8_t> bytes, Level level = Level::normal);
 Bytes gzip(std::string_view text, Level level = Level::normal);
 

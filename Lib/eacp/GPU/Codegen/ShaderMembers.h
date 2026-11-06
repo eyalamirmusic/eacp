@@ -1,5 +1,14 @@
 #pragma once
 
+/** @file Uniform<T> members, EACP_SHADER and the member walks shared by
+    ShaderProgram and ComputeKernel.
+
+    The member half of a struct-authored shader or kernel, which needs no device:
+    the typed Uniform<T> members, the visitor their EACP_SHADER list is walked
+    with, and the build and upload walks every program runs. ShaderProgram and
+    ComputeKernel are both written on top of it.
+*/
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <array>

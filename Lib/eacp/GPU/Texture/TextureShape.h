@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Internal: checks a texture descriptor's kind, sizes and levels against each
+    other, shared by every backend.
+*/
+
 #include "MipChain.h"
 #include "Texture.h"
 

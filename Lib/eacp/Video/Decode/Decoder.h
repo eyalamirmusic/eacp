@@ -1,3 +1,4 @@
+/** @file Decoder: synchronous decoding of one video track into frames. */
 #pragma once
 
 #include "VideoFrame.h"

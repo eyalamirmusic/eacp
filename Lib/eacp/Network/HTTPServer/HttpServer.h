@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A small HTTP server with method-and-path routing. */
+
 #include "../HTTP/Http.h"
 
 namespace eacp::HTTP
@@ -28,6 +30,8 @@ struct RequestBodyReader
 using StreamingRequestHandler =
     std::function<Response(const Request&, RequestBodyReader&)>;
 
+// Where request handlers run: EventLoop on the main thread, ThreadPool on
+// threadPoolSize worker threads, concurrently.
 enum class ServerThreadingMode
 {
     EventLoop,
@@ -41,6 +45,8 @@ struct ServerOptions
     BindInterface bindTo = BindInterface::loopback;
 };
 
+// Thrown from a handler to answer with this status and response instead of
+// a 500. Any other exception becomes a plain-text 500.
 struct Error : std::runtime_error
 {
     Error(int statusCodeToUse, const std::string& message);
@@ -50,6 +56,7 @@ struct Error : std::runtime_error
     Response response;
 };
 
+// Throws Error with a plain-text body.
 [[noreturn]] void throwError(const std::string& message, int statusCode = 400);
 
 // Finds the streaming handler for a request whose headers have been read,
@@ -100,6 +107,8 @@ private:
     std::map<std::string, Handler> prefixes;
 };
 
+// An HTTP server with exact method-and-path routes; an unmatched request
+// gets a 404. Bound to loopback unless ServerOptions::bindTo says any.
 struct Server
 {
     explicit Server(ServerOptions options = {});
@@ -123,8 +132,10 @@ struct Server
                            const std::string& path,
                            StreamingRequestHandler handler);
 
-    // Serves the routes added above. A request whose method and path match a
-    // streaming route is streamed; every other request is read whole first.
+    // Starts serving the routes added so far; routes added later are not
+    // seen. A request matching a streaming route is streamed, every other one
+    // is read whole first. Port 0 picks a free port (read it from
+    // boundPort()). False when the port cannot be bound.
     bool listen(int port);
 
     // One handler for every request, each read whole; routes are not used.

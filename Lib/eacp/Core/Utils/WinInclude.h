@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: includes <windows.h> with eacp's macro settings; Windows sources only.
+*/
+
 // Windows-only convenience header — included exclusively from *-Windows
 // translation units (and Windows-only headers like D3DTypes.h), so it is no
 // longer guarded by a platform #if. The macro guards below are standard

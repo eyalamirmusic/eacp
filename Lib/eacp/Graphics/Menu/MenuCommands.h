@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Flattens a MenuBar into numbered commands for backends that address items
+    by integer id (Win32). */
+
 #include "Menu.h"
 
 namespace eacp::Graphics
@@ -76,7 +79,7 @@ const MenuCommand* findCommand(const Vector<MenuCommand>& commands, unsigned id)
 
 // "Ctrl+Shift+P". The text a Win32 menu prints after the tab in its label.
 //
-// Win32 menu accelerators are *decorative*: the string after '\t' is drawn and
+// Win32 menu accelerators are *decorative*: the string after `'\t'` is drawn and
 // nothing more, and the keystroke itself has to be delivered by an accelerator
 // table or by the application's own keymap. So this has to say what the app
 // actually does, and cannot make it true by itself.

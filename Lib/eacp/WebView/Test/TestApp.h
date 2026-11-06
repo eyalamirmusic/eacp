@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A singleton test fixture holding a live app and its AppDriver. */
+
 #include "AppDriver.h"
 
 #include <NanoTest/NanoTest.h>
@@ -139,6 +141,7 @@ struct TestProxy
     nano::TestProxy inner;
 };
 
+// Registers a test that restarts every TestApp fixture before running its body.
 TestProxy test(std::string_view name);
 
 } // namespace eacp::WebView::Test

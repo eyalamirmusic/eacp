@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Touch drag scrolling with momentum, for scrolling components. */
+
 #include "../Component/MouseEvent.h"
 
 namespace eacp::UI

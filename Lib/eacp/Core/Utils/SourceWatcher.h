@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file FileWatcher preset for a C, C++ and Objective-C source tree. */
+
 #include "FileWatcher.h"
 
 namespace eacp::Files

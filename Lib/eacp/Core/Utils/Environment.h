@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Reading, setting and removing process environment variables. */
+
 #include "Common.h"
 
 namespace eacp

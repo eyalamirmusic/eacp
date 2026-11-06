@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Custom GPU rendering (a GPUView's render and update) as a clipped, composited component. */
+
 #include "../Render/Layer.h"
 #include "Component.h"
 

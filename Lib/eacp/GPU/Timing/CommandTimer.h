@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file CommandTimer, pass timing for one off-screen CommandBuffer. */
+
 #include "FrameTimings.h"
 #include "GpuTimestamps.h"
 

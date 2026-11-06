@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    JNI helpers for calling Android framework Java classes from native threads.
+*/
+
 #include <jni.h>
 
 #include <string>

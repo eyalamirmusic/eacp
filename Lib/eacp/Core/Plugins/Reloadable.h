@@ -1,4 +1,8 @@
 #pragma once
+/** @file
+    Plugins::Reloadable: functions listed with EACP_RELOADABLE, swapped in live on
+    every save under hot reload.
+*/
 
 #include "HotReload.h"
 #include "HotReloadLoop.h"
@@ -17,12 +21,16 @@
 
 namespace eacp::Plugins
 {
+// Callbacks and overrides for a Reloadable. Every callback runs on the main thread.
 struct ReloadableOptions
 {
     std::function<void(std::string_view line)> log = [](std::string_view line)
     { LOG(line); };
 
+    // Where objects from create<T>() are rebuilt; runs while the previous image is
+    // still mapped.
     std::function<void()> onReloaded = [] {};
+    // False skips the onReloaded call at the end of construction.
     bool callOnReloadedAtCreation = true;
 
     std::function<void()> onStateChanged = [] {};
@@ -34,6 +42,7 @@ struct ReloadableOptions
         [](std::string_view) {};
 
     Files::SourceWatcher::Options sources;
+    // Replaces the loop options derived from the app's hot-reload target.
     std::optional<HotReloadLoop::Options> loop;
 };
 
@@ -72,12 +81,14 @@ std::string readableSignature(std::string_view signature);
 class Reloadable
 {
 public:
+    // Static or dev mode as the app was configured; main thread only.
     template <bool hotReload = isHotReload()>
     explicit Reloadable(const ReloadableOptions& optionsToUse = {})
         : Reloadable(setupFor<hotReload>(), optionsToUse)
     {
     }
 
+    // Mode and module given explicitly; for tests.
     Reloadable(const Detail::ReloadableSetup& setup,
                const ReloadableOptions& optionsToUse);
     ~Reloadable();
@@ -136,6 +147,7 @@ public:
     }
 
     [[nodiscard]] std::string describeState() const;
+    // 0 for the first image, one more per successful reload.
     [[nodiscard]] int getGeneration() const;
 
 private:

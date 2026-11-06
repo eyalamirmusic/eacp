@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file JSON request and response handlers for HTTP::Server, typed through Miro reflection. */
+
 #include <eacp/Network/Network.h>
 
 #include <Miro/Json.h>
@@ -27,8 +29,12 @@ void setJson(Response& response, const T& value)
     response.setContent(Miro::toJSONString(value), "application/json");
 }
 
+// Throws HTTP::Error whose body is a JSON ErrorResponse.
 [[noreturn]] void throwError(const std::string& message, int statusCode = 400);
 
+// Wraps a typed function as a handler: the body is parsed into Req (an
+// empty body is a default Req, malformed JSON a 400) and the result is sent
+// as JSON with status 200.
 template <typename Resp, typename Req>
 RequestHandler makeHandler(Resp (*fn)(const Req&))
 {
@@ -56,6 +62,8 @@ RequestHandler makeHandler(Resp (*fn)(const Req&))
     };
 }
 
+// HTTP::Server that also takes typed functions as routes, through
+// makeHandler.
 struct Server : eacp::HTTP::Server
 {
     using eacp::HTTP::Server::del;

@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Sampler descriptors (filtering, addressing, comparison) and the device's
+    cached sampler objects.
+*/
+
 #include "Texture.h"
 
 #include <cstddef>
@@ -82,6 +86,7 @@ struct SamplerDescriptor
 
 std::size_t hashOf(const SamplerDescriptor& descriptor);
 
+// Hashes a SamplerDescriptor, for the Device's sampler cache.
 struct SamplerDescriptorHash
 {
     std::size_t operator()(const SamplerDescriptor& descriptor) const;

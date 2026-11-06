@@ -1,3 +1,6 @@
+/** @file
+    Lock-free ring carrying audio blocks from the audio thread to the recorder.
+*/
 #pragma once
 
 #include "Audio.h"

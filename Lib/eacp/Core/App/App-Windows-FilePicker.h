@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: windows file picker internals. */
+
 // The native picker (IFileOpenDialog::Show) is an untestable modal; these pure
 // helpers factor out its surrounding logic so tests can drive it with a fake.
 

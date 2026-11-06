@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A named byte stream between two of this user's processes. */
+
 #include "Lock.h"
 
 #include <optional>

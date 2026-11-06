@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A texture cache of rasterized glyphs, keyed by face, glyph and size. */
+
 #include "GlyphRasterizer.h"
 #include "ShelfPacker.h"
 
@@ -75,8 +77,8 @@ struct ShapedText
 //
 // **One atlas holds many faces.** A face is a (family, pointSize) pair, and the
 // key is (face, variant, font, glyph id, phase, lightness) — so a heading, a caption and a
-// monospace log share one texture and are drawn in one batch. The alternative, an atlas per
-// size, is what this class used to be: it costs a texture and a batch break per
+// monospace log share one texture and are drawn in one batch. An atlas per size would
+// cost a texture and a batch break per
 // size, which is bearable for an interface that looks like one thing and wrong
 // for a document, which mixes sizes by definition.
 //
@@ -92,8 +94,7 @@ public:
         std::function<OwningPointer<GlyphSource>(const FontRequest&)>;
 
     // `defaultFace` is face 0 and supplies the scale everything is rasterized
-    // at. A caller that never asks for another face gets exactly the atlas this
-    // class used to be.
+    // at. A caller that never asks for another face gets a single-face atlas.
     explicit GlyphAtlas(FaceFactory factoryToUse,
                         const FontRequest& defaultFace = {},
                         int initialSize = 512,

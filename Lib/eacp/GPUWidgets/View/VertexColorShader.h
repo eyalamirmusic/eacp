@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: shader PathView fills a 2D triangle mesh with,
+    interpolating per-vertex colour. */
+
 #include "../Common.h"
 
 #include "Vertices.h"

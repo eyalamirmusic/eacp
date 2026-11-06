@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file The primary display's frame, work area and scale, in points, for sizing
+    and placing windows. */
+
 #include "../Primitives/Primitives.h"
 
 namespace eacp::Graphics

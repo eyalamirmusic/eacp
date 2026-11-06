@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: macOS only: telling eacp's own NSViews apart when re-dispatching keys. */
+
 @class NSView;
 
 namespace eacp::Graphics

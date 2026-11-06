@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file BindInterface, the choice every listening socket in Network makes between loopback and every interface. */
+
 #include <eacp/Core/Core.h>
 #include <stdexcept>
 

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: draws a layer's texture into the frame with opacity and transform. */
+
 #include "ClipMask.h"
 #include "CoverageAtlas.h"
 #include "Layer.h"

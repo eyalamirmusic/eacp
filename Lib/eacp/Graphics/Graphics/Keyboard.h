@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Key codes, key events, modifiers and polled keyboard state. */
+
 #include "../Common.h"
 
 namespace eacp::Graphics
@@ -7,6 +9,8 @@ namespace eacp::Graphics
 
 class Window;
 
+// Platform-independent key codes. The values are macOS virtual key codes;
+// other backends translate their native codes into them.
 namespace KeyCode
 {
 constexpr uint16_t A = 0x00;
@@ -89,9 +93,7 @@ constexpr uint16_t Period = 0x2F;
 constexpr uint16_t Slash = 0x2C;
 constexpr uint16_t Grave = 0x32;
 
-// Navigation. An editor needs every one of these, and their absence is why
-// downstream apps end up hand-defining raw platform virtual key codes — which
-// then only work on the platform they were lifted from.
+// Navigation.
 constexpr uint16_t Home = 0x73;
 constexpr uint16_t End = 0x77;
 constexpr uint16_t PageUp = 0x74;
@@ -164,10 +166,13 @@ enum class KeyEventType
     Up
 };
 
+// One key press or release, delivered to View::keyDown/keyUp on the main thread.
 struct KeyEvent
 {
+    // The text the key typed with the modifiers applied; may be empty.
     std::string characters;
     std::string charactersIgnoringModifiers;
+    // A KeyCode value.
     uint16_t keyCode = 0;
     KeyEventType type = KeyEventType::Down;
     ModifierKeys modifiers;
@@ -181,6 +186,7 @@ struct Key
     std::string character;
 };
 
+// Polled keyboard state, main thread. For a game loop prefer GameInput.
 struct Keyboard
 {
     // Window-scoped keyboard state. Preferred over the global variants below
@@ -202,6 +208,7 @@ struct Keyboard
 
     static Vector<Key> getPressedKeys();
 
+    // What the key types on the current layout, unshifted; empty when unknown.
     static std::string keyCodeToCharacter(uint16_t keyCode);
 };
 

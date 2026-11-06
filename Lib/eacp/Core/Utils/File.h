@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Chunked, read-only access to one file on disk. */
+
 #include "Common.h"
 #include "FilePath.h"
 

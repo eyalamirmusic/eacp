@@ -1,8 +1,12 @@
 #pragma once
 
-// Direct2D / DirectWrite only, for the drawing primitives (Path, Font,
-// TextMetrics, Image) that never touch the compositor. Anything that builds a
-// visual tree wants DComp-Windows.h, which includes this.
+/** @file Internal: Windows only: Direct2D and DirectWrite helpers, including the shared font
+    collection.
+
+    Direct2D / DirectWrite only, for the drawing primitives (Path, Font,
+    TextMetrics, Image) that never touch the compositor. Anything that builds a
+    visual tree wants DComp-Windows.h, which includes this.
+*/
 
 #include <eacp/Core/Utils/WinInclude.h>
 

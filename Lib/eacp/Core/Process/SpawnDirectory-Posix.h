@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: pOSIX process spawn internals. */
+
 #include <spawn.h>
 #include <string>
 

@@ -1,8 +1,11 @@
 #pragma once
 
-// Compute kernels executed on the CPU: a ComputeKernel (or a bare ShaderGraph)
-// decoded once into a Plan and run over plain arrays, bound through Bindings,
-// with no device and no allocation per dispatch.
+/** @file Umbrella for running compute kernels on the CPU with no device.
+
+    Compute kernels executed on the CPU: a ComputeKernel (or a bare ShaderGraph)
+    decoded once into a Plan and run over plain arrays, bound through Bindings,
+    with no device and no allocation per dispatch.
+*/
 
 #include "Bindings.h"
 #include "CpuUniformVisitor.h"

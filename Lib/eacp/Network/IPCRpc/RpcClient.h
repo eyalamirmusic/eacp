@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Typed remote procedure calls to another of this user's processes, answered on the main thread. */
+
 #include "../IPC/Messenger.h"
 #include "../Rpc/AsyncCommand.h"
 

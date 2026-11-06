@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: stopping the callAfter scheduler thread before an image unloads.
+*/
+
 namespace eacp::Threads
 {
 // Joins callAfter's scheduler thread and drops every callback it still held;

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: the batched textured-quad renderer behind Graphics::drawImage. */
+
 #include "../Common.h"
 #include "ClipMask.h"
 #include "CoverageAtlas.h"

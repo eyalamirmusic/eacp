@@ -5,25 +5,26 @@
 
 #include <string>
 
-// The CLIPBOARD selection, behind the Clipboard::Backend hooks. Owned by
-// X11Connection, which offers the backend to LinuxWindowSystem as the
-// connection comes up and takes it away again on the way down, so a copy that
-// prefers Wayland - or reaches no server at all - keeps Core's empty answers.
-//
-// X11 has no clipboard of its own, any more than Wayland has: the selection
-// belongs to whichever client last claimed it, and a paste is a property the
-// owner writes onto the requestor's window. What differs from the Wayland twin
-// is who may claim it. There, set_selection needs the serial of an input event
-// on a surface of ours, so a copy needs a focused window; here the owner is a
-// 1x1 window that is created on first use and never mapped, so a plugin copy
-// with no toplevel and no keyboard focus can still put text on the clipboard.
-//
-// A read blocks the message thread while the connection is pumped by hand
-// (X11Connection::dispatchUntil), so everything arriving beside the answer is
-// dispatched exactly as the loop source would have dispatched it and no window
-// loses an event to a paste. Reading an INCR transfer is implemented, which is
-// how every toolkit sends anything large; sending one is not, so a selection
-// bigger than the server's maximum request is refused rather than truncated.
+/** @file Internal: Linux only. The CLIPBOARD selection, behind the
+    Clipboard::Backend hooks. Owned by X11Connection, which offers the backend to
+    LinuxWindowSystem as the connection comes up and takes it away again on the
+    way down, so a copy that prefers Wayland - or reaches no server at all -
+    keeps Core's empty answers.
+
+    X11 has no clipboard of its own, any more than Wayland has: the selection
+    belongs to whichever client last claimed it, and a paste is a property the
+    owner writes onto the requestor's window. What differs from the Wayland twin
+    is who may claim it. There, set_selection needs the serial of an input event
+    on a surface of ours, so a copy needs a focused window; here the owner is a
+    1x1 window that is created on first use and never mapped, so a plugin copy
+    with no toplevel and no keyboard focus can still put text on the clipboard.
+
+    A read blocks the message thread while the connection is pumped by hand
+    (X11Connection::dispatchUntil), so everything arriving beside the answer is
+    dispatched exactly as the loop source would have dispatched it and no window
+    loses an event to a paste. Reading an INCR transfer is implemented, which is
+    how every toolkit sends anything large; sending one is not, so a selection
+    bigger than the server's maximum request is refused rather than truncated. */
 
 namespace eacp::Graphics
 {

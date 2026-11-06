@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The Unicode Emoji_Presentation table and lookups, generated from Unicode 16.0. */
+
 namespace eacp::Text
 {
 // The Unicode Emoji_Presentation property (UTS #51), from emoji-data.txt of

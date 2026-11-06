@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: an exclusive prefix sum over a GPU buffer of unsigned
+    integers. */
+
 #include "../Common.h"
 
 #include <eacp/GPU/Buffer/Buffer.h>
