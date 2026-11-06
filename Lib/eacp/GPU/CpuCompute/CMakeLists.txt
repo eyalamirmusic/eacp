@@ -11,6 +11,10 @@ target_sources(eacp-cpu-compute PRIVATE
         Executor.cpp
         Helpers.cpp
         Plan.cpp
+        PlanLayout.cpp
+        PlanNodes.cpp
+        PlanSchedule.cpp
+        PlanStatements.cpp
         SimdMatrix.cpp
         Statements.cpp
         Workspace.cpp)
