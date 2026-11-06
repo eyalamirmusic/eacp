@@ -19,10 +19,10 @@ namespace
 constexpr auto targetWidth = 40;
 constexpr auto targetHeight = 30;
 
-bool isScissor(const ScissorPixels& pixels, int left, int top, int right, int bottom)
+bool isScissor(const ScissorPixels& pixels, const ScissorPixels& expected)
 {
-    return pixels.left == left && pixels.top == top && pixels.right == right
-           && pixels.bottom == bottom;
+    return pixels.left == expected.left && pixels.top == expected.top
+           && pixels.right == expected.right && pixels.bottom == expected.bottom;
 }
 } // namespace
 
@@ -38,35 +38,35 @@ auto tScissorRoundsOutward = test("RenderPassRegions/scissorRoundsOutward") = []
 {
     const auto pixels = calculateScissorPixels(
         {2.5f, 3.25f, 10.0f, 5.5f}, targetWidth, targetHeight);
-    check(isScissor(pixels, 2, 3, 13, 9));
+    check(isScissor(pixels, {2, 3, 13, 9}));
 };
 
 auto tScissorWholePixels = test("RenderPassRegions/scissorKeepsWholePixels") = []
 {
     const auto pixels =
         calculateScissorPixels({4.0f, 6.0f, 8.0f, 2.0f}, targetWidth, targetHeight);
-    check(isScissor(pixels, 4, 6, 12, 8));
+    check(isScissor(pixels, {4, 6, 12, 8}));
 };
 
 auto tScissorClamps = test("RenderPassRegions/scissorClampsToTarget") = []
 {
     const auto pixels = calculateScissorPixels(
         {-5.0f, -2.0f, 100.0f, 100.0f}, targetWidth, targetHeight);
-    check(isScissor(pixels, 0, 0, targetWidth, targetHeight));
+    check(isScissor(pixels, {0, 0, targetWidth, targetHeight}));
 };
 
 auto tScissorOutside = test("RenderPassRegions/scissorPastTargetIsEmpty") = []
 {
     const auto pixels = calculateScissorPixels(
         {50.0f, 40.0f, 10.0f, 10.0f}, targetWidth, targetHeight);
-    check(isScissor(pixels, targetWidth, targetHeight, targetWidth, targetHeight));
+    check(isScissor(pixels, {targetWidth, targetHeight, targetWidth, targetHeight}));
 };
 
 auto tScissorNegativeSize = test("RenderPassRegions/scissorNeverInverts") = []
 {
     const auto pixels = calculateScissorPixels(
         {10.0f, 10.0f, -5.0f, -5.0f}, targetWidth, targetHeight);
-    check(isScissor(pixels, 10, 10, 10, 10));
+    check(isScissor(pixels, {10, 10, 10, 10}));
 };
 
 auto tViewportInside = test("RenderPassRegions/viewportInsideTargetIsKept") = []

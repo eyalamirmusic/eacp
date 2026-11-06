@@ -309,8 +309,10 @@ static void recordExecuteIndirect(CommandContext& commands,
     auto* data = getIndirectArguments(commands, call.arguments);
     auto* countData = getIndirectCountArguments(commands, call.count);
 
-    if (signature == nullptr || data == nullptr
-        || isIndirectCountMissing(call.count, countData))
+    if (signature == nullptr || data == nullptr)
+        return;
+
+    if (isIndirectCountMissing(call.count, countData))
         return;
 
     commands.list->ExecuteIndirect(signature,
