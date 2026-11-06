@@ -181,9 +181,9 @@ GPU::Float CoverageKernel::coverageAt(const GPU::UInt& pixelX,
              // segment is also the only one whose slope divides by zero below.
              auto low = clamp(min(ay, by), 0.f, 1.f);
              auto high = clamp(max(ay, by), 0.f, 1.f);
-             auto height = high - low;
+             auto spanHeight = high - low;
 
-             ifThen(height > 0.f,
+             ifThen(spanHeight > 0.f,
                     [&]
                     {
                         // Where the segment enters and leaves that span.
@@ -191,7 +191,7 @@ GPU::Float CoverageKernel::coverageAt(const GPU::UInt& pixelX,
                         auto xLow = ax + (low - ay) * slope * (bx - ax);
                         auto xHigh = ax + (high - ay) * slope * (bx - ax);
 
-                        auto direction = select(by > ay, height, -height);
+                        auto direction = select(by > ay, spanHeight, -spanHeight);
                         winding += direction * (1.f - meanClampedX(xLow, xHigh));
                     });
 

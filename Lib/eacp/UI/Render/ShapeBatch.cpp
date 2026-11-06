@@ -111,9 +111,9 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         // The rounded-box field: distance to the box shrunk by the radius, then
         // let back out by it. Negative inside, positive outside, and correct in
         // both -- which is what lets the same number serve the fill and the ring.
-        auto roundedBox = [](auto point, auto halfSize, auto cornerRadius)
+        auto roundedBox = [](auto point, auto boxHalfSize, auto cornerRadius)
         {
-            auto q = abs(point) - (halfSize - float2(cornerRadius, cornerRadius));
+            auto q = abs(point) - (boxHalfSize - float2(cornerRadius, cornerRadius));
             auto outside = length(max(0.f, q));
             auto inside = min(0.f, max(q.x(), q.y()));
 

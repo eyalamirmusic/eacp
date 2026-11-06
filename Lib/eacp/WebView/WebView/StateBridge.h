@@ -35,14 +35,13 @@ template <typename Store>
 inline void registerStateBinder(Store& (*accessor)(), std::string eventName)
 {
     stateBinderRegistry().add(
-        [accessor, eventName = std::move(eventName)](
+        [accessor, event = std::move(eventName)](
             Miro::Bridge& bridge) -> OwningPointer<EA::Listener>
         {
             auto& store = accessor();
             return makeOwned<EA::Listener>(
                 store,
-                [&store, &bridge, eventName]
-                { bridge.emit(eventName, store.get()); },
+                [&store, &bridge, event] { bridge.emit(event, store.get()); },
                 EA::Listener::Modes::TriggerOnEvent);
         });
 }
