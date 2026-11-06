@@ -1,6 +1,7 @@
 #include "WebView-Windows.h"
 
 #include "WebViewMessages.h"
+#include <eacp/Core/Utils/Format.h>
 #include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
@@ -224,8 +225,8 @@ void WebView::Native::addWebResourceFilter(const std::string& pattern)
         widePattern.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
 
     if (FAILED(hr))
-        LOG("WebView2: AddWebResourceRequestedFilter('" + pattern + "') failed hr=0x"
-            + formatHresultAsHex(hr));
+        LOG("WebView2: AddWebResourceRequestedFilter('" + pattern + "') failed hr="
+            + Strings::format("0x{:08X}", static_cast<std::uint32_t>(hr)));
 }
 
 // Attach the WebResourceRequested handler once. Both custom-scheme serving

@@ -168,3 +168,21 @@ auto tMaximizedStateScript = test("WebViewMessages/maximizedStateScript") = []
     check(buildMaximizedStateScript(true) == "window.__eacpSetMaximized(true)");
     check(buildMaximizedStateScript(false) == "window.__eacpSetMaximized(false)");
 };
+
+auto tKeyVerdictNonNumericFieldsReadAsZero =
+    test("WebViewMessages/keyVerdictNonNumericFieldsReadAsZero") = []
+{
+    auto verdict = parseKeyVerdict("down:0:abc::0:a");
+    check(verdict.has_value());
+    check(verdict->virtualKey == 0);
+    check(!verdict->modifiers.shift);
+    check(verdict->characters == "a");
+};
+
+auto tKeyVerdictKeepsColonsInKey =
+    test("WebViewMessages/keyVerdictKeepsColonsInKey") = []
+{
+    auto verdict = parseKeyVerdict("down:0:0:0:0:a:b");
+    check(verdict.has_value());
+    check(verdict->characters.empty());
+};

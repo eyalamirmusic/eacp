@@ -2,8 +2,7 @@
 
 #include <Miro/Miro.h>
 
-#include <cstdlib>
-#include <string_view>
+#include <eacp/Core/Utils/Strings.h>
 
 namespace eacp::Graphics::detail
 {
@@ -15,71 +14,50 @@ constexpr auto altModifierBit = 4;
 constexpr auto commandModifierBit = 8;
 constexpr auto firstNonAsciiByte = 0x80;
 
-class ColonFieldReader
+constexpr auto keyVerdictFieldCount = 6;
+
+constexpr auto kindField = 0;
+constexpr auto consumedField = 1;
+constexpr auto virtualKeyField = 2;
+constexpr auto modifiersField = 3;
+constexpr auto repeatField = 4;
+constexpr auto keyField = 5;
+
+std::string getField(const Vector<std::string>& fields, int field)
 {
-public:
-    explicit ColonFieldReader(std::string_view messageToUse)
-        : message(messageToUse)
-    {
-    }
-
-    std::string readField()
-    {
-        if (isFinished())
-            return {};
-
-        auto colon = message.find(':', position);
-
-        if (colon == std::string::npos)
-            return takeRemainder();
-
-        auto field = std::string {message.substr(position, colon - position)};
-        position = colon + 1;
-        return field;
-    }
-
-    std::string takeRemainder()
-    {
-        if (isFinished())
-            return {};
-
-        auto remainder = std::string {message.substr(position)};
-        position = std::string::npos;
-        return remainder;
-    }
-
-    int readIntegerField()
-    {
-        auto field = readField();
-        return field.empty() ? 0 : std::atoi(field.c_str());
-    }
-
-    bool readFlagField() { return readField() == "1"; }
-
-    // The remainder as typed text: only a single code point counts; named keys
-    // ("Enter", "ArrowUp") are multi-char ASCII and carry no characters,
-    // matching the host window's WM_CHAR-derived text.
-    std::string takeTypedCharacters()
-    {
-        auto key = takeRemainder();
-
-        if (key.empty())
-            return {};
-
-        auto firstByte = static_cast<unsigned char>(key[0]);
-
-        if (key.size() == 1 || firstByte >= firstNonAsciiByte)
-            return key;
-
+    if (field >= fields.size())
         return {};
-    }
 
-private:
-    bool isFinished() const { return position == std::string::npos; }
+    return fields[field];
+}
 
-    std::string_view message;
-    std::size_t position = 0;
-};
+int getIntegerField(const Vector<std::string>& fields, int field)
+{
+    return Strings::parseOr<int>(getField(fields, field), 0);
+}
+
+bool getFlagField(const Vector<std::string>& fields, int field)
+{
+    return getField(fields, field) == "1";
+}
+
+// Typed text only when event.key is a single code point; named keys ("Enter",
+// "ArrowUp") are multi-char ASCII and carry no characters, matching the host
+// window's WM_CHAR-derived text.
+std::string getTypedCharacters(const Vector<std::string>& fields)
+{
+    auto key = getField(fields, keyField);
+
+    if (key.empty())
+        return {};
+
+    auto firstByte = static_cast<unsigned char>(key[0]);
+
+    if (key.size() == 1 || firstByte >= firstNonAsciiByte)
+        return key;
+
+    return {};
+}
 
 ModifierKeys modifiersFromMask(int mask)
 {
@@ -128,20 +106,19 @@ WebMessage readWebMessage(const Miro::Json::Value& envelope)
 
 std::optional<KeyVerdict> parseKeyVerdict(const std::string& message)
 {
-    auto reader = ColonFieldReader {message};
+    auto fields = Strings::split(message, ':', keyVerdictFieldCount);
 
-    auto kind = reader.readField();
+    auto kind = getField(fields, kindField);
     if (kind != "down" && kind != "up")
         return std::nullopt;
 
     auto verdict = KeyVerdict {};
     verdict.isDown = kind == "down";
-    verdict.consumed = reader.readFlagField();
-    verdict.virtualKey = reader.readIntegerField();
-    verdict.modifiers = modifiersFromMask(reader.readIntegerField());
-    verdict.isRepeat = reader.readFlagField();
-
-    verdict.characters = reader.takeTypedCharacters();
+    verdict.consumed = getFlagField(fields, consumedField);
+    verdict.virtualKey = getIntegerField(fields, virtualKeyField);
+    verdict.modifiers = modifiersFromMask(getIntegerField(fields, modifiersField));
+    verdict.isRepeat = getFlagField(fields, repeatField);
+    verdict.characters = getTypedCharacters(fields);
 
     return verdict;
 }
