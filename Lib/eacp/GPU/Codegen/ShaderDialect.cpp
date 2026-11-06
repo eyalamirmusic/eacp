@@ -93,7 +93,6 @@ const char* findDialectRename(Backend backend, const std::string& name)
     return findRename(glslRenames, glslPrefixRenames, name);
 }
 
-// Call nodes carry the canonical (MSL) builtin name; renamed here per dialect.
 std::string getCallName(Backend backend, const std::string& name)
 {
     if (const auto* renamed = findDialectRename(backend, name))
@@ -137,13 +136,11 @@ std::string_view getGlslComparisonFunction(const std::string& op)
 // texture sampled that way shares one. See TextureSampling.
 std::string getHlslSamplerName(const TextureSampling& sampling)
 {
-    return "samplerConfig" + std::to_string(samplingIndex(sampling));
+    return Strings::format("samplerConfig{}", samplingIndex(sampling));
 }
 
-// The lane of a vector value, which is a different question: a thread index
-// reaches three components and a vector reaches four, so the one above stops
-// where it does and this one names .w. Nothing in the EDSL is wider than four,
-// so a fifth component is a caller's mistake rather than a lane to name.
+// Nothing in the EDSL is wider than four components, so a fifth is a caller's
+// mistake rather than a lane to name.
 std::string_view getVectorComponentSuffix(int component)
 {
     assert(component >= 0 && component < 4
@@ -177,4 +174,70 @@ std::string_view getMetalPackedVectorType(ValueType type)
     }
 }
 
+std::string getAttributeSemantic(Backend backend, int index)
+{
+    if (backend == Backend::Vulkan)
+        return {};
+
+    if (backend == Backend::Metal)
+        return Strings::format(" [[attribute({})]]", index);
+
+    return Strings::format(" : TEXCOORD{}", index);
+}
+
+// Metal writes the flat qualifier after the member name, so on Metal it is part
+// of the semantic.
+std::string getVaryingSemantic(Backend backend, int index, ValueType type)
+{
+    if (backend == Backend::Metal)
+        return isFlatVarying(type) ? " [[flat]]" : std::string {};
+
+    if (backend != Backend::DirectX)
+        return {};
+
+    return Strings::format(" : TEXCOORD{}", index);
+}
+
+// Attribute i and varying i take location i, which is what the Vulkan
+// vertex-input state and the vertex/fragment interface match on.
+std::string getLocationLayout(int index)
+{
+    return Strings::format("layout(location = {}) ", index);
+}
+
+// GLSL reads a stage's I/O out of globals, spelled attrN and varyN because aN
+// and vN are taken there by a constant array and a mutable local.
+std::string getAttributeName(Backend backend, int slot)
+{
+    if (backend == Backend::Vulkan)
+        return Strings::format("attr{}", slot);
+
+    return Strings::format("input.a{}", slot);
+}
+
+std::string getVaryingName(Backend backend, int index)
+{
+    if (backend == Backend::Vulkan)
+        return Strings::format("vary{}", index);
+
+    return Strings::format("input.v{}", index);
+}
+
+// A thread index under the name both kernel scaffoldings bind it to: the whole
+// value where the node took the position as one, one lane otherwise.
+std::string
+    getIndexReference(std::string_view name, DispatchRank rank, int component)
+{
+    if (rank == DispatchRank::OneD || component == allComponents)
+        return std::string(name);
+
+    return Strings::format("{}{}", name, getComponentSuffix(component));
+}
+
+// A whole expression parenthesised, since an offset or a stride is printed
+// into the middle of an index computation.
+std::string wrapInParentheses(const std::string& expression)
+{
+    return Strings::format("({})", expression);
+}
 } // namespace eacp::GPU::ShaderEmission

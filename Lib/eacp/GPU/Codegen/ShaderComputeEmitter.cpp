@@ -152,7 +152,8 @@ std::string printGroupMemoryGlobals(const ShaderGraph& graph,
         graph, backend, qualifier, graph.groupReductionTypes());
     source += formatSimdMatrixScratchDeclaration(graph, qualifier);
 
-    if (doesDeclareGroupMemory(graph))
+    // A blank line separates threadgroup memory from the entry point below it.
+    if (hasGroupMemoryDeclarations(graph))
         source += "\n";
 
     return source;

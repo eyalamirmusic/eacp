@@ -8,7 +8,7 @@ namespace
 // The builtins whose two spellings are not one name apart, emitted as a
 // function definition ahead of the shader body and called like any other.
 //
-// callName above handles the ordinary case - one name, one argument list, a
+// getCallName handles the ordinary case - one name, one argument list, a
 // different word. This is for the rest: unpacking two halves out of a word is
 // a bitcast and a vector conversion on MSL, and two f16tof32 calls against a
 // shift on HLSL, and no renaming reconciles those. A helper does, and it keeps
@@ -73,7 +73,7 @@ constexpr auto erfHelper =
     "    return float4(eacpErf(x.x), eacpErf(x.y), eacpErf(x.z), eacpErf(x.w));\n"
     "}\n\n";
 
-// Its complement, as poly(t) * exp(-x*x) rather than as 1 - eacpErf(x): erf has
+// erfc, as poly(t) * exp(-x*x) rather than as 1 - eacpErf(x): erf has
 // saturated at 1.0f by x = 4 while erfc there is still 1.5e-8, so the
 // subtraction would return zero for the whole tail - which is the half of erfc
 // that anything asks for it by name. What the direct form cannot fix is the

@@ -58,7 +58,8 @@ std::string StageEmitter::formatMetalGroupReduction(const Statement& statement,
         "{}    {} = {};\n",
         indent,
         name,
-        formatFoldedPair(statement.reduction, name, scratch + "[" + step + "]"));
+        formatFoldedPair(
+            statement.reduction, name, Strings::format("{}[{}]", scratch, step)));
 
     return source + barrier;
 }
@@ -88,10 +89,12 @@ std::string StageEmitter::formatTreeGroupReduction(const Statement& statement,
     auto whole = doesFoldSpanWholeGroup(getGraph(), statement.scope);
     auto widthText = Strings::format("{}u", width);
 
-    auto within = whole ? lane : wrapInParentheses(lane + " % " + widthText);
-    auto first =
-        whole ? std::string("0")
-              : wrapInParentheses(lane + " / " + widthText) + " * " + widthText;
+    auto within =
+        whole ? lane
+              : wrapInParentheses(Strings::format("{} % {}", lane, widthText));
+    auto first = whole
+                     ? std::string("0")
+                     : Strings::format("({} / {}) * {}", lane, widthText, widthText);
     auto bounded =
         whole ? std::string {}
               : Strings::format(
@@ -140,8 +143,8 @@ bool StageEmitter::isMetal() const
     return printer.backend == Backend::Metal;
 }
 
-// The four matrix statements below. An 8x8 fragment on Metal is a type MSL has,
-// and each operation on one is a single intrinsic. On the two backends with no
+// An 8x8 SIMD-group matrix fragment on Metal is a type MSL has, and each
+// operation on one is a single intrinsic. On the two backends with no
 // wave matrix operation it is spread over the lanes the way Metal spreads it -
 // see simdMatrixLaneElements - so a fill, a load and a store are two scalars of
 // each lane's own, and only the product needs what other lanes hold, which it
@@ -314,9 +317,9 @@ std::string StageEmitter::formatSimdMatrixMultiplyAdd(const Statement& statement
                                getSimdMatrixName(statement.right),
                                accumulator);
 
-    auto step = accumulator + "k";
-    auto term = accumulator + "l";
-    auto side = std::to_string(simdMatrixSize);
+    auto step = Strings::format("{}k", accumulator);
+    auto term = Strings::format("{}l", accumulator);
+    auto side = simdMatrixSize;
     auto barrier = formatBarrierStatement(printer.backend, indent);
 
     auto source = stageSimdMatrixOperands(statement, scope);
@@ -358,7 +361,7 @@ std::string StageEmitter::stageSimdMatrixOperands(const Statement& statement,
     auto left = getSimdMatrixName(statement.left);
     auto right = getSimdMatrixName(statement.right);
     auto held = Strings::format("sgmRow * {}u + sgmColumn", simdMatrixSize);
-    auto heldNext = held + " + 1u";
+    auto heldNext = Strings::format("{} + 1u", held);
 
     auto source = std::string {};
 

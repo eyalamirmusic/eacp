@@ -18,12 +18,12 @@ struct ExpressionPrintEntry
 
 std::string printNumberedName(const char* prefix, int index)
 {
-    return prefix + std::to_string(index);
+    return Strings::format("{}{}", prefix, index);
 }
 
 std::string printSubscript(const char* prefix, int index, const std::string& at)
 {
-    return printNumberedName(prefix, index) + "[" + at + "]";
+    return Strings::format("{}{}[{}]", prefix, index, at);
 }
 
 bool isUnsignedConstant(const Expr& expr)
@@ -54,7 +54,7 @@ int ExprPrinter::findCarryingVarying(int slot) const
 std::string ExprPrinter::printReference(int node) const
 {
     if (locals[node] >= 0)
-        return "t" + std::to_string(locals[node]);
+        return Strings::format("t{}", locals[node]);
 
     return print(node);
 }
@@ -84,15 +84,15 @@ ValueType ExprPrinter::getBroadcastType(const Expr& call) const
 std::string ExprPrinter::printMetalLayer(int node) const
 {
     if (graph.expr(node).type == ValueType::Int)
-        return "uint(" + printReference(node) + ")";
+        return Strings::format("uint({})", printReference(node));
 
-    return "uint(rint(" + printReference(node) + "))";
+    return Strings::format("uint(rint({}))", printReference(node));
 }
 
 std::string ExprPrinter::printFloatLayer(int layer) const
 {
     if (graph.expr(layer).type == ValueType::Int)
-        return "float(" + printReference(layer) + ")";
+        return Strings::format("float({})", printReference(layer));
 
     return printReference(layer);
 }
@@ -142,7 +142,8 @@ std::string ExprPrinter::printCompareSample(const Expr& expr,
 
     if (backend == Backend::Metal)
     {
-        auto layer = layered ? printMetalLayer(expr.args[1]) + ", " : std::string {};
+        auto layer = layered ? Strings::format("{}, ", printMetalLayer(expr.args[1]))
+                             : std::string {};
 
         return Strings::format("{}.sample_compare({}, {}, {}{})",
                                name,
@@ -274,11 +275,11 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
     if (isUnsignedConstant(expr))
     {
         auto bits = static_cast<unsigned>(expr.index);
-        return std::to_string(bits) + "u";
+        return Strings::format("{}u", bits);
     }
 
     if (expr.type == ValueType::Int)
-        return std::to_string(expr.index);
+        return Strings::format("{}", expr.index);
 
     if (expr.type == ValueType::Bool)
         return expr.index != 0 ? "true" : "false";
@@ -295,7 +296,7 @@ std::string ExprPrinter::printConstruct(const Expr& expr) const
                                 printArguments(expr, ValueType::Float));
 
     if (backend == Backend::DirectX && isMatrix(expr.type))
-        return "transpose(" + text + ")";
+        return Strings::format("transpose({})", text);
 
     return text;
 }
@@ -321,7 +322,7 @@ std::string ExprPrinter::printUnary(const Expr& expr) const
                               && componentCount(expr.type) > 1;
 
     if (isGlslMaskNegation)
-        return "not(" + printReference(expr.args[0]) + ")";
+        return Strings::format("not({})", printReference(expr.args[0]));
 
     return Strings::format("({}({}))", expr.op, printReference(expr.args[0]));
 }
@@ -513,22 +514,22 @@ std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
                                name,
                                base);
 
-    auto text = std::string(type) + "(";
+    auto elements = std::string {};
 
     for (auto component = 0; component < componentCount(expr.type); ++component)
     {
         if (component > 0)
-            text += ", ";
+            elements += ", ";
 
-        text += name + "[" + base;
+        elements += Strings::format("{}[{}", name, base);
 
         if (component > 0)
-            text += Strings::format(" + {}u", component);
+            elements += Strings::format(" + {}u", component);
 
-        text += "]";
+        elements += "]";
     }
 
-    return text + ")";
+    return Strings::format("{}({})", type, elements);
 }
 
 // HLSL has nothing to spell: a UAV element of an RWStructuredBuffer<uint> is
@@ -571,7 +572,7 @@ std::string ExprPrinter::printGridExtent(const Expr& expr) const
     if (graph.dispatchRank() == DispatchRank::OneD)
         return "uniforms.count";
 
-    return "uniforms." + std::string(getGridExtentName(expr.index));
+    return Strings::format("uniforms.{}", getGridExtentName(expr.index));
 }
 
 std::string ExprPrinter::printSharedRead(const Expr& expr) const

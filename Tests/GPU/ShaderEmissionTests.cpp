@@ -48,39 +48,41 @@ int findStatement(const ShaderGraph& graph, StatementKind kind)
 
 using namespace ShaderEmissionTests;
 
-static_assert(formatDecimal(0) == "0");
-static_assert(formatDecimal(-42) == "-42");
-static_assert(formatDecimal(2147483647) == "2147483647");
-
-static_assert(printStagedSimdMatrixElement(StagedOperand::Left, "i")
-              == "sgmScratch[sgmBase + i]");
-static_assert(printStagedSimdMatrixElement(StagedOperand::Right, "i")
-              == "sgmScratch[sgmBase + 64u + i]");
-static_assert(printSimdMatrixLaneColumn(0) == "sgmColumn");
-static_assert(printSimdMatrixLaneColumn(1) == "sgmColumn + 1u");
-
-static_assert(getAttributeSemantic(Backend::Metal, 3) == " [[attribute(3)]]");
-static_assert(getAttributeSemantic(Backend::DirectX, 3) == " : TEXCOORD3");
-static_assert(getAttributeSemantic(Backend::Vulkan, 3).empty());
-static_assert(getVaryingSemantic(Backend::Metal, 1, ValueType::UInt) == " [[flat]]");
-static_assert(getVaryingSemantic(Backend::Metal, 1, ValueType::Float).empty());
 static_assert(getFlatQualifier(Backend::Vulkan, ValueType::Int) == "flat ");
 static_assert(getFlatQualifier(Backend::DirectX, ValueType::UInt)
               == "nointerpolation ");
-static_assert(getLocationLayout(2) == "layout(location = 2) ");
-static_assert(getAttributeName(Backend::Vulkan, 4) == "attr4");
-static_assert(getVaryingName(Backend::Metal, 4) == "input.v4");
-static_assert(getIndexReference("gid", DispatchRank::TwoD, 1) == "gid.y");
-static_assert(getIndexReference("gid", DispatchRank::OneD, 1) == "gid");
-static_assert(wrapInParentheses("a + b") == "(a + b)");
+static_assert(getPositionSemantic(Backend::Metal) == " [[position]]");
+static_assert(getComponentSuffix(2) == ".z");
+static_assert(getIndexSwizzle(DispatchRank::TwoD) == ".xy");
+static_assert(getMetalSimdReduction(GroupReduction::Min) == "simd_min");
 
-static_assert(getSimdMatrixName(5) == "sgm5");
-static_assert(formatFoldedPair(GroupReduction::Max, "a", "b") == "max(a, b)");
-static_assert(formatFoldedPair(GroupReduction::Sum, "a", "b") == "a + b");
-static_assert(formatBarrierStatement(Backend::Vulkan, "  ")
-              == "  memoryBarrierShared();\n  barrier();\n");
-static_assert(formatBarrierStatement(Backend::DirectX, "")
-              == "GroupMemoryBarrierWithGroupSync();\n");
+auto tEmissionSpellings = test("ShaderEmission/spellingsMatchTheEmittedSource") = []
+{
+    check(printStagedSimdMatrixElement(StagedOperand::Left, "i")
+          == "sgmScratch[sgmBase + i]");
+    check(printStagedSimdMatrixElement(StagedOperand::Right, "i")
+          == "sgmScratch[sgmBase + 64u + i]");
+    check(printSimdMatrixLaneColumn(0) == "sgmColumn");
+    check(printSimdMatrixLaneColumn(1) == "sgmColumn + 1u");
+    check(getAttributeSemantic(Backend::Metal, 3) == " [[attribute(3)]]");
+    check(getAttributeSemantic(Backend::DirectX, 3) == " : TEXCOORD3");
+    check(getAttributeSemantic(Backend::Vulkan, 3).empty());
+    check(getVaryingSemantic(Backend::Metal, 1, ValueType::UInt) == " [[flat]]");
+    check(getVaryingSemantic(Backend::Metal, 1, ValueType::Float).empty());
+    check(getLocationLayout(2) == "layout(location = 2) ");
+    check(getAttributeName(Backend::Vulkan, 4) == "attr4");
+    check(getVaryingName(Backend::Metal, 4) == "input.v4");
+    check(getIndexReference("gid", DispatchRank::TwoD, 1) == "gid.y");
+    check(getIndexReference("gid", DispatchRank::OneD, 1) == "gid");
+    check(wrapInParentheses("a + b") == "(a + b)");
+    check(getSimdMatrixName(5) == "sgm5");
+    check(formatFoldedPair(GroupReduction::Max, "a", "b") == "max(a, b)");
+    check(formatFoldedPair(GroupReduction::Sum, "a", "b") == "a + b");
+    check(formatBarrierStatement(Backend::Vulkan, "  ")
+          == "  memoryBarrierShared();\n  barrier();\n");
+    check(formatBarrierStatement(Backend::DirectX, "")
+          == "GroupMemoryBarrierWithGroupSync();\n");
+};
 
 auto tEmissionBufferTypes = test("ShaderEmission/bufferTypesSpellEachAccess") = []
 {

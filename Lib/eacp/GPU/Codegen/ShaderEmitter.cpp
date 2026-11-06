@@ -270,8 +270,11 @@ private:
         auto position = stage.printer.printReference(graph.position());
 
         if (isGlsl())
-            return source + Strings::format("    gl_Position = {};\n", position)
-                   + printVaryingAssignments(stage, "vary") + "}\n#endif\n\n";
+        {
+            source += Strings::format("    gl_Position = {};\n", position);
+            source += printVaryingAssignments(stage, "vary");
+            return source + "}\n#endif\n\n";
+        }
 
         source += "    VertexOut output;\n";
         source += Strings::format("    output.position = {};\n", position);

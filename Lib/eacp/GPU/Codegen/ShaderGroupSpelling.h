@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ShaderDialect.h"
-#include "ShaderText.h"
 
 #include <string_view>
 
@@ -45,37 +44,11 @@ constexpr std::string_view getMetalSimdReduction(GroupReduction operation)
     return "simd_sum";
 }
 
-// Two partials combined, spelled identically in all three dialects.
-constexpr std::string formatFoldedPair(GroupReduction operation,
-                                       const std::string& left,
-                                       const std::string& right)
-{
-    switch (operation)
-    {
-        case GroupReduction::Sum:
-            return left + " + " + right;
-        case GroupReduction::Max:
-            return "max(" + left + ", " + right + ")";
-        case GroupReduction::Min:
-            return "min(" + left + ", " + right + ")";
-    }
+std::string formatFoldedPair(GroupReduction operation,
+                             const std::string& left,
+                             const std::string& right);
 
-    return left + " + " + right;
-}
-
-// The barrier itself, shared by the barrier statement and by the reductions
-// that bracket their scratch with one.
-constexpr std::string formatBarrierStatement(Backend backend,
-                                             const std::string& indent)
-{
-    if (backend == Backend::Vulkan)
-        return indent + "memoryBarrierShared();\n" + indent + "barrier();\n";
-
-    return indent
-           + std::string(backend == Backend::Metal
-                             ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
-                             : "GroupMemoryBarrierWithGroupSync();\n");
-}
+std::string formatBarrierStatement(Backend backend, const std::string& indent);
 
 // The flat position of a thread within its group, which the tree indexes its
 // scratch by. Both dialects that take the tree have a builtin for it, so
@@ -85,12 +58,7 @@ constexpr std::string_view getGroupLaneName(Backend backend)
     return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";
 }
 
-// A SIMD-group matrix fragment's name. Its own numbering, so it collides with
-// neither the variables nor the shared arrays.
-constexpr std::string getSimdMatrixName(int slot)
-{
-    return "sgm" + formatDecimal(slot);
-}
+std::string getSimdMatrixName(int slot);
 
 std::string getSimdMatrixMemoryName(const Statement& statement);
 // The MSL type a fragment of each element is, and the element type its load
@@ -139,7 +107,7 @@ constexpr std::string_view getBitsOfFloatFunction(Backend backend)
 std::string_view getSimdMatrixLaneType(Backend backend);
 std::string formatSimdMatrixScratchDeclaration(const ShaderGraph& graph,
                                                const std::string& qualifier);
-bool doesDeclareGroupMemory(const ShaderGraph& graph);
+bool hasGroupMemoryDeclarations(const ShaderGraph& graph);
 std::string formatSimdMatrixPreamble(Backend backend);
 
 enum class StagedOperand
@@ -148,27 +116,8 @@ enum class StagedOperand
     Right
 };
 
-// An element of an operand a product staged in the scratch: the left fragment
-// at the start of this SIMD group's slice, the right one a fragment further on.
-constexpr std::string printStagedSimdMatrixElement(StagedOperand operand,
-                                                   std::string_view element)
-{
-    auto text = std::string(simdMatrixScratchName) + "[sgmBase + ";
+std::string printStagedSimdMatrixElement(StagedOperand operand,
+                                         std::string_view element);
 
-    if (operand == StagedOperand::Right)
-        text += formatDecimal(simdMatrixSize * simdMatrixSize) + "u + ";
-
-    text += element;
-    text += "]";
-    return text;
-}
-
-// The first or second of the pair of columns a lane holds.
-constexpr std::string printSimdMatrixLaneColumn(int which)
-{
-    if (which == 0)
-        return "sgmColumn";
-
-    return "sgmColumn + " + formatDecimal(which) + "u";
-}
+std::string printSimdMatrixLaneColumn(int which);
 } // namespace eacp::GPU::ShaderEmission

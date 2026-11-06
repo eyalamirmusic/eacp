@@ -1,5 +1,7 @@
 #include "ShaderGroupSpelling.h"
 
+#include <eacp/Core/Utils/Format.h>
+
 namespace eacp::GPU::ShaderEmission
 {
 
@@ -68,8 +70,8 @@ bool doesMetalCombinePartials(const ShaderGraph& graph)
 // Where a fragment's patch lives, spelled as the emitted source names it.
 std::string getSimdMatrixMemoryName(const Statement& statement)
 {
-    return (statement.memory == SimdMatrixMemory::Shared ? "s" : "buffer")
-           + std::to_string(statement.bufferSlot);
+    auto prefix = statement.memory == SimdMatrixMemory::Shared ? "s" : "buffer";
+    return Strings::format("{}{}", prefix, statement.bufferSlot);
 }
 
 // How the fallback backends hold a fragment: spread over the lanes of what
@@ -86,7 +88,6 @@ constexpr int simdMatrixLanesPerRow = simdMatrixSize / simdMatrixLaneElements;
 static_assert(simdMatrixLaneElements == 2,
               "the fallback holds a lane's share of a fragment as a two-vector");
 
-// The two-component type a lane's share is declared as.
 std::string_view getSimdMatrixLaneType(Backend backend)
 {
     return getDialectTypeName(backend, ValueType::Float2);
@@ -111,13 +112,13 @@ std::string formatSimdMatrixScratchDeclaration(const ShaderGraph& graph,
     if (graph.simdMatrixCount() == 0)
         return {};
 
-    return qualifier + " float " + simdMatrixScratchName + "["
-           + std::to_string(getSimdMatrixScratchElementCount(graph)) + "];\n";
+    return Strings::format("{} float {}[{}];\n",
+                           qualifier,
+                           simdMatrixScratchName,
+                           getSimdMatrixScratchElementCount(graph));
 }
 
-// Whether a kernel declares any threadgroup memory of its own or the
-// emitter's - what the blank line after those declarations is for.
-bool doesDeclareGroupMemory(const ShaderGraph& graph)
+bool hasGroupMemoryDeclarations(const ShaderGraph& graph)
 {
     return graph.sharedArrays().size() > 0 || graph.usesGroupReduction()
            || graph.simdMatrixCount() > 0;
@@ -129,17 +130,81 @@ bool doesDeclareGroupMemory(const ShaderGraph& graph)
 // of the scratch starts.
 std::string formatSimdMatrixPreamble(Backend backend)
 {
-    auto lane = std::string(getGroupLaneName(backend));
-    auto width = std::to_string(simdGroupWidth);
-    auto perRow = std::to_string(simdMatrixLanesPerRow);
+    auto lane = getGroupLaneName(backend);
 
-    auto source = "    uint sgmLane = " + lane + " % " + width + "u;\n";
-    source += "    uint sgmRow = sgmLane / " + perRow + "u;\n";
-    source += "    uint sgmColumn = (sgmLane % " + perRow + "u) * "
-              + std::to_string(simdMatrixLaneElements) + "u;\n";
-    source += "    uint sgmBase = (" + lane + " / " + width + "u) * "
-              + std::to_string(simdMatrixScratchPerGroup) + "u;\n";
+    auto source =
+        Strings::format("    uint sgmLane = {} % {}u;\n", lane, simdGroupWidth);
+    source +=
+        Strings::format("    uint sgmRow = sgmLane / {}u;\n", simdMatrixLanesPerRow);
+    source += Strings::format("    uint sgmColumn = (sgmLane % {}u) * {}u;\n",
+                              simdMatrixLanesPerRow,
+                              simdMatrixLaneElements);
+    source += Strings::format("    uint sgmBase = ({} / {}u) * {}u;\n",
+                              lane,
+                              simdGroupWidth,
+                              simdMatrixScratchPerGroup);
     return source;
 }
 
+// Two partials combined, spelled identically in all three dialects.
+std::string formatFoldedPair(GroupReduction operation,
+                             const std::string& left,
+                             const std::string& right)
+{
+    switch (operation)
+    {
+        case GroupReduction::Sum:
+            return Strings::format("{} + {}", left, right);
+        case GroupReduction::Max:
+            return Strings::format("max({}, {})", left, right);
+        case GroupReduction::Min:
+            return Strings::format("min({}, {})", left, right);
+    }
+
+    return Strings::format("{} + {}", left, right);
+}
+
+// The barrier itself, shared by the barrier statement and by the reductions
+// that bracket their scratch with one.
+std::string formatBarrierStatement(Backend backend, const std::string& indent)
+{
+    if (backend == Backend::Vulkan)
+        return Strings::format(
+            "{}memoryBarrierShared();\n{}barrier();\n", indent, indent);
+
+    auto barrier = backend == Backend::Metal
+                       ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+                       : "GroupMemoryBarrierWithGroupSync();\n";
+    return indent + barrier;
+}
+
+// A numbering of its own, so it collides with neither the variables nor the
+// shared arrays.
+std::string getSimdMatrixName(int slot)
+{
+    return Strings::format("sgm{}", slot);
+}
+
+// An element of an operand a product staged in the scratch: the left fragment
+// at the start of this SIMD group's slice, the right one a fragment further on.
+std::string printStagedSimdMatrixElement(StagedOperand operand,
+                                         std::string_view element)
+{
+    if (operand == StagedOperand::Right)
+        return Strings::format("{}[sgmBase + {}u + {}]",
+                               simdMatrixScratchName,
+                               simdMatrixSize * simdMatrixSize,
+                               element);
+
+    return Strings::format("{}[sgmBase + {}]", simdMatrixScratchName, element);
+}
+
+// The first or second of the pair of columns a lane holds.
+std::string printSimdMatrixLaneColumn(int which)
+{
+    if (which == 0)
+        return "sgmColumn";
+
+    return Strings::format("sgmColumn + {}u", which);
+}
 } // namespace eacp::GPU::ShaderEmission

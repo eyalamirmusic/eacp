@@ -25,8 +25,7 @@ StageEmitter::StageEmitter(const ShaderGraph& graphToUse,
     locals.resize(graphToUse.nodeCount(), -1);
 }
 
-// The locals a standalone run of expressions needs - a stage's outputs, which
-// no statement follows - counted over just those expressions.
+// For a stage's outputs, which no statement follows.
 std::string StageEmitter::defineLocalsFor(const Vector<int>& roots,
                                           const std::string& indent)
 {
@@ -170,7 +169,8 @@ std::string StageEmitter::emitLoop(const Statement& statement,
 
 std::string StageEmitter::printBody(int block, const std::string& indent)
 {
-    return indent + "{\n" + emitBlock(block, indent + nestedIndent) + indent + "}\n";
+    return Strings::format(
+        "{}{{\n{}{}}}\n", indent, emitBlock(block, indent + nestedIndent), indent);
 }
 
 std::string StageEmitter::defineLocalsInScope(const Vector<int>& roots,
@@ -185,9 +185,10 @@ std::string StageEmitter::emitVariableWrite(const Statement& statement,
     auto type = std::string {};
 
     if (statement.kind == StatementKind::Declare)
-        type = std::string(getDialectTypeName(
-                   printer.backend, getGraph().variables()[statement.slot]))
-               + " ";
+        type = Strings::format(
+            "{} ",
+            getDialectTypeName(printer.backend,
+                               getGraph().variables()[statement.slot]));
 
     auto source = defineLocalsInScope({statement.value}, scope);
     source += Strings::format("{}{}v{} = {};\n",
@@ -545,10 +546,8 @@ std::string StageEmitter::holdTheVector(const Statement& statement,
     return source + holdOperand(statement.value, statement.slot, indent, open);
 }
 
-// One of them, unless naming it would buy nothing: something already named is
-// already computed, and a leaf costs nothing however often it is repeated -
-// unless it is a read of the buffer being written, which is not a matter of
-// cost.
+// A leaf costs nothing however often it is repeated, unless it reads the
+// buffer being written, which is a matter of correctness rather than cost.
 std::string StageEmitter::holdOperand(int node,
                                       int slot,
                                       const std::string& indent,

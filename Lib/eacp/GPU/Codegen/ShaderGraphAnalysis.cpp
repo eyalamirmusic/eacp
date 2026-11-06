@@ -353,11 +353,8 @@ bool doesTouchSharedMemory(const ShaderGraph& graph, const Statement& statement)
     return false;
 }
 
-// Its storage-buffer sibling: which buffer slots running a statement can leave
-// holding something else. What it feeds is the rule variables and shared memory
-// already get - a name computed from an element is given up the moment that
-// buffer may have moved on - and it is what makes an output a kernel reads back
-// answer with what the kernel stored rather than with what was there before.
+// A name computed from a buffer element is given up once that buffer may have
+// changed, so a kernel that reads back its own output sees what it stored.
 void collectBufferWrites(const ShaderGraph& graph,
                          const Statement& statement,
                          Vector<char>& written)
@@ -464,10 +461,9 @@ Vector<int> getVertexStageRoots(const ShaderGraph& graph)
     return roots;
 }
 
-// Its fragment sibling: the colour, the alpha test when there is one, and what
-// the statements evaluate. Wider than the roots the colour's locals are planned
-// from, which is why emit() keeps both - a value a statement reads is declared
-// by the stage but named where the statement is emitted.
+// Wider than the roots the colour's locals are planned from: a value a
+// statement reads is declared by the stage but named where the statement is
+// emitted.
 Vector<int> getFragmentStageRoots(const ShaderGraph& graph)
 {
     auto roots = Vector<int> {graph.fragment()};
