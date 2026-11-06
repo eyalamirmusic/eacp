@@ -1,8 +1,11 @@
 #include "ShaderExpressionPrinter.h"
 
 #include "ShaderGroupSpelling.h"
+#include "UniformLayout.h"
 
 #include <eacp/Core/Utils/Format.h>
+
+#include <climits>
 
 namespace eacp::GPU::ShaderEmission
 {
@@ -58,7 +61,10 @@ std::string ExprPrinter::printReference(int node) const
 
 ValueType ExprPrinter::getBroadcastType(const Expr& call) const
 {
-    if (backend != Backend::Vulkan || !isGenTypeCall(call.text))
+    auto widens = (backend == Backend::Vulkan && isGenTypeCall(call.text))
+                  || (backend == Backend::Metal && isMetalGenTypeCall(call.text));
+
+    if (!widens)
         return ValueType::Float;
 
     auto widest = ValueType::Float;
@@ -196,7 +202,7 @@ std::string ExprPrinter::printArguments(const Expr& expr, ValueType wide) const
 
 std::string ExprPrinter::print(int node) const
 {
-    static constexpr auto printers = Array<ExpressionPrintEntry, 26> {
+    static constexpr auto printers = Array<ExpressionPrintEntry, 29> {
         {ExprKind::Input, &ExprPrinter::printInput},
         {ExprKind::Varying, &ExprPrinter::printVarying},
         {ExprKind::Uniform, &ExprPrinter::printUniform},
@@ -223,6 +229,9 @@ std::string ExprPrinter::print(int node) const
         {ExprKind::SharedRead, &ExprPrinter::printSharedRead},
         {ExprKind::SimdGroupIndex, &ExprPrinter::printSimdGroupIndex},
         {ExprKind::BuiltIn, &ExprPrinter::printBuiltInNode},
+        {ExprKind::TextureFunction, &ExprPrinter::printTextureFunction},
+        {ExprKind::TextureQuery, &ExprPrinter::printTextureQuery},
+        {ExprKind::MatrixColumn, &ExprPrinter::printMatrixColumn},
     };
 
     const auto& expr = graph.expr(node);
@@ -249,9 +258,21 @@ std::string ExprPrinter::printVarying(const Expr& expr) const
     return getVaryingName(backend, expr.index);
 }
 
+// A two-row matrix is held as float4 columns on Metal (UniformLayout.h).
 std::string ExprPrinter::printUniform(const Expr& expr) const
 {
-    return printNumberedName("uniforms.u", expr.index);
+    auto name = printNumberedName("uniforms.u", expr.index);
+
+    if (backend != Backend::Metal || !isMetalWidenedUniform(expr.type))
+        return name;
+
+    auto columns = std::string {};
+
+    for (auto column = 0; column < matrixColumns(expr.type); ++column)
+        columns +=
+            Strings::format("{}{}[{}].xy", column > 0 ? ", " : "", name, column);
+
+    return Strings::format("{}({})", typeName(expr.type), columns);
 }
 
 // A uint above INT_MAX is held in Expr::index as a negative.
@@ -263,6 +284,10 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
         return Strings::format("{}u", bits);
     }
 
+    // -2147483648 is the negation of a literal no int holds, which GLSL refuses.
+    if (expr.type == ValueType::Int && expr.index == INT_MIN)
+        return "(-2147483647 - 1)";
+
     if (expr.type == ValueType::Int)
         return Strings::format("{}", expr.index);
 
@@ -272,17 +297,34 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
     return formatShaderFloatLiteral(expr.value);
 }
 
-// HLSL fills a matrix from rows, so transpose() restores the column-major value.
+// HLSL fills a matrix from rows, so the columns are taken as the rows of the
+// transposed shape - MSL's spelling, rows first in HLSL - and transpose()
+// restores the column-major value.
 std::string ExprPrinter::printConstruct(const Expr& expr) const
 {
-    auto text = Strings::format("{}({})",
-                                getDialectTypeName(backend, expr.type),
-                                printArguments(expr, ValueType::Float));
+    auto transposes = backend == Backend::DirectX && isMatrix(expr.type);
+    auto name = transposes ? std::string_view {typeName(expr.type)}
+                           : getDialectTypeName(backend, expr.type);
+    auto text =
+        Strings::format("{}({})", name, printArguments(expr, ValueType::Float));
 
-    if (backend == Backend::DirectX && isMatrix(expr.type))
+    if (transposes)
         return Strings::format("transpose({})", text);
 
     return text;
+}
+
+// HLSL holds the matrix itself, whose subscript is a row; a column of it is a
+// row of its transpose.
+std::string ExprPrinter::printMatrixColumn(const Expr& expr) const
+{
+    auto matrix = printReference(expr.args[0]);
+    auto index = printReference(expr.args[1]);
+
+    if (backend == Backend::DirectX)
+        return Strings::format("transpose({})[{}]", matrix, index);
+
+    return Strings::format("({})[{}]", matrix, index);
 }
 
 std::string ExprPrinter::printSwizzle(const Expr& expr) const
@@ -355,9 +397,13 @@ std::string ExprPrinter::printSelect(const Expr& expr) const
                            printReference(expr.args[2]));
 }
 
+// An element of a private array carries its (already clamped) index.
 std::string ExprPrinter::printVarRead(const Expr& expr) const
 {
-    return printNumberedName("v", expr.index);
+    if (expr.args.empty())
+        return printNumberedName("v", expr.index);
+
+    return printSubscript("v", expr.index, printReference(expr.args[0]));
 }
 
 std::string ExprPrinter::printMul(const Expr& expr) const
@@ -523,7 +569,13 @@ std::string ExprPrinter::printGridExtent(const Expr& expr) const
 
 std::string ExprPrinter::printSharedRead(const Expr& expr) const
 {
-    return printSubscript("s", expr.index, printReference(expr.args[0]));
+    auto element = printSubscript("s", expr.index, printReference(expr.args[0]));
+
+    if (backend == Backend::Metal && graph.sharedArrays()[expr.index].atomic)
+        return Strings::format("atomic_load_explicit(&{}, memory_order_relaxed)",
+                               element);
+
+    return element;
 }
 
 std::string ExprPrinter::printSimdGroupIndex(const Expr&) const
@@ -541,24 +593,88 @@ std::string ExprPrinter::printBuiltInNode(const Expr& expr) const
 }
 
 // HLSL's SV_Position gives clip w where the others give 1 / w.
-std::string ExprPrinter::printBuiltIn(ShaderBuiltIn which) const
+std::string ExprPrinter::printFragmentCoordinate() const
 {
-    if (which == ShaderBuiltIn::FragmentCoordinate)
-    {
-        if (backend == Backend::Vulkan)
-            return "gl_FragCoord";
+    if (backend == Backend::Vulkan)
+        return "gl_FragCoord";
 
-        if (backend == Backend::DirectX)
-            return "float4(input.position.xyz, 1.0 / input.position.w)";
+    if (backend == Backend::DirectX)
+        return "float4(input.position.xyz, 1.0 / input.position.w)";
 
-        return "input.position";
-    }
+    return "input.position";
+}
 
-    auto vertexId = which == ShaderBuiltIn::VertexId;
+// Metal declares it with gid's width, every kernel input having to agree.
+std::string ExprPrinter::printMetalGroupCount() const
+{
+    const auto rank = graph.dispatchRank();
+
+    if (rank == DispatchRank::OneD)
+        return "uint3(groupCount, 1u, 1u)";
+
+    return rank == DispatchRank::TwoD ? "uint3(groupCount, 1u)" : "groupCount";
+}
+
+// D3D has no SV_ for it below SM 6, so there it is the extent the dispatch
+// supplied over the group, rounded up: what every direct dispatch encodes.
+std::string ExprPrinter::printGroupCount() const
+{
+    if (backend == Backend::Metal)
+        return printMetalGroupCount();
 
     if (backend == Backend::Vulkan)
-        return vertexId ? "uint(gl_VertexIndex)" : "uint(gl_InstanceIndex)";
+        return "gl_NumWorkGroups";
 
-    return vertexId ? "vertexId" : "instanceId";
+    const auto rank = graph.dispatchRank();
+    const auto group = graph.threadGroupShape();
+    const auto sizes = Array<int, 3> {group.x, group.y, group.z};
+    auto axes = Array<std::string, 3> {"1u", "1u", "1u"};
+
+    for (auto axis = 0; axis < getGridExtentCount(rank); ++axis)
+    {
+        auto extent = rank == DispatchRank::OneD
+                          ? std::string {"uniforms.count"}
+                          : Strings::format("uniforms.{}", getGridExtentName(axis));
+
+        axes[axis] = Strings::format("(({} - 1u) / {}u + 1u)", extent, sizes[axis]);
+    }
+
+    return Strings::format("uint3({}, {}, {})", axes[0], axes[1], axes[2]);
+}
+
+std::string ExprPrinter::printBuiltIn(ShaderBuiltIn which) const
+{
+    auto isGlsl = backend == Backend::Vulkan;
+    auto isMetal = backend == Backend::Metal;
+
+    switch (which)
+    {
+        case ShaderBuiltIn::FragmentCoordinate:
+            return printFragmentCoordinate();
+        case ShaderBuiltIn::VertexId:
+            return isGlsl ? "uint(gl_VertexIndex)" : "vertexId";
+        case ShaderBuiltIn::InstanceId:
+            return isGlsl ? "uint(gl_InstanceIndex)" : "instanceId";
+        case ShaderBuiltIn::FrontFacing:
+            return isGlsl ? "gl_FrontFacing" : "frontFacing";
+        case ShaderBuiltIn::SampleIndex:
+            return isGlsl ? "uint(gl_SampleID)" : "sampleIndex";
+        case ShaderBuiltIn::SampleMask:
+            return isGlsl ? "uint(gl_SampleMaskIn[0])" : "sampleMaskIn";
+        case ShaderBuiltIn::LocalIndex:
+            return isMetal ? "localIndex" : std::string(getGroupLaneName(backend));
+        case ShaderBuiltIn::GroupCount:
+            return printGroupCount();
+        case ShaderBuiltIn::SimdLaneIndex:
+            if (isMetal)
+                return "simdLane";
+
+            return Strings::format(
+                "({} % {}u)", getGroupLaneName(backend), simdGroupWidth);
+        case ShaderBuiltIn::SimdGroupSize:
+            return isMetal ? "simdSize" : Strings::format("{}u", simdGroupWidth);
+    }
+
+    return {};
 }
 } // namespace eacp::GPU::ShaderEmission

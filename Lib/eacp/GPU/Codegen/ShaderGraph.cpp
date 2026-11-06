@@ -2,8 +2,11 @@
 
 #include "../Frame/ComputePass.h"
 
+#include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <tuple>
 
@@ -39,6 +42,7 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::AtomicLoad:
         case ExprKind::Sample:
         case ExprKind::Fetch:
+        case ExprKind::TextureFunction:
         case ExprKind::SharedRead:
             return true;
 
@@ -61,6 +65,8 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::GridExtent:
         case ExprKind::SimdGroupIndex:
         case ExprKind::BuiltIn:
+        case ExprKind::TextureQuery:
+        case ExprKind::MatrixColumn:
             return false;
     }
 
@@ -95,6 +101,33 @@ BinaryKey binaryKeyFor(const Expr& node)
 ReadKey readKeyFor(const Expr& node)
 {
     return {node.kind, node.type, node.index, node.args[0]};
+}
+
+constexpr auto vertexStageStatements = Array<StatementKind, 10> {
+    StatementKind::Declare,
+    StatementKind::Assign,
+    StatementKind::If,
+    StatementKind::Loop,
+    StatementKind::Break,
+    StatementKind::Continue,
+    StatementKind::BreakIf,
+    StatementKind::Switch,
+    StatementKind::Case,
+    StatementKind::Return,
+};
+
+bool isVertexStageStatement(StatementKind kind)
+{
+    return vertexStageStatements.contains(kind);
+}
+
+bool fitsSelector(ValueType selector, std::int64_t value)
+{
+    if (selector == ValueType::Int)
+        return value >= std::numeric_limits<std::int32_t>::min()
+               && value <= std::numeric_limits<std::int32_t>::max();
+
+    return value >= 0 && value <= std::numeric_limits<std::uint32_t>::max();
 }
 } // namespace
 
@@ -198,10 +231,23 @@ TextureKind ShaderGraph::textureKind(int slot) const
                                                    : TextureKind::Texture2D;
 }
 
+TextureFormat ShaderGraph::textureFormat(int slot) const
+{
+    return slot >= 0 && slot < textureFormats.size() ? textureFormats[slot]
+                                                     : TextureFormat::RGBA32Float;
+}
+
 ValueType ShaderGraph::storageElementType(int slot) const
 {
     return slot >= 0 && slot < storageElements.size() ? storageElements[slot]
                                                       : ValueType::Float;
+}
+
+ValueType ShaderGraph::sharedElementType(int slot) const
+{
+    return slot >= 0 && slot < sharedArrayList.size()
+               ? sharedArrayList[slot].elementType
+               : ValueType::Float;
 }
 
 bool ShaderGraph::usesGroupReduction() const
@@ -253,6 +299,15 @@ int ShaderGraph::blockCount() const
 bool ShaderGraph::hasStatements() const
 {
     return !blocks[rootBlock].statements.empty();
+}
+
+bool ShaderGraph::hasStatementOf(StatementKind kind) const
+{
+    for (const auto& recorded: statementList)
+        if (recorded.kind == kind)
+            return true;
+
+    return false;
 }
 
 bool ShaderGraph::isPure(int node) const
@@ -561,28 +616,31 @@ int ShaderGraph::addMul(ValueType type, int left, int right)
     return add(std::move(node));
 }
 
-int ShaderGraph::addTexture(TextureSampling sampling)
+int ShaderGraph::addTextureSlot(TextureSampling sampling,
+                                TextureAccess access,
+                                TextureKind kind,
+                                TextureFormat format)
 {
     textureSamplings.add(sampling);
-    textureAccesses.add(TextureAccess::Sample);
-    textureKinds.add(TextureKind::Texture2D);
+    textureAccesses.add(access);
+    textureKinds.add(kind);
+    textureFormats.add(format);
     return textureSamplings.size() - 1;
+}
+
+int ShaderGraph::addTexture(TextureSampling sampling)
+{
+    return addTextureSlot(sampling, TextureAccess::Sample, TextureKind::Texture2D);
 }
 
 int ShaderGraph::addCubeTexture(TextureSampling sampling)
 {
-    textureSamplings.add(sampling);
-    textureAccesses.add(TextureAccess::Sample);
-    textureKinds.add(TextureKind::Cube);
-    return textureSamplings.size() - 1;
+    return addTextureSlot(sampling, TextureAccess::Sample, TextureKind::Cube);
 }
 
 int ShaderGraph::addDepthTexture(TextureSampling sampling)
 {
-    textureSamplings.add(sampling);
-    textureAccesses.add(TextureAccess::Sample);
-    textureKinds.add(TextureKind::Depth2D);
-    return textureSamplings.size() - 1;
+    return addTextureSlot(sampling, TextureAccess::Sample, TextureKind::Depth2D);
 }
 
 // Everything addSample records, with the type it gives the node changed - which
@@ -600,18 +658,14 @@ int ShaderGraph::addDepthSample(int textureSlot, int uv)
 
 int ShaderGraph::addArrayTexture(TextureSampling sampling)
 {
-    textureSamplings.add(sampling);
-    textureAccesses.add(TextureAccess::Sample);
-    textureKinds.add(TextureKind::Texture2DArray);
-    return textureSamplings.size() - 1;
+    return addTextureSlot(
+        sampling, TextureAccess::Sample, TextureKind::Texture2DArray);
 }
 
 int ShaderGraph::addDepthArrayTexture(TextureSampling sampling)
 {
-    textureSamplings.add(sampling);
-    textureAccesses.add(TextureAccess::Sample);
-    textureKinds.add(TextureKind::Depth2DArray);
-    return textureSamplings.size() - 1;
+    return addTextureSlot(
+        sampling, TextureAccess::Sample, TextureKind::Depth2DArray);
 }
 
 int ShaderGraph::addLayerSample(int textureSlot, int uv, int layer)
@@ -653,13 +707,11 @@ int ShaderGraph::addCompareSample(int textureSlot, int uv, int layer, int refere
 
 int ShaderGraph::addBuiltIn(ShaderBuiltIn which)
 {
-    vertexIdUsed = vertexIdUsed || which == ShaderBuiltIn::VertexId;
-    instanceIdUsed = instanceIdUsed || which == ShaderBuiltIn::InstanceId;
+    builtInsUsed |= builtInBit(which);
 
     auto node = Expr {};
     node.kind = ExprKind::BuiltIn;
-    node.type = which == ShaderBuiltIn::FragmentCoordinate ? ValueType::Float4
-                                                           : ValueType::UInt;
+    node.type = builtInType(which);
     node.index = (int) which;
     return add(std::move(node));
 }
@@ -671,10 +723,8 @@ int ShaderGraph::addWritableTexture()
     // braced - `add({})` is Vector's initializer-list overload with an empty
     // list, which adds nothing at all. The kind is 2D for the same reason: a
     // kernel writes an image, and there is no cube form of that to record.
-    textureSamplings.add(TextureSampling {});
-    textureAccesses.add(TextureAccess::Write);
-    textureKinds.add(TextureKind::Texture2D);
-    return textureSamplings.size() - 1;
+    return addTextureSlot(
+        TextureSampling {}, TextureAccess::Write, TextureKind::Texture2D);
 }
 
 void ShaderGraph::addTextureStore(int slot, int x, int y, int value)
@@ -685,6 +735,54 @@ void ShaderGraph::addTextureStore(int slot, int x, int y, int value)
     statement.slot = slot;
     statement.index = x;
     statement.indexY = y;
+    statement.value = value;
+    addStatement(statement);
+}
+
+int ShaderGraph::addStorageTexture(TextureKind kind,
+                                   TextureFormat format,
+                                   TextureAccess access)
+{
+    assert(isStorageAccess(access) && isStorageTextureFormat(format)
+           && (kind == TextureKind::Texture2D || kind == TextureKind::Texture2DArray
+               || kind == TextureKind::Texture3D));
+
+    return addTextureSlot(TextureSampling {}, access, kind, format);
+}
+
+// The level rides along as a constant 0 so the read binding's load prints as
+// a load of a sampled texture's level 0 does; the read-write one ignores it.
+int ShaderGraph::addStorageLoad(int slot, int coordinates, int layer)
+{
+    assert(textureAccess(slot) == TextureAccess::Read
+           || textureAccess(slot) == TextureAccess::ReadWrite);
+
+    auto node = Expr {};
+    node.kind = ExprKind::TextureFunction;
+    node.type = storageTexelType(textureFormat(slot));
+    node.index = slot;
+    node.text = std::string(textureFunctionName(TextureFunction::Load));
+    node.op = 'x';
+    node.args.add(coordinates);
+
+    if (layer >= 0)
+        node.args.add(layer);
+
+    node.args.add(addIntConstant(0));
+    return add(std::move(node));
+}
+
+void ShaderGraph::addStorageStore(int slot, int coordinates, int layer, int value)
+{
+    assert(textureAccess(slot) == TextureAccess::Write
+           || textureAccess(slot) == TextureAccess::ReadWrite);
+
+    textureStoreList.add({slot, coordinates, -1, value, layer});
+
+    auto statement = Statement {StatementKind::TextureStore};
+    statement.slot = slot;
+    statement.index = coordinates;
+    statement.layer = layer;
     statement.value = value;
     addStatement(statement);
 }
@@ -717,6 +815,121 @@ int ShaderGraph::addFetch(int textureSlot, int coordinates)
     node.type = ValueType::Float4;
     node.index = textureSlot;
     node.args.add(coordinates);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addTextureOfKind(TextureKind kind, TextureSampling sampling)
+{
+    return addTextureSlot(sampling, TextureAccess::Sample, kind);
+}
+
+// The comparison rides in the slot's sampling, which no sampler slot reads
+// otherwise.
+int ShaderGraph::addSampler(bool comparison)
+{
+    auto sampling = TextureSampling {};
+    sampling.compare = comparison ? TextureCompare::LessEqual : TextureCompare::None;
+
+    return addTextureSlot(sampling, TextureAccess::Sampler, TextureKind::Texture2D);
+}
+
+bool ShaderGraph::isComparisonSampler(int slot) const
+{
+    return textureAccess(slot) == TextureAccess::Sampler
+           && textureSampling(slot).compare != TextureCompare::None;
+}
+
+namespace
+{
+constexpr auto textureFunctionNames = Array<std::string_view, 9> {"sample",
+                                                                  "level",
+                                                                  "bias",
+                                                                  "grad",
+                                                                  "compare",
+                                                                  "compareLevel",
+                                                                  "gather",
+                                                                  "gatherCompare",
+                                                                  "load"};
+
+constexpr auto gatherComponents = std::string_view {"xyzw"};
+
+ValueType textureFunctionType(TextureKind kind, TextureFunction function)
+{
+    switch (function)
+    {
+        case TextureFunction::Gather:
+        case TextureFunction::GatherCompare:
+            return ValueType::Float4;
+        case TextureFunction::Compare:
+        case TextureFunction::CompareLevel:
+            return ValueType::Float;
+        default:
+            return isDepth(kind) ? ValueType::Float : ValueType::Float4;
+    }
+}
+
+ValueType textureQueryType(TextureKind kind, const std::string& query)
+{
+    if (query != "size")
+        return ValueType::UInt;
+
+    return kind == TextureKind::Texture3D ? ValueType::UInt3 : ValueType::UInt2;
+}
+} // namespace
+
+std::string_view textureFunctionName(TextureFunction function)
+{
+    return textureFunctionNames[(int) function];
+}
+
+TextureFunction textureFunctionNamed(std::string_view name)
+{
+    for (auto i = 0; i < textureFunctionNames.size(); ++i)
+        if (textureFunctionNames[i] == name)
+            return static_cast<TextureFunction>(i);
+
+    return TextureFunction::Sample;
+}
+
+int ShaderGraph::addTextureFunction(int textureSlot,
+                                    TextureFunction function,
+                                    const Vector<int>& args,
+                                    int component,
+                                    int samplerSlot)
+{
+    assert(component >= 0 && component < 4);
+    assert(textureAccess(textureSlot) != TextureAccess::Sampler);
+    assert(
+        (samplerSlot < 0
+         || (textureAccess(samplerSlot) == TextureAccess::Sampler
+             && isComparisonSampler(samplerSlot) == isComparisonFunction(function)))
+        && "eacp: a comparison function samples through a comparison "
+           "sampler, every other one through a plain sampler");
+
+    auto node = Expr {};
+    node.sampler = samplerSlot;
+    node.kind = ExprKind::TextureFunction;
+    node.type = textureFunctionType(textureKind(textureSlot), function);
+    node.index = textureSlot;
+    node.text = std::string(textureFunctionName(function));
+    node.op = gatherComponents[(std::size_t) component];
+    node.args = args;
+    return add(std::move(node));
+}
+
+int ShaderGraph::addTextureQuery(int textureSlot,
+                                 const std::string& query,
+                                 int level)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::TextureQuery;
+    node.type = textureQueryType(textureKind(textureSlot), query);
+    node.index = textureSlot;
+    node.text = query;
+
+    if (level >= 0)
+        node.args.add(level);
+
     return add(std::move(node));
 }
 
@@ -849,9 +1062,13 @@ int ShaderGraph::addGridExtent(DispatchRank forRank, int component)
     return addIndexNode(ExprKind::GridExtent, wanted, component);
 }
 
-int ShaderGraph::addSharedArray(ValueType elementType, int elements)
+int ShaderGraph::addSharedArray(ValueType elementType, int elements, bool atomic)
 {
-    sharedArrayList.add({elementType, elements});
+    assert(
+        (!atomic || elementType == ValueType::UInt || elementType == ValueType::Int)
+        && "eacp: an atomic shared array holds UInt or Int");
+
+    sharedArrayList.add({elementType, elements, atomic});
     return sharedArrayList.size() - 1;
 }
 
@@ -895,8 +1112,7 @@ int ShaderGraph::addGroupReduction(GroupReduction operation,
     else if (!wholeGroupTypes.contains(elementType))
         wholeGroupTypes.add(elementType);
 
-    auto slot = variableTypes.size();
-    variableTypes.add(elementType);
+    auto slot = addVariableSlot(elementType);
 
     auto fold = Statement {StatementKind::GroupReduce};
     fold.slot = slot;
@@ -1135,28 +1351,53 @@ void ShaderGraph::addRecordStore(int slot,
     }
 }
 
-int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)
+ShaderGraph::AtomicVariables ShaderGraph::addAtomic(AtomicOperation operation,
+                                                    MemorySpace memory,
+                                                    int slot,
+                                                    int index,
+                                                    int value,
+                                                    int compare)
 {
+    assert((operation == AtomicOperation::CompareExchange) == (compare >= 0)
+           && "eacp: a comparand belongs to a compare-exchange, and only there");
+
     atomicUsed = true;
 
-    auto slot = variableTypes.size();
-    variableTypes.add(ValueType::UInt);
+    auto elementType = memory == MemorySpace::Buffer ? storageElementType(slot)
+                                                     : sharedElementType(slot);
 
-    auto operation = Statement {StatementKind::AtomicAdd};
-    operation.slot = slot;
-    operation.bufferSlot = bufferSlot;
-    operation.index = index;
-    operation.value = value;
-    addStatement(operation);
+    auto variables = AtomicVariables {};
+    variables.previous = addVariableSlot(elementType);
 
-    return slot;
+    if (compare >= 0)
+        variables.exchanged = addVariableSlot(ValueType::Bool);
+
+    auto statement = Statement {StatementKind::Atomic};
+    statement.slot = variables.previous;
+    statement.atomic = operation;
+    statement.memory = memory;
+    statement.bufferSlot = slot;
+    statement.index = index;
+    statement.value = value;
+    statement.compare = compare;
+    statement.exchanged = variables.exchanged;
+    addStatement(statement);
+
+    return variables;
+}
+
+int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)
+{
+    return addAtomic(
+               AtomicOperation::Add, MemorySpace::Buffer, bufferSlot, index, value)
+        .previous;
 }
 
 int ShaderGraph::addAtomicLoad(int bufferSlot, int index)
 {
     auto node = Expr {};
     node.kind = ExprKind::AtomicLoad;
-    node.type = ValueType::UInt;
+    node.type = storageElementType(bufferSlot);
     node.index = bufferSlot;
     node.args.add(index);
     return add(std::move(node));
@@ -1164,16 +1405,234 @@ int ShaderGraph::addAtomicLoad(int bufferSlot, int index)
 
 int ShaderGraph::addStatement(Statement newStatement)
 {
+    assert((!recordingVertexStage || isVertexStageStatement(newStatement.kind))
+           && "eacp: the vertex stage records var, assign and the control "
+              "statements only. Storage writes, atomics, barriers and group "
+              "operations belong to a kernel, and discard to the fragment "
+              "stage.");
+
+    auto& open = blocks[openBlocks.back()];
+
+    assert(((open.role == BlockRole::Cases)
+            == (newStatement.kind == StatementKind::Case))
+           && "eacp: a switch's clause list holds its Case statements and "
+              "nothing else.");
+
+    assert((open.statements.empty()
+            || statementList[open.statements.back()].kind != StatementKind::BreakIf)
+           && "eacp: breakLoopIf is the last statement of a continuing block.");
+
     statementList.add(newStatement);
     auto index = statementList.size() - 1;
-    blocks[openBlocks.back()].statements.add(index);
+    open.statements.add(index);
     return index;
+}
+
+BlockRole ShaderGraph::innermostJumpTarget() const
+{
+    for (auto at = openBlocks.size() - 1; at >= 0; --at)
+    {
+        auto role = blocks[openBlocks[at]].role;
+
+        if (role == BlockRole::LoopBody || role == BlockRole::Continuing)
+            return role;
+    }
+
+    return BlockRole::Plain;
+}
+
+bool ShaderGraph::isInsideContinuing() const
+{
+    for (auto open: openBlocks)
+        if (blocks[open].role == BlockRole::Continuing)
+            return true;
+
+    return false;
+}
+
+bool ShaderGraph::areValidLabels(int selector, int cases) const
+{
+    auto type = nodes[selector].type;
+
+    if (type != ValueType::Int && type != ValueType::UInt)
+        return false;
+
+    auto defaults = 0;
+    auto seen = Vector<std::int64_t> {};
+
+    for (auto clause: blocks[cases].statements)
+    {
+        const auto& labels = caseLabelList[statementList[clause].slot];
+        defaults += labels.isDefault ? 1 : 0;
+
+        for (auto value: labels.values)
+        {
+            if (!fitsSelector(type, value) || seen.contains(value))
+                return false;
+
+            seen.add(value);
+        }
+    }
+
+    return defaults <= 1 && !blocks[cases].statements.empty();
+}
+
+int ShaderGraph::addVariableSlot(ValueType type)
+{
+    variableTypes.add(type);
+    vertexVariables.add(recordingVertexStage ? char {1} : char {0});
+    variableSizes.add(0);
+    return variableTypes.size() - 1;
+}
+
+int ShaderGraph::variableArraySize(int slot) const
+{
+    return slot >= 0 && slot < variableSizes.size() ? variableSizes[slot] : 0;
+}
+
+// min(i, size - 1) on a UInt, min(max(i, 0), size - 1) on an Int; a literal is
+// clamped here and stays a literal.
+int ShaderGraph::clampedIndex(int index, int size)
+{
+    auto type = nodes[index].type;
+    auto isLiteral = nodes[index].kind == ExprKind::Constant;
+    auto literal = nodes[index].index;
+    auto last = size - 1;
+    auto isUnsigned = type == ValueType::UInt;
+
+    assert((isUnsigned || type == ValueType::Int)
+           && "eacp: an array or a matrix column is indexed by an Int or a UInt");
+
+    if (isLiteral)
+    {
+        if (isUnsigned)
+            return addIntConstant(static_cast<int>(std::min(
+                static_cast<unsigned>(literal), static_cast<unsigned>(last))));
+
+        return addIntConstant(std::clamp(literal, 0, last));
+    }
+
+    if (isUnsigned)
+        return addCall(ValueType::UInt,
+                       "min",
+                       Vector<int> {index, addUIntConstant((unsigned) last)});
+
+    auto low =
+        addCall(ValueType::Int, "max", Vector<int> {index, addIntConstant(0)});
+    return addCall(ValueType::Int, "min", Vector<int> {low, addIntConstant(last)});
+}
+
+int ShaderGraph::addZero(ValueType type)
+{
+    if (isMatrix(type))
+    {
+        auto column = addZero(floatVectorOf(matrixRows(type)));
+        auto columns = Vector<int> {};
+        columns.resize(matrixColumns(type), column);
+        return addConstruct(type, std::move(columns));
+    }
+
+    auto scalar = isBoolean(type)           ? addBoolConstant(false)
+                  : isSignedInteger(type)   ? addIntConstant(0)
+                  : isUnsignedInteger(type) ? addUIntConstant(0u)
+                                            : addConstant(0.0f);
+
+    if (componentCount(type) == 1)
+        return scalar;
+
+    auto components = Vector<int> {};
+    components.resize(componentCount(type), scalar);
+    return addConstruct(type, std::move(components));
+}
+
+int ShaderGraph::addArrayVariable(ValueType elementType, int size, int fill)
+{
+    assert(size > 0 && "eacp: a private array has at least one element");
+    assert(nodes[fill].type == elementType
+           && "eacp: a private array is filled with a value of its element type");
+
+    auto slot = addVariableSlot(elementType);
+    variableSizes[slot] = size;
+
+    auto declaration = Statement {StatementKind::Declare};
+    declaration.slot = slot;
+    declaration.value = fill;
+    addStatement(declaration);
+
+    return slot;
+}
+
+int ShaderGraph::addVarElementRead(int slot, int index)
+{
+    assert(variableArraySize(slot) > 0 && "eacp: only a private array is indexed");
+
+    auto node = Expr {};
+    node.kind = ExprKind::VarRead;
+    node.type = variableTypes[slot];
+    node.index = slot;
+    node.args.add(clampedIndex(index, variableSizes[slot]));
+    return add(std::move(node));
+}
+
+void ShaderGraph::assignElement(int slot, int index, int value)
+{
+    assert(variableArraySize(slot) > 0 && "eacp: only a private array is indexed");
+    assert(isVertexVariable(slot) == recordingVertexStage
+           && "eacp: a variable is assigned in the stage that declared it - a "
+              "vertexStage variable inside vertexStage, any other outside it.");
+    assert(nodes[value].type == variableTypes[slot]
+           && "eacp: a private array's element takes a value of its type");
+
+    auto assignment = Statement {StatementKind::Assign};
+    assignment.slot = slot;
+    assignment.index = clampedIndex(index, variableSizes[slot]);
+    assignment.value = value;
+    addStatement(assignment);
+}
+
+int ShaderGraph::addMatrixColumn(int matrix, int index)
+{
+    auto type = nodes[matrix].type;
+    assert(isMatrix(type) && "eacp: only a matrix has columns");
+
+    auto node = Expr {};
+    node.kind = ExprKind::MatrixColumn;
+    node.type = floatVectorOf(matrixRows(type));
+    node.args.add(matrix);
+    node.args.add(clampedIndex(index, matrixColumns(type)));
+    return add(std::move(node));
+}
+
+bool ShaderGraph::isVertexVariable(int slot) const
+{
+    return slot >= 0 && slot < vertexVariables.size() && vertexVariables[slot] != 0;
+}
+
+void ShaderGraph::beginVertexStage()
+{
+    assert(!recordingVertexStage && openBlocks.size() == 1
+           && "eacp: vertexStage opens at the top of define(), not inside "
+              "another vertexStage or inside an ifThen or a loop.");
+
+    if (vertexRootBlock < 0)
+    {
+        blocks.add(Block {});
+        vertexRootBlock = blocks.size() - 1;
+    }
+
+    openBlocks.add(vertexRootBlock);
+    recordingVertexStage = true;
+}
+
+void ShaderGraph::endVertexStage()
+{
+    openBlocks.pop_back();
+    recordingVertexStage = false;
 }
 
 int ShaderGraph::addVariable(ValueType type, int initialValue)
 {
-    auto slot = variableTypes.size();
-    variableTypes.add(type);
+    auto slot = addVariableSlot(type);
 
     auto declaration = Statement {StatementKind::Declare};
     declaration.slot = slot;
@@ -1185,6 +1644,9 @@ int ShaderGraph::addVariable(ValueType type, int initialValue)
 
 int ShaderGraph::addVarRead(int slot)
 {
+    assert(variableArraySize(slot) == 0
+           && "eacp: a private array is read an element at a time");
+
     auto node = Expr {};
     node.kind = ExprKind::VarRead;
     node.type = variableTypes[slot];
@@ -1194,15 +1656,21 @@ int ShaderGraph::addVarRead(int slot)
 
 void ShaderGraph::assign(int slot, int value)
 {
+    assert(variableArraySize(slot) == 0
+           && "eacp: a private array is written an element at a time");
+    assert(isVertexVariable(slot) == recordingVertexStage
+           && "eacp: a variable is assigned in the stage that declared it - a "
+              "vertexStage variable inside vertexStage, any other outside it.");
+
     auto assignment = Statement {StatementKind::Assign};
     assignment.slot = slot;
     assignment.value = value;
     addStatement(assignment);
 }
 
-int ShaderGraph::pushBlock()
+int ShaderGraph::pushBlock(BlockRole role)
 {
-    blocks.add(Block {});
+    blocks.add(Block {{}, role});
     auto index = blocks.size() - 1;
     openBlocks.add(index);
     return index;
@@ -1222,21 +1690,86 @@ void ShaderGraph::addIf(int condition, int body, int elseBody)
     addStatement(branch);
 }
 
-void ShaderGraph::addLoop(int condition, int body)
+void ShaderGraph::addLoop(int condition, int body, int continuing)
 {
     auto loop = Statement {StatementKind::Loop};
     loop.value = condition;
     loop.body = body;
+    loop.continuing = continuing;
     addStatement(loop);
 }
 
 void ShaderGraph::addBreak()
 {
+    assert(innermostJumpTarget() != BlockRole::Continuing
+           && "eacp: a continuing block leaves its loop through breakLoopIf "
+              "alone, as WGSL's does.");
+
     addStatement(Statement {StatementKind::Break});
 }
 
 void ShaderGraph::addContinue()
 {
+    assert(innermostJumpTarget() != BlockRole::Continuing
+           && "eacp: continueLoop has no meaning inside a continuing block.");
+
     addStatement(Statement {StatementKind::Continue});
+}
+
+void ShaderGraph::addBreakIf(int condition)
+{
+    assert(blocks[openBlocks.back()].role == BlockRole::Continuing
+           && "eacp: breakLoopIf belongs to a loop's continuing block, as its "
+              "last statement, as WGSL's break if does.");
+
+    auto breakIf = Statement {StatementKind::BreakIf};
+    breakIf.value = condition;
+    addStatement(breakIf);
+}
+
+void ShaderGraph::addCase(const CaseLabels& labels, int body)
+{
+    caseLabelList.add(labels);
+
+    auto clause = Statement {StatementKind::Case};
+    clause.slot = caseLabelList.size() - 1;
+    clause.body = body;
+    addStatement(clause);
+}
+
+void ShaderGraph::addSwitch(int selector, int cases)
+{
+    assert(areValidLabels(selector, cases)
+           && "eacp: a switch takes a scalar Int or UInt, and at least one "
+              "clause; each label fits that type and appears once, and there "
+              "is at most one defaultCase.");
+
+    auto choice = Statement {StatementKind::Switch};
+    choice.value = selector;
+    choice.body = cases;
+    addStatement(choice);
+}
+
+const CaseLabels& ShaderGraph::caseLabels(int clause) const
+{
+    return caseLabelList[clause];
+}
+
+int ShaderGraph::caseCount() const
+{
+    return caseLabelList.size();
+}
+
+void ShaderGraph::addReturn()
+{
+    assert(!isInsideContinuing()
+           && "eacp: a continuing block cannot return, as WGSL's cannot.");
+
+    addStatement(Statement {StatementKind::Return});
+}
+
+void ShaderGraph::addDiscard()
+{
+    addStatement(Statement {StatementKind::Discard});
 }
 } // namespace eacp::GPU

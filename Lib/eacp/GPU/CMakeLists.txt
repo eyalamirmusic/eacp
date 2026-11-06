@@ -16,6 +16,7 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ComputeKernel.cpp
         Codegen/PackedScalars.cpp
         Codegen/PackedVertex.cpp
+        Codegen/Samplers.cpp
         Codegen/ShaderBuilder.cpp
         Codegen/ShaderComputeEmitter.cpp
         Codegen/ShaderDeclarations.cpp
@@ -29,7 +30,9 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ShaderGraph.cpp
         Codegen/ShaderMembers.cpp
         Codegen/ShaderSets.cpp
+        Codegen/ShaderTexturePrinter.cpp
         Codegen/ShaderValue.cpp
+        Codegen/TextureFunctions.cpp
         Codegen/UniformLayout.cpp
         Pipeline/VertexLayout.cpp
         Shader/ShaderSource.cpp

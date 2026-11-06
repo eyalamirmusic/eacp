@@ -93,6 +93,14 @@ public:
     // A kernel that loads no packed fragment builds anywhere.
     bool fitsPackedSimdMatrix(const Device& device) const;
 
+    // Whether every storage texture this kernel declares is one the device
+    // takes: a Write one in a format Device::supportsComputeWrite names, a
+    // ReadWrite one in a format Device::supportsComputeReadWrite names. A Read
+    // one loads through the read binding, which every format has. prepare()
+    // refuses a kernel that does not fit, as it refuses a packed fragment the
+    // device has no instruction for, and logs the slot and the query.
+    bool fitsStorageTextures(const Device& device) const;
+
     const ComputePipeline& pipeline() const;
 
     // Whether prepare() left something dispatchable. False before prepare(), of
@@ -134,6 +142,8 @@ private:
     void buildRefusedPipeline(Device& device);
 
     void reportUnsupportedPackedSimdMatrix(const Device& device) const;
+
+    void reportUnsupportedStorageTexture(const Device& device) const;
 
     // Named here rather than left to the backend, which reports a threadgroup
     // allocation it cannot make as a pipeline that would not build - on Metal

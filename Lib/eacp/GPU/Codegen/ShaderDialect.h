@@ -18,7 +18,10 @@ enum class Backend
 
 constexpr std::string_view getDialectTypeName(Backend backend, ValueType type)
 {
-    return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
+    if (backend == Backend::Vulkan)
+        return glslTypeName(type);
+
+    return backend == Backend::DirectX ? hlslTypeName(type) : typeName(type);
 }
 std::string formatShaderFloatLiteral(float value);
 
@@ -93,6 +96,7 @@ inline std::string getVaryingName(Backend backend, int index)
 
 std::string getCallName(Backend backend, const std::string& name);
 bool isGenTypeCall(const std::string& name);
+bool isMetalGenTypeCall(const std::string& name);
 std::string_view getGlslComparisonFunction(const std::string& op);
 
 std::string getHlslSamplerName(const TextureSampling& sampling);

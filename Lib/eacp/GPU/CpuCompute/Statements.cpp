@@ -1,5 +1,6 @@
 #include "Interpreter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -22,6 +23,47 @@ void evaluateStep(const Context& context, const Plan::Step& step)
     evaluateRange(context, step.scheduleBegin, step.scheduleEnd);
 }
 
+void blendRow(const Context& context,
+              std::uint32_t row,
+              const Word* value,
+              const Word* mask)
+{
+    Lanes::blend(context.lanes(row), value, mask, context.stride);
+}
+
+// Each active lane writes the element its own index names, clamped as the
+// read is.
+void assignElement(const Context& context,
+                   const Plan::Step& step,
+                   const Plan::Variable& variable,
+                   const Word* mask)
+{
+    const auto& value = context.plan.node(step.value);
+    const auto* indices = context.lanes(context.plan.node(step.index), 0);
+    auto isSigned = step.type == ValueType::Int;
+    auto last = variable.elements - 1;
+    auto stride = context.stride;
+
+    auto store = [&](int lane)
+    {
+        auto index = indices[lane];
+        auto element =
+            isSigned ? std::clamp(Lanes::toSigned(index), 0, last)
+                     : static_cast<int>(std::min(index, static_cast<Word>(last)));
+
+        for (auto component = 0; component < variable.components; ++component)
+        {
+            auto row = element * variable.components + component;
+            context.lanes(variable.storage)[row * stride + lane] =
+                context.lanes(value, component)[lane];
+        }
+    };
+
+    for (auto lane = 0; lane < stride; ++lane)
+        if (mask[lane] != 0)
+            store(lane);
+}
+
 void assignVariable(const Context& context,
                     const Plan::Step& step,
                     const MaskFrame& frame)
@@ -31,13 +73,21 @@ void assignVariable(const Context& context,
     const auto& variable = context.plan.variables()[step.slot];
     const auto& value = context.plan.node(step.value);
 
-    for (auto component = 0; component < variable.components; ++component)
-        Lanes::blend(
-            context.lanes(variable.storage
-                          + static_cast<std::uint32_t>(component * context.stride)),
-            context.lanes(value, component),
-            frame.mask,
-            context.stride);
+    if (step.index >= 0)
+    {
+        assignElement(context, step, variable, frame.mask);
+        return;
+    }
+
+    for (auto element = 0; element < variable.elements; ++element)
+        for (auto component = 0; component < variable.components; ++component)
+            blendRow(context,
+                     variable.storage
+                         + static_cast<std::uint32_t>(
+                             (element * variable.components + component)
+                             * context.stride),
+                     context.lanes(value, component),
+                     frame.mask);
 }
 
 // The active lanes gathered first without a branch, then visited in ascending
@@ -157,6 +207,25 @@ void storeRamp(const Context& context,
     }
 }
 
+// Another group's thread may be adding to the same word, so the store is an
+// atomic one too.
+void storeAtomically(const Context& context,
+                     const Plan::Step& step,
+                     const MaskFrame& frame,
+                     const SlotView& view)
+{
+    const auto* indices = context.lanes(context.plan.node(step.index));
+    const auto* values = context.lanes(context.plan.node(step.value));
+
+    auto store = [&](int lane)
+    {
+        if (indices[lane] < view.count)
+            view.atomicStore(indices[lane], values[lane]);
+    };
+
+    forEachActiveLane(frame.mask, context.plan.batchLanes(), store);
+}
+
 void storeElements(const Context& context,
                    const Plan::Step& step,
                    const MaskFrame& frame,
@@ -168,6 +237,12 @@ void storeElements(const Context& context,
 
     if (view.count == 0)
         return;
+
+    if (width == 1 && context.plan.access(step.slot) == BufferAccess::Atomic)
+    {
+        storeAtomically(context, step, frame, view);
+        return;
+    }
 
     if (step.ramp)
     {
@@ -227,27 +302,84 @@ void storeShared(const Context& context,
         });
 }
 
-void addAtomically(const Context& context,
-                   const Plan::Step& step,
-                   const MaskFrame& frame)
+// A group's threadgroup memory is its own workspace's, which no other thread
+// reaches, so a shared atomic is the plain read-modify-write the lanes take
+// in turn.
+AtomicOutcome applySharedAtomic(Word* element,
+                                const Plan::Step& step,
+                                Word value,
+                                Word compare)
+{
+    auto old = *element;
+
+    if (step.atomic == AtomicOperation::CompareExchange)
+    {
+        auto exchanged = old == compare;
+        *element = exchanged ? value : old;
+        return {old, exchanged};
+    }
+
+    *element = atomicCombine(step.atomic, step.type == ValueType::Int, old, value);
+    return {old};
+}
+
+// Lanes in ascending order. An element out of range is left alone and the
+// lane is handed 0, and a compare-exchange on one says it did not store.
+void runAtomic(const Context& context,
+               const Plan::Step& step,
+               const MaskFrame& frame)
 {
     evaluateStep(context, step);
 
-    const auto& view = context.slots[static_cast<std::size_t>(step.buffer)];
-    const auto* indices = context.lanes(context.plan.node(step.index));
-    const auto* values = context.lanes(context.plan.node(step.value));
-    auto* previous = context.lanes(context.plan.variables()[step.slot].storage);
+    const auto& plan = context.plan;
+    const auto* indices = context.lanes(plan.node(step.index));
+    const auto* values = context.lanes(plan.node(step.value));
+    const auto* compares =
+        step.compare >= 0 ? context.lanes(plan.node(step.compare)) : values;
+    auto* previous = context.lanes(plan.variables()[step.slot].storage);
+    auto* exchanged = step.exchanged >= 0
+                          ? context.lanes(plan.variables()[step.exchanged].storage)
+                          : nullptr;
+    auto isSigned = step.type == ValueType::Int;
+    const auto* view = static_cast<const SlotView*>(nullptr);
+    auto* sharedWords = static_cast<Word*>(nullptr);
+    auto elements = Word {0};
 
-    forEachActiveLane(frame.mask,
-                      context.plan.lanes(),
-                      [&](int lane)
-                      {
-                          auto element = indices[lane];
-                          previous[lane] =
-                              element < view.count
-                                  ? view.atomicAdd(element, values[lane])
-                                  : 0u;
-                      });
+    if (step.memory == MemorySpace::Buffer)
+    {
+        view = &context.slots[static_cast<std::size_t>(step.buffer)];
+        elements = view->count;
+    }
+    else
+    {
+        const auto& shared = plan.sharedArrays()[step.buffer];
+        sharedWords = context.lanes(shared.storage);
+        elements = static_cast<Word>(shared.elements);
+    }
+
+    auto apply = [&](int lane)
+    {
+        auto element = indices[lane];
+        auto outcome = AtomicOutcome {};
+
+        if (element < elements)
+            outcome =
+                view != nullptr
+                    ? view->atomicApply(element,
+                                        step.atomic,
+                                        isSigned,
+                                        values[lane],
+                                        compares[lane])
+                    : applySharedAtomic(
+                          sharedWords + element, step, values[lane], compares[lane]);
+
+        previous[lane] = outcome.previous;
+
+        if (exchanged != nullptr)
+            exchanged[lane] = Lanes::maskOf(outcome.exchanged);
+    };
+
+    forEachActiveLane(frame.mask, plan.lanes(), apply);
 }
 
 template <typename Fold>
@@ -431,15 +563,116 @@ void runBranch(const Context& context,
         runBlock(context, step.elseBody, elseFrame, depth + 1, loop);
 }
 
+// The lanes that break-if's condition holds for leave the loop, as a break
+// taken by those lanes alone; frame (depth, 0) is free to hold them, the
+// statement being a continuing block's last.
+void breakLoopIf(const Context& context,
+                 const Plan::Step& step,
+                 MaskFrame& frame,
+                 int depth,
+                 const LoopFrame* loop)
+{
+    evaluateStep(context, step);
+
+    const auto* condition = context.lanes(context.plan.node(step.value));
+    auto leaving = MaskFrame {statementFrame(context, depth, 0), &frame};
+    Lanes::intersect(leaving.mask, frame.mask, condition, context.stride);
+    leaveLoop(leaving, loop, true, context.stride);
+}
+
+// A return ends the lanes for good: they leave every frame up to the root and
+// every loop around them, so no later pass or statement takes them back.
+void returnLanes(MaskFrame& frame, const LoopFrame* loop, int stride)
+{
+    for (auto* outer = frame.parent; outer != nullptr; outer = outer->parent)
+        Lanes::clearWhere(outer->mask, frame.mask, stride);
+
+    for (auto* enclosing = loop; enclosing != nullptr; enclosing = enclosing->outer)
+        Lanes::clearWhere(enclosing->live, frame.mask, stride);
+
+    Lanes::fill(frame.mask, 0u, stride);
+}
+
+bool isLabelled(const Context& context, const Plan::Step& clause, Word selector)
+{
+    for (auto at = 0; at < clause.caseLabelCount; ++at)
+        if (context.plan.caseLabel(clause.caseLabelBegin + at) == selector)
+            return true;
+
+    return false;
+}
+
+// The lanes whose selector no label names, which the default clause takes.
+void findUnlabelled(const Context& context,
+                    const Plan::Step& step,
+                    const Word* selector,
+                    const MaskFrame& frame,
+                    Word* unlabelled)
+{
+    const auto& plan = context.plan;
+    const auto& clauses = plan.block(step.body);
+
+    for (auto lane = 0; lane < context.stride; ++lane)
+    {
+        auto named = false;
+
+        for (auto position = clauses.begin; position < clauses.end; ++position)
+            named = named
+                    || isLabelled(context,
+                                  plan.step(plan.blockStep(position)),
+                                  selector[lane]);
+
+        unlabelled[lane] = frame.mask[lane] & Lanes::maskOf(!named);
+    }
+}
+
+// Every clause in order, its labels matched lane by lane; the clauses are
+// disjoint, so the order they run in is the order they were written in.
+void runSwitch(const Context& context,
+               const Plan::Step& step,
+               MaskFrame& frame,
+               int depth,
+               const LoopFrame* loop)
+{
+    evaluateStep(context, step);
+
+    const auto& plan = context.plan;
+    const auto* selector = context.lanes(plan.node(step.value));
+    auto* unlabelled = statementFrame(context, depth, 0);
+    auto clauseFrame = MaskFrame {statementFrame(context, depth, 1), &frame};
+    const auto& clauses = plan.block(step.body);
+
+    if (step.isDefault)
+        findUnlabelled(context, step, selector, frame, unlabelled);
+
+    for (auto position = clauses.begin; position < clauses.end; ++position)
+    {
+        const auto& clause = plan.step(plan.blockStep(position));
+        evaluateStep(context, clause);
+
+        for (auto lane = 0; lane < context.stride; ++lane)
+        {
+            auto taken = isLabelled(context, clause, selector[lane]);
+            auto byDefault = clause.isDefault ? unlabelled[lane] : Word {0};
+            clauseFrame.mask[lane] =
+                frame.mask[lane] & (Lanes::maskOf(taken) | byDefault);
+        }
+
+        if (Lanes::anyActive(clauseFrame.mask, context.stride))
+            runBlock(context, clause.body, clauseFrame, depth + 1, loop);
+    }
+}
+
 void runLoop(const Context& context,
              const Plan::Step& step,
              MaskFrame& frame,
-             int depth)
+             int depth,
+             const LoopFrame* enclosing)
 {
     auto stride = context.stride;
     auto* live = statementFrame(context, depth, 0);
     auto iteration = MaskFrame {statementFrame(context, depth, 1), &frame};
-    auto loop = LoopFrame {&iteration, live};
+    auto loop = LoopFrame {&iteration, live, enclosing};
     const auto* condition = context.lanes(context.plan.node(step.value));
 
     Lanes::copy(live, frame.mask, stride);
@@ -454,6 +687,12 @@ void runLoop(const Context& context,
 
         Lanes::copy(iteration.mask, live, stride);
         runBlock(context, step.body, iteration, depth + 1, &loop);
+
+        if (step.continuing < 0 || !Lanes::anyActive(live, stride))
+            continue;
+
+        Lanes::copy(iteration.mask, live, stride);
+        runBlock(context, step.continuing, iteration, depth + 1, &loop);
     }
 }
 } // namespace
@@ -488,7 +727,21 @@ void runBlock(const Context& context,
                 break;
 
             case StatementKind::Loop:
-                runLoop(context, step, frame, depth);
+                runLoop(context, step, frame, depth, loop);
+
+                if (step.bodiesJumpOut
+                    && !Lanes::anyActive(frame.mask, context.stride))
+                    return;
+
+                break;
+
+            case StatementKind::Switch:
+                runSwitch(context, step, frame, depth, loop);
+
+                if (step.bodiesJumpOut
+                    && !Lanes::anyActive(frame.mask, context.stride))
+                    return;
+
                 break;
 
             case StatementKind::Break:
@@ -497,6 +750,14 @@ void runBlock(const Context& context,
 
             case StatementKind::Continue:
                 leaveLoop(frame, loop, false, context.stride);
+                return;
+
+            case StatementKind::BreakIf:
+                breakLoopIf(context, step, frame, depth, loop);
+                return;
+
+            case StatementKind::Return:
+                returnLanes(frame, loop, context.stride);
                 return;
 
             case StatementKind::Store:
@@ -516,8 +777,8 @@ void runBlock(const Context& context,
                 reduceGroup(context, step, frame);
                 break;
 
-            case StatementKind::AtomicAdd:
-                addAtomically(context, step, frame);
+            case StatementKind::Atomic:
+                runAtomic(context, step, frame);
                 break;
 
             case StatementKind::SimdMatrixFill:

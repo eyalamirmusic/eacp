@@ -2,8 +2,16 @@
 
 #include "../Shader/ShaderSource.h"
 #include "GeneratedShader.h"
+#include "Samplers.h"
 #include "ShaderGraph.h"
 #include "ShaderValue.h"
+#include "StorageTextures.h"
+#include "TextureFunctions.h"
+
+#include <cstdint>
+#include <initializer_list>
+#include <type_traits>
+#include <utility>
 
 namespace eacp::GPU
 {
@@ -21,6 +29,35 @@ ShaderBackend nativeShaderBackend();
 // detail::nativeShaderBackend(), so an offline compiler that hashes this text
 // hashes exactly what the runtime will be handed.
 GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend);
+
+// One clause of a switchOn: the integer literals it is taken for, or the
+// default, and the body it records. Made by caseOf and defaultCase, and
+// recorded only once switchOn runs, in the order the clauses are written.
+template <typename Body>
+struct SwitchClause
+{
+    CaseLabels labels;
+    Body body;
+};
+
+template <typename Body>
+SwitchClause<std::decay_t<Body>> caseOf(std::int64_t value, Body&& body)
+{
+    return {{{value}, false}, std::forward<Body>(body)};
+}
+
+template <typename Body>
+SwitchClause<std::decay_t<Body>> caseOf(std::initializer_list<std::int64_t> values,
+                                        Body&& body)
+{
+    return {{Vector<std::int64_t>(values), false}, std::forward<Body>(body)};
+}
+
+template <typename Body>
+SwitchClause<std::decay_t<Body>> defaultCase(Body&& body)
+{
+    return {{{}, true}, std::forward<Body>(body)};
+}
 
 // The string-free authoring entry point. Declare vertex inputs, uniforms and
 // varyings by call order, write the position and fragment outputs with value-type
@@ -80,26 +117,16 @@ public:
         return value;
     }
 
-    // A per-frame constant. Every value type crosses from the CPU except a
-    // Float2x2 or a Float3x3: MSL and HLSL pack those to different sizes inside
-    // the value itself, so one block of bytes would read back as two different
-    // matrices on the two backends (see UniformLayout.h). Send a Float4x4, or
-    // send the columns as vectors and assemble the matrix in the shader.
-    //
-    // A Bool is refused for the same reason at a smaller scale: MSL packs one
+    // A per-frame constant. Every value type crosses from the CPU, matrices of
+    // every shape included - each column at a 16-byte stride, which every
+    // backend reads alike (see UniformLayout.h) - except a Bool: MSL packs one
     // into a byte and an HLSL cbuffer gives it four. Send the flag as a float
     // and compare it, which is what the block already knows how to carry. The
-    // boolean vectors go with it; the integer ones do not, since both languages
-    // pack an intN exactly where they pack a floatN.
+    // boolean vectors go with it; the integer ones do not, since every language
+    // packs an intN exactly where it packs a floatN.
     template <typename T>
     T uniform()
     {
-        static_assert(!isMatrix(ValueTypeOf<T>::value)
-                          || ValueTypeOf<T>::value == ValueType::Float4x4,
-                      "Float2x2/Float3x3 cannot be uniforms: MSL and HLSL pack "
-                      "them to different sizes. Use a Float4x4, or pass the "
-                      "columns as vectors and build the matrix in the shader.");
-
         static_assert(!isBoolean(ValueTypeOf<T>::value),
                       "Bool cannot be a uniform: MSL packs it into one byte and "
                       "an HLSL cbuffer into four. Send a Float and compare it.");
@@ -140,6 +167,38 @@ public:
     Texture2DArray textureArray(TextureSampling sampling = {});
     TextureDepth2DArray depthTextureArray(TextureSampling sampling = {});
 
+    // A ThreeD texture, a CubeArray texture, and the whole depth plane of a
+    // Cube or a CubeArray target - read through TextureFunctions.h, bound
+    // with setFragmentTexture and setFragmentDepthTexture.
+    Texture3D texture3D(TextureSampling sampling = {});
+    TextureCubeArray cubeTextureArray(TextureSampling sampling = {});
+    TextureDepthCube depthCubeTexture(TextureSampling sampling = {});
+    TextureDepthCubeArray depthCubeTextureArray(TextureSampling sampling = {});
+
+    // The slot under all four, for the member walk.
+    detail::TextureHandle textureOfKind(TextureKind kind,
+                                        TextureSampling sampling = {});
+
+    // A storage texture (StorageTextures.h), from the same slot counter:
+    // builder.storageTexture<StorageTexture2D<TextureFormat::R32Uint,
+    // StorageAccess::ReadWrite>>().
+    template <typename Handle>
+    Handle storageTexture()
+    {
+        auto handle = Handle {};
+        static_cast<detail::TextureHandle&>(handle) =
+            storageTextureOf(Handle::layout);
+        return handle;
+    }
+
+    detail::TextureHandle storageTextureOf(const StorageTextureLayout& layout);
+
+    // A sampler bound beside the textures (Samplers.h), from the same slot
+    // counter: a plain one, a comparison one, and the slot under both.
+    SamplerBinding sampler();
+    ComparisonSamplerBinding comparisonSampler();
+    detail::SamplerHandle samplerOf(bool comparison);
+
     // The fragment's window position: x and y in pixels from the top left of
     // the target, y down, at pixel centres (.5), z its depth and w 1 / clip w -
     // the same four numbers on every backend. Fragment stage only.
@@ -151,6 +210,32 @@ public:
     // firstInstance add on each backend.
     UInt vertexId();
     UInt instanceId();
+
+    // Whether the primitive the fragment belongs to faces the viewer, by the
+    // pipeline's RenderPipelineDescriptor::frontFace - the winding culling
+    // judges by. Fragment stage only.
+    Bool frontFacing();
+
+    // Which sample of the pixel the fragment is shading. Reading it runs the
+    // fragment stage once per sample rather than once per pixel - on every
+    // backend, and on Vulkan only where the device has sampleRateShading.
+    // Fragment stage only.
+    UInt sampleIndex();
+
+    // The samples of the pixel the primitive covers, one bit each, as the
+    // rasterizer handed them in. Fragment stage only.
+    UInt sampleMask();
+
+    // The fragment's depth, replacing the one the rasterizer interpolated:
+    // what the depth test compares and the depth attachment keeps. Meaningful
+    // only in a pipeline with a depth attachment, and it costs the early depth
+    // test. The value is clamped to 0..1 by the target, not here.
+    void fragmentDepth(const Float& depth);
+
+    // The samples the fragment writes, ANDed with the coverage the rasterizer
+    // computed: a bit left clear keeps that sample's colour and depth as they
+    // were. Meaningful only in a multisampled target.
+    void fragmentSampleMask(const UInt& mask);
 
     // Compute kernel authoring. Declaring buffers assigns slots in call order
     // (inputs and outputs share one slot space, matching Metal's flat buffer
@@ -214,6 +299,32 @@ public:
     // gridHeight() serve a 3D kernel as they do a 2D one.
     UInt gridDepth();
 
+    // The thread's flat index inside its group: x + y * width + z * width *
+    // height of its local position, at any rank. WGSL's local_invocation_index.
+    UInt localIndex();
+
+    // How many groups the dispatch runs along each axis, 1 on the axes a
+    // lower-rank kernel has no extent for. WGSL's num_workgroups.
+    //
+    // Metal and Vulkan read the dispatch itself, so an indirect dispatch gives
+    // the counts in its arguments - on Metal at the kernel's rank, every kernel
+    // input there having gid's width. D3D has no such system value under SM5,
+    // so there it is the grid extent the dispatch supplied divided by the
+    // group, rounded up - the same number for every direct dispatch, and for
+    // an indirect one the groups the guard count covers rather than the groups
+    // the arguments ran.
+    UInt3 groupCount();
+
+    // The thread's lane inside its SIMD group, and how many lanes a SIMD group
+    // has: the group that simdSum and simdGroupIndex() are collective over.
+    // Metal reads the hardware's ([[thread_index_in_simdgroup]],
+    // [[threads_per_simdgroup]]); the other backends, which emulate SIMD groups
+    // through threadgroup memory, give the flat local index modulo
+    // simdGroupWidth and simdGroupWidth itself. The two agree on every Apple
+    // GPU, whose SIMD groups are 32 wide.
+    UInt simdLaneIndex();
+    UInt simdGroupSize();
+
     // The threadgroup the kernel is dispatched in. Left unset, the stock shape
     // for the kernel's rank is used.
     void setThreadGroupShape(ThreadGroupShape shape);
@@ -227,6 +338,17 @@ public:
     Shared<T> shared(int count)
     {
         return {&graphData, graphData.addSharedArray(ValueTypeOf<T>::value, count)};
+    }
+
+    // A threadgroup-shared array of count atomic UInt or Int elements, which
+    // the atomic operations below take as they take a buffer. Uninitialised on
+    // every GPU backend, as a shared<T> is: write the elements, barrier(), then
+    // count.
+    template <typename T>
+    SharedAtomic<T> sharedAtomic(int count)
+    {
+        return {&graphData,
+                graphData.addSharedArray(ValueTypeOf<T>::value, count, true)};
     }
 
     // The threadgroup barrier: every thread of the group arrives before any
@@ -380,10 +502,19 @@ public:
 
     UIntOutputBuffer uintOutputBuffer();
 
+    // The signed pair, WGSL's array<i32>, on the same terms.
+    IntInputBuffer intInputBuffer();
+
+    IntOutputBuffer intOutputBuffer();
+
     // A buffer of unsigned integers threads share. It takes a slot from the same
     // counter the others do, and binds exactly as an output does - what differs
     // is the element type, and that only the emitted declaration knows.
     AtomicBuffer atomicBuffer();
+
+    // The signed one, WGSL's atomic<i32>, from the same counter and bound the
+    // same way: Int elements, so atomicMax and atomicMin compare as signed.
+    IntAtomicBuffer intAtomicBuffer();
 
     // Adds to one element and yields what it held *before* - so every thread
     // that adds one to the same counter gets a different number back, which is
@@ -394,16 +525,104 @@ public:
     // and nothing about how other memory either side of it is ordered. That is
     // all a counter needs and all this offers; a kernel that needs the second
     // thing needs a barrier, not a stronger atomic.
-    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
+    //
+    // The target is an AtomicBuffer, an IntAtomicBuffer or a SharedAtomic, and
+    // the index and the value are handles or literals: both are literals in
+    // the commonest call there is - one thread taking one ticket from one
+    // shared counter - so refusing them would make the plainest use the
+    // ugliest.
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicAdd(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::Add, target, index, value);
+    }
 
-    // Either argument as a literal, anchored on the buffer. Both are literals in
-    // the commonest call there is - one thread taking one ticket from one shared
-    // counter - so refusing them would make the plainest use the ugliest.
-    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value);
+    // The rest of WGSL's read-modify-writes, on the same terms: each yields
+    // the element's value from before it. Max and Min compare as the element
+    // type does - unsigned in an AtomicBuffer, signed in an IntAtomicBuffer.
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicSub(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::Sub, target, index, value);
+    }
 
-    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value);
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicMax(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::Max, target, index, value);
+    }
 
-    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value);
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicMin(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::Min, target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicAnd(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::And, target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicOr(const Target& target,
+                                 const AtomicIndex& index,
+                                 const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::Or, target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicXor(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::Xor, target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target>
+        atomicExchange(const Target& target,
+                       const AtomicIndex& index,
+                       const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return atomic(AtomicOperation::Exchange, target, index, value);
+    }
+
+    // Stores value where the element equals compare, and yields the element's
+    // old value with whether it stored. Weak, as WGSL's is: it may fail when
+    // the two are equal, so a loop retries on exchanged rather than on the
+    // old value - see CompareExchangeResult.
+    template <AtomicStorage Target>
+    CompareExchangeResult<AtomicValue<Target>>
+        atomicCompareExchangeWeak(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& compare,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        auto at = index.nodeOn(graphData);
+        auto comparand = compare.nodeOn(graphData);
+        auto variables = graphData.addAtomic(AtomicOperation::CompareExchange,
+                                             detail::atomicMemoryOf(target),
+                                             target.slot,
+                                             at,
+                                             value.nodeOn(graphData),
+                                             comparand);
+
+        return {indexValue<AtomicValue<Target>>(
+                    graphData.addVarRead(variables.previous)),
+                indexValue<Bool>(graphData.addVarRead(variables.exchanged))};
+    }
 
     // A texture a kernel writes. It takes a slot from the same counter
     // texture() does, so a kernel reading one texture and writing another
@@ -564,6 +783,27 @@ public:
                 const UInt& index,
                 const UInt4& value);
 
+    // The signed output's element and record writes, as the unsigned ones.
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int& value);
+
+    void write(const IntOutputBuffer& buffer, const UInt& index, int value);
+
+    void write(const IntOutputBuffer& buffer, unsigned index, const Int& value);
+
+    void write(const IntOutputBuffer& buffer, unsigned index, int value);
+
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int2& value);
+
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int3& value);
+
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int4& value);
+
+    void write2(const IntOutputBuffer& buffer, const UInt& index, const Int2& value);
+
+    void write3(const IntOutputBuffer& buffer, const UInt& index, const Int3& value);
+
+    void write4(const IntOutputBuffer& buffer, const UInt& index, const Int4& value);
+
     // One element of an atomic buffer, set outright rather than added to. It
     // completes the trio - add, load, store - and it is what a kernel computing
     // a *dispatch size* needs: the threadgroup count an indirect dispatch reads
@@ -571,14 +811,21 @@ public:
     //
     // Ordinary Store underneath, because the buffer's own access is what decides
     // how it spells: only Metal needs anything, its atomic_uint having to be
-    // stored through rather than assigned.
-    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
+    // stored through rather than assigned. A SharedAtomic is set the same way,
+    // which is how a kernel zeroes its counters before the first barrier.
+    template <AtomicStorage Target>
+    void write(const Target& target,
+               const AtomicIndex& index,
+               const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        auto at = index.nodeOn(graphData);
+        auto stored = value.nodeOn(graphData);
 
-    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value);
-
-    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value);
-
-    void write(const AtomicBuffer& buffer, unsigned index, unsigned value);
+        if (detail::atomicMemoryOf(target) == MemorySpace::Buffer)
+            graphData.addStore(target.slot, at, stored);
+        else
+            graphData.addSharedStore(target.slot, at, stored);
+    }
 
     // One element of a threadgroup-shared array. A single wide store whatever
     // the element type - the array never crosses the CPU boundary, so there
@@ -596,6 +843,37 @@ public:
                const UInt& x,
                const UInt& y,
                const Float4& color);
+
+    // textureStore on a Write or ReadWrite storage texture: at a texel, at a
+    // texel of a layer, at a texel of a volume.
+    template <TextureFormat Format, StorageAccess Access>
+        requires(canStore(Access))
+    void write(const StorageTexture2D<Format, Access>& texture,
+               const TexelCoordinates2& coordinates,
+               const StorageTexelOf<Format>& value)
+    {
+        detail::storeStorageTexel(texture, coordinates.node, -1, value.node);
+    }
+
+    template <TextureFormat Format, StorageAccess Access>
+        requires(canStore(Access))
+    void write(const StorageTexture2DArray<Format, Access>& texture,
+               const TexelCoordinates2& coordinates,
+               const TextureIndex& layer,
+               const StorageTexelOf<Format>& value)
+    {
+        detail::storeStorageTexel(
+            texture, coordinates.node, layer.nodeOn(graphData), value.node);
+    }
+
+    template <TextureFormat Format, StorageAccess Access>
+        requires(canStore(Access))
+    void write(const StorageTexture3D<Format, Access>& texture,
+               const TexelCoordinates3& coordinates,
+               const StorageTexelOf<Format>& value)
+    {
+        detail::storeStorageTexel(texture, coordinates.node, -1, value.node);
+    }
 
     // Non-templated siblings of vertexInput()/uniform() keyed on a runtime
     // ValueType. The reflection-driven ShaderProgram visitor walks erased member
@@ -649,9 +927,11 @@ public:
     // makes a loop worth having: something the body can write that the code
     // after it reads. Its type follows the initialiser.
     //
-    // Control flow is a fragment-stage (or kernel) facility, like sampling: the
-    // statements a shader records are emitted into the fragment function, so a
-    // variable must not feed the position expression or a varying.
+    // A statement lands in the stage open while it is recorded: the fragment
+    // function (or the kernel) by default, the vertex function inside
+    // vertexStage(). A variable is read only by its own stage, so a fragment
+    // one never feeds the position or a varying, and a vertex one reaches the
+    // fragment through varying().
     // Constrained on the handle rather than on the float vocabulary, so the
     // flag a shader sets and later tests and the cell it walks a grid with are
     // variables on the same terms a colour is.
@@ -680,6 +960,39 @@ public:
     Var<T> var(const T& initialValue)
     {
         return {graphData, ValueTypeOf<T>::value, initialValue.node};
+    }
+
+    // A private array (see PrivateArray): privateArray<Float, 8>() has eight
+    // zeroes, privateArray(a, b, c) the three values given, its type and size
+    // taken from them. Declared where it is created, in the stage open then.
+    template <typename T, int Size>
+    PrivateArray<T, Size> privateArray()
+    {
+        auto type = ValueTypeOf<T>::value;
+        return {graphData,
+                graphData.addArrayVariable(type, Size, graphData.addZero(type))};
+    }
+
+    template <typename T, typename... Rest>
+        requires(ShaderHandleLike<T> || ShaderMatrixLike<T>)
+    PrivateArray<detail::StoredHandle<T>, 1 + (int) sizeof...(Rest)>
+        privateArray(const T& first, const Rest&... rest)
+    {
+        using Element = detail::StoredHandle<T>;
+        constexpr auto size = 1 + (int) sizeof...(Rest);
+        auto type = ValueTypeOf<Element>::value;
+
+        auto slot = graphData.addArrayVariable(type, size, graphData.addZero(type));
+        auto index = 0;
+        auto setNext = [&](const Element& value)
+        {
+            graphData.assignElement(
+                slot, graphData.addIntConstant(index++), value.node);
+        };
+
+        setNext(first);
+        (setNext(rest), ...);
+        return {graphData, slot};
     }
 
     // The statements. Each body is a callable recording into a block of its
@@ -717,15 +1030,96 @@ public:
     template <typename Body>
     void loop(const Bool& condition, Body&& body)
     {
-        auto block = graphData.pushBlock();
+        auto block = graphData.pushBlock(BlockRole::LoopBody);
         body();
         graphData.popBlock();
 
         graphData.addLoop(condition.node, block);
     }
 
+    // The loop with WGSL's continuing block: `continuing` runs after the body
+    // and after every continueLoop, before the condition is tested again, and
+    // may end with breakLoopIf. A `for` loop is this with its update as the
+    // continuing - see forLoop.
+    template <typename Body, typename Continuing>
+    void loop(const Bool& condition, Body&& body, Continuing&& continuing)
+    {
+        auto block = graphData.pushBlock(BlockRole::LoopBody);
+        body();
+        graphData.popBlock();
+
+        auto continuingBlock = graphData.pushBlock(BlockRole::Continuing);
+        continuing();
+        graphData.popBlock();
+
+        graphData.addLoop(condition.node, block, continuingBlock);
+    }
+
+    // WGSL's for (init; condition; update) { body }, the counter declared with
+    // var() beforehand: a continueLoop in the body still runs the update.
+    template <typename Update, typename Body>
+    void forLoop(const Bool& condition, Update&& update, Body&& body)
+    {
+        loop(condition, std::forward<Body>(body), std::forward<Update>(update));
+    }
+
     void breakLoop();
     void continueLoop();
+
+    // WGSL's break if: leaves the loop when `condition` holds. The last
+    // statement of a continuing block and nowhere else; inside a body,
+    // ifThen(condition, breakLoop) is the same thing.
+    void breakLoopIf(const Bool& condition);
+
+    // WGSL's switch: the selector's clause runs, the defaultCase's when no
+    // label matches, nothing when there is no default; no clause falls
+    // through. A breakLoop or continueLoop inside a clause leaves or continues
+    // the enclosing loop, not the switch - the emitter carries the jump out
+    // past the switch, since a C-family break there would only end the clause.
+    //
+    //     switchOn(mode,
+    //              caseOf(0, [&] { colour = red; }),
+    //              caseOf({1, 2}, [&] { colour = green; }),
+    //              defaultCase([&] { colour = blue; }));
+    template <typename... Bodies>
+    void switchOn(const Int& selector, const SwitchClause<Bodies>&... clauses)
+    {
+        recordSwitch(selector.node, clauses...);
+    }
+
+    template <typename... Bodies>
+    void switchOn(const UInt& selector, const SwitchClause<Bodies>&... clauses)
+    {
+        recordSwitch(selector.node, clauses...);
+    }
+
+    // Leaves the function here. A kernel's invocation ends; a vertex or
+    // fragment function returns its outputs - the position and varyings, or
+    // the colour with its depth, mask and discardBelow test - as they
+    // evaluate at this point, so a var those outputs read is the value
+    // returned.
+    void returnEarly();
+
+    // The fragment writes nothing - neither colour nor depth. A statement, so
+    // any number of them sit wherever the fragment's statements do; the
+    // vertex stage and a kernel have none.
+    void discard();
+
+    // Records `body`'s statements - var, ifThen, loop and the two jumps - into
+    // the vertex function, ahead of the position and the varyings, where
+    // everything else goes to the fragment one. Expressions belong to no stage:
+    // each function prints what its own outputs and statements reach. A vertex
+    // texture read takes an explicit level (sampleLevel, sampleGrad, gather,
+    // load, sampleCompareLevel, sample at a level); sample, sampleBias,
+    // sampleCompare and dfdx/dfdy/fwidth need the fragment's derivatives and
+    // are refused there.
+    template <typename Body>
+    void vertexStage(Body&& body)
+    {
+        graphData.beginVertexStage();
+        body();
+        graphData.endVertexStage();
+    }
 
     void position(const Float4& clipPosition);
     void fragment(const Float4& color);
@@ -737,6 +1131,26 @@ public:
     constexpr const ShaderGraph& graph() const { return graphData; }
 
 private:
+    template <typename... Bodies>
+    void recordSwitch(int selector, const SwitchClause<Bodies>&... clauses)
+    {
+        auto cases = graphData.pushBlock(BlockRole::Cases);
+        (recordClause(clauses), ...);
+        graphData.popBlock();
+
+        graphData.addSwitch(selector, cases);
+    }
+
+    template <typename Body>
+    void recordClause(const SwitchClause<Body>& clause)
+    {
+        auto block = graphData.pushBlock();
+        clause.body();
+        graphData.popBlock();
+
+        graphData.addCase(clause.labels, block);
+    }
+
     template <typename T>
     T indexValue(int node)
     {
@@ -744,6 +1158,23 @@ private:
         value.graph = &graphData;
         value.node = node;
         return value;
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomic(AtomicOperation operation,
+                               const Target& target,
+                               const AtomicIndex& index,
+                               const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        auto at = index.nodeOn(graphData);
+        auto variables = graphData.addAtomic(operation,
+                                             detail::atomicMemoryOf(target),
+                                             target.slot,
+                                             at,
+                                             value.nodeOn(graphData));
+
+        return indexValue<AtomicValue<Target>>(
+            graphData.addVarRead(variables.previous));
     }
 
     template <typename T>

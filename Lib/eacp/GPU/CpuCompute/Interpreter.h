@@ -15,6 +15,51 @@ namespace eacp::GPU::CpuCompute
 static_assert(std::atomic_ref<Word>::is_always_lock_free);
 static_assert(std::atomic_ref<Word>::required_alignment == alignof(Word));
 
+// What an atomic operation leaves in the element, given what it held: Max and
+// Min compare as signed on an Int element, and the rest are the same bits
+// whichever the element is.
+constexpr Word
+    atomicCombine(AtomicOperation operation, bool isSigned, Word old, Word value)
+{
+    auto oldSigned = Lanes::toSigned(old);
+    auto valueSigned = Lanes::toSigned(value);
+
+    switch (operation)
+    {
+        case AtomicOperation::Add:
+            return old + value;
+        case AtomicOperation::Sub:
+            return old - value;
+        case AtomicOperation::Max:
+            if (isSigned)
+                return oldSigned > valueSigned ? old : value;
+
+            return old > value ? old : value;
+        case AtomicOperation::Min:
+            if (isSigned)
+                return oldSigned < valueSigned ? old : value;
+
+            return old < value ? old : value;
+        case AtomicOperation::And:
+            return old & value;
+        case AtomicOperation::Or:
+            return old | value;
+        case AtomicOperation::Xor:
+            return old ^ value;
+        case AtomicOperation::Exchange:
+        case AtomicOperation::CompareExchange:
+            return value;
+    }
+
+    return old;
+}
+
+struct AtomicOutcome
+{
+    Word previous = 0;
+    bool exchanged = false;
+};
+
 struct SlotView
 {
     Word load(Word element) const
@@ -29,18 +74,65 @@ struct SlotView
         std::memcpy(data + sizeof(Word) * element, &word, sizeof(Word));
     }
 
-    // Only an Atomic slot takes these, and it is bound from a span of
-    // uint32_t, so the words are real, aligned uint32_t objects.
+    // Only an Atomic slot takes these, and it is bound from a span of uint32_t
+    // or int32_t, so the words are real, aligned 32-bit integers - which may
+    // alias as one another. Groups on other threads reach the same words, so
+    // every access, the store included, is an atomic one.
     Word atomicLoad(Word element) const
     {
         return std::atomic_ref<Word>(atomicWord(element))
             .load(std::memory_order_relaxed);
     }
 
-    Word atomicAdd(Word element, Word value) const
+    void atomicStore(Word element, Word value) const
     {
-        return std::atomic_ref<Word>(atomicWord(element))
-            .fetch_add(value, std::memory_order_relaxed);
+        std::atomic_ref<Word>(atomicWord(element))
+            .store(value, std::memory_order_relaxed);
+    }
+
+    AtomicOutcome atomicApply(Word element,
+                              AtomicOperation operation,
+                              bool isSigned,
+                              Word value,
+                              Word compare) const
+    {
+        constexpr auto relaxed = std::memory_order_relaxed;
+        auto word = std::atomic_ref<Word>(atomicWord(element));
+
+        switch (operation)
+        {
+            case AtomicOperation::Add:
+                return {word.fetch_add(value, relaxed)};
+            case AtomicOperation::Sub:
+                return {word.fetch_sub(value, relaxed)};
+            case AtomicOperation::And:
+                return {word.fetch_and(value, relaxed)};
+            case AtomicOperation::Or:
+                return {word.fetch_or(value, relaxed)};
+            case AtomicOperation::Xor:
+                return {word.fetch_xor(value, relaxed)};
+            case AtomicOperation::Exchange:
+                return {word.exchange(value, relaxed)};
+            case AtomicOperation::CompareExchange:
+            {
+                auto expected = compare;
+                auto exchanged =
+                    word.compare_exchange_strong(expected, value, relaxed, relaxed);
+                return {expected, exchanged};
+            }
+            case AtomicOperation::Max:
+            case AtomicOperation::Min:
+                break;
+        }
+
+        auto old = word.load(relaxed);
+
+        while (!word.compare_exchange_weak(
+            old, atomicCombine(operation, isSigned, old, value), relaxed, relaxed))
+        {
+        }
+
+        return {old};
     }
 
     Word& atomicWord(Word element) const
@@ -177,6 +269,7 @@ struct LoopFrame
 {
     MaskFrame* iteration = nullptr;
     Word* live = nullptr;
+    const LoopFrame* outer = nullptr;
 };
 
 void evaluateRange(const Context& context, int begin, int end);

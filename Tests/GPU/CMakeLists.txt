@@ -3,12 +3,21 @@
 nano_add_executable(GPUCodegenTests
         SOURCES
             AtomicCodegenTests.cpp
+            AtomicOpsCodegenTests.cpp
             ComputeKernelCodegenTests.cpp
+            ControlFlowCodegenTests.cpp
             GroupReductionCodegenTests.cpp
+            SamplerBindingCodegenTests.cpp
             ShaderCodegenTests.cpp
             ShaderCompilerTests.cpp
             ShaderEmissionTests.cpp
             SimdMatrixCodegenTests.cpp
+            StageBuiltInCodegenTests.cpp
+            StorageTextureCodegenTests.cpp
+            TextureFunctionCodegenTests.cpp
+            TypesCodegenTests.cpp
+            VertexStatementCodegenTests.cpp
+            WgslBuiltinCodegenTests.cpp
         TARGETS eacp-gpu-codegen eacp-cpu-compute eacp-shader-compiler)
 
 # With eacp-spirv around, every emitted GLSL source is compiled by glslang too;
@@ -31,6 +40,7 @@ endif ()
 # except for the CPU half of a compute cross-check (CpuCrossCheck.h).
 set(gpu_test_sources
         AdoptedMemoryTests.cpp
+        AtomicOpsDeviceTests.cpp
         AtomicTests.cpp
         BackingScaleTests.cpp
         BaseVertexTests.cpp
@@ -46,6 +56,7 @@ set(gpu_test_sources
         ComputeBufferSlotTests.cpp
         ConcurrentPassTests.cpp
         ContinuousRenderSwitchTests.cpp
+        ControlFlowDeviceTests.cpp
         CoordinateSpaceTests.cpp
         CubeTextureTests.cpp
         CullModeTests.cpp
@@ -63,6 +74,7 @@ set(gpu_test_sources
         FrameComputeTests.cpp
         FrameRedirectTests.cpp
         FrameTimingTests.cpp
+        FragmentBuiltInTests.cpp
         GPUSmokeTests.cpp
         GPUSnapshotTests.cpp
         GroupReductionTests.cpp
@@ -72,6 +84,7 @@ set(gpu_test_sources
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
         IntrinsicTests.cpp
+        KernelBuiltInDeviceTests.cpp
         KernelImageTests.cpp
         LargeBufferTests.cpp
         MipmapTests.cpp
@@ -91,6 +104,7 @@ set(gpu_test_sources
         RenderBufferRangeTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
+        SamplerBindingDeviceTests.cpp
         SamplerTests.cpp
         ScissorTests.cpp
         SelectTests.cpp
@@ -102,12 +116,14 @@ set(gpu_test_sources
         SpriteBatchTests.cpp
         StageBuiltInTests.cpp
         StencilTests.cpp
+        StorageTextureDeviceTests.cpp
         StorePlacementTests.cpp
         StreamedRangeDrawTests.cpp
         StreamingBufferTests.cpp
         SubresourceTargetTests.cpp
         SuppliedMipChainTests.cpp
         TextureCreationTests.cpp
+        TextureFunctionDeviceTests.cpp
         TextureReadTests.cpp
         TextureRegionTests.cpp
         TextureArrayTests.cpp
@@ -115,14 +131,17 @@ set(gpu_test_sources
         TextureUpdateTests.cpp
         ThreadGroupSizeTests.cpp
         ThreadIndexVectorTests.cpp
+        TypesDeviceTests.cpp
         UIntBufferTests.cpp
         UIntBufferVectorTests.cpp
         UIntScalarTests.cpp
         UIntVectorTests.cpp
         VertexFormatTests.cpp
         VertexOnlyPipelineTests.cpp
+        VertexStatementDeviceTests.cpp
         VertexTextureTests.cpp
         ViewportTests.cpp
+        WgslIntrinsicTests.cpp
         TestMain.cpp)
 
 # The zero-copy CVPixelBuffer wrap test and the Metal build-failure policy are

@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "../Buffer/Buffer.h"
+#include "../Texture/Sampler.h"
 #include "ShaderBuilder.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
@@ -49,10 +50,60 @@ struct CpuValueOf<Float4>
     using type = Array<float, 4>;
 };
 
+// A matrix is its columns one after another, as tightly as their floats go;
+// the upload walk spreads them to the block's column stride.
 template <>
 struct CpuValueOf<Float4x4>
 {
     using type = Array<float, 16>;
+};
+
+template <>
+struct CpuValueOf<Float2x2>
+{
+    using type = Array<float, 4>;
+};
+
+template <>
+struct CpuValueOf<Float3x3>
+{
+    using type = Array<float, 9>;
+};
+
+template <>
+struct CpuValueOf<Float2x3>
+{
+    using type = Array<float, 6>;
+};
+
+template <>
+struct CpuValueOf<Float2x4>
+{
+    using type = Array<float, 8>;
+};
+
+template <>
+struct CpuValueOf<Float3x2>
+{
+    using type = Array<float, 6>;
+};
+
+template <>
+struct CpuValueOf<Float3x4>
+{
+    using type = Array<float, 12>;
+};
+
+template <>
+struct CpuValueOf<Float4x2>
+{
+    using type = Array<float, 8>;
+};
+
+template <>
+struct CpuValueOf<Float4x3>
+{
+    using type = Array<float, 12>;
 };
 
 template <>
@@ -361,6 +412,49 @@ struct Uniform<TextureDepth2DArray> : TextureDepth2DArray
     TextureSampling sampling {};
 };
 
+// The kinds TextureFunctions.h adds, in the same shape: a ThreeD or CubeArray
+// texture assigned to the colour ones, the Cube or CubeArray render target to
+// the depth ones.
+template <typename Handle>
+struct TextureMember : Handle
+{
+    constexpr TextureMember& operator=(const Texture& newTexture)
+    {
+        value = &newTexture;
+        return *this;
+    }
+
+    TextureMember& operator=(Texture&&) = delete;
+
+    const Texture* value = nullptr;
+
+    TextureSampling sampling {};
+};
+
+template <>
+struct Uniform<Texture3D> : TextureMember<Texture3D>
+{
+    using TextureMember::operator=;
+};
+
+template <>
+struct Uniform<TextureCubeArray> : TextureMember<TextureCubeArray>
+{
+    using TextureMember::operator=;
+};
+
+template <>
+struct Uniform<TextureDepthCube> : TextureMember<TextureDepthCube>
+{
+    using TextureMember::operator=;
+};
+
+template <>
+struct Uniform<TextureDepthCubeArray> : TextureMember<TextureDepthCubeArray>
+{
+    using TextureMember::operator=;
+};
+
 // Storage-buffer members of a compute program, following the texture pattern:
 // the slot-indexed handle define() reads or writes, and the slot the assigned
 // GPU::Buffer is bound at when dispatched. A Buffer binds whole, a BufferRange
@@ -433,12 +527,62 @@ struct Uniform<UIntOutputBuffer> : UIntOutputBuffer
     BufferRange value {};
 };
 
+// The signed pair, bound the same way; their bytes are int32s.
+template <>
+struct Uniform<IntInputBuffer> : IntInputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer);
+
+    constexpr Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
+template <>
+struct Uniform<IntOutputBuffer> : IntOutputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer);
+
+    constexpr Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
 // The atomic sibling, bound the same way an output is. The buffer's contents
 // are unsigned integers rather than floats, so the bytes handed to it want to
 // start as such - a buffer of zeroed uint32s, not of zeroed floats, though the
 // two happen to agree on zero.
 template <>
 struct Uniform<AtomicBuffer> : AtomicBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer);
+
+    constexpr Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
+// The signed atomic sibling, bound the same way; its bytes are int32s.
+template <>
+struct Uniform<IntAtomicBuffer> : IntAtomicBuffer
 {
     Uniform& operator=(const Buffer& newBuffer);
 
@@ -472,6 +616,56 @@ struct Uniform<WritableTexture2D> : WritableTexture2D
     const Texture* value = nullptr;
 };
 
+// A storage texture member (StorageTextures.h), assigned the texture to bind.
+// Its format has to be the one the member names and its kind the member's
+// shape - a TwoD texture, a TwoDArray (or a Cube or CubeArray, as the 2D array
+// of its faces) or a ThreeD - or the bind binds nothing. Write and ReadWrite
+// want a texture created with TextureDescriptor::computeWrite.
+template <TextureKind Kind, TextureFormat Format, StorageAccess Access>
+struct Uniform<StorageTexture<Kind, Format, Access>>
+    : StorageTexture<Kind, Format, Access>
+{
+    constexpr Uniform& operator=(const Texture& newTexture)
+    {
+        value = &newTexture;
+        return *this;
+    }
+
+    Uniform& operator=(Texture&&) = delete;
+
+    const Texture* value = nullptr;
+};
+
+// A sampler member (Samplers.h), assigned the Device::makeSampler sampler to
+// bind. Unlike a texture it holds the handle itself, which costs nothing to
+// copy and lives as long as its Device, so a temporary is welcome here. One
+// left unassigned binds nothing, as an unassigned texture does; a comparison
+// member binds only a sampler with a CompareFunction and a plain member only
+// one without.
+template <>
+struct Uniform<SamplerBinding> : SamplerBinding
+{
+    Uniform& operator=(const Sampler& newSampler)
+    {
+        value = newSampler;
+        return *this;
+    }
+
+    Sampler value;
+};
+
+template <>
+struct Uniform<ComparisonSamplerBinding> : ComparisonSamplerBinding
+{
+    Uniform& operator=(const Sampler& newSampler)
+    {
+        value = newSampler;
+        return *this;
+    }
+
+    Sampler value;
+};
+
 // The non-templated surface the uniform member walk bottoms out in. The templated
 // operator() adapts any Uniform<T> onto it, the same way Miro's Property adapts
 // arbitrary fields onto its Reflector - but shaped for the GPU job.
@@ -496,6 +690,14 @@ public:
 
     void operator()(const char* name, Uniform<TextureDepth2DArray>& member);
 
+    void operator()(const char* name, Uniform<Texture3D>& member);
+
+    void operator()(const char* name, Uniform<TextureCubeArray>& member);
+
+    void operator()(const char* name, Uniform<TextureDepthCube>& member);
+
+    void operator()(const char* name, Uniform<TextureDepthCubeArray>& member);
+
     void operator()(const char* name, Uniform<InputBuffer>& member);
 
     void operator()(const char* name, Uniform<OutputBuffer>& member);
@@ -504,9 +706,26 @@ public:
 
     void operator()(const char* name, Uniform<UIntOutputBuffer>& member);
 
+    void operator()(const char* name, Uniform<IntInputBuffer>& member);
+
+    void operator()(const char* name, Uniform<IntOutputBuffer>& member);
+
     void operator()(const char* name, Uniform<AtomicBuffer>& member);
 
+    void operator()(const char* name, Uniform<IntAtomicBuffer>& member);
+
     void operator()(const char* name, Uniform<WritableTexture2D>& member);
+
+    void operator()(const char* name, Uniform<SamplerBinding>& member);
+
+    void operator()(const char* name, Uniform<ComparisonSamplerBinding>& member);
+
+    template <TextureKind Kind, TextureFormat Format, StorageAccess Access>
+    void operator()(const char* name,
+                    Uniform<StorageTexture<Kind, Format, Access>>& member)
+    {
+        onStorageTexture(name, member.layout, member, member.value);
+    }
 
 protected:
     virtual void onUniform(const char* name,
@@ -531,14 +750,37 @@ protected:
                                      TextureDepth2DArray&,
                                      const Texture*,
                                      TextureSampling);
+
+    // Every kind TextureFunctions.h adds, told apart by `kind`; a depth kind's
+    // texture is the render target whose plane it reads.
+    virtual void onTextureOfKind(const char*,
+                                 TextureKind kind,
+                                 detail::TextureHandle&,
+                                 const Texture*,
+                                 TextureSampling);
     virtual void onInputBuffer(const char*, InputBuffer&, const BufferRange&);
     virtual void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&);
     virtual void
         onUIntInputBuffer(const char*, UIntInputBuffer&, const BufferRange&);
     virtual void
         onUIntOutputBuffer(const char*, UIntOutputBuffer&, const BufferRange&);
+    virtual void onIntInputBuffer(const char*, IntInputBuffer&, const BufferRange&);
+    virtual void
+        onIntOutputBuffer(const char*, IntOutputBuffer&, const BufferRange&);
     virtual void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&);
+    virtual void
+        onIntAtomicBuffer(const char*, IntAtomicBuffer&, const BufferRange&);
     virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*);
+    virtual void onStorageTexture(const char*,
+                                  const StorageTextureLayout&,
+                                  detail::TextureHandle&,
+                                  const Texture*);
+
+    // Both sampler members, told apart by `comparison`.
+    virtual void onSampler(const char*,
+                           detail::SamplerHandle&,
+                           bool comparison,
+                           const Sampler&);
 };
 
 // Build walk: each uniform member adopts a freshly added graph slot, so define()
@@ -578,6 +820,12 @@ public:
                              const Texture*,
                              TextureSampling sampling) override;
 
+    void onTextureOfKind(const char*,
+                         TextureKind kind,
+                         detail::TextureHandle& handle,
+                         const Texture*,
+                         TextureSampling sampling) override;
+
     void
         onInputBuffer(const char*, InputBuffer& handle, const BufferRange&) override;
 
@@ -593,13 +841,35 @@ public:
                             UIntOutputBuffer& handle,
                             const BufferRange&) override;
 
+    void onIntInputBuffer(const char*,
+                          IntInputBuffer& handle,
+                          const BufferRange&) override;
+
+    void onIntOutputBuffer(const char*,
+                           IntOutputBuffer& handle,
+                           const BufferRange&) override;
+
     void onAtomicBuffer(const char*,
                         AtomicBuffer& handle,
                         const BufferRange&) override;
 
+    void onIntAtomicBuffer(const char*,
+                           IntAtomicBuffer& handle,
+                           const BufferRange&) override;
+
     void onWritableTexture(const char*,
                            WritableTexture2D& handle,
                            const Texture*) override;
+
+    void onStorageTexture(const char*,
+                          const StorageTextureLayout& layout,
+                          detail::TextureHandle& handle,
+                          const Texture*) override;
+
+    void onSampler(const char*,
+                   detail::SamplerHandle& handle,
+                   bool comparison,
+                   const Sampler&) override;
 
 private:
     ShaderBuilder& builder;

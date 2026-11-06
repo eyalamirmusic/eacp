@@ -1,5 +1,6 @@
 #include "Interpreter.h"
 
+#include <algorithm>
 #include <climits>
 
 namespace eacp::GPU::CpuCompute
@@ -315,14 +316,17 @@ OperandLanes operandLanes(const Context& context,
     return lanes;
 }
 
+// Element (column, row) of a matrix with `rows` rows is component
+// column * rows + row: its columns one after another.
 void evaluateMatrixVector(const Context& context, const Plan::Node& node)
 {
-    auto order = static_cast<int>(node.order);
-    auto matrix = operandLanes(context, node, 0, order * order);
-    auto vector = operandLanes(context, node, 1, order);
+    auto columns = static_cast<int>(node.columns);
+    auto rows = static_cast<int>(node.rows);
+    auto matrix = operandLanes(context, node, 0, columns * rows);
+    auto vector = operandLanes(context, node, 1, columns);
     auto stride = context.stride;
 
-    for (auto row = 0; row < order; ++row)
+    for (auto row = 0; row < rows; ++row)
     {
         auto* out = context.lanes(node, row);
 
@@ -330,9 +334,9 @@ void evaluateMatrixVector(const Context& context, const Plan::Node& node)
         {
             auto sum = 0.f;
 
-            for (auto column = 0; column < order; ++column)
+            for (auto column = 0; column < columns; ++column)
             {
-                auto m = toFloat(matrix[column * order + row][lane]);
+                auto m = toFloat(matrix[column * rows + row][lane]);
                 auto v = toFloat(vector[column][lane]);
                 sum = column == 0 ? m * v : sum + m * v;
             }
@@ -344,12 +348,13 @@ void evaluateMatrixVector(const Context& context, const Plan::Node& node)
 
 void evaluateVectorMatrix(const Context& context, const Plan::Node& node)
 {
-    auto order = static_cast<int>(node.order);
-    auto vector = operandLanes(context, node, 0, order);
-    auto matrix = operandLanes(context, node, 1, order * order);
+    auto columns = static_cast<int>(node.columns);
+    auto rows = static_cast<int>(node.rows);
+    auto vector = operandLanes(context, node, 0, rows);
+    auto matrix = operandLanes(context, node, 1, columns * rows);
     auto stride = context.stride;
 
-    for (auto column = 0; column < order; ++column)
+    for (auto column = 0; column < columns; ++column)
     {
         auto* out = context.lanes(node, column);
 
@@ -357,10 +362,10 @@ void evaluateVectorMatrix(const Context& context, const Plan::Node& node)
         {
             auto sum = 0.f;
 
-            for (auto row = 0; row < order; ++row)
+            for (auto row = 0; row < rows; ++row)
             {
                 auto v = toFloat(vector[row][lane]);
-                auto m = toFloat(matrix[column * order + row][lane]);
+                auto m = toFloat(matrix[column * rows + row][lane]);
                 sum = row == 0 ? v * m : sum + v * m;
             }
 
@@ -369,32 +374,86 @@ void evaluateVectorMatrix(const Context& context, const Plan::Node& node)
     }
 }
 
+// (order x rows) * (columns x order): result element (column, row) sums
+// left (k, row) * right (column, k) over k.
 void evaluateMatrixMatrix(const Context& context, const Plan::Node& node)
 {
-    auto order = static_cast<int>(node.order);
-    auto leftMatrix = operandLanes(context, node, 0, order * order);
-    auto rightMatrix = operandLanes(context, node, 1, order * order);
+    auto inner = static_cast<int>(node.order);
+    auto rows = static_cast<int>(node.rows);
+    auto columns = static_cast<int>(node.columns);
+    auto leftMatrix = operandLanes(context, node, 0, inner * rows);
+    auto rightMatrix = operandLanes(context, node, 1, columns * inner);
     auto stride = context.stride;
 
-    for (auto column = 0; column < order; ++column)
+    for (auto column = 0; column < columns; ++column)
     {
-        for (auto row = 0; row < order; ++row)
+        for (auto row = 0; row < rows; ++row)
         {
-            auto* out = context.lanes(node, column * order + row);
+            auto* out = context.lanes(node, column * rows + row);
 
             for (auto lane = 0; lane < stride; ++lane)
             {
                 auto sum = 0.f;
 
-                for (auto k = 0; k < order; ++k)
+                for (auto k = 0; k < inner; ++k)
                 {
-                    auto left = toFloat(leftMatrix[k * order + row][lane]);
-                    auto right = toFloat(rightMatrix[column * order + k][lane]);
+                    auto left = toFloat(leftMatrix[k * rows + row][lane]);
+                    auto right = toFloat(rightMatrix[column * inner + k][lane]);
                     sum = k == 0 ? left * right : sum + left * right;
                 }
 
                 out[lane] = toWord(sum);
             }
+        }
+    }
+}
+
+// The index is clamped again here, so a graph built without the EDSL's clamp
+// still reads inside the matrix or the array.
+int clampedLaneIndex(Word index, bool isSigned, int count)
+{
+    if (isSigned)
+        return std::clamp(toSigned(index), 0, count - 1);
+
+    return static_cast<int>(std::min(index, static_cast<Word>(count - 1)));
+}
+
+void evaluateMatrixColumn(const Context& context, const Plan::Node& node)
+{
+    auto columns = static_cast<int>(node.columns);
+    auto rows = static_cast<int>(node.rows);
+    auto matrix = operandLanes(context, node, 0, columns * rows);
+    const auto* indices = context.operand(node, 1, 0);
+    auto isSigned = node.sub != 0;
+    auto stride = context.stride;
+
+    for (auto lane = 0; lane < stride; ++lane)
+    {
+        auto column = clampedLaneIndex(indices[lane], isSigned, columns);
+
+        for (auto row = 0; row < rows; ++row)
+            context.lanes(node, row)[lane] = matrix[column * rows + row][lane];
+    }
+}
+
+void evaluateVariableElementRead(const Context& context, const Plan::Node& node)
+{
+    const auto& variable = context.plan.variables()[node.immediate];
+    const auto* storage = context.lanes(variable.storage);
+    const auto* indices = context.operand(node, 0, 0);
+    auto isSigned = node.sub != 0;
+    auto stride = context.stride;
+
+    for (auto component = 0; component < node.components; ++component)
+    {
+        auto* out = context.lanes(node, component);
+
+        for (auto lane = 0; lane < stride; ++lane)
+        {
+            auto element =
+                clampedLaneIndex(indices[lane], isSigned, variable.elements);
+            auto row = element * variable.components + component;
+            out[lane] = storage[row * stride + lane];
         }
     }
 }
@@ -702,6 +761,14 @@ void evaluateNode(const Context& context, const Plan::Node& node)
 
         case Op::MatMat:
             evaluateMatrixMatrix(context, node);
+            return;
+
+        case Op::MatrixColumn:
+            evaluateMatrixColumn(context, node);
+            return;
+
+        case Op::VariableElementRead:
+            evaluateVariableElementRead(context, node);
             return;
 
         case Op::BufferRead:

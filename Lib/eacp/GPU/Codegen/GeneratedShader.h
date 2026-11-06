@@ -4,6 +4,8 @@
 #include "../Shader/ShaderSource.h"
 #include "ShaderGraph.h"
 
+#include <cstdint>
+
 namespace eacp::GPU
 {
 // The output of the EDSL: the native source for the current backend (ready for
@@ -28,5 +30,15 @@ struct GeneratedShader
     // which takes its uniforms as a ComputePass bind instead.
     bool vertexReadsUniforms = false;
     bool fragmentReadsUniforms = false;
+
+    // One bit per texture slot, sampler slots included, that the vertex stage
+    // reads: the slots ShaderProgram::bindTextures binds to the vertex stage
+    // as well as to the fragment one. Zero for a kernel.
+    std::uint32_t vertexTextureSlots = 0u;
+
+    constexpr bool vertexReadsTexture(int slot) const
+    {
+        return slot >= 0 && slot < 32 && ((vertexTextureSlots >> slot) & 1u) != 0u;
+    }
 };
 } // namespace eacp::GPU

@@ -36,6 +36,8 @@ enum class ExprKind
     // Unlike every other node this is not a pure expression: what it evaluates
     // to depends on which statements have run, so the emitter never hoists one
     // past an assignment (see the per-statement local planning in the emitter).
+    // On a private array it is one element: args = {the index, already
+    // clamped to the array}.
     Mul, // a matrix product: args = {left, right} in the order written, which
     // is matrix * vector, vector * matrix or matrix * matrix. Emits per-backend
     // (MSL uses the * operator, HLSL uses mul()), so it is not a plain Binary -
@@ -74,16 +76,84 @@ enum class ExprKind
     SimdGroupIndex, // which SIMD group of the threadgroup this thread is in.
     // Metal's own builtin; the flat local index divided by simdGroupWidth
     // where there is no builtin, which is the same number.
-    BuiltIn // a value a render stage is handed rather than computes; index =
-    // the ShaderBuiltIn.
+    BuiltIn, // a value a stage is handed rather than computes; index = the
+    // ShaderBuiltIn.
+    TextureFunction, // one of WGSL's texture functions past the plain sample;
+    // index = texture slot, text = the function (see textureFunctionName),
+    // args = {coordinate, the layer on a layered kind, then the function's
+    // own: a level, a bias, two gradients or a reference}, op = the component
+    // a colour gather reads ('x'..'w').
+    TextureQuery, // textureDimensions, textureNumLevels or textureNumLayers;
+    // index = texture slot, text = "size", "levels" or "layers", args = {the
+    // level} where a size names one.
+    MatrixColumn // one column of a float matrix; args = {matrix, an Int index
+    // already clamped to the columns}. MSL and GLSL subscript the matrix; HLSL,
+    // whose subscript is a row, subscripts its transpose.
 };
 
+// The values a stage is handed rather than computes. The first six belong to a
+// render stage and the last four to a kernel; which stage may read one is
+// stageOf's answer, and the emitters assert it.
 enum class ShaderBuiltIn
 {
     FragmentCoordinate,
     VertexId,
-    InstanceId
+    InstanceId,
+    FrontFacing,
+    SampleIndex,
+    SampleMask,
+    LocalIndex,
+    GroupCount,
+    SimdLaneIndex,
+    SimdGroupSize
 };
+
+constexpr ShaderStage stageOf(ShaderBuiltIn which)
+{
+    switch (which)
+    {
+        case ShaderBuiltIn::VertexId:
+        case ShaderBuiltIn::InstanceId:
+            return ShaderStage::Vertex;
+
+        case ShaderBuiltIn::FragmentCoordinate:
+        case ShaderBuiltIn::FrontFacing:
+        case ShaderBuiltIn::SampleIndex:
+        case ShaderBuiltIn::SampleMask:
+            return ShaderStage::Fragment;
+
+        case ShaderBuiltIn::LocalIndex:
+        case ShaderBuiltIn::GroupCount:
+        case ShaderBuiltIn::SimdLaneIndex:
+        case ShaderBuiltIn::SimdGroupSize:
+            return ShaderStage::Compute;
+    }
+
+    return ShaderStage::Fragment;
+}
+
+constexpr ValueType builtInType(ShaderBuiltIn which)
+{
+    switch (which)
+    {
+        case ShaderBuiltIn::FragmentCoordinate:
+            return ValueType::Float4;
+        case ShaderBuiltIn::FrontFacing:
+            return ValueType::Bool;
+        case ShaderBuiltIn::GroupCount:
+            return ValueType::UInt3;
+        case ShaderBuiltIn::VertexId:
+        case ShaderBuiltIn::InstanceId:
+        case ShaderBuiltIn::SampleIndex:
+        case ShaderBuiltIn::SampleMask:
+        case ShaderBuiltIn::LocalIndex:
+        case ShaderBuiltIn::SimdLaneIndex:
+        case ShaderBuiltIn::SimdGroupSize:
+            return ValueType::UInt;
+    }
+
+    return ValueType::UInt;
+}
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
 // const / D3D SRV), a writable output (Metal device / D3D UAV), or an atomic
@@ -105,11 +175,90 @@ enum class BufferAccess
 // texture2d<float>, D3D Texture2D through an SRV) or written by a kernel
 // (Metal access::write, D3D RWTexture2D through a UAV). Both kinds take slots
 // from one counter, because Metal binds them to one texture index space.
+//
+// Read and ReadWrite are the storage textures of StorageTextures.h: a texel
+// load with no sampler through the read binding (an SRV, a sampled image), and
+// a load and a store through the write one. Write, Read and ReadWrite slots
+// carry the format they were declared with (ShaderGraph::textureFormat).
+//
+// Sampler is no texture at all: a sampler declared as a binding of its own
+// (Samplers.h), which takes its slot from the same counter so its sampler
+// index, register and binding are ones no texture's baked sampler holds.
 enum class TextureAccess
 {
     Sample,
-    Write
+    Write,
+    Read,
+    ReadWrite,
+    Sampler
 };
+
+constexpr bool isStorageAccess(TextureAccess access)
+{
+    return access == TextureAccess::Write || access == TextureAccess::Read
+           || access == TextureAccess::ReadWrite;
+}
+
+// Whether a storage texture may be declared in this format: every format a
+// kernel can be asked to store to, which is every uncompressed one but
+// BGRA8Unorm, the sRGB ones and RGB9E5Float (supportsComputeWrite's refusals).
+constexpr bool isStorageTextureFormat(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::BGRA8Unorm:
+        case TextureFormat::RGBA8UnormSrgb:
+        case TextureFormat::BGRA8UnormSrgb:
+        case TextureFormat::RGB9E5Float:
+        case TextureFormat::BC1RGBA:
+        case TextureFormat::BC2RGBA:
+        case TextureFormat::BC3RGBA:
+        case TextureFormat::BC7RGBA:
+        case TextureFormat::BC1RGBASrgb:
+        case TextureFormat::BC2RGBASrgb:
+        case TextureFormat::BC3RGBASrgb:
+        case TextureFormat::BC7RGBASrgb:
+        case TextureFormat::BC4RUnorm:
+        case TextureFormat::BC4RSnorm:
+        case TextureFormat::BC5RGUnorm:
+        case TextureFormat::BC5RGSnorm:
+        case TextureFormat::BC6HRGBUfloat:
+            return false;
+        default:
+            return true;
+    }
+}
+
+// What a storage texture of this format loads and stores, WGSL's way: four
+// components whatever the format holds, of the format's own scalar.
+constexpr ValueType storageTexelType(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::R8Uint:
+        case TextureFormat::RG8Uint:
+        case TextureFormat::RGBA8Uint:
+        case TextureFormat::R16Uint:
+        case TextureFormat::RG16Uint:
+        case TextureFormat::RGBA16Uint:
+        case TextureFormat::R32Uint:
+        case TextureFormat::RG32Uint:
+        case TextureFormat::RGBA32Uint:
+            return ValueType::UInt4;
+        case TextureFormat::R8Sint:
+        case TextureFormat::RG8Sint:
+        case TextureFormat::RGBA8Sint:
+        case TextureFormat::R16Sint:
+        case TextureFormat::RG16Sint:
+        case TextureFormat::RGBA16Sint:
+        case TextureFormat::R32Sint:
+        case TextureFormat::RG32Sint:
+        case TextureFormat::RGBA32Sint:
+            return ValueType::Int4;
+        default:
+            return ValueType::Float4;
+    }
+}
 
 // What shape a texture slot is: a 2D image sampled with a float2, or six square
 // faces sampled with a float3 direction. It rides beside TextureAccess rather
@@ -141,18 +290,65 @@ enum class TextureKind
     // the coordinate: a TwoDArray texture, or the whole depth plane of a
     // TwoDArray target bound with setFragmentDepthTexture.
     Texture2DArray,
-    Depth2DArray
+    Depth2DArray,
+
+    // A ThreeD texture, an array of cubes, and the depth plane of a Cube or a
+    // CubeArray target. Read only through the texture functions below.
+    Texture3D,
+    CubeArray,
+    DepthCube,
+    DepthCubeArray
 };
 
 constexpr bool isLayered(TextureKind kind)
 {
-    return kind == TextureKind::Texture2DArray || kind == TextureKind::Depth2DArray;
+    return kind == TextureKind::Texture2DArray || kind == TextureKind::Depth2DArray
+           || kind == TextureKind::CubeArray || kind == TextureKind::DepthCubeArray;
 }
 
 constexpr bool isDepth(TextureKind kind)
 {
-    return kind == TextureKind::Depth2D || kind == TextureKind::Depth2DArray;
+    return kind == TextureKind::Depth2D || kind == TextureKind::Depth2DArray
+           || kind == TextureKind::DepthCube || kind == TextureKind::DepthCubeArray;
 }
+
+constexpr bool isCubeKind(TextureKind kind)
+{
+    return kind == TextureKind::Cube || kind == TextureKind::CubeArray
+           || kind == TextureKind::DepthCube || kind == TextureKind::DepthCubeArray;
+}
+
+// What a TextureFunction node does. Sample, Bias and Compare take the level
+// from the fragment's derivatives and are fragment-stage only; the rest run in
+// any stage that declares textures.
+enum class TextureFunction
+{
+    Sample,
+    Level,
+    Bias,
+    Grad,
+    Compare,
+    CompareLevel,
+    Gather,
+    GatherCompare,
+    Load
+};
+
+constexpr bool usesImplicitDerivatives(TextureFunction function)
+{
+    return function == TextureFunction::Sample || function == TextureFunction::Bias
+           || function == TextureFunction::Compare;
+}
+
+constexpr bool isComparisonFunction(TextureFunction function)
+{
+    return function == TextureFunction::Compare
+           || function == TextureFunction::CompareLevel
+           || function == TextureFunction::GatherCompare;
+}
+
+std::string_view textureFunctionName(TextureFunction function);
+TextureFunction textureFunctionNamed(std::string_view name);
 
 // Which fold a group-wide reduction performs over the value every thread of
 // the group contributed.
@@ -176,13 +372,32 @@ enum class ReductionScope
     Simd
 };
 
-// Where a SIMD-group matrix fragment is loaded from or stored to. The two are
-// different address spaces and nothing else: a threadgroup tile the group
-// staged, or a storage buffer the dispatch bound.
-enum class SimdMatrixMemory
+// Which of the two address spaces a statement reaches: a threadgroup array the
+// group staged, or a storage buffer the dispatch bound. A SIMD-group matrix
+// fragment is loaded from and stored to either, and an atomic acts on either.
+enum class MemorySpace
 {
     Shared,
     Buffer
+};
+
+using SimdMatrixMemory = MemorySpace;
+
+// The read-modify-write an Atomic statement performs. Every one yields the
+// value the element held before it; Max and Min compare as the element type
+// does, signed for an Int element. CompareExchange stores only when the element
+// equals the comparand, and says whether it did.
+enum class AtomicOperation
+{
+    Add,
+    Sub,
+    Max,
+    Min,
+    And,
+    Or,
+    Xor,
+    Exchange,
+    CompareExchange
 };
 
 // What the elements of a loaded fragment are in the memory it comes out of.
@@ -238,24 +453,39 @@ inline constexpr int allComponents = -1;
 
 // What a statement does. Statements are what the expression store on its own
 // cannot say: that one value is computed before another, that a value changes,
-// and that a run of them repeats or is skipped. Both shading languages spell
-// all six identically, so unlike the expression kinds none of these needs a
-// per-backend form.
+// and that a run of them repeats or is skipped. The control statements are
+// spelled alike in every dialect but Discard, which Metal calls
+// discard_fragment().
 enum class StatementKind
 {
-    Declare, // <type> vN = value; slot = variable, value = its initial value
-    Assign, // vN = value; slot = variable, value = the expression assigned
+    Declare, // <type> vN = value; slot = variable, value = its initial value.
+    // A private array's declaration sets every element to value
+    Assign, // vN = value; slot = variable, value = the expression assigned.
+    // index, where set, is the private-array element written (clamped)
     If, // if (value) { body } else { elseBody }
-    Loop, // while (value) { body }
+    Loop, // while (value) { body } - and, where continuing names a block,
+    // WGSL's continuing { ... }: run after the body and after every continue,
+    // before value is tested again
     Break,
     Continue,
+    BreakIf, // WGSL's break if: leaves the loop when value holds. Only the last
+    // statement of a continuing block
+    Switch, // switch (value) on an Int or UInt; body = a block of Case
+    // statements and nothing else. No clause falls through
+    Case, // one clause of a switch: slot = its labels (ShaderGraph::caseLabels),
+    // body = the block it runs
+    Return, // leaves the function: a kernel's invocation ends, and a vertex or
+    // fragment one returns its outputs as they evaluate at this point
+    Discard, // the fragment writes nothing, colour and depth alike
     Store, // buffer[index] = value; slot = the storage slot
     VectorStore, // buffer[index .. index + N - 1] = value; slot = the storage
     // slot, index = the *first element's* index, value = the vector stored. The
     // write mirror of ExprKind::BufferVectorRead, and one store for the same
     // reason: Metal reinterprets the pointer at the address it is storing to,
     // which retypes the access and not the binding.
-    TextureStore, // texture[index, indexY] = value; slot = the texture slot
+    TextureStore, // texture[index, indexY] = value; slot = the texture slot.
+    // A storage texture's store has indexY = -1, index = the coordinate
+    // vector and layer = the array layer (or -1).
     SharedStore, // shared[index] = value; slot = the threadgroup-array slot
     Barrier, // threadgroup barrier: every thread in the group arrives before
     // any proceeds, and threadgroup memory written before it is visible after
@@ -274,17 +504,19 @@ enum class StatementKind
     SimdMatrixStore, // that patch written back. The same fields, the other way.
     SimdMatrixMultiplyAdd, // slot = slot + left * right, all three fragments.
     // slot = the accumulator, left / right = the operands.
-    AtomicAdd // vN = atomicAdd(buffer[index], value), declaring vN. slot = the
-    // variable the value *before* the add lands in, bufferSlot / index = which
-    // element, value = what is added.
+    Atomic // vN = atomic<op>(memory[index], value), declaring vN. slot = the
+    // variable the value *before* the operation lands in, atomic = which
+    // operation, memory / bufferSlot / index = which element (a storage buffer
+    // or a threadgroup array), value = the operand. A CompareExchange also
+    // names compare = the comparand and exchanged = a Bool variable it declares.
     //
-    // A statement rather than an expression, and it is the one place the two
+    // A statement rather than an expression, and it is the one place the
     // languages force that: MSL's atomic_fetch_add_explicit returns the old
     // value, but HLSL's InterlockedAdd writes it through an out parameter and
     // cannot appear in the middle of one. Naming the result is the only shape
-    // both can print, and it is the shape a caller wants anyway - the old value
-    // is a slot reserved for this thread, which is what the whole operation is
-    // usually for.
+    // all of them can print, and it is the shape a caller wants anyway - the
+    // old value is a slot reserved for this thread, which is what the whole
+    // operation is usually for.
 };
 
 // One statement. Which fields carry meaning depends on the kind above; the
@@ -294,15 +526,21 @@ struct Statement
 {
     StatementKind kind = StatementKind::Assign;
     int slot = -1; // Declare / Assign: the variable written; stores: the slot
-    int value = -1; // Declare / Assign / stores: the value; If / Loop: the condition
-    int body = -1; // If / Loop: the block that runs
+    int value = -1; // Declare / Assign / stores: the value; If / Loop / BreakIf:
+    // the condition; Switch: the selector
+    int body = -1; // If / Loop / Case: the block that runs; Switch: its clauses
     int elseBody = -1; // If: the block that runs when the condition is false
+    int continuing = -1; // Loop: the block run before the condition is retested
     int index = -1; // Store: the element index; VectorStore: the *first*
     // element's index, the rest of the record following it; TextureStore: x;
-    // AtomicAdd: the element
+    // Atomic: the element
     int indexY = -1; // TextureStore: y
-    int bufferSlot = -1; // AtomicAdd: the buffer, its slot field being taken by
-    // the variable the old value lands in
+    int layer = -1; // TextureStore of a layered storage texture: the layer
+    int bufferSlot = -1; // Atomic: the buffer or the shared array, its slot
+    // field being taken by the variable the old value lands in
+    AtomicOperation atomic = AtomicOperation::Add; // Atomic: which operation
+    int compare = -1; // Atomic CompareExchange: the comparand
+    int exchanged = -1; // Atomic CompareExchange: the Bool variable it declares
     int record = -1; // Store: the record this element is a component of, -1
     // where the store is a write of its own
     int recordComponentsLeft = 0; // Store: how many components of that record
@@ -312,11 +550,22 @@ struct Statement
     int stride = -1; // SimdMatrixLoad / SimdMatrixStore: the patch's row stride
     int left = -1; // SimdMatrixMultiplyAdd: the left operand's fragment
     int right = -1; // SimdMatrixMultiplyAdd: the right operand's fragment
-    SimdMatrixMemory memory = SimdMatrixMemory::Shared; // which address space
-    // a SimdMatrixLoad / SimdMatrixStore reaches, bufferSlot being the slot in
-    // it
+    MemorySpace memory = MemorySpace::Shared; // which address space a
+    // SimdMatrixLoad / SimdMatrixStore or an Atomic reaches, bufferSlot being
+    // the slot in it
     SimdMatrixElement element = SimdMatrixElement::Float; // SimdMatrixLoad:
     // what the patch's elements are in memory, and so what the fragment is
+};
+
+// What a block is the body of, for the statements only some may hold: a jump
+// out of a loop needs a loop body, break-if a continuing block, and a switch's
+// clause list holds Case statements alone.
+enum class BlockRole
+{
+    Plain,
+    LoopBody,
+    Continuing,
+    Cases
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -324,6 +573,16 @@ struct Statement
 struct Block
 {
     Vector<int> statements; // indices into the graph's statement store
+    BlockRole role = BlockRole::Plain;
+};
+
+// The labels of one switch clause: integer literals of the selector's type,
+// held wide so an Int and a UInt label fit alike, and whether it is the
+// default clause.
+struct CaseLabels
+{
+    Vector<std::int64_t> values;
+    bool isDefault = false;
 };
 
 // A constant array the shader subscripts: the palette a procedural shader picks
@@ -344,10 +603,16 @@ struct ArrayConstant
 // boundary, so its element type is whatever the kernel wants - a float4 tile
 // is one wide element, not four scalars with a layout contract. The size is a
 // compile-time constant in the emitted source, fixed when define() runs.
+//
+// An atomic one holds UInt or Int elements declared in the type an atomic
+// operation acts through - Metal's atomic_uint / atomic_int - and is read and
+// stored through atomic loads and stores there; HLSL and GLSL declare it as
+// plain integers.
 struct SharedArray
 {
     ValueType elementType = ValueType::Float;
     int elements = 0;
+    bool atomic = false;
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -361,6 +626,8 @@ struct Expr
     char op = '+'; // Binary
     std::string text; // Swizzle components ("xy") or Call name ("sin")
     Vector<int> args; // child node ids
+    int sampler = -1; // TextureFunction: the sampler slot it samples through,
+    // -1 for the texture's own baked sampling
 };
 
 // Backend-agnostic shader IR: an expression-node store plus the shader's I/O
@@ -406,6 +673,7 @@ public:
         int x = -1;
         int y = -1;
         int value = -1;
+        int layer = -1;
     };
 
     int addInput(ValueType type);
@@ -459,13 +727,61 @@ public:
     int addVarRead(int slot);
     void assign(int slot, int value);
 
-    int pushBlock();
+    // WGSL's var a: array<T, N>: a private array of `size` elements, declared
+    // with every element set to `fill`, its elements read and written by an
+    // index. The index is an Int or a UInt; it is clamped into [0, size) here,
+    // as graph nodes, so every backend and the CPU executor read and write the
+    // same element for one past either end.
+    int addArrayVariable(ValueType elementType, int size, int fill);
+    int addVarElementRead(int slot, int index);
+    void assignElement(int slot, int index, int value);
+
+    // The elements of variable `slot`: 0 for a plain variable.
+    int variableArraySize(int slot) const;
+
+    // The zero of any value type, WGSL's zero value: a literal for a scalar, a
+    // construct of them for a vector, of zero columns for a matrix.
+    int addZero(ValueType type);
+
+    // Column `index` of a float matrix (an Int, clamped here like an array's).
+    int addMatrixColumn(int matrix, int index);
+
+    int pushBlock(BlockRole role = BlockRole::Plain);
     void popBlock();
 
     void addIf(int condition, int body, int elseBody);
-    void addLoop(int condition, int body);
+    void addLoop(int condition, int body, int continuing = -1);
     void addBreak();
     void addContinue();
+
+    // WGSL's break if, the last statement of a loop's continuing block.
+    void addBreakIf(int condition);
+
+    // A switch over an Int or UInt selector. Its clauses are Case statements
+    // recorded into a BlockRole::Cases block, each naming labels of the
+    // selector's type - no value twice, at most one default - and its body.
+    void addCase(const CaseLabels& labels, int body);
+    void addSwitch(int selector, int cases);
+    const CaseLabels& caseLabels(int clause) const;
+    int caseCount() const;
+
+    void addReturn();
+
+    // The fragment stage's discard, as many times and wherever its statements
+    // are; the vertex stage and a kernel have none.
+    void addDiscard();
+
+    // The vertex stage's statements. What is recorded between beginVertexStage
+    // and endVertexStage lands in a root block of its own, emitted into the
+    // vertex function ahead of the position and the varyings; everything else
+    // lands in rootBlock, the fragment's or the kernel's. A variable belongs to
+    // the stage it was declared in: only that stage assigns or reads it, and a
+    // vertex one reaches the fragment through a varying. Only the variable and
+    // control statements may be recorded here, discard excepted - WGSL's vertex
+    // stage has no storage writes, atomics or barriers. Not nested, and not
+    // opened inside a block.
+    void beginVertexStage();
+    void endVertexStage();
 
     // Registers a 2D texture slot (always a float-returning texture2d, so only
     // the slot index and how it is sampled are stored), and a sample of it at a
@@ -510,9 +826,42 @@ public:
     int addWritableTexture();
     void addTextureStore(int slot, int x, int y, int value);
 
+    // A storage texture of a 2D, 2D-array or 3D kind (StorageTextures.h), and
+    // its load and store at a coordinate vector, with the layer of an array
+    // or -1. The load is the slot format's storageTexelType.
+    int addStorageTexture(TextureKind kind,
+                          TextureFormat format,
+                          TextureAccess access);
+    int addStorageLoad(int slot, int coordinates, int layer);
+    void addStorageStore(int slot, int coordinates, int layer, int value);
+
     // One texel read straight out of the texture at integer coordinates: no
     // sampler, so no filtering, no addressing and no interpolation.
     int addFetch(int textureSlot, int coordinates);
+
+    // A slot of any kind, for the kinds with no entry point of their own above.
+    int addTextureOfKind(TextureKind kind, TextureSampling sampling = {});
+
+    // A sampler slot (TextureAccess::Sampler), from the texture counter, and
+    // whether one is a comparison sampler.
+    int addSampler(bool comparison);
+    bool isComparisonSampler(int slot) const;
+
+    // A TextureFunction node. args are the coordinate, the layer where the
+    // slot's kind is layered, then the function's own; a colour gather reads
+    // `component` (0 to 3). The node is a Float4, or a Float where a depth
+    // kind's sample, level or load gives one channel and every comparison.
+    // samplerSlot names a sampler slot to sample through in place of the
+    // texture's own sampling; a comparison function takes a comparison one.
+    int addTextureFunction(int textureSlot,
+                           TextureFunction function,
+                           const Vector<int>& args,
+                           int component = 0,
+                           int samplerSlot = -1);
+
+    // A TextureQuery node: "size" (a UInt2, a UInt3 on a Texture3D) at `level`,
+    // or with no level for level 0; "levels" or "layers" (a UInt) with none.
+    int addTextureQuery(int textureSlot, const std::string& query, int level = -1);
 
     // A constant array and a subscript of one. Reading past the end is
     // undefined in both shading languages exactly as it is in GLSL, so an index
@@ -562,9 +911,24 @@ public:
                         const Vector<int>& components,
                         int record);
 
-    // The atomic pair. addAtomicAdd returns the *variable* slot holding the
-    // element's value from before the add, which addVarRead then reads - it is a
-    // statement, so unlike every other producer here it does not yield a node.
+    // The atomics. addAtomic returns the *variable* slots holding the element's
+    // value from before the operation and, for a CompareExchange, whether it
+    // stored - which addVarRead then reads. It is a statement, so unlike every
+    // other producer here it does not yield a node. The slot is an Atomic
+    // storage buffer or an atomic shared array, by `memory`; the value, the
+    // comparand and the old value are its element type.
+    struct AtomicVariables
+    {
+        int previous = -1;
+        int exchanged = -1;
+    };
+
+    AtomicVariables addAtomic(AtomicOperation operation,
+                              MemorySpace memory,
+                              int slot,
+                              int index,
+                              int value,
+                              int compare = -1);
     int addAtomicAdd(int bufferSlot, int index, int value);
     int addAtomicLoad(int bufferSlot, int index);
 
@@ -588,7 +952,7 @@ public:
     int addGroupId3();
 
     int addGridExtent(DispatchRank forRank, int component);
-    int addSharedArray(ValueType elementType, int elements);
+    int addSharedArray(ValueType elementType, int elements, bool atomic = false);
     int addSharedRead(int slot, int index);
     void addSharedStore(int slot, int index, int value);
     void addBarrier();
@@ -621,6 +985,13 @@ public:
     constexpr void setPosition(int node) { positionNode = node; }
     constexpr void setFragment(int node) { fragmentNode = node; }
 
+    // The two fragment outputs beside the colour: the depth written in place
+    // of the rasterized one (a Float), and the coverage mask ANDed with the
+    // rasterizer's (a UInt). Either one, once set, turns the fragment's return
+    // into a struct on Metal and HLSL.
+    constexpr void setFragmentDepth(int node) { fragmentDepthNode = node; }
+    constexpr void setSampleMask(int node) { sampleMaskNode = node; }
+
     // The alpha test: a third fragment-stage root, evaluated before the colour
     // is written. When the node's value falls below the threshold the fragment
     // is killed outright, writing neither colour nor depth.
@@ -650,8 +1021,14 @@ public:
     // declaration, and the only other thing the emitter needs to print it.
     TextureKind textureKind(int slot) const;
 
+    // The format a storage slot was declared with; a WritableTexture2D's is
+    // RGBA32Float, which spells its float4 store in every dialect.
+    TextureFormat textureFormat(int slot) const;
+
     constexpr int position() const { return positionNode; }
     constexpr int fragment() const { return fragmentNode; }
+    constexpr int fragmentDepth() const { return fragmentDepthNode; }
+    constexpr int sampleMask() const { return sampleMaskNode; }
     constexpr int discard() const { return discardNode; }
     constexpr float discardThreshold() const { return discardValue; }
 
@@ -662,6 +1039,9 @@ public:
 
     // What storage buffer `slot` holds, as its kernel declared it.
     ValueType storageElementType(int slot) const;
+
+    // What shared array `slot` holds.
+    ValueType sharedElementType(int slot) const;
 
     constexpr const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
     constexpr const Vector<Store>& stores() const { return storeList; }
@@ -733,8 +1113,21 @@ public:
     // barrier below a return some threads took is undefined on both backends.
     // Such a kernel bounds its own stores, typically against gridExtent.
     constexpr bool usesLocalId() const { return localIdUsed; }
-    constexpr bool usesVertexId() const { return vertexIdUsed; }
-    constexpr bool usesInstanceId() const { return instanceIdUsed; }
+    constexpr bool usesVertexId() const
+    {
+        return usesBuiltIn(ShaderBuiltIn::VertexId);
+    }
+    constexpr bool usesInstanceId() const
+    {
+        return usesBuiltIn(ShaderBuiltIn::InstanceId);
+    }
+
+    // Whether any node reads the built-in, which is what puts it in the entry
+    // point's signature.
+    constexpr bool usesBuiltIn(ShaderBuiltIn which) const
+    {
+        return (builtInsUsed & builtInBit(which)) != 0u;
+    }
     constexpr bool usesGroupId() const { return groupIdUsed; }
     constexpr bool usesBarrier() const { return barrierUsed; }
 
@@ -760,11 +1153,19 @@ public:
     }
     ThreadGroupShape threadGroupShape() const;
 
-    // The body every recorded statement ends up in, directly or inside a nested
-    // block. It runs before the fragment (or the kernel's stores) is evaluated,
+    // The body every statement recorded outside the vertex stage ends up in,
+    // directly or inside a nested block. It runs before the fragment (or the
+    // kernel's stores) is evaluated,
     // which is what makes a mutable local visible to the expression that reads
     // it afterwards.
     static constexpr int rootBlock = 0;
+
+    // The vertex stage's own root block, or -1 while nothing was recorded in
+    // it. Its statements run before the position and the varyings are written.
+    constexpr int vertexBlock() const { return vertexRootBlock; }
+
+    // Whether variable `slot` was declared in the vertex stage.
+    bool isVertexVariable(int slot) const;
 
     const Statement& statement(int index) const;
     const Block& block(int index) const;
@@ -773,13 +1174,30 @@ public:
     constexpr const Vector<ValueType>& variables() const { return variableTypes; }
     bool hasStatements() const;
 
+    // Whether a statement of this kind was recorded anywhere.
+    bool hasStatementOf(StatementKind kind) const;
+
     // Whether a node's value is the same wherever in the body it is read: no
     // mutable state under it, save storage the kernel only reads.
     bool isPure(int node) const;
 
 private:
+    static constexpr std::uint32_t builtInBit(ShaderBuiltIn which)
+    {
+        return 1u << static_cast<std::uint32_t>(which);
+    }
+
     int add(Expr node);
     int addStatement(Statement newStatement);
+    int addVariableSlot(ValueType type);
+    int clampedIndex(int index, int size);
+    BlockRole innermostJumpTarget() const;
+    bool isInsideContinuing() const;
+    bool areValidLabels(int selector, int cases) const;
+    int addTextureSlot(TextureSampling sampling,
+                       TextureAccess access,
+                       TextureKind kind,
+                       TextureFormat format = TextureFormat::RGBA32Float);
 
     // A fragment's slot, taken from a numbering of its own and remembering what
     // the fragment is made of.
@@ -827,6 +1245,7 @@ private:
     Vector<TextureSampling> textureSamplings;
     Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
     Vector<TextureKind> textureKinds; // parallel to textureSamplings
+    Vector<TextureFormat> textureFormats; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
     Vector<SharedArray> sharedArrayList;
     Vector<ValueType> reductionTypes;
@@ -835,8 +1254,7 @@ private:
     Vector<SimdMatrixElement> simdMatrixElementList; // one entry per fragment
     bool simdGroupIndexUsed = false;
     bool localIdUsed = false;
-    bool vertexIdUsed = false;
-    bool instanceIdUsed = false;
+    std::uint32_t builtInsUsed = 0u;
     bool groupIdUsed = false;
     bool barrierUsed = false;
 
@@ -846,14 +1264,21 @@ private:
     bool atomicUsed = false;
 
     Vector<ValueType> variableTypes;
+    Vector<char> vertexVariables; // parallel to variableTypes
+    Vector<int> variableSizes; // parallel to variableTypes; 0 = not an array
     Vector<Statement> statementList;
     Vector<Block> blocks; // blocks[rootBlock] is the shader's body
+    Vector<CaseLabels> caseLabelList; // one entry per Case statement
     Vector<int> openBlocks; // innermost last; blocks[back()] takes new statements
+    int vertexRootBlock = -1;
+    bool recordingVertexStage = false;
     DispatchRank rank = DispatchRank::OneD;
     ThreadGroupShape groupShape;
     bool rankFixed = false;
     int positionNode = -1;
     int fragmentNode = -1;
+    int fragmentDepthNode = -1;
+    int sampleMaskNode = -1;
     int discardNode = -1;
     float discardValue = 0.0f;
 };

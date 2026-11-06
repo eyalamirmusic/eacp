@@ -41,12 +41,40 @@ bool Bindings::set(const UIntOutputBuffer& member, std::span<std::uint32_t> elem
                 BufferAccess::Write);
 }
 
+bool Bindings::set(const IntInputBuffer& member,
+                   std::span<const std::int32_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Int,
+                BufferAccess::Read);
+}
+
+bool Bindings::set(const IntOutputBuffer& member, std::span<std::int32_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Int,
+                BufferAccess::Write);
+}
+
 bool Bindings::set(const AtomicBuffer& member, std::span<std::uint32_t> elements)
 {
     return bind(member.slot,
                 elements.data(),
                 elements.size(),
                 ValueType::UInt,
+                BufferAccess::Atomic);
+}
+
+bool Bindings::set(const IntAtomicBuffer& member, std::span<std::int32_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Int,
                 BufferAccess::Atomic);
 }
 

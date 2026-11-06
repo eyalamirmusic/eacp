@@ -47,6 +47,35 @@ bool hasValidSimdReductionShape(const ShaderGraph& graph)
            || isWholeNumberOfSimdGroups(graph);
 }
 
+bool takesNoDerivedLevel(const ShaderGraph& graph)
+{
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::TextureFunction
+            && usesImplicitDerivatives(textureFunctionNamed(expr.text)))
+            return false;
+    }
+
+    return true;
+}
+
+bool readsOnlyKernelBuiltIns(const ShaderGraph& graph)
+{
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::BuiltIn
+            && stageOf(static_cast<ShaderBuiltIn>(expr.index))
+                   != ShaderStage::Compute)
+            return false;
+    }
+
+    return true;
+}
+
 void assertKernelShapeIsValid(const ShaderGraph& graph)
 {
     assert(hasValidSimdGroupShape(graph)
@@ -60,6 +89,17 @@ void assertKernelShapeIsValid(const ShaderGraph& graph)
               "dispatched in a threadgroup that is a whole number of SIMD "
               "groups - a multiple of ComputeProgram::simdWidth threads - or "
               "in one narrower than a single SIMD group.");
+
+    assert(readsOnlyKernelBuiltIns(graph)
+           && "eacp: a kernel read a render stage's built-in - "
+              "fragmentCoordinate, vertexId, frontFacing and the like belong "
+              "to a ShaderProgram, and a kernel has none of them.");
+
+    assert(takesNoDerivedLevel(graph)
+           && "eacp: a kernel used sample, sampleBias or sampleCompare on a "
+              "kind from TextureFunctions.h. They take the level from the "
+              "fragment's derivatives, which a kernel has none of - use "
+              "sampleLevel, sampleGrad or sampleCompareLevel.");
 
     assert(graph.storageBuffers().size() <= ComputePass::portableBufferSlots
            && "eacp: a kernel may bind ComputePass::portableBufferSlots storage "
@@ -96,6 +136,15 @@ std::string printKernelUniformBlock(const ShaderGraph& graph, Backend backend)
         backend, uniformTypes, uniformNames, vulkanComputeUniformBinding);
 }
 
+// HLSL and GLSL act atomically on plain integers; Metal needs its atomic types.
+std::string_view getSharedElementType(const SharedArray& shared, Backend backend)
+{
+    if (shared.atomic && backend == Backend::Metal)
+        return shared.elementType == ValueType::Int ? "atomic_int" : "atomic_uint";
+
+    return getDialectTypeName(backend, shared.elementType);
+}
+
 std::string printSharedArrays(const ShaderGraph& graph,
                               Backend backend,
                               std::string_view qualifier)
@@ -108,7 +157,7 @@ std::string printSharedArrays(const ShaderGraph& graph,
 
         source += Strings::format("{} {} s{}[{}];\n",
                                   qualifier,
-                                  getDialectTypeName(backend, shared.elementType),
+                                  getSharedElementType(shared, backend),
                                   i,
                                   shared.elements);
     }
@@ -195,23 +244,40 @@ std::string printMetalTextureParameters(const ShaderGraph& graph)
 
     for (auto i = 0; i < graph.textureCount(); ++i)
     {
-        if (graph.textureAccess(i) == TextureAccess::Write)
+        if (graph.textureAccess(i) == TextureAccess::Sampler)
         {
-            source += Strings::format(
-                "texture2d<float, access::write> texture{} [[texture({})]],\n    ",
-                i,
-                i);
+            source +=
+                Strings::format("sampler sampler{} [[sampler({})]],\n    ", i, i);
             continue;
         }
 
-        source += Strings::format("{} texture{} [[texture({})]],\n    sampler "
-                                  "sampler{} [[sampler({})]],\n    ",
-                                  getMetalTextureType(graph.textureKind(i)),
-                                  i,
-                                  i,
+        source += Strings::format("{} texture{} [[texture({})]],\n    ",
+                                  getMetalTextureParameterType(graph, i),
                                   i,
                                   i);
+
+        if (graph.textureAccess(i) == TextureAccess::Sample)
+            source +=
+                Strings::format("sampler sampler{} [[sampler({})]],\n    ", i, i);
     }
+
+    return source;
+}
+
+std::string printMetalBuiltInParameters(const ShaderGraph& graph)
+{
+    auto source = std::string {};
+
+    if (graph.usesBuiltIn(ShaderBuiltIn::LocalIndex))
+        source += ",\n    uint localIndex [[thread_index_in_threadgroup]]";
+
+    if (graph.usesBuiltIn(ShaderBuiltIn::GroupCount))
+        source +=
+            Strings::format(",\n    {} groupCount [[threadgroups_per_grid]]",
+                            getIndexTypeName(Backend::Metal, graph.dispatchRank()));
+
+    if (graph.usesBuiltIn(ShaderBuiltIn::SimdGroupSize))
+        source += ",\n    uint simdSize [[threads_per_simdgroup]]";
 
     return source;
 }
@@ -229,12 +295,17 @@ std::string printMetalIndexParameters(const ShaderGraph& graph)
         source += Strings::format(",\n    {} tgid [[threadgroup_position_in_grid]]",
                                   indexType);
 
-    if (doesMetalCombinePartials(graph) || graph.usesSimdGroups())
-        source += ",\n    uint simdLane [[thread_index_in_simdgroup]],\n    "
-                  "uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
+    auto usesSimdVocabulary =
+        doesMetalCombinePartials(graph) || graph.usesSimdGroups();
+
+    if (usesSimdVocabulary || graph.usesBuiltIn(ShaderBuiltIn::SimdLaneIndex))
+        source += ",\n    uint simdLane [[thread_index_in_simdgroup]]";
+
+    if (usesSimdVocabulary)
+        source += ",\n    uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
                   "uint simdCount [[simdgroups_per_threadgroup]]";
 
-    return source;
+    return source + printMetalBuiltInParameters(graph);
 }
 
 std::string printMetalGroupMemory(const ShaderGraph& graph)
@@ -276,14 +347,7 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
         source += "\n";
 
     for (auto i = 0; i < graph.textureCount(); ++i)
-    {
-        auto binding = vulkanComputeTextureBinding(i);
-
-        if (graph.textureAccess(i) == TextureAccess::Write)
-            source += formatGlslWritableTexture(i, binding);
-        else
-            source += formatGlslSampledTexture(graph, i, binding);
-    }
+        source += formatGlslTexture(graph, i, vulkanComputeTextureBinding(i));
 
     if (graph.textureCount() > 0)
         source += "\n";
@@ -343,21 +407,14 @@ std::string printHlslKernelTextures(const ShaderGraph& graph)
 
     for (auto i = 0; i < graph.textureCount(); ++i)
     {
-        auto textureRegister = ComputePass::textureRegisterBase + i;
-
-        if (graph.textureAccess(i) == TextureAccess::Write)
-        {
-            source +=
-                Strings::format("RWTexture2D<float4> texture{} : register(u{});\n",
-                                i,
-                                textureRegister);
-            continue;
-        }
-
-        source += Strings::format("{} texture{} : register(t{});\n",
-                                  getHlslTextureType(graph.textureKind(i)),
-                                  i,
-                                  textureRegister);
+        if (graph.textureAccess(i) == TextureAccess::Sampler)
+            source += formatHlslSampler(graph, i);
+        else
+            source += Strings::format("{} texture{} : register({}{});\n",
+                                      getHlslTextureDeclarationType(graph, i),
+                                      i,
+                                      getHlslTextureRegisterSpace(graph, i),
+                                      ComputePass::textureRegisterBase + i);
     }
 
     source += formatHlslSamplerDeclarations(graph);
@@ -366,6 +423,13 @@ std::string printHlslKernelTextures(const ShaderGraph& graph)
         source += "\n";
 
     return source;
+}
+
+bool doesHlslReadGroupLane(const ShaderGraph& graph)
+{
+    return graph.usesGroupReduction() || graph.usesSimdGroups()
+           || graph.usesBuiltIn(ShaderBuiltIn::LocalIndex)
+           || graph.usesBuiltIn(ShaderBuiltIn::SimdLaneIndex);
 }
 
 std::string printHlslKernelSignature(const ShaderGraph& graph)
@@ -382,7 +446,7 @@ std::string printHlslKernelSignature(const ShaderGraph& graph)
     if (graph.usesGroupId())
         source += ", uint3 groupIndex : SV_GroupID";
 
-    if (graph.usesGroupReduction() || graph.usesSimdGroups())
+    if (doesHlslReadGroupLane(graph))
         source += ", uint groupLane : SV_GroupIndex";
 
     return source + ")\n{\n";
@@ -447,6 +511,10 @@ std::string printKernelBody(const ShaderGraph& graph, Backend backend)
 std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     assertKernelShapeIsValid(graph);
+
+    assert(!graph.hasStatementOf(StatementKind::Discard)
+           && "eacp: discard belongs to the fragment stage; a kernel ends an "
+              "invocation with returnEarly.");
 
     auto source = getSourcePreamble(graph, backend);
     source += printKernelUniformBlock(graph, backend);

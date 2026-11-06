@@ -241,11 +241,21 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
 
 ### What the EDSL has
 
-- `Float`, `Float2/3/4`, `Float2x2`, `Float3x3`, `Float4x4` — built from their
-  columns, transposed, and their determinant taken; multiplied by a vector on
-  either side, which is a different product each way, and scaled by a scalar,
-  which is neither. There is no `inverse`, and that is the languages rather
-  than this: GLSL has one, MSL and HLSL do not
+- `Float`, `Float2/3/4`, and the float matrices of every shape WGSL has:
+  `Float2x2`, `Float3x3`, `Float4x4` and the non-square `Float2x3`, `Float2x4`,
+  `Float3x2`, `Float3x4`, `Float4x2`, `Float4x3` (WGSL's `matCxR`: C columns of
+  R rows, so a `Float2x3` is two `Float3` columns). Built from their columns
+  (`float2x3(c0, c1)`), a column read with `m[i]` (an `int` literal checked, an
+  `Int` or `UInt` clamped into the columns as a private array's index is),
+  transposed — which turns a `Float2x3` into a `Float3x2` — and their
+  determinant taken where square; multiplied by a vector on either side, which
+  is a different product each way, by any matrix whose rows match their
+  columns, summed and differenced with one of their own shape, and scaled by a
+  scalar. MSL and GLSL name them columns first (`float2x3`, `mat2x3`); HLSL rows
+  first, so a `Float2x3` is a `float3x2` there, built from the rows of the
+  transposed shape and transposed as the square ones are, and a column is a
+  row of its `transpose()`. There is no `inverse`, and that is the languages
+  rather than this: GLSL has one, MSL and HLSL do not
 - `Int` and `Int2/3/4` — signed, with `%`, the bitwise set, the shifts, the
   comparisons, and the explicit crossings `toInt` / `toFloat`
 - `Bool` and `Bool2/3/4` — what a comparison yields, collapsed by `any()` /
@@ -289,26 +299,493 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   so every argument answered with a constant is one whose correctly rounded tanh
   is that constant: it is a repair of the tails, not a different function. Reach
   for it wherever the argument is not bounded by construction
-- Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
+- The rest of WGSL's scalar built-ins: `asinh` / `acosh` / `atanh`, `fma`,
+  `degrees` / `radians`, `quantizeToF16`; the bit functions `countOneBits`,
+  `reverseBits`, `countLeadingZeros`, `countTrailingZeros`,
+  `firstLeadingBit`, `firstTrailingBit`, `extractBits` and `insertBits` on
+  `Int`, `UInt` and their vectors, the offset and count a `UInt` or a
+  literal; and the normalized packs `packUnorm8x4`, `packSnorm8x4`,
+  `packUnorm16x2`, `packSnorm16x2` with their `unpack…` twins (WGSL's
+  `pack4x8unorm` and the rest). Each keeps WGSL's meaning where the dialects
+  part: a bit field's offset is clamped to 32 and its count to what is left
+  above it, a first bit that is not there is all ones (-1), an `Int`'s leading
+  bit is the highest one unlike its sign, and the packs round with
+  `floor(0.5 + x)` on every backend rather than with the dialect's own pack.
+  HLSL has no inverse hyperbolics, so there they are the logarithm forms WGSL
+  defines their accuracy by; Metal's `asinh` is taken of `|x|` and given the
+  sign back, since under fast math it cancels for a negative argument.
+  `degrees` and `radians` are a multiply, not a call, and `fma` is `mad` on
+  HLSL
+- Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`,
+  and WGSL's remaining control flow - `switchOn` with `caseOf`/`defaultCase`,
+  `loop(condition, body, continuing)` with `breakLoopIf`, `forLoop`,
+  `returnEarly` and the fragment's `discard` (see "Control flow" below).
   A `var` takes any handle and any matrix. `select` runs across every family —
   a float, an index, an integer vector, a mask — and takes a literal on either
   side of a scalar one; the condition is a scalar `Bool` in all of them, which
-  is the conditional operator both languages already print
-- Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId`, the
+  is the conditional operator both languages already print. Statements go to
+  the fragment function (or the kernel), and to the vertex function inside
+  `vertexStage(body)` (see "Statements in the vertex stage" below)
+- Compute-only: the atomics (`atomicAdd`, `atomicSub`, `atomicMax`,
+  `atomicMin`, `atomicAnd`, `atomicOr`, `atomicXor`, `atomicExchange`,
+  `atomicCompareExchangeWeak`, on an `AtomicBuffer`, an `IntAtomicBuffer` or a
+  `sharedAtomic<T>(count)`), `shared<T>(count)`, `barrier`, `localId`, the
   group-wide `groupSum` / `groupMax` / `groupMin` and their SIMD-group-scoped
   siblings `simdSum` / `simdMax` / `simdMin`, and the SIMD-group matrix —
   `simdGroupIndex`, `simdMatrix`, `multiplyAccumulate` and the `write` that
   stores a fragment — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
+- Private arrays, WGSL's `var a: array<T, N>`: `privateArray<T, N>()` (every
+  element zero) or `privateArray(a, b, c)` (its type and size from the values),
+  any scalar, vector or matrix element, read with `a[i]` and written with
+  `a.set(i, value)` in the fragment function, the vertex function inside
+  `vertexStage` or a kernel - in the stage that declared it, as a `var` is. An
+  `int` literal index is checked; an `Int` or `UInt` one is clamped into `[0,
+  N)` where it is recorded (`min(max(i, 0), N - 1)`, `min(i, N - 1u)`), so one
+  past either end reads and writes the end element on every backend and the
+  CPU executor alike. The emitters declare `T vN[N]` and fill it in a `for`
+  loop; per invocation, so a large one is the backend's to place (HLSL's FXC
+  spills a dynamically indexed one to indexable temps)
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
   coordinates; `sample(t, uv, layer)` on a `Texture2DArray` or a
   `TextureDepth2DArray`, and `sampleCompare` on a depth texture declared with
-  `TextureCompare::LessEqual` (see "Depth")
-- Stage built-ins: `fragmentCoordinate()`, `vertexId()` and `instanceId()`
-  (see "Stage built-ins" below)
+  `TextureCompare::LessEqual` (see "Depth"); and WGSL's texture functions -
+  `sampleLevel`, `sampleBias`, `sampleGrad`, `sampleCompareLevel`, `gather`,
+  `gatherCompare`, `load`, `dimensions`, `levelCount`, `layerCount` - over
+  every kind, `Texture3D`, `TextureCubeArray`, `TextureDepthCube` and
+  `TextureDepthCubeArray` among them (see "Texture functions" below)
+- Storage textures: `StorageTexture2D`, `StorageTexture2DArray` and
+  `StorageTexture3D` in a format and a `StorageAccess` (`Write`, `Read`,
+  `ReadWrite`), with `load`, `write`, `dimensions` and `layerCount` (see
+  "Storage textures" below)
+- Samplers as bindings: `SamplerBinding` and `ComparisonSamplerBinding`, handed
+  to every sampling function in place of the texture's baked `TextureSampling`
+  (see "Samplers as bindings" below)
+- Stage built-ins: `fragmentCoordinate()`, `vertexId()`, `instanceId()`,
+  `frontFacing()`, `sampleIndex()` and `sampleMask()`; the fragment outputs
+  `setFragmentDepth()` and `setSampleMask()` beside `setFragment()`; and in a
+  kernel `localIndex()`, `groupCount()`, `simdLaneIndex()` and
+  `simdGroupSize()` (see "Stage built-ins" below)
 
 There is no aggregate type and none is needed: the EDSL is embedded in C++, so a
 struct of handles is a C++ struct.
+
+### Texture functions
+
+`Codegen/TextureFunctions.h` is WGSL's texture functions past the plain sample,
+and four kinds beside the five the EDSL had: `Texture3D` (`ThreeD`),
+`TextureCubeArray` (`CubeArray`, where `Device::supportsCubeArrays`), and
+`TextureDepthCube` / `TextureDepthCubeArray`, the whole depth plane of a `Cube`
+or `CubeArray` target. Each is a `Uniform<...>` member or a
+`ShaderBuilder::texture3D` / `cubeTextureArray` / `depthCubeTexture` /
+`depthCubeTextureArray` slot, and binds as its family does: colour with
+`setFragmentTexture` / `setInputTexture`, depth with `setFragmentDepthTexture` /
+`setInputDepthTexture` (a kernel's depth members, the 2D ones included, now
+bind too).
+
+| WGSL | EDSL | kinds | MSL | HLSL | GLSL |
+| --- | --- | --- | --- | --- | --- |
+| `textureSample` | `sample` | the new four | `sample(s, c[, layer])` | `Sample` | `texture` |
+| `textureSampleLevel` | `sampleLevel` | all nine | `level(l)` | `SampleLevel` | `textureLod` |
+| `textureSampleBias` | `sampleBias` | colour | `bias(b)` | `SampleBias` | `texture(t, c, b)` |
+| `textureSampleGrad` | `sampleGrad` | colour | `gradient2d/3d/cube` | `SampleGrad` | `textureGrad` |
+| `textureSampleCompare` | `sampleCompare` | depth | `sample_compare` | `SampleCmpLevelZero` | `texture` on a shadow sampler |
+| `textureSampleCompareLevel` | `sampleCompareLevel` | depth | `sample_compare(..., level(0))` | `SampleCmpLevelZero` | `texture` on a shadow sampler |
+| `textureGather` | `gather(t, c[, layer], component)` | 2D, array, cube, cube array, depth | `gather(..., component::x)` | `GatherRed`..`GatherAlpha`, `Gather` | `textureGather(t, c, n)` |
+| `textureGatherCompare` | `gatherCompare` | depth | `gather_compare` | `GatherCmp` | `textureGather(t, c, ref)` |
+| `textureLoad` | `load(t, texel[, layer], level)` | 2D, array, 3D, depth 2D and array | `read(uint2, [layer,] lod)` | `Load(int3/int4)` | `texelFetch` |
+| `textureDimensions` | `dimensions(t[, level])` | all nine | `get_width/height/depth` | `eacpTextureInfo*` helper | `textureSize` |
+| `textureNumLevels` | `levelCount` | all nine | `get_num_mip_levels` | helper `.w` | `textureQueryLevels` |
+| `textureNumLayers` | `layerCount` | arrays | `get_array_size` | helper `.z` | `textureSize(t, 0).z` |
+
+Levels and layers are an `Int`, a `UInt` or an int literal; a colour level, a
+bias and a reference a `Float` or a float literal; a depth kind's level is an
+integer, as WGSL has it. `sample`, `sampleBias` and `sampleCompare` take their
+level from the fragment's derivatives and are fragment-stage only - a kernel
+that uses them on the new path asserts (the older `sample` on a `Texture2D`
+still emits HLSL's `Sample` in a kernel, which SM5 refuses), and so does a
+vertex stage, on either path; the rest run in a kernel and a vertex stage as in
+a fragment shader. A gather returns WGSL's order, (umin, vmax),
+(umax, vmax), (umax, vmin), (umin, vmin) with v growing down the image, which
+is every backend's own; `TextureFunctionDevice/` pins it on the device.
+HLSL's `GetDimensions` answers through out-parameters, so each kind a shader
+queries gets one helper, `uint4 eacpTextureInfo<Kind>(T t, uint level)`
+returning width, height, depth or layers, and levels, and a query is a swizzle
+of it. A cube array's layer count is its cubes on all three. Comparisons are
+level-zero everywhere: a depth view has one level on D3D12 and Vulkan, and
+GLSL's `texture()` reads the base level outside the fragment stage.
+
+Not yet: `texture_1d` (no `TextureType::OneD`), the multisampled kinds (a
+multisampled target's sample texture is render-target-only on every backend,
+with no shader-read usage, view or bind), offsets on any function, and the CPU
+executor, which runs no texture read at all.
+
+### Storage textures
+
+`Codegen/StorageTextures.h` is WGSL's `texture_storage_2d`, `_2d_array` and
+`_3d`: `StorageTexture2D<Format, Access>`, `StorageTexture2DArray<...>` and
+`StorageTexture3D<...>`, the format a `TextureFormat` and the access a
+`StorageAccess` (`Write` when omitted). The format is part of the type, as in
+WGSL, because it decides both what the texel is - `StorageTexelOf<Format>`, a
+`Float4`, a `UInt4` or an `Int4`, four components whatever the format holds,
+a narrower one loading with (0, 0, 1) after its channels - and what GLSL and
+HLSL declare. Every format a kernel can be asked to store to is one:
+everything uncompressed but `BGRA8Unorm`, the sRGB formats and `RGB9E5Float`,
+which is a `static_assert`.
+
+```cpp
+struct Relax final : ComputeProgram
+{
+    Relax() { compile(); }
+
+    void define() override
+    {
+        auto p = toInt(threadId2());
+        write(heights, p, load(heights, p) * 0.5f);
+    }
+
+    Uniform<StorageTexture2D<TextureFormat::R32Float, StorageAccess::ReadWrite>>
+        heights;
+    EACP_SHADER(heights)
+};
+```
+
+`load(t, texel)`, `load(t, texel, layer)` and `load(t, voxel)` need `Read` or
+`ReadWrite`; `write(t, texel[, layer], value)` (a member of `ComputeKernel`
+and `ShaderBuilder`) needs `Write` or `ReadWrite`; the other is a compile
+error. Texels are an `Int2`/`UInt2` (`Int3`/`UInt3`), layers an `Int`, a
+`UInt` or a literal. `dimensions(t)` is a `UInt2` (`UInt3` on a volume) and
+`layerCount(t)` an array's layers. A storage slot takes its index from the
+counter sampled ones do and declares no sampler.
+
+| access | binds through | MSL | HLSL | GLSL |
+| --- | --- | --- | --- | --- |
+| `Write` | `setOutputTexture` (computeWrite) | `texture2d<T, access::write>` | `RWTexture2D<T>` at `u` | `writeonly image2D`, no qualifier |
+| `ReadWrite` | `setOutputTexture` (computeWrite) | `texture2d<T, access::read_write>` | `RWTexture2D<T>` at `u` | `image2D` with the format's qualifier |
+| `Read` | `setInputTexture`, no filtering | `texture2d<T, access::read>` | `Texture2D<T4>` at `t` | `sampler2D`, `texelFetch` level 0 |
+
+(`texture2d_array` / `texture3d`, `RWTexture2DArray` / `RWTexture3D`,
+`image2DArray` / `image3D` and so on; `T` is `float`, `uint` or `int`, `u` and
+`i` prefixing the GLSL types.) HLSL's typed UAV is declared as wide as the
+format - `RWTexture2D<float>` for `R32Float`, `<int2>` for `RG16Sint` - so a
+single 32-bit channel loads on hardware with no typed-UAV-load extension; a
+store writes that many components of the value and a load is widened back to
+four. A store to a `ReadWrite` texture on Metal is followed by `fence()`, so a
+later load in the same thread sees it, as WGSL promises; HLSL and GLSL keep
+one invocation's image accesses in order already. Queries are
+`get_width/height/depth/array_size` on Metal, `imageSize` (a `Read` one
+`textureSize`) on GLSL, and on HLSL one `eacpStorageSize<slot>(t)` helper per
+queried slot, taking the slot's own type.
+
+**What each access needs.** `Read` is a texel load through the read binding,
+which any texture in any format has: no `computeWrite`, no capability, and it
+works in a fragment shader too (`setFragmentTexture`), WGSL's read-only
+storage texture in a fragment. `Write` needs `Device::supportsComputeWrite`
+for the format, as a `WritableTexture2D`'s texture always has. `ReadWrite`
+needs `Device::supportsComputeReadWrite`: Metal's read-write tier (tier 1 the
+three R32 formats, tier 2 the four-channel 8/16/32-bit ones and the one-channel
+8/16-bit ones, never a two-channel or packed format); D3D12's
+`D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD`, which the R32 formats always have and
+the rest have where the driver reports the typed-UAV-load additional formats;
+and on Vulkan the storage-image bit plus, for every format past the ones
+SPIR-V's base `Shader` capability declares (`rgba8`, `rgba16f`, `rgba32f`,
+`r32f` and the four-channel and `r32` integer ones),
+`shaderStorageImageExtendedFormats`, which the device now enables where it has
+it. `ComputeProgram::fitsStorageTextures(device)` asks all of them, and
+`prepare()` refuses a kernel that does not fit - an invalid pipeline, a
+logged slot and query - as it refuses a packed SIMD fragment.
+
+**The texture has to match.** The member binds a texture of exactly its
+format and shape - a `TwoD`, a `TwoDArray` (or a `Cube` / `CubeArray`, bound
+through `setOutputTextureAsArray` / `setInputTextureAsArray` as the array of
+its faces), a `ThreeD` - and binds nothing otherwise, which is what WGSL's
+validation asks and what GLSL's format qualifier needs. Level 0 only.
+
+`WritableTexture2D` stays as it was: a write-only 2D float target taking any
+float format the device writes, emitted character for character as before.
+A fragment shader writing a storage texture is not supported - a render
+program declaring `Write` or `ReadWrite` asserts - because D3D12's render root
+signature has no UAV ranges, Vulkan would need `fragmentStoresAndAtomics` and
+the render passes have no output-texture bind; Metal alone could. The CPU
+executor refuses storage textures by name, as it refuses every texture read.
+`StorageTextureCodegen/` and `StorageTextureDevice/` are the suites.
+
+### Samplers as bindings
+
+`Codegen/Samplers.h` is WGSL's `sampler` and `sampler_comparison`: a sampler
+the shader declares as a binding of its own and hands to the sampling
+function, so what it does is whatever `Device::makeSampler` sampler is bound -
+filter, mip filter, address mode per axis, border colour, anisotropy, LOD
+clamp and, on a comparison sampler, the `CompareFunction`. One compiled
+program then samples smoothly or crisply, clamped or tiled, as the draw says,
+where a baked `TextureSampling` needs a program per configuration.
+
+```cpp
+struct Floor final : ShaderProgram
+{
+    Floor() { compile(); }
+
+    void define() override
+    {
+        // ...
+        setFragment(sample(albedo, tiled, uv)
+                    * sampleCompare(shadowMap, shadow, lightUv, depth));
+    }
+
+    Uniform<Texture2D> albedo;
+    Uniform<SamplerBinding> tiled;
+    Uniform<TextureDepth2D> shadowMap;
+    Uniform<ComparisonSamplerBinding> shadow;
+    EACP_SHADER(albedo, tiled, shadowMap, shadow, ...)
+};
+
+floor.tiled = device.makeSampler(repeatLinear);
+floor.shadow = device.makeSampler(lessCompare);
+```
+
+Every function takes one after the texture, WGSL's order:
+`sample(t, s, coords[, layer])`, `sampleLevel`, `sampleBias`, `sampleGrad`,
+`gather(t, s, coords[, layer][, component])` with a `SamplerBinding`, and
+`sampleCompare`, `sampleCompareLevel`, `gatherCompare` with a
+`ComparisonSamplerBinding` - on each kind its baked form takes (bias and
+grad on the colour kinds, comparisons on the depth ones, no volume gather).
+The handle's type is what picks, so a comparison through a plain sampler is a
+compile error, as in WGSL. A depth kind sampled through a sampler need not be
+declared with `TextureCompare`, and one texture may be read through several
+samplers and its own baked one in one shader.
+
+A sampler takes its slot from the texture counter - members in declaration
+order, or `ShaderBuilder::sampler()` / `comparisonSampler()` - so its index
+is one no texture's baked sampler holds:
+
+| | declares | binds through |
+| --- | --- | --- |
+| Metal | `sampler sampler<n> [[sampler(n)]]` | `setFragmentSamplerState` / compute `setSamplerState` at `n` |
+| D3D12 | `SamplerState` / `SamplerComparisonState sampler<n> : register(s<8 + n>)` | the slot's sampler table, render and compute (`RenderPass::samplerRegisterBase`) |
+| Vulkan | `uniform sampler` / `samplerShadow sampler<n>` at the slot's texture binding; a texture read through one also declares `texture2D textureImage<m>` (and so on per kind) at its own binding, and the call is `texture(sampler2D(textureImage<m>, sampler<n>), ...)` | render: the sampler half of the combined image sampler at `8 + n`, its image half lent by a texture bound elsewhere in the pass (never read); compute: a `VK_DESCRIPTOR_TYPE_SAMPLER` descriptor, the layout reflected from the SPIR-V |
+
+The separate image aliases the combined image sampler at the texture's own
+binding, which the Vulkan spec allows - a combined descriptor serves a
+sampled-image or a sampler variable - so the fixed render layout is
+unchanged; a kernel's reflected layout keeps the combined type where both
+are declared. The member's bind is `RenderPass::setFragmentSampler`, plus
+`setVertexSampler` where the vertex stage reads the slot, or
+`ComputePass::setSampler`, and all three are public for a hand-rolled bind. A member binds only a valid `Sampler` of its own kind - one with a
+`CompareFunction` on a `ComparisonSamplerBinding`, one without on a
+`SamplerBinding` - and binds nothing otherwise, as an unassigned texture
+does; the mismatch is logged once. D3D12's static-sampler fallback
+(`Device::supportsPerBindSamplers()` false) drops the bind, so there the
+register holds the fixed linear/repeat sampler, as for every per-bind
+sampler.
+
+The baked forms are untouched and emit what they always did, character for
+character (`SamplerBindingCodegen/bakedSamplingEmitsWhatItAlwaysDid` pins the
+whole source); a sampler slot only adds its declaration. The CPU executor
+refuses a kernel declaring a sampler, naming the slot. `SamplerBindingCodegen/`
+and `SamplerBindingDevice/` (Metal: filter, address modes and border, two
+samplers in one draw, comparison functions, LOD clamp and mip filter, and a
+gather's wrap) are the suites.
+
+### Statements in the vertex stage
+
+A vertex shader is a statement context too. What `vertexStage(body)` records -
+`var`, `ifThen`, `loop`, `breakLoop`, `continueLoop`, and the `switchOn`,
+`breakLoopIf`, `forLoop` and `returnEarly` of "Control flow" - goes to the vertex
+function, run before the position and the varyings are written; everything
+recorded outside it goes to the fragment function, as before:
+
+```cpp
+void define() override
+{
+    auto position = vertexInput(&Vertex::position);
+    auto shade = Float {};
+
+    auto displace = [&]
+    {
+        auto uv = position * 0.5f + 0.5f;
+        auto height = var(sampleLevel(heights, uv, 0.f).x());
+        auto taken = var(0);
+        auto ripple = [&]
+        {
+            height += sin(position.x() * 8.f + toFloat(taken.get())) * amplitude;
+            taken += 1;
+        };
+
+        loop(taken.get() < octaves, ripple);
+        setPosition(float4(position, height.get(), 1.f));
+        shade = varying(height.get());
+    };
+
+    vertexStage(displace);
+    setFragment(float4(shade, shade, shade, 1.f));
+}
+```
+
+Attribution is by the stage open while a statement is recorded, not by what
+reads it: the graph keeps a second root block for the vertex stage
+(`ShaderGraph::vertexBlock()`), opened by `beginVertexStage`, and each
+variable remembers which one declared it. Expressions belong to no stage -
+each function prints whatever its own outputs and statements reach, so a value
+built from attributes and uniforms may be shared by both - except a variable
+read, which belongs to its variable's stage: a vertex `var` reaches the
+fragment through `varying()`, a fragment one never feeds the position or a
+varying, and the emitter asserts both (`stagesReadOnlyTheirOwnVariables`).
+Assigning a variable outside its own stage asserts at the assignment. Only
+variables and control flow may be recorded in the vertex stage, as in WGSL: a
+store, an atomic, a barrier, a group operation or a `discard` there asserts. `vertexStage` opens at
+the top of `define()`, not nested and not inside an `ifThen` or a `loop`, and
+may be opened more than once, appending to the same block.
+
+The vertex stage reads textures and sampler bindings with an explicit level:
+`sampleLevel`, `sampleGrad`, `sampleCompareLevel`, `gather`,
+`gatherCompare`, `load`, the `dimensions`/`levelCount`/`layerCount` queries,
+the older `sample(t, uv, level)` and `fetch`. What takes the fragment's
+derivatives - `sample` with no level (a layered one included), `sampleBias`,
+`sampleCompare`, `dfdx`, `dfdy`, `fwidth` - asserts there
+(`vertexUsesImplicitDerivatives`). The Metal vertex function declares exactly
+the slots it reads, each `[[texture(n)]]` with its baked `[[sampler(n)]]`, and a
+sampler binding's `[[sampler(n)]]`; HLSL and GLSL declare their textures as
+globals both functions already see. `GeneratedShader::vertexTextureSlots` is
+that set, one bit per slot, and `ShaderProgram::bindTextures` binds those
+members with `setVertexTexture` / `setVertexDepthTexture` / `setVertexSampler`
+as well as the fragment form - one bind on D3D12 and Vulkan, whose stages share
+a slot, and a second index space on Metal. `vertexReadsUniforms()` and the
+Metal vertex buffer parameters follow the statements too, and the elements of
+the constant arrays a stage subscripts, so a uniform or a buffer read only
+inside a vertex loop or an `array()` element is still declared and bound. A
+vertex stage with no statements prints byte for byte what it did before.
+`VertexStatementCodegen/` and `VertexStatementDevice/` are the suites.
+
+### Control flow
+
+The rest of WGSL's statements, in every statement context - the fragment
+function, the kernel, and the vertex function inside `vertexStage`:
+
+```cpp
+Uniform<Int> mode;
+
+void define() override
+{
+    auto position = vertexInput(&Vertex::position);
+    setPosition(float4(position, 0.f, 1.f));
+    auto uv = varying(position * 0.5f + 0.5f);
+
+    auto colour = var(float4(constant(0.f), 0.f, 0.f, 1.f));
+    auto red = [&] { colour = float4(constant(1.f), 0.f, 0.f, 1.f); };
+    auto green = [&] { colour = float4(constant(0.f), 1.f, 0.f, 1.f); };
+    auto hole = [&] { discard(); };
+
+    switchOn(mode, caseOf(0, red), caseOf({1, 2}, green), defaultCase(hole));
+
+    auto finished = [&] { returnEarly(); };
+    ifThen(uv.x() > 0.9f, finished);
+
+    colour *= 0.5f;
+    setFragment(colour.get());
+}
+```
+
+`switchOn(selector, clauses...)` takes a scalar `Int` or `UInt` (a `Var` of one
+too) and clauses made by `caseOf(value, body)`, `caseOf({values...}, body)` and
+`defaultCase(body)`, recorded in the order written. Labels are integer literals
+that fit the selector's type, none twice, at most one default; each dialect
+prints them in that type (`4000000000u`, `(-2147483647 - 1)`), which GLSL
+insists on. WGSL's semantics: the matching clause runs, the default when no
+label matches - and nothing when there is no default, where WGSL requires one -
+and no clause falls through: each is printed braced and ended by `break;`.
+`case 1, default:` is just `defaultCase`.
+
+A `breakLoop` or `continueLoop` inside a clause leaves or continues the
+enclosing *loop*, as its name says. In WGSL `break` inside a switch ends the
+switch, and in C-family dialects so does `break` - while HLSL refuses
+`continue` inside a switch outright - so a switch whose clauses jump declares
+`int jumpN = 0;` before it, a jump sets it and breaks the clause, and after the
+switch `if (jumpN == 1) break;` / `if (jumpN == 2) continue;` takes the jump,
+passing it on through an enclosing switch the same way. A switch with no loop
+jump in it prints none of this. There is no `breakSwitch`: a clause ends at its
+last statement, and an `ifThen` is how one stops early.
+
+`loop(condition, body, continuing)` is WGSL's `loop` with a `continuing`
+block: run after the body *and after every* `continueLoop`, before the
+condition is tested again. Its last statement may be `breakLoopIf(condition)`,
+WGSL's `break if`, and nothing else may follow it; a continuing block may not
+`breakLoop`, `continueLoop` or `returnEarly` (asserts, as WGSL refuses them).
+`forLoop(condition, update, body)` is the `for` loop - that loop with the update
+as its continuing, the counter a `var` declared before it - so a `continueLoop`
+in the body still runs the update. Because a C `continue` jumps to the top of a
+`while`, the continuing is printed at the top, behind a flag:
+
+```
+bool firstPass0 = true;
+while (true)
+{
+    if (!firstPass0)
+    {
+        v0 = (v0 + 1u);       // the continuing block
+        if ((v1 > gid))       // breakLoopIf
+        {
+            break;
+        }
+    }
+    firstPass0 = false;
+    if (!(v0 < 10u))
+    {
+        break;
+    }
+    ...                       // the body; continue; lands above
+}
+```
+
+A loop with no continuing block prints the plain `while (condition)` it always
+did. Inside a body, `ifThen(c, breakLoop)` is the same thing as a break-if.
+
+`returnEarly()` leaves the function where it stands. In a kernel it is
+`return;`, which ends the invocation beside the generated bounds guard - which
+is still there, unless the kernel barriers. A thread returning ahead of a
+`barrier()`, a group fold, a SIMD-group op or matrix the rest of its group
+reaches is the divergence "Threadgroup memory" forbids: undefined on the GPU
+(and the folds off Metal are barriers inside), nothing is checked. In a vertex
+or fragment function the return carries the function's outputs, evaluated at
+the return rather than at the end: the position and the varyings, or the colour
+with its `setFragmentDepth`, `setSampleMask` and `discardBelow` test, exactly
+the expressions those setters were given. An output that reads a `var` returns
+the value the var holds there, which is how a chosen colour is returned:
+assign it, then `returnEarly()`. Metal and HLSL build the `VertexOut` /
+`FragmentOut` in a braced block of its own; GLSL assigns its outputs and
+returns. The outputs may read only variables declared before the return in a
+block around it (the emitter asserts). Locals the outputs share are named in
+the return's own block.
+
+`discard()` is the fragment stage's statement - `discard_fragment()` on Metal,
+`discard` on HLSL and GLSL - as many times and wherever the fragment's
+statements go, inside a `switchOn` or a loop included: the fragment writes no
+colour and no depth. The vertex stage and a kernel have none (asserts; the CPU
+executor refuses one by name). `discardBelow(value, threshold)` stays as it
+was, one alpha test evaluated with the outputs, byte for byte the source it
+printed before. WGSL's discard demotes the invocation to a helper, and so does
+GLSL's on a Vulkan 1.3 device: glslang lowers `discard` to
+`OpDemoteToHelperInvocation` when it targets SPIR-V 1.6, and the device enables
+`shaderDemoteToHelperInvocation` for it. On the Vulkan 1.1 floor, which targets
+SPIR-V 1.3 or 1.4, glslang lowers it to `OpKill` and no demote extension is
+asked for, so a derivative taken after a divergent discard may differ there.
+Storage writes, the other place demotion shows, do not exist in the fragment
+stage here.
+
+On the CPU executor (see "Running a kernel on the CPU") a switch evaluates its
+selector once and runs each clause under the lanes whose selector its labels
+name, the default under the lanes no label names; a return takes its lanes out
+of every enclosing mask and every enclosing loop for good; a continuing block
+runs under the lanes still in the loop, the continued ones included, and
+`breakLoopIf` takes out those its condition holds for.
+
+Unverified here: FXC on the new HLSL - `switch` with `discard` or `return` in a
+clause, and `while (true)` loops with the continuing flag - checked against the
+documentation only. FXC's gradient warnings (X3570, X4121) apply to an implicit
+`sample` after a divergent `discard` or `return` as they do after any
+divergent branch; they are warnings, not errors, unless a loop containing one
+must be unrolled. `ControlFlowCodegen/`, `ControlFlow/` (CPU) and
+`ControlFlowDevice/` (Metal, kernels cross-checked with the CPU) are the
+suites.
 
 ### Stage built-ins
 
@@ -332,6 +809,70 @@ D3D12's system values start at 0 whatever the draw's start locations are, and
 shader model 5 has no way to read those. Portable code that reads either id
 draws from 0, or adds its own offset from a uniform.
 
+The rest of the fragment stage's inputs are parameters of the entry point,
+declared only by a shader that reads them:
+
+| call | type | MSL | HLSL | GLSL |
+| --- | --- | --- | --- | --- |
+| `frontFacing()` | `Bool` | `[[front_facing]]` | `SV_IsFrontFace` | `gl_FrontFacing` |
+| `sampleIndex()` | `UInt` | `[[sample_id]]` | `SV_SampleIndex` | `gl_SampleID` |
+| `sampleMask()` | `UInt` | `[[sample_mask]]` | `SV_Coverage` | `gl_SampleMaskIn[0]` |
+
+`frontFacing()` judges by the pipeline's `frontFace`, the winding culling uses,
+so counter-clockwise in clip space is front by default on every backend.
+Reading `sampleIndex()` runs the fragment stage once per sample rather than
+once per pixel; Vulkan needs the device's `sampleRateShading` feature for it,
+which eacp enables wherever the device has it. `sampleMask()` is the coverage
+of *this* primitive: along the edge two triangles share, each is handed only
+the samples on its own side.
+
+`setFragmentDepth(Float)` replaces the depth the rasterizer interpolated
+(`[[depth(any)]]`, `SV_Depth`, `gl_FragDepth`) and `setSampleMask(UInt)` is
+ANDed with the coverage (`[[sample_mask]]`, `SV_Coverage`, `gl_SampleMask[0]`):
+a sample whose bit is clear keeps its colour and depth. Either one turns the
+fragment's return into a `FragmentOut` struct on Metal and HLSL - `color` at
+`[[color(0)]]` / `SV_Target` beside them - and is one more assignment beside
+`fragColor` on GLSL. Neither needs anything of the pipeline: a depth output
+means something only with a depth attachment (and costs the early depth test),
+a mask only on a multisampled target, and without either the value is
+ignored rather than refused.
+
+A kernel's four:
+
+| call | type | MSL | HLSL | GLSL |
+| --- | --- | --- | --- | --- |
+| `localIndex()` | `UInt` | `[[thread_index_in_threadgroup]]` | `SV_GroupIndex` | `gl_LocalInvocationIndex` |
+| `groupCount()` | `UInt3` | `[[threadgroups_per_grid]]` | from the grid extent | `gl_NumWorkGroups` |
+| `simdLaneIndex()` | `UInt` | `[[thread_index_in_simdgroup]]` | `SV_GroupIndex % 32` | `gl_LocalInvocationIndex % 32` |
+| `simdGroupSize()` | `UInt` | `[[threads_per_simdgroup]]` | `32` | `32` |
+
+`localIndex()` is WGSL's `local_invocation_index`, x fastest, at any rank.
+`groupCount()` is `num_workgroups`, 1 on the axes the kernel's rank lacks.
+Shader model 5 has no system value for it, so on D3D it is the extent the
+dispatch supplied over the group, rounded up - exactly what every direct
+dispatch encodes, but for `dispatchIndirect(program, ...)` it is the groups
+the guard count covers, not the groups the arguments ran. Metal declares it at
+gid's width (the kernel's inputs must agree), so a 1D or 2D kernel reports 1
+on the axes it does not have even where an indirect dispatch's arguments named
+more; Vulkan and the CPU executor report the arguments' three counts whole.
+Exact on every backend would take a D3D command signature that feeds the
+arguments in as root constants too, which nothing needs yet.
+
+`simdLaneIndex()` and `simdGroupSize()` describe the SIMD group the `simd*`
+folds and `simdGroupIndex()` already speak of. Metal reads the hardware's;
+D3D (FXC, shader model 5, where `WaveGetLaneIndex` does not exist) and Vulkan
+emulate the SIMD group through threadgroup memory as `simdGroupWidth`
+consecutive flat indices, so they give the flat index modulo 32 and 32. The
+two agree on every Apple GPU; on one whose SIMD groups are narrower, Metal
+tells the truth about the hardware where the folds would not - the same caveat
+`simdSum` carries. Neither needs the threadgroup to be whole SIMD groups.
+
+Each built-in belongs to one stage, and the emitters assert it: a vertex stage
+reading `frontFacing()`, a fragment stage reading `vertexId()` straight rather
+than through `varying()`, or a kernel reading either. The CPU executor runs the
+kernel four - `localIndex()` and the lane per lane, `groupCount()` from the
+dispatch, an indirect one's arguments included - and refuses the render ones.
+
 ```cpp
 struct Hit
 {
@@ -342,19 +883,24 @@ struct Hit
 
 ### What it deliberately refuses
 
-`ShaderBuilder::uniform<T>()` static_asserts rather than leaving these to a
-comment, because each is a case where the backends disagree about the
-packing *inside* a value and no padding between fields can bridge it:
+`ShaderBuilder::uniform<T>()` static_asserts rather than leaving this to a
+comment, because it is a case where the backends disagree about the packing
+*inside* a value and no padding between fields can bridge it:
 
 - `Bool` and the boolean vectors — MSL packs a `bool` into a byte, an HLSL
   cbuffer gives it four
-- `Float2x2` and `Float3x3` — MSL packs a `float2x2` as two `float2` columns,
-  16 bytes; an HLSL cbuffer gives every matrix row a register and takes 32.
-  `Float4x4`, which both agree on, is the matrix to send
 
-Send a `Float` and compare it; send a `Float4x4`. `Int` and the integer vectors
-*are* uniforms — both languages give a signed integer four bytes and pack it
-where they pack a float.
+Send a `Float` and compare it. `Int` and the integer vectors *are* uniforms —
+every language gives a signed integer four bytes and packs it where it packs a
+float. So is every matrix shape: `Uniform<Float2x3>` takes its six floats
+column after column (`CpuValueOf` is an `Array<float, 6>`), and the upload walk
+lays each column at a 16-byte stride, 16-aligned — what std140 does, what an
+HLSL cbuffer does (column-major, a register per column), and what MSL does for
+columns of three or four. MSL packs a two-row matrix's columns at 8 bytes, so
+there the block declares a `Float2x2`, `Float3x2` or `Float4x2` as `float4`
+columns and the read rebuilds it from their `.xy`. HLSL's last register holds
+only the matrix's rows, so a scalar after one gets pad floats up to where the
+other two put it. The CPU executor reads the members' tight floats directly.
 
 `ShaderBuilder::varying<T>()` refuses one type for a different reason: a `Bool`
 varying. GLSL allows no boolean stage input or output, and no `flat` qualifier
@@ -832,9 +1378,11 @@ With `sampleableDepth` too, a later pass reads the plane with
 `setFragmentDepthTexture` and a kernel with `ComputePass::setInputDepthTexture`,
 once the pass that drew it has ended with `DepthAction::Keep`. The plane has
 the target's shape, so an array, cube or cube-array target's reads as one —
-`depth2d_array`, `depthcube`, `depthcube_array` in MSL, the matching
-`Texture2DArray<float>` on D3D12, `sampler2DArray`, `samplerCube`,
-`samplerCubeArray` on Vulkan — level 0 of every slice, the same on all three.
+`depth2d_array`, `depthcube`, `depthcube_array` in MSL, `Texture2DArray<float>`,
+`TextureCube<float>`, `TextureCubeArray<float>` on D3D12 (whose cube planes
+were 2D-array views until the EDSL's `TextureDepthCube` needed them to be
+cubes), `sampler2DArray`, `samplerCube`, `samplerCubeArray` on Vulkan — level
+0 of every slice, the same on all three.
 
 **One slice of it as a 2D depth texture** is the `...Slice` bind:
 
@@ -1703,8 +2251,14 @@ struct Gather final : ComputeProgram
 One kernel's `UIntOutputBuffer` is the next one's `UIntInputBuffer` on the same
 `GPU::Buffer`, so a decoder's ids go from the step that picked them to the step
 that looks them up without reaching the CPU. A render stage reads one too, on
-the terms below. There is no signed sibling: `Int` indexes constant arrays, and
-a storage buffer of them has not been wanted.
+the terms below.
+
+`Uniform<IntInputBuffer>` and `Uniform<IntOutputBuffer>` are the signed pair,
+WGSL's `array<i32>`: `Int` elements, `Int2`/`Int3`/`Int4` records through the
+same `read2`/`read3`/`read4` and `write`/`write2`/`write3`/`write4`, bound from
+int32s (`int` / `StructuredBuffer<int>` / `int[]`; `packed_int4` for Metal's
+one-load record read). An offset that may be negative, a signed sample, a
+delta. The atomic one is `IntAtomicBuffer`, below.
 
 ### Atomics
 
@@ -1745,6 +2299,59 @@ in a later kernel reads those bits as floats and yields nonsense. Bind it to a
 `UIntInputBuffer` instead — which is how a later kernel reads what the counting
 one left — or read it back with `counts.load(index)`. It binds like an output
 otherwise, and takes a slot from the same counter.
+
+The rest of WGSL's atomics take the same arguments and give back the old value
+the same way: `atomicSub`, `atomicMax`, `atomicMin`, `atomicAnd`, `atomicOr`,
+`atomicXor` and `atomicExchange`. The index and the operand are handles or
+literals (`unsigned` for an index or a `UInt` element, `int` for an `Int` one),
+and `write(target, index, value)` sets an element outright.
+
+| Operation | Metal | HLSL | GLSL |
+| --- | --- | --- | --- |
+| `atomicAdd` | `atomic_fetch_add_explicit` | `InterlockedAdd` | `atomicAdd` |
+| `atomicSub` | `atomic_fetch_sub_explicit` | `InterlockedAdd` of `0u - v` / `-v` | `atomicAdd` of `0u - v` / `-v` |
+| `atomicMax`, `atomicMin` | `atomic_fetch_max/min_explicit` | `InterlockedMax/Min` | `atomicMax/Min` |
+| `atomicAnd`, `Or`, `Xor` | `atomic_fetch_and/or/xor_explicit` | `InterlockedAnd/Or/Xor` | `atomicAnd/Or/Xor` |
+| `atomicExchange` | `atomic_exchange_explicit` | `InterlockedExchange` | `atomicExchange` |
+| `atomicCompareExchangeWeak` | `atomic_compare_exchange_weak_explicit` | `InterlockedCompareExchange` | `atomicCompSwap` |
+
+Every Metal call is `memory_order_relaxed`. Max and min compare as the element
+type does, and the element type is the declaration's: `uint` in an
+`AtomicBuffer`, `int` in an `IntAtomicBuffer` (WGSL's `atomic<i32>`), which is
+what makes HLSL's and GLSL's overloads signed — so -1 is below 0 there and the
+largest value there is in an `AtomicBuffer`. An `IntAtomicBuffer` binds like
+its unsigned sibling, from `int32` bytes, and `load()` reads an `Int`.
+
+`atomicCompareExchangeWeak(target, index, compare, value)` stores `value` where
+the element equals `compare` and hands back a `CompareExchangeResult<T>` —
+`oldValue` and `exchanged` — a struct of handles the way `ThreadPosition` and
+`Float4Pair` are, WGSL's `__atomic_compare_exchange_result`. It is weak, as
+WGSL's is: `exchanged` may be false although `oldValue` equals the comparand,
+so a loop retries on `exchanged`. Metal's is the weak one, the call itself
+saying whether it stored; HLSL and GLSL are strong and say nothing, so the
+comparand is named before the call and compared with the old value after:
+
+```cpp
+auto done = var(false);
+auto attempt = [&]
+{
+    auto seen = counter.load(0u);
+    auto outcome = atomicCompareExchangeWeak(counter, 0u, seen, seen + 1u);
+    auto take = [&] { ticket = outcome.oldValue; done = true; };
+    ifThen(outcome.exchanged, take);
+};
+loop(!done.get(), attempt);
+```
+
+`sharedAtomic<UInt>(count)` and `sharedAtomic<Int>(count)` are the threadgroup
+form, WGSL's `var<workgroup>` of atomics: the same operations, `load()` and
+`write()`, declared `threadgroup atomic_uint` / `atomic_int` on Metal (whose
+loads and stores of one are `atomic_load_explicit` / `atomic_store_explicit`),
+`groupshared` and `shared` plain integers on HLSL and GLSL. **It starts
+uninitialised**, as `shared<T>` does — WGSL zeroes workgroup memory, Metal,
+D3D and Vulkan do not — so a kernel writes the counters it will use and
+barriers before the first atomic. An atomic on shared memory moves it the way a
+store does: a `load()` taken before it is read again after.
 
 ### A dispatch the GPU sized
 
@@ -2455,17 +3062,21 @@ Apple-silicon Mac, adds `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`, `R16Float`
 and `R8Unorm` and the `Uint` and `Sint` formats of those shapes; no tier takes a
 two-channel or a packed format), D3D12's
 `D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD`, and on Vulkan the storage-image bit
-again. That is the per-format `IMAGE_READ`/`IMAGE_WRITE` pair bgfx's caps
+again (with `shaderStorageImageExtendedFormats` for a qualifier past SPIR-V's
+base set). That is the per-format `IMAGE_READ`/`IMAGE_WRITE` pair bgfx's caps
 want. An integer image is declared `texture2d<uint, ...>`,
-`RWTexture2D<uint>` or `uimage2D` with `r32ui`, and never filtered.
+`RWTexture2D<uint>` or `uimage2D` with `r32ui`, and never filtered. In the
+EDSL these are the storage textures of "Storage textures" above, in any
+format, as an array or a volume, read-only, write-only or read-write.
 
 A kernel reads a render target's **depth** with
 `setInputDepthTexture(renderTarget, slot)` — the compute twin of
 `setFragmentDepthTexture`, on the input slots: the target was created with
 `sampleableDepth`, the pass that drew it ended with `DepthAction::Keep`, and the
 kernel declares the target's kind as a depth texture (`depth2d`,
-`depth2d_array`, `depthcube`; `Texture2D<float>`, `Texture2DArray<float>`;
-`sampler2D`, `sampler2DArray`, `samplerCube`) and gets one float per read. That
+`depth2d_array`, `depthcube`; `Texture2D<float>`, `Texture2DArray<float>`,
+`TextureCube<float>`; `sampler2D`, `sampler2DArray`, `samplerCube`) and gets one
+float per read. That
 is how a hi-Z pyramid's first level is copied out of the scene and how an
 ambient-occlusion pass starts. `setInputDepthTextureSlice(renderTarget, slice,
 slot)` hands it one slice of an array or cube target's plane as a `depth2d`
@@ -2546,8 +3157,8 @@ pass.draw(draw);                    // binds it to both stages
 
 The same `InputBuffer` a kernel declares, and the same `read2`/`read3`/`read4`
 record reads — what differs is only that no store makes the graph a kernel, so
-it emits a vertex/fragment pair. A `Uniform<UIntInputBuffer>` reads here on the
-same terms. Read-only either way: writing stays the compute path's job. Each
+it emits a vertex/fragment pair. A `Uniform<UIntInputBuffer>` or a
+`Uniform<IntInputBuffer>` reads here on the same terms. Read-only either way: writing stays the compute path's job. Each
 stage declares only the buffers its own expressions read, and the program binds
 to both, so a buffer works wherever `define()` reaches for it.
 
@@ -2872,8 +3483,10 @@ the limit every GPU backend shares, kept so a kernel that runs here also runs
 there — filled by typed
 `set` overloads that take the kernel's own member, so the slot comes from its
 handle: a `std::span<const float>` for an `InputBuffer`, `std::span<float>` for
-an `OutputBuffer`, and `std::uint32_t` spans for `UIntInputBuffer`,
-`UIntOutputBuffer` and `AtomicBuffer`. A `set` stores a pointer and a count and
+an `OutputBuffer`, `std::uint32_t` spans for `UIntInputBuffer`,
+`UIntOutputBuffer` and `AtomicBuffer`, a `std::span<const std::int32_t>` for an
+`IntInputBuffer`, and a `std::span<std::int32_t>` for an `IntOutputBuffer` or an
+`IntAtomicBuffer`. A `set` stores a pointer and a count and
 nothing else, so a callback rebinds every block for free; the memory stays the
 caller's and must outlive the dispatch. The handles `ShaderBuilder` hands back
 take the same overloads, so a bare graph binds the same way. The check is at
@@ -2930,11 +3543,19 @@ assignments are masked.
 | --- | --- |
 | `threadId`, `localId`, `groupId` | lane `l` is the flat local index, x fastest, as the emitter's `lane` is |
 | the bounds guard | lanes past the extent start inactive; a kernel with a barrier has no guard and every lane of a partial group runs, as on the GPU |
+| `switchOn` | the selector once, then each clause in order under the lanes its labels name; the default under the lanes no label names |
+| `returnEarly()` | the lanes leave every enclosing mask and every enclosing loop for the rest of the dispatch |
+| a continuing block, `breakLoopIf`, `forLoop` | the continuing runs after the body under the lanes still in the loop, continued ones included; break-if takes out the lanes it holds for |
 | `shared<T>` | one array per group, zero-filled at group start |
+| `privateArray<T, N>()` | N elements per lane in the workspace, sized at construction; the declaration fills the active lanes' elements, each lane reads and writes the element its own clamped index names |
+| a matrix | its columns one after another, components per lane; every product sums in ascending order, unfused |
 | `barrier()` | nothing: statement order already is the barrier |
 | `groupSum`, `simdSum`, `simdMax`, … | a fold over the group or each 32-lane block in the fallback's halving order, so a float sum rounds as it does on D3D12 and Vulkan |
-| `atomicAdd`, atomic loads | `std::atomic_ref`, relaxed, lanes in ascending order; each lane gets the pre-add value |
+| buffer atomics, their loads and stores | `std::atomic_ref`, relaxed, lanes in ascending order, each lane getting the old value: `fetch_add`/`sub`/`and`/`or`/`xor` and `exchange`, a `compare_exchange_weak` loop for max and min (signed on an `Int` element), `compare_exchange_strong` for the compare-exchange — real atomics, since groups split over threads by `dispatchGroups` reach the same words at once |
+| `sharedAtomic<T>` | a plain read-modify-write per lane in ascending order: a group's threadgroup memory is its own workspace's |
 | `simdGroupIndex()` | `lane / 32` |
+| `localIndex()`, `simdLaneIndex()`, `simdGroupSize()` | `lane`, `lane % 32` and 32, filled once with the workspace |
+| `groupCount()` | the dispatch's groups per axis, an indirect dispatch's arguments included |
 | the SIMD-group matrix | a dense 8×8 per SIMD group; the product is the accumulator plus the terms in ascending `k`, unfused; packed half and bf16 loads widen as they load |
 | `eacpErf`, the packed reads, … | the public C++ twins in `CpuCompute/Helpers.h` (`errorFunction`, `readHalf`, `packHalf2`, …), which the tests' references use too |
 | the math set | the `std::` function per lane, IEEE single precision, never contracted |
@@ -2944,17 +3565,23 @@ What the GPU leaves undefined, the CPU defines:
 | Case | GPU | CPU |
 | --- | --- | --- |
 | buffer read out of bounds, or from an empty span | Metal undefined; D3D12/Vulkan read 0 | 0 |
-| buffer store or atomic out of bounds | Metal undefined; D3D12/Vulkan drop it | dropped; the atomic yields 0 |
-| shared or constant array out of bounds | undefined | reads 0, store dropped |
+| buffer store or atomic out of bounds | Metal undefined; D3D12/Vulkan drop it | dropped; the atomic yields 0, a compare-exchange `exchanged` false |
+| shared or constant array out of bounds | undefined | reads 0, store dropped; an atomic yields 0 |
+| private array or matrix column out of bounds | defined: the index is clamped into range, as graph nodes, on every backend | the same clamp |
+| `atomicCompareExchangeWeak` failing spuriously | Metal may; D3D12/Vulkan never do | never: it is strong |
 | integer `/` or `%` by zero | undefined, or all-ones on D3D | 0 |
 | `INT_MIN / -1`, `INT_MIN % -1` | undefined | `INT_MIN`, 0 |
 | shift by 32 or more | masked by the hardware | amount `& 31` |
 | float to int out of range, NaN | saturates | saturates; NaN is 0 |
 | `round` at an exact half | Metal away from zero; D3D12/Vulkan to even | away from zero |
+| `fma` | Metal fused; D3D's `mad` and Vulkan may round the product first | fused, `std::fma` |
+| `quantizeToF16` between two halves | Metal and Vulkan to nearest even (GLSL's helper rounds in integer bits rather than trusting `packHalf2x16`, which Mesa leaves unrounded); D3D towards zero | to nearest even |
+| `packHalf2` between two halves | Metal to nearest even; D3D towards zero; Vulkan the driver's `packHalf2x16` | to nearest even |
 | a barrier under divergent control flow | undefined | nothing |
+| a `returnEarly()` some threads of a group take ahead of a barrier, fold or SIMD-group op | undefined | the returned lanes take no part |
 | a reduction under divergence | undefined | inactive lanes give the fold's identity; only active ones receive it |
 | a SIMD-matrix op under divergence | undefined | the whole fragment, with the first active lane's operands, if any lane is active |
-| threadgroup memory and fragments at group start | uninitialised | zero |
+| threadgroup memory, shared atomics included, and fragments at group start | uninitialised | zero |
 
 ### The realtime contract
 
@@ -3349,7 +3976,8 @@ The shader declares the sampler where the slot puts it: an MSL
 `SamplerState s : register(s<8 + slot>)` (`RenderPass::samplerRegisterBase`; a
 `SamplerComparisonState` for a comparison sampler), or on Vulkan the combined
 `sampler2D` / `sampler2DShadow` at the texture's own binding. Shaders built with
-the codegen layer keep sampling the way they declared, and the `TextureSampling`
+the codegen layer keep sampling the way they declared, unless they declare a
+sampler binding of their own (see "Samplers as bindings"), and the `TextureSampling`
 overloads are the same cache under eight fixed descriptors
 (`SamplerDescriptor::from`). `Device::supportsPerBindSamplers()` is false on the
 one D3D12 driver whose sampler tables cannot be trusted, where the per-bind
@@ -3369,8 +3997,10 @@ pass.setVertexDepthTexture(shadowMap, 1, shadowCompare);
 ```
 
 The vertex function samples with an explicit level - `sample(s, uv, level(0))`
-in MSL, `SampleLevel` or `SampleCmpLevelZero` in HLSL, `textureLod` in GLSL. The
-codegen layer still binds textures in the fragment stage only.
+in MSL, `SampleLevel` or `SampleCmpLevelZero` in HLSL, `textureLod` in GLSL.
+The codegen layer reaches it through `vertexStage` (see "Statements in the
+vertex stage"), and `ShaderProgram::bindTextures` makes these binds for every
+slot the vertex function reads.
 
 | | texture slot `n` | its per-bind sampler | slots per stage | stages share a slot |
 | --- | --- | --- | --- | --- |

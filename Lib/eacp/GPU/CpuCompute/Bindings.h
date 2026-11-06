@@ -34,7 +34,10 @@ public:
     bool set(const OutputBuffer& member, std::span<float> elements);
     bool set(const UIntInputBuffer& member, std::span<const std::uint32_t> elements);
     bool set(const UIntOutputBuffer& member, std::span<std::uint32_t> elements);
+    bool set(const IntInputBuffer& member, std::span<const std::int32_t> elements);
+    bool set(const IntOutputBuffer& member, std::span<std::int32_t> elements);
     bool set(const AtomicBuffer& member, std::span<std::uint32_t> elements);
+    bool set(const IntAtomicBuffer& member, std::span<std::int32_t> elements);
 
     void clear(int slot);
     void clear();

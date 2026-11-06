@@ -57,6 +57,21 @@
 
 namespace eacp::GPU
 {
+namespace detail
+{
+// Whether a texture is what a storage member asks for: valid, in the member's
+// format, and of its shape - a 2D array taking a cube or a cube array as the
+// array of its faces.
+bool fitsStorageMember(const Texture& texture, const StorageTextureLayout& layout);
+
+// Whether a sampler member binds the sampler assigned to it: a valid one, with
+// a CompareFunction exactly where the member is a comparison sampler. A
+// mismatch is logged, once per process, naming the member.
+bool fitsSamplerMember(const char* name, const Sampler& sampler, bool comparison);
+
+bool isCubeType(TextureType type);
+} // namespace detail
+
 constexpr VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
@@ -67,26 +82,9 @@ constexpr VertexFormat toVertexFormat(ValueType type)
             return VertexFormat::Float2;
         case ValueType::Float3:
             return VertexFormat::Float3;
-        case ValueType::Float4:
-        case ValueType::Float2x2:
-        case ValueType::Float3x3:
-        case ValueType::Float4x4:
-        case ValueType::UInt:
-        case ValueType::UInt2:
-        case ValueType::UInt3:
-        case ValueType::UInt4:
-        case ValueType::Int:
-        case ValueType::Int2:
-        case ValueType::Int3:
-        case ValueType::Int4:
-        case ValueType::Bool:
-        case ValueType::Bool2:
-        case ValueType::Bool3:
-        case ValueType::Bool4:
+        default:
             return VertexFormat::Float4; // matrix/integer/bool are never attributes
     }
-
-    return VertexFormat::Float;
 }
 
 // A CPU vertex field's wire format.
@@ -321,8 +319,9 @@ public:
     bool vertexReadsUniforms() const;
     bool fragmentReadsUniforms() const;
 
-    // Binds every assigned texture member to the pass; a no-op for programs
-    // without textures. RenderPass::bind and RenderPass::draw(program) call it
+    // Binds every assigned texture member to the pass - to the fragment stage,
+    // and to the vertex stage as well where vertexStage() reads it; a no-op for
+    // programs without textures. RenderPass::bind and RenderPass::draw(program) call it
     // once - and so does a caller drawing sub-ranges of one buffer that differ
     // by their texture, which is what this is public for: after bind(), the
     // per-draw state is the caller's to restate, and a texture is the commonest
@@ -413,6 +412,9 @@ protected:
     Float4 fragmentCoordinate();
     UInt vertexId();
     UInt instanceId();
+    Bool frontFacing();
+    UInt sampleIndex();
+    UInt sampleMask();
 
     Float constant(float value);
     Bool boolean(bool value);
@@ -453,6 +455,22 @@ protected:
     Var<Int> var(int initialValue);
     Var<UInt> var(unsigned initialValue);
 
+    // A private array per invocation, in the stage open when it is created
+    // (see PrivateArray and ShaderBuilder::privateArray).
+    template <typename T, int Size>
+    PrivateArray<T, Size> privateArray()
+    {
+        return builder.privateArray<T, Size>();
+    }
+
+    template <typename T, typename... Rest>
+        requires(ShaderHandleLike<T> || ShaderMatrixLike<T>)
+    PrivateArray<detail::StoredHandle<T>, 1 + (int) sizeof...(Rest)>
+        privateArray(const T& first, const Rest&... rest)
+    {
+        return builder.privateArray(first, rest...);
+    }
+
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)
     {
@@ -472,8 +490,62 @@ protected:
         builder.loop(condition, std::forward<Body>(body));
     }
 
+    template <typename Body, typename Continuing>
+    void loop(const Bool& condition, Body&& body, Continuing&& continuing)
+    {
+        builder.loop(condition,
+                     std::forward<Body>(body),
+                     std::forward<Continuing>(continuing));
+    }
+
+    template <typename Update, typename Body>
+    void forLoop(const Bool& condition, Update&& update, Body&& body)
+    {
+        builder.forLoop(
+            condition, std::forward<Update>(update), std::forward<Body>(body));
+    }
+
     void breakLoop();
     void continueLoop();
+    void breakLoopIf(const Bool& condition);
+
+    template <typename Selector, typename... Bodies>
+    void switchOn(const Selector& selector, const SwitchClause<Bodies>&... clauses)
+    {
+        builder.switchOn(selector, clauses...);
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>> caseOf(std::int64_t value, Body&& body)
+    {
+        return GPU::caseOf(value, std::forward<Body>(body));
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>>
+        caseOf(std::initializer_list<std::int64_t> values, Body&& body)
+    {
+        return GPU::caseOf(values, std::forward<Body>(body));
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>> defaultCase(Body&& body)
+    {
+        return GPU::defaultCase(std::forward<Body>(body));
+    }
+
+    // The fragment or vertex function returns here with its outputs as they
+    // evaluate now, and discard() drops the fragment. See ShaderBuilder.
+    void returnEarly();
+    void discard();
+
+    // The statements `body` records go to the vertex function. See
+    // ShaderBuilder::vertexStage.
+    template <typename Body>
+    void vertexStage(Body&& body)
+    {
+        builder.vertexStage(std::forward<Body>(body));
+    }
 
     // In-shader transform builders, matching column-major / right-handed [0,1]
     // depth conventions. Build the model/view/projection inside define() from
@@ -489,6 +561,12 @@ protected:
 
     void setPosition(const Float4& clipPosition);
     void setFragment(const Float4& color);
+
+    // The fragment's other two outputs, beside its colour: a depth replacing
+    // the rasterized one, and a coverage mask over the samples it writes. See
+    // ShaderBuilder::fragmentDepth and fragmentSampleMask.
+    void setFragmentDepth(const Float& depth);
+    void setSampleMask(const UInt& mask);
 
     // Kills the fragment when value falls below threshold, before any colour or
     // depth is written — the alpha test a masked texture needs, so a sprite's

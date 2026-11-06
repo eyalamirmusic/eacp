@@ -17,26 +17,9 @@ VertexFormat toVertexFormat(ValueType type)
             return VertexFormat::Float2;
         case ValueType::Float3:
             return VertexFormat::Float3;
-        case ValueType::Float4:
-        case ValueType::Float2x2:
-        case ValueType::Float3x3:
-        case ValueType::Float4x4:
-        case ValueType::UInt:
-        case ValueType::UInt2:
-        case ValueType::UInt3:
-        case ValueType::UInt4:
-        case ValueType::Int:
-        case ValueType::Int2:
-        case ValueType::Int3:
-        case ValueType::Int4:
-        case ValueType::Bool:
-        case ValueType::Bool2:
-        case ValueType::Bool3:
-        case ValueType::Bool4:
+        default:
             return VertexFormat::Float4; // matrix/integer/bool are never attributes
     }
-
-    return VertexFormat::Float;
 }
 
 VertexLayout buildVertexLayout(const ShaderGraph& graph)
@@ -133,6 +116,16 @@ void ShaderBuilder::fragment(const Float4& color)
     graphData.setFragment(color.node);
 }
 
+void ShaderBuilder::fragmentDepth(const Float& depth)
+{
+    graphData.setFragmentDepth(depth.node);
+}
+
+void ShaderBuilder::fragmentSampleMask(const UInt& mask)
+{
+    graphData.setSampleMask(mask.node);
+}
+
 GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend)
 {
     auto source = shaderSourceFor(graph, backend);
@@ -152,6 +145,7 @@ GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend)
     result.vertexLayout = buildVertexLayout(graph);
     result.vertexReadsUniforms = vertexReadsUniforms(graph);
     result.fragmentReadsUniforms = fragmentReadsUniforms(graph);
+    result.vertexTextureSlots = vertexTextureSlots(graph);
     return result;
 }
 
@@ -185,6 +179,54 @@ TextureDepth2DArray ShaderBuilder::depthTextureArray(TextureSampling sampling)
     return {&graphData, graphData.addDepthArrayTexture(sampling)};
 }
 
+detail::TextureHandle ShaderBuilder::textureOfKind(TextureKind kind,
+                                                   TextureSampling sampling)
+{
+    return {&graphData, graphData.addTextureOfKind(kind, sampling)};
+}
+
+detail::TextureHandle
+    ShaderBuilder::storageTextureOf(const StorageTextureLayout& layout)
+{
+    return {&graphData,
+            graphData.addStorageTexture(layout.kind, layout.format, layout.access)};
+}
+
+detail::SamplerHandle ShaderBuilder::samplerOf(bool comparison)
+{
+    return {&graphData, graphData.addSampler(comparison)};
+}
+
+SamplerBinding ShaderBuilder::sampler()
+{
+    return {samplerOf(false)};
+}
+
+ComparisonSamplerBinding ShaderBuilder::comparisonSampler()
+{
+    return {samplerOf(true)};
+}
+
+Texture3D ShaderBuilder::texture3D(TextureSampling sampling)
+{
+    return {textureOfKind(TextureKind::Texture3D, sampling)};
+}
+
+TextureCubeArray ShaderBuilder::cubeTextureArray(TextureSampling sampling)
+{
+    return {textureOfKind(TextureKind::CubeArray, sampling)};
+}
+
+TextureDepthCube ShaderBuilder::depthCubeTexture(TextureSampling sampling)
+{
+    return {textureOfKind(TextureKind::DepthCube, sampling)};
+}
+
+TextureDepthCubeArray ShaderBuilder::depthCubeTextureArray(TextureSampling sampling)
+{
+    return {textureOfKind(TextureKind::DepthCubeArray, sampling)};
+}
+
 Float4 ShaderBuilder::fragmentCoordinate()
 {
     return indexValue<Float4>(
@@ -199,6 +241,41 @@ UInt ShaderBuilder::vertexId()
 UInt ShaderBuilder::instanceId()
 {
     return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::InstanceId));
+}
+
+Bool ShaderBuilder::frontFacing()
+{
+    return indexValue<Bool>(graphData.addBuiltIn(ShaderBuiltIn::FrontFacing));
+}
+
+UInt ShaderBuilder::sampleIndex()
+{
+    return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::SampleIndex));
+}
+
+UInt ShaderBuilder::sampleMask()
+{
+    return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::SampleMask));
+}
+
+UInt ShaderBuilder::localIndex()
+{
+    return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::LocalIndex));
+}
+
+UInt3 ShaderBuilder::groupCount()
+{
+    return indexValue<UInt3>(graphData.addBuiltIn(ShaderBuiltIn::GroupCount));
+}
+
+UInt ShaderBuilder::simdLaneIndex()
+{
+    return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::SimdLaneIndex));
+}
+
+UInt ShaderBuilder::simdGroupSize()
+{
+    return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::SimdGroupSize));
 }
 
 UInt ShaderBuilder::threadId()
@@ -554,43 +631,28 @@ UIntOutputBuffer ShaderBuilder::uintOutputBuffer()
             graphData.addStorageBuffer(BufferAccess::Write, ValueType::UInt)};
 }
 
+IntInputBuffer ShaderBuilder::intInputBuffer()
+{
+    return {&graphData,
+            graphData.addStorageBuffer(BufferAccess::Read, ValueType::Int)};
+}
+
+IntOutputBuffer ShaderBuilder::intOutputBuffer()
+{
+    return {&graphData,
+            graphData.addStorageBuffer(BufferAccess::Write, ValueType::Int)};
+}
+
 AtomicBuffer ShaderBuilder::atomicBuffer()
 {
     return {&graphData,
             graphData.addStorageBuffer(BufferAccess::Atomic, ValueType::UInt)};
 }
 
-UInt ShaderBuilder::atomicAdd(const AtomicBuffer& buffer,
-                              const UInt& index,
-                              const UInt& value)
+IntAtomicBuffer ShaderBuilder::intAtomicBuffer()
 {
-    auto previous = graphData.addAtomicAdd(buffer.slot, index.node, value.node);
-
-    auto result = UInt {};
-    result.graph = &graphData;
-    result.node = graphData.addVarRead(previous);
-    return result;
-}
-
-UInt ShaderBuilder::atomicAdd(const AtomicBuffer& buffer,
-                              unsigned index,
-                              const UInt& value)
-{
-    return atomicAdd(buffer, buffer.literal(index), value);
-}
-
-UInt ShaderBuilder::atomicAdd(const AtomicBuffer& buffer,
-                              const UInt& index,
-                              unsigned value)
-{
-    return atomicAdd(buffer, index, buffer.literal(value));
-}
-
-UInt ShaderBuilder::atomicAdd(const AtomicBuffer& buffer,
-                              unsigned index,
-                              unsigned value)
-{
-    return atomicAdd(buffer, buffer.literal(index), buffer.literal(value));
+    return {&graphData,
+            graphData.addStorageBuffer(BufferAccess::Atomic, ValueType::Int)};
 }
 
 WritableTexture2D ShaderBuilder::writableTexture()
@@ -839,30 +901,85 @@ void ShaderBuilder::write4(const UIntOutputBuffer& buffer,
     graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
 }
 
-void ShaderBuilder::write(const AtomicBuffer& buffer,
+void ShaderBuilder::write(const IntOutputBuffer& buffer,
                           const UInt& index,
-                          const UInt& value)
+                          const Int& value)
 {
     graphData.addStore(buffer.slot, index.node, value.node);
 }
 
-void ShaderBuilder::write(const AtomicBuffer& buffer,
+void ShaderBuilder::write(const IntOutputBuffer& buffer,
                           const UInt& index,
-                          unsigned value)
+                          int value)
 {
     write(buffer, index, buffer.literal(value));
 }
 
-void ShaderBuilder::write(const AtomicBuffer& buffer,
+void ShaderBuilder::write(const IntOutputBuffer& buffer,
                           unsigned index,
-                          const UInt& value)
+                          const Int& value)
 {
-    write(buffer, buffer.literal(index), value);
+    write(buffer, buffer.index(index), value);
 }
 
-void ShaderBuilder::write(const AtomicBuffer& buffer, unsigned index, unsigned value)
+void ShaderBuilder::write(const IntOutputBuffer& buffer, unsigned index, int value)
 {
-    write(buffer, buffer.literal(index), buffer.literal(value));
+    write(buffer, buffer.index(index), buffer.literal(value));
+}
+
+void ShaderBuilder::write(const IntOutputBuffer& buffer,
+                          const UInt& index,
+                          const Int2& value)
+{
+    auto base = index * 2u;
+    graphData.addRecordStore(buffer.slot,
+                             {base.node, (base + 1u).node},
+                             {value.x().node, value.y().node},
+                             value.node);
+}
+
+void ShaderBuilder::write(const IntOutputBuffer& buffer,
+                          const UInt& index,
+                          const Int3& value)
+{
+    auto base = index * 3u;
+    graphData.addRecordStore(buffer.slot,
+                             {base.node, (base + 1u).node, (base + 2u).node},
+                             {value.x().node, value.y().node, value.z().node},
+                             value.node);
+}
+
+void ShaderBuilder::write(const IntOutputBuffer& buffer,
+                          const UInt& index,
+                          const Int4& value)
+{
+    auto base = index * 4u;
+    graphData.addRecordStore(
+        buffer.slot,
+        {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
+        {value.x().node, value.y().node, value.z().node, value.w().node},
+        value.node);
+}
+
+void ShaderBuilder::write2(const IntOutputBuffer& buffer,
+                           const UInt& index,
+                           const Int2& value)
+{
+    graphData.addVectorStore(buffer.slot, (index * 2u).node, value.node);
+}
+
+void ShaderBuilder::write3(const IntOutputBuffer& buffer,
+                           const UInt& index,
+                           const Int3& value)
+{
+    graphData.addVectorStore(buffer.slot, (index * 3u).node, value.node);
+}
+
+void ShaderBuilder::write4(const IntOutputBuffer& buffer,
+                           const UInt& index,
+                           const Int4& value)
+{
+    graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
 }
 
 void ShaderBuilder::write(const WritableTexture2D& texture,
@@ -948,6 +1065,21 @@ void ShaderBuilder::breakLoop()
 void ShaderBuilder::continueLoop()
 {
     graphData.addContinue();
+}
+
+void ShaderBuilder::breakLoopIf(const Bool& condition)
+{
+    graphData.addBreakIf(condition.node);
+}
+
+void ShaderBuilder::returnEarly()
+{
+    graphData.addReturn();
+}
+
+void ShaderBuilder::discard()
+{
+    graphData.addDiscard();
 }
 
 void ShaderBuilder::discardBelow(const Float& value, float threshold)

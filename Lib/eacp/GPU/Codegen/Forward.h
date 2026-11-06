@@ -32,6 +32,12 @@ struct Bool4;
 struct Float2x2;
 struct Float3x3;
 struct Float4x4;
+struct Float2x3;
+struct Float2x4;
+struct Float3x2;
+struct Float3x4;
+struct Float4x2;
+struct Float4x3;
 
 // How a module hands over a shader whose program type is nested in a .cpp.
 using ShaderGraphVisitor = std::function<void(const ShaderGraph&)>;

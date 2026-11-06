@@ -48,6 +48,8 @@ enum class Op : std::uint8_t
     MatVec,
     VecMat,
     MatMat,
+    MatrixColumn,
+    VariableElementRead,
     BufferRead,
     BufferVectorRead,
     ArrayRead,
@@ -67,6 +69,7 @@ enum class Op : std::uint8_t
     Clamp,
     Mix,
     Smoothstep,
+    Fma,
     Dot,
     Length,
     Distance,
@@ -107,7 +110,26 @@ enum class HelperFunction : std::uint8_t
     UnpackInt4x4,
     UnpackUInt4x4,
     PackInt8x4,
-    PackUInt8x4
+    PackUInt8x4,
+    QuantizeToF16,
+    PackUnorm8x4,
+    PackSnorm8x4,
+    PackUnorm16x2,
+    PackSnorm16x2,
+    UnpackUnorm8x4,
+    UnpackSnorm8x4,
+    UnpackUnorm16x2,
+    UnpackSnorm16x2,
+    CountOneBits,
+    ReverseBits,
+    CountLeadingZeros,
+    CountTrailingZeros,
+    FirstLeadingBitUnsigned,
+    FirstLeadingBitSigned,
+    FirstTrailingBit,
+    ExtractBitsUnsigned,
+    ExtractBitsSigned,
+    InsertBits
 };
 
 enum class Relation : std::uint8_t
@@ -131,6 +153,9 @@ enum class MathFunction : std::uint8_t
     Sinh,
     Cosh,
     Tanh,
+    Asinh,
+    Acosh,
+    Atanh,
     Exp,
     Exp2,
     Log,
@@ -169,12 +194,17 @@ public:
     // Metal's setBytes limit: the uniforms tightly packed, a word per scalar.
     static constexpr int maxUniformWords = 1024;
 
+    // A matrix op's shape: MatVec and VecMat a columns x rows matrix,
+    // MatMat a (order x rows) times a (columns x order), Transpose and Column
+    // the operand's columns x rows, Determinant an order x order.
     struct Node
     {
         Op op = Op::Leaf;
         std::uint8_t sub = 0;
         std::uint8_t components = 1;
         std::uint8_t order = 0;
+        std::uint8_t rows = 0;
+        std::uint8_t columns = 0;
         std::array<std::uint8_t, 4> swizzle {};
         int argBegin = 0;
         int argCount = 0;
@@ -200,9 +230,16 @@ public:
         int buffer = -1;
         int body = -1;
         int elseBody = -1;
+        int continuing = -1;
         int scheduleBegin = 0;
         int scheduleEnd = 0;
         bool bodiesJumpOut = false;
+
+        // A Case: its labels, caseLabelCount words from caseLabels(), and
+        // whether it is the default clause; a Switch: whether one is.
+        int caseLabelBegin = 0;
+        int caseLabelCount = 0;
+        bool isDefault = false;
         GroupReduction reduction = GroupReduction::Sum;
         ReductionScope scope = ReductionScope::Group;
         ValueType type = ValueType::Float;
@@ -211,6 +248,13 @@ public:
         int right = -1;
         SimdMatrixMemory memory = SimdMatrixMemory::Shared;
         SimdMatrixElement element = SimdMatrixElement::Float;
+
+        // An Atomic: the operation, its comparand and the Bool variable a
+        // CompareExchange declares; buffer and memory say where, type is the
+        // element's.
+        AtomicOperation atomic = AtomicOperation::Add;
+        int compare = -1;
+        int exchanged = -1;
 
         // A store whose index is a ramp (as Node::ramp) that never gives two
         // (lane, component) pairs the same element.
@@ -240,9 +284,13 @@ public:
         bool used = false;
     };
 
+    // Element e, component c of a private array is the row storage +
+    // (e * components + c) * stride; a plain variable is element 0 of one.
     struct Variable
     {
         int components = 1;
+        int elements = 1;
+        bool isArray = false;
         std::uint32_t storage = 0;
     };
 
@@ -322,6 +370,7 @@ public:
     const BlockRange& block(int id) const { return blocks[id]; }
     int blockStep(int position) const { return blockSteps[position]; }
     constexpr int rootBlock() const { return 0; }
+    Word caseLabel(int position) const { return caseLabelWords[position]; }
 
     constexpr const Vector<ArrayLayout>& arrays() const { return arrayLayouts; }
     int arrayElement(const ArrayLayout& array, int which) const;
@@ -339,6 +388,10 @@ public:
     {
         return simdGroupLeaves;
     }
+
+    // The kernel built-ins read, index = the ShaderBuiltIn: the per-lane ones
+    // are filled once with the workspace, GroupCount per dispatch.
+    constexpr const Vector<LeafNode>& builtInNodes() const { return builtInLeaves; }
 
     constexpr const Vector<SharedLayout>& sharedArrays() const
     {
@@ -418,6 +471,7 @@ private:
     Vector<Step> steps;
     Vector<BlockRange> blocks;
     Vector<int> blockSteps;
+    Vector<Word> caseLabelWords;
     Vector<ArrayLayout> arrayLayouts;
     Vector<int> arrayElements;
     Vector<Variable> variableLayouts;
@@ -427,6 +481,7 @@ private:
     Vector<LeafNode> threadIdLeaves;
     Vector<LeafNode> groupIdLeaves;
     Vector<int> simdGroupLeaves;
+    Vector<LeafNode> builtInLeaves;
     Vector<SharedLayout> sharedLayouts;
 
     int nesting = 0;

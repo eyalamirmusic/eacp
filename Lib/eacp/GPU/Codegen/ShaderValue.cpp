@@ -544,6 +544,102 @@ UInt UIntOutputBuffer::literal(unsigned value) const
     return detail::bufferIndex(graph, value);
 }
 
+Int IntInputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Int>(graph, slot, index);
+}
+
+Int IntInputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Int2 IntInputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Int2>(
+        graph, slot, index, ValueType::Int2, 2);
+}
+
+Int3 IntInputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Int3>(
+        graph, slot, index, ValueType::Int3, 3);
+}
+
+Int4 IntInputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Int4>(
+        graph, slot, index, ValueType::Int4, 4);
+}
+
+Int2 IntInputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Int3 IntInputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Int4 IntInputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+Int IntOutputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Int>(graph, slot, index);
+}
+
+Int IntOutputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Int2 IntOutputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVector<Int2>(graph, slot, index, ValueType::Int2, 2);
+}
+
+Int3 IntOutputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVector<Int3>(graph, slot, index, ValueType::Int3, 3);
+}
+
+Int4 IntOutputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVector<Int4>(graph, slot, index, ValueType::Int4, 4);
+}
+
+Int2 IntOutputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Int3 IntOutputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Int4 IntOutputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+Int IntOutputBuffer::literal(int value) const
+{
+    auto result = Int {};
+    result.graph = graph;
+    result.node = graph->addIntConstant(value);
+    return result;
+}
+
+UInt IntOutputBuffer::index(unsigned value) const
+{
+    return detail::bufferIndex(graph, value);
+}
+
 UInt AtomicBuffer::load(const UInt& index) const
 {
     auto result = UInt {};
@@ -563,6 +659,19 @@ UInt AtomicBuffer::literal(unsigned value) const
     result.graph = graph;
     result.node = graph->addUIntConstant(value);
     return result;
+}
+
+Int IntAtomicBuffer::load(const UInt& index) const
+{
+    auto result = Int {};
+    result.graph = graph;
+    result.node = graph->addAtomicLoad(slot, index.node);
+    return result;
+}
+
+Int IntAtomicBuffer::load(unsigned index) const
+{
+    return load(detail::bufferIndex(graph, index));
 }
 
 Float toFloat(const UInt& value)
@@ -849,6 +958,46 @@ UInt packInt8x4(const Int4& values)
 UInt packUInt8x4(const UInt4& values)
 {
     return detail::call<UInt>(values, ValueType::UInt, "eacpPackUInt8x4");
+}
+
+UInt packUnorm8x4(const Float4& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackUnorm8x4");
+}
+
+UInt packSnorm8x4(const Float4& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackSnorm8x4");
+}
+
+UInt packUnorm16x2(const Float2& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackUnorm16x2");
+}
+
+UInt packSnorm16x2(const Float2& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackSnorm16x2");
+}
+
+Float4 unpackUnorm8x4(const UInt& bits)
+{
+    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackUnorm8x4");
+}
+
+Float4 unpackSnorm8x4(const UInt& bits)
+{
+    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackSnorm8x4");
+}
+
+Float2 unpackUnorm16x2(const UInt& bits)
+{
+    return detail::call<Float2>(bits, ValueType::Float2, "eacpUnpackUnorm16x2");
+}
+
+Float2 unpackSnorm16x2(const UInt& bits)
+{
+    return detail::call<Float2>(bits, ValueType::Float2, "eacpUnpackSnorm16x2");
 }
 
 Float4Pair unpackInt4x8(const UInt& bits)
@@ -1145,6 +1294,74 @@ Float4x4 transpose(const Float4x4& matrix)
     return detail::call<Float4x4>(matrix, ValueType::Float4x4, "transpose");
 }
 
+Float2x3 float2x3(const Float3& c0, const Float3& c1)
+{
+    return detail::construct<Float2x3>(
+        *c0.graph, ValueType::Float2x3, {c0.node, c1.node});
+}
+
+Float2x4 float2x4(const Float4& c0, const Float4& c1)
+{
+    return detail::construct<Float2x4>(
+        *c0.graph, ValueType::Float2x4, {c0.node, c1.node});
+}
+
+Float3x2 float3x2(const Float2& c0, const Float2& c1, const Float2& c2)
+{
+    return detail::construct<Float3x2>(
+        *c0.graph, ValueType::Float3x2, {c0.node, c1.node, c2.node});
+}
+
+Float3x4 float3x4(const Float4& c0, const Float4& c1, const Float4& c2)
+{
+    return detail::construct<Float3x4>(
+        *c0.graph, ValueType::Float3x4, {c0.node, c1.node, c2.node});
+}
+
+Float4x2
+    float4x2(const Float2& c0, const Float2& c1, const Float2& c2, const Float2& c3)
+{
+    return detail::construct<Float4x2>(
+        *c0.graph, ValueType::Float4x2, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Float4x3
+    float4x3(const Float3& c0, const Float3& c1, const Float3& c2, const Float3& c3)
+{
+    return detail::construct<Float4x3>(
+        *c0.graph, ValueType::Float4x3, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Float3x2 transpose(const Float2x3& matrix)
+{
+    return detail::call<Float3x2>(matrix, ValueType::Float3x2, "transpose");
+}
+
+Float4x2 transpose(const Float2x4& matrix)
+{
+    return detail::call<Float4x2>(matrix, ValueType::Float4x2, "transpose");
+}
+
+Float2x3 transpose(const Float3x2& matrix)
+{
+    return detail::call<Float2x3>(matrix, ValueType::Float2x3, "transpose");
+}
+
+Float4x3 transpose(const Float3x4& matrix)
+{
+    return detail::call<Float4x3>(matrix, ValueType::Float4x3, "transpose");
+}
+
+Float2x4 transpose(const Float4x2& matrix)
+{
+    return detail::call<Float2x4>(matrix, ValueType::Float2x4, "transpose");
+}
+
+Float3x4 transpose(const Float4x3& matrix)
+{
+    return detail::call<Float3x4>(matrix, ValueType::Float3x4, "transpose");
+}
+
 Float determinant(const Float2x2& matrix)
 {
     return detail::call<Float>(matrix, ValueType::Float, "determinant");
@@ -1324,6 +1541,12 @@ EACP_DEFINE_UINT_COMPARISON(operator!=, "!=")
 EACP_DEFINE_MATRIX_SCALE(Float2x2)
 EACP_DEFINE_MATRIX_SCALE(Float3x3)
 EACP_DEFINE_MATRIX_SCALE(Float4x4)
+EACP_DEFINE_MATRIX_SCALE(Float2x3)
+EACP_DEFINE_MATRIX_SCALE(Float2x4)
+EACP_DEFINE_MATRIX_SCALE(Float3x2)
+EACP_DEFINE_MATRIX_SCALE(Float3x4)
+EACP_DEFINE_MATRIX_SCALE(Float4x2)
+EACP_DEFINE_MATRIX_SCALE(Float4x3)
 
 #undef EACP_DEFINE_MATRIX_SCALE
 } // namespace eacp::GPU

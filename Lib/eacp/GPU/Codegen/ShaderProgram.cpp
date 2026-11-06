@@ -1,11 +1,64 @@
 #include "ShaderProgram.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 
 namespace eacp::GPU
 {
+namespace detail
+{
+bool isCubeType(TextureType type)
+{
+    return type == TextureType::Cube || type == TextureType::CubeArray;
+}
+
+namespace
+{
+bool fitsStorageShape(TextureKind kind, TextureType type)
+{
+    if (kind == TextureKind::Texture2DArray)
+        return type == TextureType::TwoDArray || isCubeType(type);
+
+    if (kind == TextureKind::Texture3D)
+        return type == TextureType::ThreeD;
+
+    return type == TextureType::TwoD;
+}
+} // namespace
+
+bool fitsStorageMember(const Texture& texture, const StorageTextureLayout& layout)
+{
+    return texture.isValid() && texture.format() == layout.format
+           && fitsStorageShape(layout.kind, texture.kind());
+}
+
+bool fitsSamplerMember(const char* name, const Sampler& sampler, bool comparison)
+{
+    if (!sampler.isValid())
+        return false;
+
+    if (sampler.descriptor().compare.has_value() == comparison)
+        return true;
+
+    static auto reported = std::atomic_flag {};
+
+    if (!reported.test_and_set())
+        LOG("eacp: sampler member '",
+            name,
+            comparison
+                ? "' is a comparison sampler and was assigned a Sampler with "
+                  "no CompareFunction"
+                : "' is a plain sampler and was assigned a comparison Sampler",
+            "; it binds nothing");
+
+    return false;
+}
+} // namespace detail
+
 namespace
 {
 // Texture bind walk: hand each assigned texture member to the render pass at
@@ -13,7 +66,8 @@ namespace
 class ShaderTextureBindVisitor final : public ShaderVisitor
 {
 public:
-    explicit ShaderTextureBindVisitor(RenderPass& passToUse);
+    ShaderTextureBindVisitor(RenderPass& passToUse,
+                             const GeneratedShader& shaderToUse);
 
     void onUniform(const char*,
                    ValueType,
@@ -52,8 +106,36 @@ public:
                              const Texture* renderTarget,
                              TextureSampling sampling) override;
 
+    void onTextureOfKind(const char*,
+                         TextureKind kind,
+                         detail::TextureHandle& handle,
+                         const Texture* texture,
+                         TextureSampling sampling) override;
+
+    // A Read storage texture is a sampled one with no filtering, and a cube
+    // has no array view on the fragment stage. A render program writing one
+    // is not something the render passes bind.
+    void onStorageTexture(const char*,
+                          const StorageTextureLayout& layout,
+                          detail::TextureHandle& handle,
+                          const Texture* texture) override;
+
+    void onSampler(const char* name,
+                   detail::SamplerHandle& handle,
+                   bool comparison,
+                   const Sampler& sampler) override;
+
 private:
+    // Every slot to the fragment stage, as always, and to the vertex stage too
+    // where the vertex function reads it. On D3D12 and Vulkan the two are one
+    // binding, so the second bind restates the first.
+    void bindTexture(const Texture& texture, int slot, TextureSampling sampling);
+    void bindDepthTexture(const Texture& renderTarget,
+                          int slot,
+                          TextureSampling sampling);
+
     RenderPass& pass;
+    const GeneratedShader& shader;
 };
 
 // Storage-buffer bind walk: hand each assigned input-buffer member to the
@@ -88,7 +170,19 @@ public:
                             UIntOutputBuffer&,
                             const BufferRange&) override;
 
+    void onIntInputBuffer(const char*,
+                          IntInputBuffer& handle,
+                          const BufferRange& range) override;
+
+    void onIntOutputBuffer(const char*,
+                           IntOutputBuffer&,
+                           const BufferRange&) override;
+
     void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) override;
+
+    void onIntAtomicBuffer(const char*,
+                           IntAtomicBuffer&,
+                           const BufferRange&) override;
 
     void onWritableTexture(const char*, WritableTexture2D&, const Texture*) override;
 
@@ -96,9 +190,31 @@ private:
     RenderPass& pass;
 };
 
-ShaderTextureBindVisitor::ShaderTextureBindVisitor(RenderPass& passToUse)
+ShaderTextureBindVisitor::ShaderTextureBindVisitor(
+    RenderPass& passToUse, const GeneratedShader& shaderToUse)
     : pass(passToUse)
+    , shader(shaderToUse)
 {
+}
+
+void ShaderTextureBindVisitor::bindTexture(const Texture& texture,
+                                           int slot,
+                                           TextureSampling sampling)
+{
+    pass.setFragmentTexture(texture, slot, sampling);
+
+    if (shader.vertexReadsTexture(slot))
+        pass.setVertexTexture(texture, slot, sampling);
+}
+
+void ShaderTextureBindVisitor::bindDepthTexture(const Texture& renderTarget,
+                                                int slot,
+                                                TextureSampling sampling)
+{
+    pass.setFragmentDepthTexture(renderTarget, slot, sampling);
+
+    if (shader.vertexReadsTexture(slot))
+        pass.setVertexDepthTexture(renderTarget, slot, sampling);
 }
 
 void ShaderTextureBindVisitor::onUniform(const char*,
@@ -114,7 +230,7 @@ void ShaderTextureBindVisitor::onTexture(const char*,
                                          TextureSampling sampling)
 {
     if (texture != nullptr)
-        pass.setFragmentTexture(*texture, handle.slot, sampling);
+        bindTexture(*texture, handle.slot, sampling);
 }
 
 void ShaderTextureBindVisitor::onCubeTexture(const char*,
@@ -123,7 +239,7 @@ void ShaderTextureBindVisitor::onCubeTexture(const char*,
                                              TextureSampling sampling)
 {
     if (texture != nullptr)
-        pass.setFragmentTexture(*texture, handle.slot, sampling);
+        bindTexture(*texture, handle.slot, sampling);
 }
 
 void ShaderTextureBindVisitor::onDepthTexture(const char*,
@@ -132,7 +248,7 @@ void ShaderTextureBindVisitor::onDepthTexture(const char*,
                                               TextureSampling sampling)
 {
     if (renderTarget != nullptr)
-        pass.setFragmentDepthTexture(*renderTarget, handle.slot, sampling);
+        bindDepthTexture(*renderTarget, handle.slot, sampling);
 }
 
 void ShaderTextureBindVisitor::onArrayTexture(const char*,
@@ -141,7 +257,7 @@ void ShaderTextureBindVisitor::onArrayTexture(const char*,
                                               TextureSampling sampling)
 {
     if (texture != nullptr)
-        pass.setFragmentTexture(*texture, handle.slot, sampling);
+        bindTexture(*texture, handle.slot, sampling);
 }
 
 void ShaderTextureBindVisitor::onDepthArrayTexture(const char*,
@@ -150,7 +266,55 @@ void ShaderTextureBindVisitor::onDepthArrayTexture(const char*,
                                                    TextureSampling sampling)
 {
     if (renderTarget != nullptr)
-        pass.setFragmentDepthTexture(*renderTarget, handle.slot, sampling);
+        bindDepthTexture(*renderTarget, handle.slot, sampling);
+}
+
+void ShaderTextureBindVisitor::onTextureOfKind(const char*,
+                                               TextureKind kind,
+                                               detail::TextureHandle& handle,
+                                               const Texture* texture,
+                                               TextureSampling sampling)
+{
+    if (texture == nullptr)
+        return;
+
+    if (isDepth(kind))
+        bindDepthTexture(*texture, handle.slot, sampling);
+    else
+        bindTexture(*texture, handle.slot, sampling);
+}
+
+void ShaderTextureBindVisitor::onStorageTexture(const char*,
+                                                const StorageTextureLayout& layout,
+                                                detail::TextureHandle& handle,
+                                                const Texture* texture)
+{
+    assert(layout.access == TextureAccess::Read
+           && "eacp: a render program cannot write a texture - a Write or "
+              "ReadWrite storage texture belongs to a ComputeProgram");
+
+    if (texture == nullptr || !detail::fitsStorageMember(*texture, layout)
+        || detail::isCubeType(texture->kind()))
+        return;
+
+    constexpr auto unfiltered =
+        TextureSampling {TextureFilter::Nearest, TextureAddressMode::Clamp};
+
+    bindTexture(*texture, handle.slot, unfiltered);
+}
+
+void ShaderTextureBindVisitor::onSampler(const char* name,
+                                         detail::SamplerHandle& handle,
+                                         bool comparison,
+                                         const Sampler& sampler)
+{
+    if (!detail::fitsSamplerMember(name, sampler, comparison))
+        return;
+
+    pass.setFragmentSampler(sampler, handle.slot);
+
+    if (shader.vertexReadsTexture(handle.slot))
+        pass.setVertexSampler(sampler, handle.slot);
 }
 
 ShaderBufferBindVisitor::ShaderBufferBindVisitor(RenderPass& passToUse)
@@ -209,6 +373,26 @@ void ShaderBufferBindVisitor::onUIntOutputBuffer(const char*,
               "Uniform<UIntOutputBuffer> belongs to a ComputeProgram");
 }
 
+void ShaderBufferBindVisitor::onIntInputBuffer(const char*,
+                                               IntInputBuffer& handle,
+                                               const BufferRange& range)
+{
+    if (!range.isValid())
+        return;
+
+    pass.setVertexStorageBuffer(range, handle.slot);
+    pass.setFragmentStorageBuffer(range, handle.slot);
+}
+
+void ShaderBufferBindVisitor::onIntOutputBuffer(const char*,
+                                                IntOutputBuffer&,
+                                                const BufferRange&)
+{
+    assert(false
+           && "eacp: a render program cannot write a buffer - "
+              "Uniform<IntOutputBuffer> belongs to a ComputeProgram");
+}
+
 void ShaderBufferBindVisitor::onAtomicBuffer(const char*,
                                              AtomicBuffer&,
                                              const BufferRange&)
@@ -216,6 +400,15 @@ void ShaderBufferBindVisitor::onAtomicBuffer(const char*,
     assert(false
            && "eacp: a render program cannot write a buffer - "
               "Uniform<AtomicBuffer> belongs to a ComputeProgram");
+}
+
+void ShaderBufferBindVisitor::onIntAtomicBuffer(const char*,
+                                                IntAtomicBuffer&,
+                                                const BufferRange&)
+{
+    assert(false
+           && "eacp: a render program cannot write a buffer - "
+              "Uniform<IntAtomicBuffer> belongs to a ComputeProgram");
 }
 
 void ShaderBufferBindVisitor::onWritableTexture(const char*,
@@ -352,7 +545,7 @@ bool ShaderProgram::fragmentReadsUniforms() const
 
 void ShaderProgram::bindTextures(RenderPass& pass)
 {
-    auto bindVisitor = ShaderTextureBindVisitor {pass};
+    auto bindVisitor = ShaderTextureBindVisitor {pass, generated};
     reflectMembers(bindVisitor);
 }
 
@@ -438,6 +631,21 @@ UInt ShaderProgram::instanceId()
     return builder.instanceId();
 }
 
+Bool ShaderProgram::frontFacing()
+{
+    return builder.frontFacing();
+}
+
+UInt ShaderProgram::sampleIndex()
+{
+    return builder.sampleIndex();
+}
+
+UInt ShaderProgram::sampleMask()
+{
+    return builder.sampleMask();
+}
+
 Float ShaderProgram::constant(float value)
 {
     return builder.constant(value);
@@ -486,6 +694,21 @@ void ShaderProgram::breakLoop()
 void ShaderProgram::continueLoop()
 {
     builder.continueLoop();
+}
+
+void ShaderProgram::breakLoopIf(const Bool& condition)
+{
+    builder.breakLoopIf(condition);
+}
+
+void ShaderProgram::returnEarly()
+{
+    builder.returnEarly();
+}
+
+void ShaderProgram::discard()
+{
+    builder.discard();
 }
 
 Float4x4 ShaderProgram::translate(float x, float y, float z)
@@ -565,6 +788,16 @@ void ShaderProgram::setPosition(const Float4& clipPosition)
 void ShaderProgram::setFragment(const Float4& color)
 {
     builder.fragment(color);
+}
+
+void ShaderProgram::setFragmentDepth(const Float& depth)
+{
+    builder.fragmentDepth(depth);
+}
+
+void ShaderProgram::setSampleMask(const UInt& mask)
+{
+    builder.fragmentSampleMask(mask);
 }
 
 void ShaderProgram::setDiscardBelow(const Float& value, float threshold)

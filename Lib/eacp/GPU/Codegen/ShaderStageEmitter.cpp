@@ -1,8 +1,14 @@
 #include "ShaderStageEmitter.h"
 
+#include "ShaderDeclarations.h"
 #include "ShaderGroupSpelling.h"
 
 #include <eacp/Core/Utils/Format.h>
+
+#include <cassert>
+#include <cstdint>
+#include <initializer_list>
+#include <limits>
 
 namespace eacp::GPU::ShaderEmission
 {
@@ -14,6 +20,122 @@ std::string printBufferElement(int slot, const std::string& index)
 {
     return Strings::format("buffer{}[{}]", slot, index);
 }
+
+struct AtomicSpelling
+{
+    AtomicOperation operation;
+    std::string_view metal;
+    std::string_view hlsl;
+    std::string_view glsl;
+};
+
+constexpr auto atomicSpellings = Array<AtomicSpelling, 9> {
+    {AtomicOperation::Add,
+     "atomic_fetch_add_explicit",
+     "InterlockedAdd",
+     "atomicAdd"},
+    {AtomicOperation::Sub,
+     "atomic_fetch_sub_explicit",
+     "InterlockedAdd",
+     "atomicAdd"},
+    {AtomicOperation::Max,
+     "atomic_fetch_max_explicit",
+     "InterlockedMax",
+     "atomicMax"},
+    {AtomicOperation::Min,
+     "atomic_fetch_min_explicit",
+     "InterlockedMin",
+     "atomicMin"},
+    {AtomicOperation::And,
+     "atomic_fetch_and_explicit",
+     "InterlockedAnd",
+     "atomicAnd"},
+    {AtomicOperation::Or, "atomic_fetch_or_explicit", "InterlockedOr", "atomicOr"},
+    {AtomicOperation::Xor,
+     "atomic_fetch_xor_explicit",
+     "InterlockedXor",
+     "atomicXor"},
+    {AtomicOperation::Exchange,
+     "atomic_exchange_explicit",
+     "InterlockedExchange",
+     "atomicExchange"},
+    {AtomicOperation::CompareExchange,
+     "atomic_compare_exchange_weak_explicit",
+     "InterlockedCompareExchange",
+     "atomicCompSwap"},
+};
+
+std::string_view getAtomicFunction(AtomicOperation operation, Backend backend)
+{
+    for (const auto& spelling: atomicSpellings)
+    {
+        if (spelling.operation != operation)
+            continue;
+
+        if (backend == Backend::Metal)
+            return spelling.metal;
+
+        return backend == Backend::Vulkan ? spelling.glsl : spelling.hlsl;
+    }
+
+    return {};
+}
+
+// The values a switch's jump flag takes: the loop jump a clause asked for.
+constexpr auto breakCode = 1;
+constexpr auto continueCode = 2;
+
+// Which loop jumps reach out of a switch's clauses, as breakCode and
+// continueCode bits: through ifs and nested switches, never past a loop of
+// their own.
+int findLoopJumps(const ShaderGraph& graph, int block)
+{
+    auto jumps = 0;
+
+    for (auto index: graph.block(block).statements)
+    {
+        const auto& statement = graph.statement(index);
+
+        if (statement.kind == StatementKind::Break)
+            jumps |= breakCode;
+
+        if (statement.kind == StatementKind::Continue)
+            jumps |= continueCode;
+
+        if (statement.kind == StatementKind::Loop)
+            continue;
+
+        for (auto body: {statement.body, statement.elseBody})
+            if (body >= 0)
+                jumps |= findLoopJumps(graph, body);
+    }
+
+    return jumps;
+}
+
+bool endsInJump(const ShaderGraph& graph, int block)
+{
+    const auto& statements = graph.block(block).statements;
+
+    if (statements.empty())
+        return false;
+
+    auto last = graph.statement(statements.back()).kind;
+    return last == StatementKind::Return || last == StatementKind::Break
+           || last == StatementKind::Continue;
+}
+
+// -2147483648 is the negation of a literal no int holds, which GLSL refuses.
+std::string printCaseLabel(ValueType selector, std::int64_t value)
+{
+    if (selector == ValueType::UInt)
+        return Strings::format("{}u", value);
+
+    if (value == std::numeric_limits<std::int32_t>::min())
+        return "(-2147483647 - 1)";
+
+    return Strings::format("{}", value);
+}
 } // namespace
 
 StageEmitter::StageEmitter(const ShaderGraph& graphToUse,
@@ -23,6 +145,7 @@ StageEmitter::StageEmitter(const ShaderGraph& graphToUse,
     , visited(graphToUse.nodeCount())
 {
     locals.resize(graphToUse.nodeCount(), -1);
+    variablesInScope.resize(graphToUse.variables().size(), 0);
 }
 
 std::string StageEmitter::defineLocalsFor(const Vector<int>& roots,
@@ -98,6 +221,10 @@ std::string StageEmitter::emitBlock(int block, std::string_view indentToUse)
     for (auto index: getGraph().block(block).statements)
         source += emitStatement(getGraph().statement(index), indent, uses, open);
 
+    for (auto index: getGraph().block(block).statements)
+        if (getGraph().statement(index).kind == StatementKind::Declare)
+            variablesInScope[getGraph().statement(index).slot] = 0;
+
     retireLocals(open);
     return source;
 }
@@ -105,15 +232,19 @@ std::string StageEmitter::emitBlock(int block, std::string_view indentToUse)
 StageEmitter::StatementEmitFunction
     StageEmitter::findStatementEmitter(StatementKind kind)
 {
-    static constexpr auto emitters = Array<StatementEmitEntry, 16> {
+    static constexpr auto emitters = Array<StatementEmitEntry, 20> {
         {StatementKind::Declare, &StageEmitter::emitVariableWrite},
         {StatementKind::Assign, &StageEmitter::emitVariableWrite},
         {StatementKind::If, &StageEmitter::emitIf},
         {StatementKind::Break, &StageEmitter::emitBreak},
         {StatementKind::Continue, &StageEmitter::emitContinue},
+        {StatementKind::BreakIf, &StageEmitter::emitBreakIf},
+        {StatementKind::Switch, &StageEmitter::emitSwitch},
+        {StatementKind::Return, &StageEmitter::emitReturn},
+        {StatementKind::Discard, &StageEmitter::emitDiscard},
         {StatementKind::Store, &StageEmitter::emitStore},
         {StatementKind::VectorStore, &StageEmitter::emitVectorStore},
-        {StatementKind::AtomicAdd, &StageEmitter::emitAtomicAdd},
+        {StatementKind::Atomic, &StageEmitter::emitAtomic},
         {StatementKind::SharedStore, &StageEmitter::emitSharedStore},
         {StatementKind::Barrier, &StageEmitter::emitBarrier},
         {StatementKind::GroupReduce, &StageEmitter::emitGroupReduce},
@@ -153,9 +284,53 @@ std::string StageEmitter::emitLoop(const Statement& statement,
 {
     dropStaleLocals(statement, open);
 
-    return Strings::format(
-               "{}while ({})\n", indent, printer.printReference(statement.value))
-           + printBody(statement.body, indent);
+    if (statement.continuing >= 0)
+        return emitLoopWithContinuing(statement, indent);
+
+    auto header = Strings::format(
+        "{}while ({})\n", indent, printer.printReference(statement.value));
+    return header + printLoopBlock(statement.body, indent);
+}
+
+std::string StageEmitter::printLoopBlock(int block, const std::string& indent)
+{
+    jumpTargets.add(jumpsToLoop);
+    auto source = printBody(block, indent);
+    jumpTargets.pop_back();
+    return source;
+}
+
+// The continuing block runs at the top of every pass but the first, so a
+// continue - which jumps to the top - runs it as well, which a block printed
+// after the body would not.
+std::string StageEmitter::emitLoopWithContinuing(const Statement& statement,
+                                                 const std::string& indent)
+{
+    auto pass = controlCount++;
+    auto inner = Strings::format("{}{}", indent, nestedIndent);
+
+    auto source =
+        Strings::format("{}bool firstPass{} = true;\n{}while (true)\n{}{{\n",
+                        indent,
+                        pass,
+                        indent,
+                        indent);
+    source += Strings::format("{}if (!firstPass{})\n", inner, pass);
+    source += printLoopBlock(statement.continuing, inner);
+    source += Strings::format("{}firstPass{} = false;\n", inner, pass);
+    source += Strings::format("{}if (!{})\n{}{{\n{}{}break;\n{}}}\n",
+                              inner,
+                              printer.printReference(statement.value),
+                              inner,
+                              inner,
+                              nestedIndent,
+                              inner);
+
+    jumpTargets.add(jumpsToLoop);
+    source += emitBlock(statement.body, inner);
+    jumpTargets.pop_back();
+
+    return source + indent + "}\n";
 }
 
 std::string StageEmitter::printBody(int block, const std::string& indent)
@@ -173,16 +348,61 @@ std::string StageEmitter::defineLocalsInScope(const Vector<int>& roots,
     return defineLocals(roots, scope.indent, scope.uses, scope.open);
 }
 
+// A private array is declared bare and each element set to the fill in a loop,
+// which every dialect spells alike; an element write names the element.
+std::string StageEmitter::emitArrayWrite(const Statement& statement,
+                                         StatementScope& scope)
+{
+    auto slot = statement.slot;
+
+    if (statement.kind == StatementKind::Assign)
+    {
+        auto source = defineLocalsInScope({statement.index, statement.value}, scope);
+        source += Strings::format("{}v{}[{}] = {};\n",
+                                  scope.indent,
+                                  slot,
+                                  printer.printReference(statement.index),
+                                  printer.printReference(statement.value));
+        return source;
+    }
+
+    variablesInScope[slot] = 1;
+
+    auto size = getGraph().variableArraySize(slot);
+    auto type = getDialectTypeName(printer.backend, getGraph().variables()[slot]);
+    auto source = defineLocalsInScope({statement.value}, scope);
+    source += Strings::format("{}{} v{}[{}];\n", scope.indent, type, slot, size);
+    source += Strings::format("{}for (int fill{} = 0; fill{} < {}; ++fill{})\n",
+                              scope.indent,
+                              slot,
+                              slot,
+                              size,
+                              slot);
+    source += Strings::format("{}{}v{}[fill{}] = {};\n",
+                              scope.indent,
+                              nestedIndent,
+                              slot,
+                              slot,
+                              printer.printReference(statement.value));
+    return source;
+}
+
 std::string StageEmitter::emitVariableWrite(const Statement& statement,
                                             StatementScope& scope)
 {
+    if (getGraph().variableArraySize(statement.slot) > 0)
+        return emitArrayWrite(statement, scope);
+
     auto type = std::string {};
 
     if (statement.kind == StatementKind::Declare)
+    {
+        variablesInScope[statement.slot] = 1;
         type = Strings::format(
             "{} ",
             getDialectTypeName(printer.backend,
                                getGraph().variables()[statement.slot]));
+    }
 
     auto source = defineLocalsInScope({statement.value}, scope);
     source += Strings::format("{}{}v{} = {};\n",
@@ -214,12 +434,160 @@ std::string StageEmitter::emitIf(const Statement& statement, StatementScope& sco
 
 std::string StageEmitter::emitBreak(const Statement&, StatementScope& scope)
 {
-    return scope.indent + "break;\n";
+    return printLoopJump(breakCode, scope.indent);
 }
 
 std::string StageEmitter::emitContinue(const Statement&, StatementScope& scope)
 {
-    return scope.indent + "continue;\n";
+    return printLoopJump(continueCode, scope.indent);
+}
+
+// Inside a switch, a C-family break ends the clause and HLSL refuses a
+// continue outright, so the jump is left in the switch's flag and taken once
+// the switch is behind it.
+std::string StageEmitter::printLoopJump(int code, const std::string& indent) const
+{
+    auto target = jumpTargets.empty() ? jumpsToLoop : jumpTargets.back();
+
+    if (target < 0)
+        return indent + (code == breakCode ? "break;\n" : "continue;\n");
+
+    return Strings::format(
+        "{}jump{} = {};\n{}break;\n", indent, target, code, indent);
+}
+
+std::string StageEmitter::emitBreakIf(const Statement& statement,
+                                      StatementScope& scope)
+{
+    auto source = defineLocalsInScope({statement.value}, scope);
+    source += Strings::format("{}if ({})\n{}{{\n",
+                              scope.indent,
+                              printer.printReference(statement.value),
+                              scope.indent);
+    source += printLoopJump(breakCode, scope.indent + std::string(nestedIndent));
+    return source + scope.indent + "}\n";
+}
+
+std::string StageEmitter::emitSwitch(const Statement& statement,
+                                     StatementScope& scope)
+{
+    auto source = defineLocalsInScope({statement.value}, scope);
+    auto selector = printer.printReference(statement.value);
+    dropStaleLocals(statement, scope.open);
+
+    auto jumps = findLoopJumps(getGraph(), statement.body);
+    auto flag = noJumpFlag;
+
+    if (jumps != 0)
+    {
+        flag = controlCount++;
+        source += Strings::format("{}int jump{} = 0;\n", scope.indent, flag);
+    }
+
+    source += Strings::format(
+        "{}switch ({})\n{}{{\n", scope.indent, selector, scope.indent);
+
+    const auto type = getGraph().expr(statement.value).type;
+    const auto clauseIndent = scope.indent + std::string(nestedIndent);
+    jumpTargets.add(flag);
+
+    for (auto index: getGraph().block(statement.body).statements)
+        source += printClause(getGraph().statement(index), type, clauseIndent);
+
+    jumpTargets.pop_back();
+    source += scope.indent + "}\n";
+
+    if (flag >= 0)
+        source += printJumpsOutOfSwitch(flag, jumps, scope.indent);
+
+    return source;
+}
+
+// Braced, so a clause's declarations are its own; ended with a break, so none
+// falls into the next.
+std::string StageEmitter::printClause(const Statement& clause,
+                                      ValueType selector,
+                                      const std::string& indent)
+{
+    const auto& labels = getGraph().caseLabels(clause.slot);
+    auto source = std::string {};
+
+    for (auto value: labels.values)
+        source +=
+            Strings::format("{}case {}:\n", indent, printCaseLabel(selector, value));
+
+    if (labels.isDefault)
+        source += indent + "default:\n";
+
+    const auto inner = indent + std::string(nestedIndent);
+    source += indent + "{\n" + emitBlock(clause.body, inner);
+
+    if (!endsInJump(getGraph(), clause.body))
+        source += inner + "break;\n";
+
+    return source + indent + "}\n";
+}
+
+std::string StageEmitter::printJumpsOutOfSwitch(int flag,
+                                                int jumps,
+                                                const std::string& indent) const
+{
+    auto source = std::string {};
+    const auto inner = indent + std::string(nestedIndent);
+
+    for (auto code: {breakCode, continueCode})
+        if ((jumps & code) != 0)
+            source += Strings::format(
+                          "{}if (jump{} == {})\n{}{{\n", indent, flag, code, indent)
+                      + printLoopJump(code, inner) + indent + "}\n";
+
+    return source;
+}
+
+// The outputs are evaluated where the return stands, their shared values named
+// in the block the return is in.
+std::string StageEmitter::emitReturn(const Statement&, StatementScope& scope)
+{
+    assert(returnReadsOnlyVariablesInScope()
+           && "eacp: returnEarly evaluates the outputs where it stands, so a var "
+              "they read is declared before it, in a block around it.");
+
+    auto source = defineLocals(
+        returnRoots, scope.indent, countUsesOver(returnRoots), scope.open);
+    return source + printReturn(*this, scope.indent);
+}
+
+bool StageEmitter::returnReadsOnlyVariablesInScope()
+{
+    visited.restart();
+
+    for (auto root: returnRoots)
+        if (!readsOnlyVariablesInScope(root))
+            return false;
+
+    return true;
+}
+
+bool StageEmitter::readsOnlyVariablesInScope(int node)
+{
+    if (node < 0 || !visited.visit(node))
+        return true;
+
+    const auto& expr = getGraph().expr(node);
+
+    if (expr.kind == ExprKind::VarRead && variablesInScope[expr.index] == 0)
+        return false;
+
+    for (auto argument: expr.args)
+        if (!readsOnlyVariablesInScope(argument))
+            return false;
+
+    return true;
+}
+
+std::string StageEmitter::emitDiscard(const Statement&, StatementScope& scope)
+{
+    return scope.indent + (isMetal() ? "discard_fragment();\n" : "discard;\n");
 }
 
 std::string StageEmitter::emitStore(const Statement& statement,
@@ -282,51 +650,139 @@ std::string StageEmitter::emitVectorStore(const Statement& statement,
     return source;
 }
 
-// HLSL's InterlockedAdd returns the old value through an out parameter.
-std::string StageEmitter::emitAtomicAdd(const Statement& statement,
-                                        StatementScope& scope)
+// HLSL's Interlocked* return the old value through an out parameter, and
+// neither HLSL nor GLSL has a subtraction: Sub adds the negated operand.
+std::string StageEmitter::emitAtomic(const Statement& statement,
+                                     StatementScope& scope)
 {
-    const auto& indent = scope.indent;
-    auto source = defineLocalsInScope({statement.index, statement.value}, scope);
+    auto source = defineLocalsInScope(
+        {statement.index, statement.value, statement.compare}, scope);
 
-    auto name = Strings::format("v{}", statement.slot);
-    auto element = printBufferElement(statement.bufferSlot,
-                                      printer.printReference(statement.index));
-    auto addend = printer.printReference(statement.value);
+    auto element = statement.memory == MemorySpace::Buffer
+                       ? printBufferElement(statement.bufferSlot,
+                                            printer.printReference(statement.index))
+                       : Strings::format("s{}[{}]",
+                                         statement.bufferSlot,
+                                         printer.printReference(statement.index));
 
-    if (printer.backend == Backend::Metal)
+    auto operand = printer.printReference(statement.value);
+    auto type = getGraph().variables()[statement.slot];
+    auto call = AtomicCall {element,
+                            operand,
+                            std::string(getDialectTypeName(printer.backend, type)),
+                            Strings::format("v{}", statement.slot),
+                            scope.indent};
+
+    if (statement.atomic == AtomicOperation::CompareExchange)
+        return source + formatCompareExchange(statement, call);
+
+    if (statement.atomic == AtomicOperation::Sub && !isMetal())
+        call.operand = type == ValueType::Int
+                           ? Strings::format("-({})", operand)
+                           : Strings::format("0u - ({})", operand);
+
+    auto function = getAtomicFunction(statement.atomic, printer.backend);
+
+    if (isMetal())
         return source
-               + Strings::format("{}uint {} = atomic_fetch_add_explicit(&{}, {}, "
-                                 "memory_order_relaxed);\n",
-                                 indent,
-                                 name,
-                                 element,
-                                 addend);
+               + Strings::format("{}{} {} = {}(&{}, {}, memory_order_relaxed);\n",
+                                 call.indent,
+                                 call.type,
+                                 call.name,
+                                 function,
+                                 call.element,
+                                 call.operand);
 
     if (printer.backend == Backend::Vulkan)
         return source
-               + Strings::format("{}uint {} = atomicAdd({}, {});\n",
-                                 indent,
-                                 name,
-                                 element,
-                                 addend);
+               + Strings::format("{}{} {} = {}({}, {});\n",
+                                 call.indent,
+                                 call.type,
+                                 call.name,
+                                 function,
+                                 call.element,
+                                 call.operand);
 
-    source += Strings::format("{}uint {};\n", indent, name);
-    source += Strings::format(
-        "{}InterlockedAdd({}, {}, {});\n", indent, element, addend, name);
+    source += Strings::format("{}{} {};\n", call.indent, call.type, call.name);
+    source += Strings::format("{}{}({}, {}, {});\n",
+                              call.indent,
+                              function,
+                              call.element,
+                              call.operand,
+                              call.name);
     return source;
+}
+
+// Metal's compare-exchange is weak and writes the element's value into the
+// comparand's place when it fails, so the old value starts as the comparand and
+// the call says whether it stored. HLSL and GLSL are strong and say nothing, so
+// the comparand is named first and compared with what came back.
+std::string StageEmitter::formatCompareExchange(const Statement& statement,
+                                                const AtomicCall& call)
+{
+    auto comparand = printer.printReference(statement.compare);
+    auto exchanged = Strings::format("v{}", statement.exchanged);
+    auto function =
+        getAtomicFunction(AtomicOperation::CompareExchange, printer.backend);
+
+    if (isMetal())
+        return Strings::format(
+                   "{}{} {} = {};\n", call.indent, call.type, call.name, comparand)
+               + Strings::format(
+                   "{}bool {} = {}(&{}, &{}, {}, memory_order_relaxed, "
+                   "memory_order_relaxed);\n",
+                   call.indent,
+                   exchanged,
+                   function,
+                   call.element,
+                   call.name,
+                   call.operand);
+
+    auto held = Strings::format("cx{}", statement.slot);
+    auto source =
+        Strings::format("{}{} {} = {};\n", call.indent, call.type, held, comparand);
+
+    if (printer.backend == Backend::Vulkan)
+        source += Strings::format("{}{} {} = {}({}, {}, {});\n",
+                                  call.indent,
+                                  call.type,
+                                  call.name,
+                                  function,
+                                  call.element,
+                                  held,
+                                  call.operand);
+    else
+        source += Strings::format("{}{} {};\n", call.indent, call.type, call.name)
+                  + Strings::format("{}{}({}, {}, {}, {});\n",
+                                    call.indent,
+                                    function,
+                                    call.element,
+                                    held,
+                                    call.operand,
+                                    call.name);
+
+    return source
+           + Strings::format(
+               "{}bool {} = {} == {};\n", call.indent, exchanged, call.name, held);
 }
 
 std::string StageEmitter::emitSharedStore(const Statement& statement,
                                           StatementScope& scope)
 {
     auto source = defineLocalsInScope({statement.index, statement.value}, scope);
-    source += Strings::format("{}s{}[{}] = {};\n",
-                              scope.indent,
-                              statement.slot,
-                              printer.printReference(statement.index),
-                              printer.printReference(statement.value));
-    return source;
+    auto element = Strings::format(
+        "s{}[{}]", statement.slot, printer.printReference(statement.index));
+    auto stored = printer.printReference(statement.value);
+
+    if (isMetal() && getGraph().sharedArrays()[statement.slot].atomic)
+        return source
+               + Strings::format(
+                   "{}atomic_store_explicit(&{}, {}, memory_order_relaxed);\n",
+                   scope.indent,
+                   element,
+                   stored);
+
+    return source + Strings::format("{}{} = {};\n", scope.indent, element, stored);
 }
 
 std::string StageEmitter::emitBarrier(const Statement&, StatementScope& scope)
@@ -365,6 +821,9 @@ std::string StageEmitter::emitSimdMatrixMultiplyAdd(const Statement& statement,
 std::string StageEmitter::emitTextureStore(const Statement& statement,
                                            StatementScope& scope)
 {
+    if (statement.indexY < 0)
+        return emitStorageStore(statement, scope);
+
     const auto& indent = scope.indent;
     auto source = defineLocalsInScope(
         {statement.index, statement.indexY, statement.value}, scope);
@@ -398,6 +857,55 @@ std::string StageEmitter::emitTextureStore(const Statement& statement,
                              statement.slot,
                              coordinates,
                              color);
+}
+
+// A typed UAV takes as many components as its format has. A Metal read_write
+// texture orders a later read of what this thread wrote only past a fence;
+// HLSL and GLSL keep one invocation's image accesses in program order.
+std::string StageEmitter::emitStorageStore(const Statement& statement,
+                                           StatementScope& scope)
+{
+    const auto& indent = scope.indent;
+    auto source = defineLocalsInScope(
+        {statement.index, statement.layer, statement.value}, scope);
+
+    const auto& graph = getGraph();
+    const auto address = printer.printStorageAddress(
+        statement.slot, statement.index, statement.layer);
+    const auto value = printer.printReference(statement.value);
+
+    if (printer.backend == Backend::Metal)
+    {
+        source += Strings::format(
+            "{}texture{}.write({}, {});\n", indent, statement.slot, value, address);
+
+        if (graph.textureAccess(statement.slot) == TextureAccess::ReadWrite)
+            source +=
+                Strings::format("{}texture{}.fence();\n", indent, statement.slot);
+
+        return source;
+    }
+
+    if (printer.backend == Backend::Vulkan)
+        return source
+               + Strings::format("{}imageStore(texture{}, {}, {});\n",
+                                 indent,
+                                 statement.slot,
+                                 address,
+                                 value);
+
+    const auto channels =
+        getStorageChannelCount(graph.textureFormat(statement.slot));
+    const auto stored = channels >= 4
+                            ? value
+                            : Strings::format("{}.{}",
+                                              wrapInParentheses(value),
+                                              std::string_view {"xyzw"}.substr(
+                                                  0, (std::size_t) channels));
+
+    return source
+           + Strings::format(
+               "{}texture{}[{}] = {};\n", indent, statement.slot, address, stored);
 }
 
 std::string StageEmitter::emitNothing(const Statement&, StatementScope&)

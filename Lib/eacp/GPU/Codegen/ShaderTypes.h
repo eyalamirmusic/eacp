@@ -6,7 +6,8 @@ namespace eacp::GPU
 {
 // The value types the shader EDSL understands. Inputs, varyings and expression
 // results are all described with these, and they spell identically in MSL and
-// HLSL ("float2" etc.), so the emitters share one type vocabulary. UInt exists
+// HLSL ("float2" etc.) but for the non-square matrices, so the emitters share
+// one type vocabulary. UInt exists
 // for the compute thread id and the element count it is checked against; it is
 // never a vertex attribute. Int is what indexes an array and what the operators
 // no float has - %, the bitwise set and the shifts - are defined on; unlike UInt
@@ -29,6 +30,12 @@ enum class ValueType
     Float2x2,
     Float3x3,
     Float4x4,
+    Float2x3,
+    Float2x4,
+    Float3x2,
+    Float3x4,
+    Float4x2,
+    Float4x3,
     UInt,
     UInt2,
     UInt3,
@@ -43,46 +50,96 @@ enum class ValueType
     Bool4
 };
 
-// Whether a type is one of the square matrices. They share every rule that
-// separates a matrix from a vector: built from columns, multiplied with mul()
-// on HLSL, and transposed at construction there.
-constexpr bool isMatrix(ValueType type)
-{
-    return type == ValueType::Float2x2 || type == ValueType::Float3x3
-           || type == ValueType::Float4x4;
-}
-
-// The width of a square matrix's columns, and the number of them.
-constexpr int matrixOrder(ValueType type)
+// The float matrices, WGSL's matCxR: C columns of R rows each, named columns
+// first as MSL and GLSL name them (Float2x3 is two Float3 columns). They share
+// every rule that separates a matrix from a vector: built from columns,
+// multiplied with mul() on HLSL, and transposed at construction there. HLSL
+// names the rows first, so its spelling of a non-square one is the other way
+// round (hlslTypeName).
+constexpr int matrixColumns(ValueType type)
 {
     switch (type)
     {
         case ValueType::Float2x2:
+        case ValueType::Float2x3:
+        case ValueType::Float2x4:
             return 2;
         case ValueType::Float3x3:
+        case ValueType::Float3x2:
+        case ValueType::Float3x4:
             return 3;
         case ValueType::Float4x4:
+        case ValueType::Float4x2:
+        case ValueType::Float4x3:
             return 4;
-        case ValueType::Float:
-        case ValueType::Float2:
-        case ValueType::Float3:
-        case ValueType::Float4:
-        case ValueType::UInt:
-        case ValueType::UInt2:
-        case ValueType::UInt3:
-        case ValueType::UInt4:
-        case ValueType::Int:
-        case ValueType::Int2:
-        case ValueType::Int3:
-        case ValueType::Int4:
-        case ValueType::Bool:
-        case ValueType::Bool2:
-        case ValueType::Bool3:
-        case ValueType::Bool4:
+        default:
             return 0;
     }
+}
 
-    return 0;
+constexpr int matrixRows(ValueType type)
+{
+    switch (type)
+    {
+        case ValueType::Float2x2:
+        case ValueType::Float3x2:
+        case ValueType::Float4x2:
+            return 2;
+        case ValueType::Float3x3:
+        case ValueType::Float2x3:
+        case ValueType::Float4x3:
+            return 3;
+        case ValueType::Float4x4:
+        case ValueType::Float2x4:
+        case ValueType::Float3x4:
+            return 4;
+        default:
+            return 0;
+    }
+}
+
+constexpr bool isMatrix(ValueType type)
+{
+    return matrixColumns(type) > 0;
+}
+
+// The width of a square matrix's columns, and the number of them; 0 for a
+// non-square one, which has no single order.
+constexpr int matrixOrder(ValueType type)
+{
+    return matrixColumns(type) == matrixRows(type) ? matrixColumns(type) : 0;
+}
+
+// The float vector of a width from 1 to 4: a matrix's column, or its row.
+constexpr ValueType floatVectorOf(int width)
+{
+    switch (width)
+    {
+        case 2:
+            return ValueType::Float2;
+        case 3:
+            return ValueType::Float3;
+        case 4:
+            return ValueType::Float4;
+        default:
+            return ValueType::Float;
+    }
+}
+
+// The matrix of `columns` columns of `rows` rows, both 2 to 4.
+constexpr ValueType matrixOf(int columns, int rows)
+{
+    constexpr ValueType shapes[3][3] = {
+        {ValueType::Float2x2, ValueType::Float2x3, ValueType::Float2x4},
+        {ValueType::Float3x2, ValueType::Float3x3, ValueType::Float3x4},
+        {ValueType::Float4x2, ValueType::Float4x3, ValueType::Float4x4}};
+
+    return shapes[columns - 2][rows - 2];
+}
+
+constexpr ValueType transposedMatrix(ValueType type)
+{
+    return matrixOf(matrixRows(type), matrixColumns(type));
 }
 
 constexpr int componentCount(ValueType type)
@@ -110,11 +167,15 @@ constexpr int componentCount(ValueType type)
         case ValueType::Bool4:
             return 4;
         case ValueType::Float2x2:
-            return 4;
         case ValueType::Float3x3:
-            return 9;
         case ValueType::Float4x4:
-            return 16;
+        case ValueType::Float2x3:
+        case ValueType::Float2x4:
+        case ValueType::Float3x2:
+        case ValueType::Float3x4:
+        case ValueType::Float4x2:
+        case ValueType::Float4x3:
+            return matrixColumns(type) * matrixRows(type);
     }
 
     return 1;
@@ -184,6 +245,18 @@ constexpr const char* typeName(ValueType type)
             return "float3x3";
         case ValueType::Float4x4:
             return "float4x4";
+        case ValueType::Float2x3:
+            return "float2x3";
+        case ValueType::Float2x4:
+            return "float2x4";
+        case ValueType::Float3x2:
+            return "float3x2";
+        case ValueType::Float3x4:
+            return "float3x4";
+        case ValueType::Float4x2:
+            return "float4x2";
+        case ValueType::Float4x3:
+            return "float4x3";
         case ValueType::UInt:
             return "uint";
         case ValueType::UInt2:
@@ -231,6 +304,18 @@ constexpr const char* glslTypeName(ValueType type)
             return "mat3";
         case ValueType::Float4x4:
             return "mat4";
+        case ValueType::Float2x3:
+            return "mat2x3";
+        case ValueType::Float2x4:
+            return "mat2x4";
+        case ValueType::Float3x2:
+            return "mat3x2";
+        case ValueType::Float3x4:
+            return "mat3x4";
+        case ValueType::Float4x2:
+            return "mat4x2";
+        case ValueType::Float4x3:
+            return "mat4x3";
         case ValueType::UInt:
             return "uint";
         case ValueType::UInt2:
@@ -258,6 +343,13 @@ constexpr const char* glslTypeName(ValueType type)
     }
 
     return "float";
+}
+
+// HLSL names a matrix rows first: MSL's float2x3, two columns of three rows,
+// is HLSL's float3x2. Every other type is spelled as typeName spells it.
+constexpr const char* hlslTypeName(ValueType type)
+{
+    return isMatrix(type) ? typeName(transposedMatrix(type)) : typeName(type);
 }
 
 // A constructor-style cast is a call under the target's canonical type name.

@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include <cstdint>
+
 namespace eacp::GPU
 {
 class ShaderGraph;
@@ -26,4 +28,20 @@ std::string emitGlsl(const ShaderGraph& graph);
 // the answer governs the bind alone.
 bool vertexReadsUniforms(const ShaderGraph& graph);
 bool fragmentReadsUniforms(const ShaderGraph& graph);
+
+// The texture and sampler slots the vertex stage reads, one bit each - the
+// ones the Metal vertex function declares, and so the ones a bind has to reach
+// the vertex stage with.
+std::uint32_t vertexTextureSlots(const ShaderGraph& graph);
+
+// Whether the vertex stage reaches anything that takes its level from the
+// fragment's derivatives: sample with no level, sampleBias, sampleCompare, a
+// layered sample, dfdx, dfdy or fwidth. WGSL allows them in the fragment stage
+// alone, and the emitter asserts the vertex stage has none.
+bool vertexUsesImplicitDerivatives(const ShaderGraph& graph);
+
+// Whether each render stage reads only the variables it declared: a vertex
+// one reaches the fragment through a varying, never directly. The emitter
+// asserts it.
+bool stagesReadOnlyTheirOwnVariables(const ShaderGraph& graph);
 } // namespace eacp::GPU

@@ -290,8 +290,11 @@ public:
     // those shapes, and no tier takes a two-channel, packed or 16-bit unorm
     // format. D3D12 asks D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD, which the
     // R32 formats always have and the rest have on most hardware; Vulkan
-    // answers as for a write. Reading through setInputTexture needs none of
-    // this: any format a texture has is readable there.
+    // answers as for a write, and for a format past SPIR-V's base storage
+    // formats (rgba8, rgba16f, rgba32f, r32f and the four-channel and r32
+    // integer ones) also asks shaderStorageImageExtendedFormats, which its
+    // qualifier needs. Reading through setInputTexture needs none of this:
+    // any format a texture has is readable there.
     bool supportsComputeReadWrite(TextureFormat format) const;
 
     // Whether Frame::generateMipmaps (and CommandBuffer's) can fill a

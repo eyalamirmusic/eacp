@@ -5,7 +5,11 @@
 #include "ShaderTypes.h"
 
 #include <cassert>
+#include <concepts>
 #include <initializer_list>
+#include <numbers>
+#include <type_traits>
+#include <utility>
 
 // The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
 // handles into a ShaderGraph: operators and the free float2/float3/float4()
@@ -267,27 +271,147 @@ struct Bool4 : detail::Swizzles<detail::Bools, 4>
 {
 };
 
-// The square matrix values. No swizzles; their operations are matrix * vector
-// and matrix * matrix, which record a Mul node so the emitter can spell it
-// per-backend.
+namespace detail
+{
+template <int Width>
+struct FloatVectorOfWidth;
+
+template <>
+struct FloatVectorOfWidth<2>
+{
+    using type = Float2;
+};
+
+template <>
+struct FloatVectorOfWidth<3>
+{
+    using type = Float3;
+};
+
+template <>
+struct FloatVectorOfWidth<4>
+{
+    using type = Float4;
+};
+
+// A float matrix of Columns columns, each a vector of Rows. No swizzles; its
+// operations are matrix * vector, vector * matrix and matrix * matrix, which
+// record a Mul node so the emitter can spell it per-backend, the elementwise
+// sum and difference, the scale by a scalar, and the column read here.
+template <int Columns, int Rows>
+struct MatrixHandle : ValueHandle
+{
+    static constexpr int columns = Columns;
+    static constexpr int rows = Rows;
+    using Column = typename FloatVectorOfWidth<Rows>::type;
+
+    // Column `index`, WGSL's m[i]. A literal is checked here; an Int or a UInt
+    // is clamped into the columns, so every backend reads the same column for
+    // one out of range.
+    Column operator[](const Int& index) const { return columnAt(index.node); }
+    Column operator[](const UInt& index) const { return columnAt(index.node); }
+
+    Column operator[](int index) const
+    {
+        assert(index >= 0 && index < Columns
+               && "eacp: a matrix has no column at that index");
+        return columnAt(graph->addIntConstant(index));
+    }
+
+    Column columnAt(int indexNode) const
+    {
+        auto result = Column {};
+        result.graph = graph;
+        result.node = graph->addMatrixColumn(node, indexNode);
+        return result;
+    }
+};
+} // namespace detail
+
+// The float matrices, WGSL's matCxR: Float2x3 is two Float3 columns, which MSL
+// and GLSL spell the same and HLSL, rows first, spells float3x2.
 //
-// Float2x2 and Float3x3 are shader-local values only - the 2D rotation a
-// procedural shader builds inline, the tangent basis a lighting term assembles
-// - and ShaderBuilder refuses them as uniforms: MSL and HLSL pack them to
-// different sizes inside the value itself, which the uniform block's padding
-// cannot bridge. See UniformLayout.h. A Float4x4, which both languages agree
-// on, is the matrix to send from the CPU.
-struct Float2x2 : detail::ValueHandle
+// Every shape crosses from the CPU as a uniform, as its columns one after
+// another (CpuValueOf); the upload walk lays each column at a 16-byte stride,
+// which is where std140, an HLSL cbuffer and MSL - a two-row one through float4
+// columns - all read them. See UniformLayout.h.
+struct Float2x2 : detail::MatrixHandle<2, 2>
 {
 };
 
-struct Float3x3 : detail::ValueHandle
+struct Float3x3 : detail::MatrixHandle<3, 3>
 {
 };
 
-struct Float4x4 : detail::ValueHandle
+struct Float4x4 : detail::MatrixHandle<4, 4>
 {
 };
+
+struct Float2x3 : detail::MatrixHandle<2, 3>
+{
+};
+
+struct Float2x4 : detail::MatrixHandle<2, 4>
+{
+};
+
+struct Float3x2 : detail::MatrixHandle<3, 2>
+{
+};
+
+struct Float3x4 : detail::MatrixHandle<3, 4>
+{
+};
+
+struct Float4x2 : detail::MatrixHandle<4, 2>
+{
+};
+
+struct Float4x3 : detail::MatrixHandle<4, 3>
+{
+};
+
+namespace detail
+{
+template <int Columns, int Rows>
+struct MatrixOfShape;
+
+#define EACP_MATRIX_SHAPE(Matrix, Columns, Rows)                                    \
+    template <>                                                                     \
+    struct MatrixOfShape<Columns, Rows>                                             \
+    {                                                                               \
+        using type = Matrix;                                                        \
+    };
+
+EACP_MATRIX_SHAPE(Float2x2, 2, 2)
+EACP_MATRIX_SHAPE(Float3x3, 3, 3)
+EACP_MATRIX_SHAPE(Float4x4, 4, 4)
+EACP_MATRIX_SHAPE(Float2x3, 2, 3)
+EACP_MATRIX_SHAPE(Float2x4, 2, 4)
+EACP_MATRIX_SHAPE(Float3x2, 3, 2)
+EACP_MATRIX_SHAPE(Float3x4, 3, 4)
+EACP_MATRIX_SHAPE(Float4x2, 4, 2)
+EACP_MATRIX_SHAPE(Float4x3, 4, 3)
+
+#undef EACP_MATRIX_SHAPE
+} // namespace detail
+
+template <int Columns, int Rows>
+using MatrixOf = typename detail::MatrixOfShape<Columns, Rows>::type;
+
+template <int Width>
+using FloatVectorOf = typename detail::FloatVectorOfWidth<Width>::type;
+
+// A matrix handle or a type derived from one, a Uniform<Float2x3> among them.
+template <typename T>
+concept ShaderMatrixLike = requires {
+    T::columns;
+    T::rows;
+} && std::derived_from<T, detail::MatrixHandle<T::columns, T::rows>>;
+
+// The matrix handle T stands in for.
+template <ShaderMatrixLike T>
+using MatrixBase = MatrixOf<T::columns, T::rows>;
 
 // A 2D texture declared by the shader, identified by its slot rather than an
 // expression node: it is not a value, its one operation is sample(). Sampling
@@ -414,7 +538,7 @@ Float sampleCompare(const TextureDepth2DArray& texture,
 // fragments - and a deliberate blur, which walks up the pyramid on purpose.
 //
 // A texture with one level ignores the level, since there is nothing else to
-// read; GPU::Texture has no mips yet, so that is every texture today.
+// read; one with a mip chain reads the level asked for.
 Float4
     sample(const Texture2D& texture, const Float2& coordinates, const Float& level);
 
@@ -440,7 +564,8 @@ Float4 fetch(const Texture2D& texture, const Float2& coordinates);
 // store recorded via ShaderBuilder::write - there is nothing to read back from
 // one, on either backend. Bind the matching GPU::Texture, created with
 // TextureDescriptor::computeWrite, at the same slot
-// (ComputePass::setOutputTexture).
+// (ComputePass::setOutputTexture). StorageTextures.h has the rest of WGSL's
+// storage textures: read and read-write, arrays, volumes, integer formats.
 struct WritableTexture2D
 {
     ShaderGraph* graph = nullptr;
@@ -733,6 +858,46 @@ struct UIntOutputBuffer
     int slot = -1;
 };
 
+// The signed siblings, WGSL's array<i32>: the same slots, binds and record
+// reads as the unsigned pair, on elements that are Int - an offset that may be
+// negative, a signed sample, a delta. Bound from int32s; the CPU executor's
+// Bindings::set takes a span of std::int32_t.
+struct IntInputBuffer
+{
+    Int operator[](const UInt& index) const;
+    Int operator[](unsigned index) const;
+
+    Int2 read2(const UInt& index) const;
+    Int3 read3(const UInt& index) const;
+    Int4 read4(const UInt& index) const;
+    Int2 read2(unsigned index) const;
+    Int3 read3(unsigned index) const;
+    Int4 read4(unsigned index) const;
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+struct IntOutputBuffer
+{
+    Int operator[](const UInt& index) const;
+    Int operator[](unsigned index) const;
+
+    Int2 read2(const UInt& index) const;
+    Int3 read3(const UInt& index) const;
+    Int4 read4(const UInt& index) const;
+    Int2 read2(unsigned index) const;
+    Int3 read3(unsigned index) const;
+    Int4 read4(unsigned index) const;
+
+    // A literal anchored on this buffer's own graph, and an index for one.
+    Int literal(int value) const;
+    UInt index(unsigned value) const;
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 // A storage buffer of unsigned integers every thread in the dispatch may
 // read-modify-write at once, which is what makes one kernel able to hand out
 // slots of a shared array to threads that know nothing about each other.
@@ -742,8 +907,10 @@ struct UIntOutputBuffer
 // floats and yields nonsense. Bind it to a UIntInputBuffer instead, or read it
 // back through load().
 //
-// The add itself is ShaderBuilder::atomicAdd rather than a method here, because
-// it is a statement: see StatementKind::AtomicAdd for why the two backends
+// The operations themselves - atomicAdd, atomicSub, atomicMax, atomicMin,
+// atomicAnd, atomicOr, atomicXor, atomicExchange and
+// atomicCompareExchangeWeak - are ShaderBuilder's rather than methods here,
+// because each is a statement: see StatementKind::Atomic for why the backends
 // leave no other option.
 struct AtomicBuffer
 {
@@ -760,6 +927,21 @@ struct AtomicBuffer
     UInt load(unsigned index) const;
 
     UInt literal(unsigned value) const;
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+// The signed sibling, WGSL's atomic<i32>: the same operations on elements that
+// are Int, so atomicMax and atomicMin compare as signed - -1 is below 0, where
+// in an AtomicBuffer it is the largest value there is. Bound from int32s, and
+// read back by a later kernel as such; the bits are the same two's complement
+// an AtomicBuffer would hold, so add, sub and the bitwise ones agree between
+// the two and only max and min tell them apart.
+struct IntAtomicBuffer
+{
+    Int load(const UInt& index) const;
+    Int load(unsigned index) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
@@ -808,6 +990,42 @@ template <>
 struct ValueTypeOf<Float4x4>
 {
     static constexpr ValueType value = ValueType::Float4x4;
+};
+
+template <>
+struct ValueTypeOf<Float2x3>
+{
+    static constexpr ValueType value = ValueType::Float2x3;
+};
+
+template <>
+struct ValueTypeOf<Float2x4>
+{
+    static constexpr ValueType value = ValueType::Float2x4;
+};
+
+template <>
+struct ValueTypeOf<Float3x2>
+{
+    static constexpr ValueType value = ValueType::Float3x2;
+};
+
+template <>
+struct ValueTypeOf<Float3x4>
+{
+    static constexpr ValueType value = ValueType::Float3x4;
+};
+
+template <>
+struct ValueTypeOf<Float4x2>
+{
+    static constexpr ValueType value = ValueType::Float4x2;
+};
+
+template <>
+struct ValueTypeOf<Float4x3>
+{
+    static constexpr ValueType value = ValueType::Float4x3;
 };
 
 template <>
@@ -1322,6 +1540,61 @@ ShaderBase<R> atan2(float y, const R& x)
     return detail::intrinsic<ShaderBase<R>>("atan2", y, x);
 }
 
+// The inverse hyperbolics. MSL and GLSL have all three; HLSL has none, so there
+// they are the logarithm forms WGSL defines their accuracy by, emitted as
+// helpers: asinh(x) = log(|x| + sqrt(x * x + 1)) with x's sign, acosh(x) =
+// log(x + sqrt(x * x - 1)), atanh(x) = 0.5 * log((1 + x) / (1 - x)). Metal's
+// asinh is taken of |x| and given x's sign back, since under the fast math
+// eacp compiles Metal with it cancels for a negative argument. acosh below 1
+// and atanh outside (-1, 1) are undefined, as in WGSL.
+template <ShaderValueLike T>
+ShaderBase<T> asinh(const T& value)
+{
+    return detail::componentCall(value, "asinh");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> acosh(const T& value)
+{
+    return detail::componentCall(value, "acosh");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> atanh(const T& value)
+{
+    return detail::componentCall(value, "atanh");
+}
+
+// Angles between the two units, recorded as the multiplication WGSL defines
+// them as rather than as a call - MSL has neither - so every backend computes
+// the same single rounding.
+inline constexpr auto degreesPerRadian =
+    static_cast<float>(180.0 / std::numbers::pi);
+inline constexpr auto radiansPerDegree =
+    static_cast<float>(std::numbers::pi / 180.0);
+
+template <ShaderValueLike T>
+ShaderBase<T> degrees(const T& angle)
+{
+    return angle * degreesPerRadian;
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> radians(const T& angle)
+{
+    return angle * radiansPerDegree;
+}
+
+// The value rounded through binary16 and widened back, which is what storing
+// it as a half and reading it again would give - the rounding packHalf2
+// documents, so D3D may differ from Metal and the CPU by an ulp of a half, and
+// a magnitude past 65504 is undefined.
+template <ShaderValueLike T>
+ShaderBase<T> quantizeToF16(const T& value)
+{
+    return detail::componentCall(value, "eacpQuantizeToF16");
+}
+
 template <ShaderValueLike T>
 ShaderBase<T> exp(const T& value)
 {
@@ -1603,6 +1876,28 @@ template <ShaderValueLike T>
 ShaderBase<T> mix(float from, float to, const T& amount)
 {
     return detail::intrinsic<ShaderBase<T>>("mix", from, to, amount);
+}
+
+// fma(a, b, c): a * b + c. Metal and the CPU round once, as a fused
+// multiply-add; HLSL's mad and a Vulkan driver may round the product first,
+// which WGSL allows too. A scalar or literal beside a vector is widened in the
+// emitted MSL and GLSL, whose fma takes one type throughout.
+template <ShaderValueLike A, ShapedBeside<A> B, ShapedBeside<A> C>
+ShaderBase<A> fma(const A& a, const B& b, const C& c)
+{
+    return detail::intrinsic<ShaderBase<A>>("fma", a, b, c);
+}
+
+template <ShaderValueLike B, ShapedBeside<B> C>
+ShaderBase<B> fma(float a, const B& b, const C& c)
+{
+    return detail::intrinsic<ShaderBase<B>>("fma", a, b, c);
+}
+
+template <ShaderValueLike C>
+ShaderBase<C> fma(float a, float b, const C& c)
+{
+    return detail::intrinsic<ShaderBase<C>>("fma", a, b, c);
 }
 
 // smoothstep(edge0, edge1, x): the shape is x's, and either edge is a literal
@@ -2407,6 +2702,118 @@ Int max(int a, const Int& b);
 
 Int abs(const Int& value);
 
+// The bit functions, componentwise on Int, UInt and their vectors, with WGSL's
+// meaning in every corner the dialects leave undefined or spell differently.
+// Each is an eacp* helper in all three, so a type the dialect's own builtin
+// returns differently (GLSL's bitCount is always signed, HLSL's countbits
+// unsigned) and the cases it does not define are settled in one place.
+template <typename T>
+concept IntegerValueLike = UIntValueLike<T> || IntValueLike<T>;
+
+// A bit position or count: a UInt, or a literal recorded as one.
+template <typename T>
+concept BitFieldArgument = UIntScalarLike<T> || std::integral<T>;
+
+namespace detail
+{
+template <typename T>
+ShaderHandle<T> bitCall(const T& value, const char* name)
+{
+    return call<ShaderHandle<T>>(value, ValueTypeOf<ShaderHandle<T>>::value, name);
+}
+
+template <std::integral T>
+ValueHandle bitFieldOperand(const ValueHandle& anchor, T literal)
+{
+    return uintConstantOn(anchor, static_cast<unsigned>(literal));
+}
+
+template <UIntScalarLike T>
+ValueHandle bitFieldOperand(const ValueHandle&, const T& value)
+{
+    return value;
+}
+} // namespace detail
+
+template <IntegerValueLike T>
+ShaderHandle<T> countOneBits(const T& value)
+{
+    return detail::bitCall(value, "eacpCountOneBits");
+}
+
+template <IntegerValueLike T>
+ShaderHandle<T> reverseBits(const T& value)
+{
+    return detail::bitCall(value, "eacpReverseBits");
+}
+
+// 32 for a zero, as WGSL has it.
+template <IntegerValueLike T>
+ShaderHandle<T> countLeadingZeros(const T& value)
+{
+    return detail::bitCall(value, "eacpCountLeadingZeros");
+}
+
+template <IntegerValueLike T>
+ShaderHandle<T> countTrailingZeros(const T& value)
+{
+    return detail::bitCall(value, "eacpCountTrailingZeros");
+}
+
+// The index of the highest set bit, or all ones (-1) for zero. On an Int it is
+// the highest bit that differs from the sign bit, so -1 answers for -1 too.
+template <IntegerValueLike T>
+ShaderHandle<T> firstLeadingBit(const T& value)
+{
+    return detail::bitCall(value, "eacpFirstLeadingBit");
+}
+
+// The index of the lowest set bit, or all ones (-1) for zero.
+template <IntegerValueLike T>
+ShaderHandle<T> firstTrailingBit(const T& value)
+{
+    return detail::bitCall(value, "eacpFirstTrailingBit");
+}
+
+// `count` bits from `offset`, moved down to bit 0: zero-filled above on a UInt,
+// sign-extended from the field's top bit on an Int. The offset is clamped to 32
+// and the count to what is left above it, so no argument is undefined, and a
+// count of zero gives zero.
+template <IntegerValueLike T, BitFieldArgument O, BitFieldArgument C>
+ShaderHandle<T> extractBits(const T& value, const O& offset, const C& count)
+{
+    return detail::call3<ShaderHandle<T>>(value,
+                                          detail::bitFieldOperand(value, offset),
+                                          detail::bitFieldOperand(value, count),
+                                          ValueTypeOf<ShaderHandle<T>>::value,
+                                          "eacpExtractBits");
+}
+
+// `value` with `count` bits from `offset` replaced by the low bits of
+// `newBits`, clamped as extractBits is; a count of zero leaves it unchanged.
+template <IntegerValueLike T,
+          SameShaderHandle<T> N,
+          BitFieldArgument O,
+          BitFieldArgument C>
+ShaderHandle<T>
+    insertBits(const T& value, const N& newBits, const O& offset, const C& count)
+{
+    const ShaderHandle<T>& base = value;
+    const ShaderHandle<T>& bits = newBits;
+
+    auto args = Vector<int> {};
+    args.add(base.node);
+    args.add(bits.node);
+    args.add(detail::bitFieldOperand(base, offset).node);
+    args.add(detail::bitFieldOperand(base, count).node);
+
+    auto result = ShaderHandle<T> {};
+    result.graph = base.graph;
+    result.node = base.graph->addCall(
+        ValueTypeOf<ShaderHandle<T>>::value, "eacpInsertBits", args);
+    return result;
+}
+
 // Crossing between the integer and the float vocabularies, explicit in both
 // directions. The constructor-style cast spells identically in MSL and HLSL,
 // and truncates towards zero on the way to an int exactly as GLSL's int() does.
@@ -2572,6 +2979,29 @@ UInt packInt8x4(const Int4& values);
 
 UInt packUInt8x4(const UInt4& values);
 
+// The normalized packs, .x in the low bits, as WGSL's pack4x8unorm,
+// pack4x8snorm, pack2x16unorm and pack2x16snorm define them: each component is
+// clamped to [0, 1] or [-1, 1], scaled to 255, 127, 65535 or 32767 and taken as
+// floor(0.5 + scaled), so a tie rounds up on every backend - the dialects' own
+// packs round it their own way, which is why these are helpers.
+UInt packUnorm8x4(const Float4& values);
+
+UInt packSnorm8x4(const Float4& values);
+
+UInt packUnorm16x2(const Float2& values);
+
+UInt packSnorm16x2(const Float2& values);
+
+// And back: each field divided by the same scale, a signed one clamped to -1 so
+// the two codes for -1 (-128 and -127) read alike.
+Float4 unpackUnorm8x4(const UInt& bits);
+
+Float4 unpackSnorm8x4(const UInt& bits);
+
+Float2 unpackUnorm16x2(const UInt& bits);
+
+Float2 unpackSnorm16x2(const UInt& bits);
+
 // The eight nibbles of one word, widened, as the two halves Float4Pair
 // describes. Two float4s rather than one returned aggregate because no dialect
 // spells a returned struct the way the others do, and a float4 is what all
@@ -2718,6 +3148,126 @@ struct ConstantArray
     int slot = -1;
 };
 
+namespace detail
+{
+// The handle a private array of T's holds: the plain handle a derived one (a
+// Uniform<Float3>, a Uniform<Float4x4>) stands in for.
+template <typename T>
+struct StoredHandleOf
+{
+    using type = ShaderHandle<T>;
+};
+
+template <ShaderMatrixLike T>
+struct StoredHandleOf<T>
+{
+    using type = MatrixBase<T>;
+};
+
+template <typename T>
+using StoredHandle = typename StoredHandleOf<T>::type;
+} // namespace detail
+
+// What indexes a private array: an Int or a UInt handle, or a literal.
+template <typename T>
+concept PrivateArrayIndex = std::same_as<T, int> || std::same_as<T, unsigned>
+                            || SameShaderHandle<T, Int> || SameShaderHandle<T, UInt>;
+
+// WGSL's var a: array<T, N>: a mutable array private to one invocation, created
+// inside a shader or kernel body with privateArray(). Every element starts at
+// zero unless initial values were given; a subscript reads the element as the
+// statements before it left it, and set() writes one, as a statement in the
+// block open at the time - in the stage that declared it, like a Var.
+//
+// Any index is safe: an Int or a UInt is clamped into [0, Size) - min(max(i,
+// 0), Size - 1) - on every backend and on the CPU executor alike, so one past
+// either end reads and writes the end element rather than nothing or memory
+// beyond. A literal index is checked here instead.
+//
+// T is any scalar, vector or matrix. Non-copyable, as a Var is.
+template <typename T, int Size>
+struct PrivateArray
+{
+    static_assert(Size > 0, "eacp: a private array has at least one element");
+
+    PrivateArray(ShaderGraph& graphToUse, int slotToUse)
+        : graph(&graphToUse)
+        , slot(slotToUse)
+    {
+    }
+
+    PrivateArray(const PrivateArray&) = delete;
+    PrivateArray(PrivateArray&&) = delete;
+
+    template <PrivateArrayIndex Index>
+    T operator[](const Index& index) const
+    {
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addVarElementRead(slot, indexNode(index));
+        return result;
+    }
+
+    template <PrivateArrayIndex Index>
+    void set(const Index& index, const T& value) const
+    {
+        graph->assignElement(slot, indexNode(index), value.node);
+    }
+
+    template <PrivateArrayIndex Index>
+    void set(const Index& index, float value) const
+        requires std::same_as<T, Float>
+    {
+        graph->assignElement(slot, indexNode(index), graph->addConstant(value));
+    }
+
+    template <PrivateArrayIndex Index>
+    void set(const Index& index, int value) const
+        requires std::same_as<T, Int>
+    {
+        graph->assignElement(slot, indexNode(index), graph->addIntConstant(value));
+    }
+
+    template <PrivateArrayIndex Index>
+    void set(const Index& index, unsigned value) const
+        requires std::same_as<T, UInt>
+    {
+        graph->assignElement(slot, indexNode(index), graph->addUIntConstant(value));
+    }
+
+    template <PrivateArrayIndex Index>
+    void set(const Index& index, bool value) const
+        requires std::same_as<T, Bool>
+    {
+        graph->assignElement(slot, indexNode(index), graph->addBoolConstant(value));
+    }
+
+    static constexpr int size() { return Size; }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+
+private:
+    int indexNode(int index) const
+    {
+        assert(index >= 0 && index < Size
+               && "eacp: private-array index out of range");
+        return graph->addIntConstant(index);
+    }
+
+    int indexNode(unsigned index) const
+    {
+        assert(index < (unsigned) Size && "eacp: private-array index out of range");
+        return graph->addIntConstant((int) index);
+    }
+
+    template <ShaderHandleLike Index>
+    int indexNode(const Index& index) const
+    {
+        return index.node;
+    }
+};
+
 // A threadgroup-shared array, created inside a kernel body: the tile a
 // reduction or a blocked matmul stages in on-chip memory so a group of
 // threads reads it instead of re-reading global memory. It is never
@@ -2751,6 +3301,133 @@ struct Shared
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
+
+// A threadgroup-shared array of atomic UInt or Int elements, created inside a
+// kernel body with sharedAtomic<T>(count): the per-group counters a histogram
+// bins into before one thread adds the group's totals to a buffer. It takes the
+// operations an AtomicBuffer does, on the same terms, and is read through
+// load() and set through write() rather than subscripted, since Metal reaches
+// its atomic types only through atomic loads and stores.
+//
+// Like a Shared<T> it starts uninitialised on every GPU backend - WGSL zeroes
+// workgroup memory, Metal, D3D and Vulkan do not - so a kernel writes the
+// elements it will count into and barriers before the first atomic.
+template <typename T>
+struct SharedAtomic
+{
+    static_assert(std::same_as<T, UInt> || std::same_as<T, Int>,
+                  "eacp: a shared atomic holds UInt or Int");
+
+    T load(const UInt& index) const
+    {
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addSharedRead(slot, index.node);
+        return result;
+    }
+
+    T load(unsigned index) const
+    {
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addSharedRead(slot, graph->addUIntConstant(index));
+        return result;
+    }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+// What atomicCompareExchangeWeak hands back - WGSL's
+// __atomic_compare_exchange_result - as a struct of handles, the way
+// ThreadPosition and Float4Pair return more than one value: the element's
+// value before the operation, and whether the value given was stored.
+//
+// Weak, as WGSL's is: exchanged may be false although oldValue equals the
+// comparand, so a loop retries until it is true. Metal's is weak; HLSL's and
+// GLSL's are strong, which a weak one is allowed to be.
+template <typename T>
+struct CompareExchangeResult
+{
+    T oldValue;
+    Bool exchanged;
+};
+
+namespace detail
+{
+UInt atomicValueOf(const AtomicBuffer&);
+Int atomicValueOf(const IntAtomicBuffer&);
+
+template <typename T>
+T atomicValueOf(const SharedAtomic<T>&);
+
+constexpr MemorySpace atomicMemoryOf(const AtomicBuffer&)
+{
+    return MemorySpace::Buffer;
+}
+
+constexpr MemorySpace atomicMemoryOf(const IntAtomicBuffer&)
+{
+    return MemorySpace::Buffer;
+}
+
+template <typename T>
+constexpr MemorySpace atomicMemoryOf(const SharedAtomic<T>&)
+{
+    return MemorySpace::Shared;
+}
+} // namespace detail
+
+// Something an atomic operation acts on - an AtomicBuffer, an
+// IntAtomicBuffer, a SharedAtomic, or a Uniform<> of a buffer - and the value
+// type its elements are read and operated on as.
+template <typename T>
+concept AtomicStorage = requires(const T& target) { detail::atomicValueOf(target); };
+
+template <AtomicStorage T>
+using AtomicValue = decltype(detail::atomicValueOf(std::declval<const T&>()));
+
+// One operand of an atomic operation: a handle (or anything that reads as one,
+// a Var or a Uniform<> included), or a literal of the element's own C++ type,
+// anchored on the target's graph when the operation is recorded. A single
+// counter is spelled at element zero and counted in ones, so a call made of
+// literals only is the commonest there is.
+template <typename T>
+class AtomicOperand
+{
+public:
+    using Literal = std::conditional_t<std::same_as<T, Int>, int, unsigned>;
+
+    template <typename V>
+        requires std::convertible_to<const V&, T>
+    AtomicOperand(const V& value)
+        : node(static_cast<T>(value).node)
+    {
+    }
+
+    AtomicOperand(Literal value)
+        : literal(value)
+    {
+    }
+
+    int nodeOn(ShaderGraph& graph) const
+    {
+        if (node >= 0)
+            return node;
+
+        if constexpr (std::same_as<T, Int>)
+            return graph.addIntConstant(literal);
+        else
+            return graph.addUIntConstant(literal);
+    }
+
+private:
+    int node = -1;
+    Literal literal {};
+};
+
+// Which element: a UInt, or an unsigned literal.
+using AtomicIndex = AtomicOperand<UInt>;
 
 // An 8x8 patch of a float matrix, held between the registers of a whole SIMD
 // group rather than by one thread. It is the one handle here that stands for
@@ -2821,6 +3498,48 @@ Float3x3 operator*(const Float3x3& a, const Float3x3& b);
 
 Float4x4 operator*(const Float4x4& a, const Float4x4& b);
 
+// The same three products for the shapes the overloads above do not name: a
+// CxR matrix takes a C-vector on its right and an R-vector on its left, and a
+// KxR one times a CxK one is CxR. Shapes that do not agree have no overload.
+template <ShaderMatrixLike M>
+    requires(M::columns != M::rows)
+FloatVectorOf<M::rows> operator*(const M& matrix,
+                                 const FloatVectorOf<M::columns>& vector)
+{
+    return detail::matrixMul<FloatVectorOf<M::rows>>(matrix, vector);
+}
+
+template <ShaderMatrixLike M>
+    requires(M::columns != M::rows)
+FloatVectorOf<M::columns> operator*(const FloatVectorOf<M::rows>& vector,
+                                    const M& matrix)
+{
+    return detail::matrixMul<FloatVectorOf<M::columns>>(vector, matrix);
+}
+
+template <ShaderMatrixLike A, ShaderMatrixLike B>
+    requires(A::columns == B::rows
+             && !(A::columns == A::rows && B::columns == B::rows))
+MatrixOf<B::columns, A::rows> operator*(const A& a, const B& b)
+{
+    return detail::matrixMul<MatrixOf<B::columns, A::rows>>(a, b);
+}
+
+// The elementwise sum and difference of two matrices of one shape.
+template <ShaderMatrixLike A, ShaderMatrixLike B>
+    requires(A::columns == B::columns && A::rows == B::rows)
+MatrixBase<A> operator+(const A& a, const B& b)
+{
+    return detail::binaryOp<MatrixBase<A>>('+', a, b);
+}
+
+template <ShaderMatrixLike A, ShaderMatrixLike B>
+    requires(A::columns == B::columns && A::rows == B::rows)
+MatrixBase<A> operator-(const A& a, const B& b)
+{
+    return detail::binaryOp<MatrixBase<A>>('-', a, b);
+}
+
 // A matrix scaled by a scalar, on either side and by a handle or a literal.
 // This is not one of the products above and is deliberately not a Mul node: it
 // multiplies every element, which both languages spell with the operator, and
@@ -2853,6 +3572,12 @@ Float4x4 operator*(const Float4x4& a, const Float4x4& b);
 EACP_MATRIX_SCALE(Float2x2)
 EACP_MATRIX_SCALE(Float3x3)
 EACP_MATRIX_SCALE(Float4x4)
+EACP_MATRIX_SCALE(Float2x3)
+EACP_MATRIX_SCALE(Float2x4)
+EACP_MATRIX_SCALE(Float3x2)
+EACP_MATRIX_SCALE(Float3x4)
+EACP_MATRIX_SCALE(Float4x2)
+EACP_MATRIX_SCALE(Float4x3)
 
 #undef EACP_MATRIX_SCALE
 
@@ -2865,6 +3590,20 @@ Float3x3 float3x3(const Float3& c0, const Float3& c1, const Float3& c2);
 
 Float4x4
     float4x4(const Float4& c0, const Float4& c1, const Float4& c2, const Float4& c3);
+
+Float2x3 float2x3(const Float3& c0, const Float3& c1);
+
+Float2x4 float2x4(const Float4& c0, const Float4& c1);
+
+Float3x2 float3x2(const Float2& c0, const Float2& c1, const Float2& c2);
+
+Float3x4 float3x4(const Float4& c0, const Float4& c1, const Float4& c2);
+
+Float4x2
+    float4x2(const Float2& c0, const Float2& c1, const Float2& c2, const Float2& c3);
+
+Float4x3
+    float4x3(const Float3& c0, const Float3& c1, const Float3& c2, const Float3& c3);
 
 // The transpose of a matrix, spelled the same in both backends and right in
 // both for the same reason the construction above is: HLSL holds transposed
@@ -2880,6 +3619,19 @@ Float2x2 transpose(const Float2x2& matrix);
 Float3x3 transpose(const Float3x3& matrix);
 
 Float4x4 transpose(const Float4x4& matrix);
+
+// A non-square transpose changes the shape: CxR becomes RxC.
+Float3x2 transpose(const Float2x3& matrix);
+
+Float4x2 transpose(const Float2x4& matrix);
+
+Float2x3 transpose(const Float3x2& matrix);
+
+Float4x3 transpose(const Float3x4& matrix);
+
+Float2x4 transpose(const Float4x2& matrix);
+
+Float3x4 transpose(const Float4x3& matrix);
 
 // The determinant, which needs no such argument at all: a matrix and its
 // transpose have the same one, so the backends agree whatever each is holding.

@@ -128,6 +128,15 @@ protected:
     UInt gridWidth();
     UInt gridHeight();
     UInt gridDepth();
+
+    // The flat index inside the group, the group counts of the dispatch, and
+    // the lane and width of the SIMD group - see ShaderBuilder for what each
+    // backend reads them from.
+    UInt localIndex();
+    UInt3 groupCount();
+    UInt simdLaneIndex();
+    UInt simdGroupSize();
+
     void barrier();
 
     template <typename T>
@@ -200,16 +209,95 @@ protected:
                             const SimdMatrix& left,
                             const SimdMatrix& right);
 
+    // A threadgroup array of atomic UInt or Int counters, uninitialised like a
+    // shared<T>: write it, barrier(), then count.
+    template <typename T>
+    SharedAtomic<T> sharedAtomic(int count)
+    {
+        return builder.sharedAtomic<T>(count);
+    }
+
     // Adds to one element of a shared counter and yields what it held before, so
     // threads that never meet each other still come away with distinct numbers.
-    // See ShaderBuilder::atomicAdd for what it does and does not order.
-    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
+    // See ShaderBuilder::atomicAdd for what it does and does not order. The
+    // target is an AtomicBuffer, an IntAtomicBuffer or a SharedAtomic; the
+    // index and the value are handles or literals.
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicAdd(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicAdd(target, index, value);
+    }
 
-    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value);
+    // The rest of WGSL's atomics, each yielding the element's old value; Max
+    // and Min are signed on Int elements. See ShaderBuilder.
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicSub(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicSub(target, index, value);
+    }
 
-    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value);
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicMax(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicMax(target, index, value);
+    }
 
-    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value);
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicMin(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicMin(target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicAnd(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicAnd(target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicOr(const Target& target,
+                                 const AtomicIndex& index,
+                                 const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicOr(target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target> atomicXor(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicXor(target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    AtomicValue<Target>
+        atomicExchange(const Target& target,
+                       const AtomicIndex& index,
+                       const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicExchange(target, index, value);
+    }
+
+    template <AtomicStorage Target>
+    CompareExchangeResult<AtomicValue<Target>>
+        atomicCompareExchangeWeak(const Target& target,
+                                  const AtomicIndex& index,
+                                  const AtomicOperand<AtomicValue<Target>>& compare,
+                                  const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        return builder.atomicCompareExchangeWeak(target, index, compare, value);
+    }
 
     // Control flow, forwarded from the builder on the terms ShaderProgram
     // forwards it: a mutable local, the two branching statements, the loop and
@@ -222,10 +310,33 @@ protected:
         return builder.var(initialValue);
     }
 
+    template <typename T>
+        requires(isMatrix(ValueTypeOf<T>::value))
+    Var<T> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
     Var<Float> var(float initialValue);
     Var<Bool> var(bool initialValue);
     Var<Int> var(int initialValue);
     Var<UInt> var(unsigned initialValue);
+
+    // A private array per invocation (see PrivateArray and
+    // ShaderBuilder::privateArray).
+    template <typename T, int Size>
+    PrivateArray<T, Size> privateArray()
+    {
+        return builder.privateArray<T, Size>();
+    }
+
+    template <typename T, typename... Rest>
+        requires(ShaderHandleLike<T> || ShaderMatrixLike<T>)
+    PrivateArray<detail::StoredHandle<T>, 1 + (int) sizeof...(Rest)>
+        privateArray(const T& first, const Rest&... rest)
+    {
+        return builder.privateArray(first, rest...);
+    }
 
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)
@@ -246,8 +357,54 @@ protected:
         builder.loop(condition, std::forward<Body>(body));
     }
 
+    template <typename Body, typename Continuing>
+    void loop(const Bool& condition, Body&& body, Continuing&& continuing)
+    {
+        builder.loop(condition,
+                     std::forward<Body>(body),
+                     std::forward<Continuing>(continuing));
+    }
+
+    template <typename Update, typename Body>
+    void forLoop(const Bool& condition, Update&& update, Body&& body)
+    {
+        builder.forLoop(
+            condition, std::forward<Update>(update), std::forward<Body>(body));
+    }
+
     void breakLoop();
     void continueLoop();
+    void breakLoopIf(const Bool& condition);
+
+    template <typename Selector, typename... Bodies>
+    void switchOn(const Selector& selector, const SwitchClause<Bodies>&... clauses)
+    {
+        builder.switchOn(selector, clauses...);
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>> caseOf(std::int64_t value, Body&& body)
+    {
+        return GPU::caseOf(value, std::forward<Body>(body));
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>>
+        caseOf(std::initializer_list<std::int64_t> values, Body&& body)
+    {
+        return GPU::caseOf(values, std::forward<Body>(body));
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>> defaultCase(Body&& body)
+    {
+        return GPU::defaultCase(std::forward<Body>(body));
+    }
+
+    // Ends this invocation. Every thread of a group that barriers or folds
+    // afterwards must still reach that barrier or fold - a return some take
+    // and others do not, ahead of one, is undefined on the GPU.
+    void returnEarly();
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value);
 
@@ -384,15 +541,36 @@ protected:
                 const UInt& index,
                 const UInt4& value);
 
-    // An atomic buffer's element, set rather than added to - what a kernel
-    // computing a dispatch size writes.
-    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
+    // The signed output's element and record writes, as the unsigned ones.
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int& value);
 
-    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value);
+    void write(const IntOutputBuffer& buffer, const UInt& index, int value);
 
-    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value);
+    void write(const IntOutputBuffer& buffer, unsigned index, const Int& value);
 
-    void write(const AtomicBuffer& buffer, unsigned index, unsigned value);
+    void write(const IntOutputBuffer& buffer, unsigned index, int value);
+
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int2& value);
+
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int3& value);
+
+    void write(const IntOutputBuffer& buffer, const UInt& index, const Int4& value);
+
+    void write2(const IntOutputBuffer& buffer, const UInt& index, const Int2& value);
+
+    void write3(const IntOutputBuffer& buffer, const UInt& index, const Int3& value);
+
+    void write4(const IntOutputBuffer& buffer, const UInt& index, const Int4& value);
+
+    // An atomic element, set rather than added to - what a kernel computing a
+    // dispatch size writes, and how one zeroes its shared counters.
+    template <AtomicStorage Target>
+    void write(const Target& target,
+               const AtomicIndex& index,
+               const AtomicOperand<AtomicValue<Target>>& value)
+    {
+        builder.write(target, index, value);
+    }
 
     // One texel of a kernel's output image, at the coordinates a 2D kernel
     // already has in hand from threadPosition().
@@ -400,6 +578,35 @@ protected:
                const UInt& x,
                const UInt& y,
                const Float4& color);
+
+    // textureStore on a Write or ReadWrite storage texture (StorageTextures.h).
+    template <TextureFormat Format, StorageAccess Access>
+        requires(canStore(Access))
+    void write(const StorageTexture2D<Format, Access>& texture,
+               const TexelCoordinates2& coordinates,
+               const StorageTexelOf<Format>& value)
+    {
+        builder.write(texture, coordinates, value);
+    }
+
+    template <TextureFormat Format, StorageAccess Access>
+        requires(canStore(Access))
+    void write(const StorageTexture2DArray<Format, Access>& texture,
+               const TexelCoordinates2& coordinates,
+               const TextureIndex& layer,
+               const StorageTexelOf<Format>& value)
+    {
+        builder.write(texture, coordinates, layer, value);
+    }
+
+    template <TextureFormat Format, StorageAccess Access>
+        requires(canStore(Access))
+    void write(const StorageTexture3D<Format, Access>& texture,
+               const TexelCoordinates3& coordinates,
+               const StorageTexelOf<Format>& value)
+    {
+        builder.write(texture, coordinates, value);
+    }
 
     // Generated by EACP_SHADER: visits each declared member in order.
     virtual void reflectMembers(ShaderVisitor& visitor) = 0;

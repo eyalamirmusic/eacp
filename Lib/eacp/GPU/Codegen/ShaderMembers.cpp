@@ -5,6 +5,21 @@
 
 namespace eacp::GPU
 {
+namespace
+{
+// Tightly packed columns on the CPU, one per uniformColumnStride in the block.
+void copyMatrixColumns(ValueType type, const void* data, std::byte* block)
+{
+    const auto* columns = static_cast<const std::byte*>(data);
+    auto columnBytes = (std::size_t) matrixRows(type) * sizeof(float);
+
+    for (auto column = 0; column < matrixColumns(type); ++column)
+        std::memcpy(block + column * uniformColumnStride,
+                    columns + column * columnBytes,
+                    columnBytes);
+}
+} // namespace
+
 ShaderVisitor::~ShaderVisitor() = default;
 
 void ShaderVisitor::operator()(const char* name, Uniform<Texture2D>& member)
@@ -33,6 +48,31 @@ void ShaderVisitor::operator()(const char* name,
     onDepthArrayTexture(name, member, member.value, member.sampling);
 }
 
+void ShaderVisitor::operator()(const char* name, Uniform<Texture3D>& member)
+{
+    onTextureOfKind(
+        name, TextureKind::Texture3D, member, member.value, member.sampling);
+}
+
+void ShaderVisitor::operator()(const char* name, Uniform<TextureCubeArray>& member)
+{
+    onTextureOfKind(
+        name, TextureKind::CubeArray, member, member.value, member.sampling);
+}
+
+void ShaderVisitor::operator()(const char* name, Uniform<TextureDepthCube>& member)
+{
+    onTextureOfKind(
+        name, TextureKind::DepthCube, member, member.value, member.sampling);
+}
+
+void ShaderVisitor::operator()(const char* name,
+                               Uniform<TextureDepthCubeArray>& member)
+{
+    onTextureOfKind(
+        name, TextureKind::DepthCubeArray, member, member.value, member.sampling);
+}
+
 void ShaderVisitor::operator()(const char* name, Uniform<InputBuffer>& member)
 {
     onInputBuffer(name, member, member.value);
@@ -53,14 +93,40 @@ void ShaderVisitor::operator()(const char* name, Uniform<UIntOutputBuffer>& memb
     onUIntOutputBuffer(name, member, member.value);
 }
 
+void ShaderVisitor::operator()(const char* name, Uniform<IntInputBuffer>& member)
+{
+    onIntInputBuffer(name, member, member.value);
+}
+
+void ShaderVisitor::operator()(const char* name, Uniform<IntOutputBuffer>& member)
+{
+    onIntOutputBuffer(name, member, member.value);
+}
+
 void ShaderVisitor::operator()(const char* name, Uniform<AtomicBuffer>& member)
 {
     onAtomicBuffer(name, member, member.value);
 }
 
+void ShaderVisitor::operator()(const char* name, Uniform<IntAtomicBuffer>& member)
+{
+    onIntAtomicBuffer(name, member, member.value);
+}
+
 void ShaderVisitor::operator()(const char* name, Uniform<WritableTexture2D>& member)
 {
     onWritableTexture(name, member, member.value);
+}
+
+void ShaderVisitor::operator()(const char* name, Uniform<SamplerBinding>& member)
+{
+    onSampler(name, member, false, member.value);
+}
+
+void ShaderVisitor::operator()(const char* name,
+                               Uniform<ComparisonSamplerBinding>& member)
+{
+    onSampler(name, member, true, member.value);
 }
 
 void ShaderVisitor::onTexture(const char*,
@@ -98,6 +164,14 @@ void ShaderVisitor::onDepthArrayTexture(const char*,
 {
 }
 
+void ShaderVisitor::onTextureOfKind(const char*,
+                                    TextureKind,
+                                    detail::TextureHandle&,
+                                    const Texture*,
+                                    TextureSampling)
+{
+}
+
 void ShaderVisitor::onInputBuffer(const char*, InputBuffer&, const BufferRange&) {}
 
 void ShaderVisitor::onOutputBuffer(const char*, OutputBuffer&, const BufferRange&) {}
@@ -114,11 +188,43 @@ void ShaderVisitor::onUIntOutputBuffer(const char*,
 {
 }
 
+void ShaderVisitor::onIntInputBuffer(const char*,
+                                     IntInputBuffer&,
+                                     const BufferRange&)
+{
+}
+
+void ShaderVisitor::onIntOutputBuffer(const char*,
+                                      IntOutputBuffer&,
+                                      const BufferRange&)
+{
+}
+
 void ShaderVisitor::onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) {}
+
+void ShaderVisitor::onIntAtomicBuffer(const char*,
+                                      IntAtomicBuffer&,
+                                      const BufferRange&)
+{
+}
 
 void ShaderVisitor::onWritableTexture(const char*,
                                       WritableTexture2D&,
                                       const Texture*)
+{
+}
+
+void ShaderVisitor::onStorageTexture(const char*,
+                                     const StorageTextureLayout&,
+                                     detail::TextureHandle&,
+                                     const Texture*)
+{
+}
+
+void ShaderVisitor::onSampler(const char*,
+                              detail::SamplerHandle&,
+                              bool,
+                              const Sampler&)
 {
 }
 
@@ -175,6 +281,15 @@ void ShaderBuildVisitor::onDepthArrayTexture(const char*,
     handle = builder.depthTextureArray(sampling);
 }
 
+void ShaderBuildVisitor::onTextureOfKind(const char*,
+                                         TextureKind kind,
+                                         detail::TextureHandle& handle,
+                                         const Texture*,
+                                         TextureSampling sampling)
+{
+    handle = builder.textureOfKind(kind, sampling);
+}
+
 void ShaderBuildVisitor::onInputBuffer(const char*,
                                        InputBuffer& handle,
                                        const BufferRange&)
@@ -203,6 +318,20 @@ void ShaderBuildVisitor::onUIntOutputBuffer(const char*,
     handle = builder.uintOutputBuffer();
 }
 
+void ShaderBuildVisitor::onIntInputBuffer(const char*,
+                                          IntInputBuffer& handle,
+                                          const BufferRange&)
+{
+    handle = builder.intInputBuffer();
+}
+
+void ShaderBuildVisitor::onIntOutputBuffer(const char*,
+                                           IntOutputBuffer& handle,
+                                           const BufferRange&)
+{
+    handle = builder.intOutputBuffer();
+}
+
 void ShaderBuildVisitor::onAtomicBuffer(const char*,
                                         AtomicBuffer& handle,
                                         const BufferRange&)
@@ -210,11 +339,34 @@ void ShaderBuildVisitor::onAtomicBuffer(const char*,
     handle = builder.atomicBuffer();
 }
 
+void ShaderBuildVisitor::onIntAtomicBuffer(const char*,
+                                           IntAtomicBuffer& handle,
+                                           const BufferRange&)
+{
+    handle = builder.intAtomicBuffer();
+}
+
 void ShaderBuildVisitor::onWritableTexture(const char*,
                                            WritableTexture2D& handle,
                                            const Texture*)
 {
     handle = builder.writableTexture();
+}
+
+void ShaderBuildVisitor::onStorageTexture(const char*,
+                                          const StorageTextureLayout& layout,
+                                          detail::TextureHandle& handle,
+                                          const Texture*)
+{
+    handle = builder.storageTextureOf(layout);
+}
+
+void ShaderBuildVisitor::onSampler(const char*,
+                                   detail::SamplerHandle& handle,
+                                   bool comparison,
+                                   const Sampler&)
+{
+    handle = builder.samplerOf(comparison);
 }
 
 ShaderUploadVisitor::ShaderUploadVisitor(Vector<std::byte>& bytesToFill)
@@ -234,7 +386,11 @@ void ShaderUploadVisitor::onUniform(const char*,
     if (bytes.size() < next)
         bytes.resize(next);
 
-    std::memcpy(bytes.data() + offset, data, (std::size_t) byteSize(type));
+    if (isMatrix(type))
+        copyMatrixColumns(type, data, bytes.data() + offset);
+    else
+        std::memcpy(bytes.data() + offset, data, (std::size_t) byteSize(type));
+
     cursor = next;
 
     if (alignment > blockAlignment)

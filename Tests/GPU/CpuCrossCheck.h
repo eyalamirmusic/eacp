@@ -140,9 +140,29 @@ public:
         return find(member.slot).uints;
     }
 
+    Vector<std::int32_t> ints(const IntAtomicBuffer& member) const
+    {
+        return intsAt(member.slot);
+    }
+
+    Vector<std::int32_t> ints(const IntOutputBuffer& member) const
+    {
+        return intsAt(member.slot);
+    }
+
     Backend backend;
 
 private:
+    Vector<std::int32_t> intsAt(int slot) const
+    {
+        auto values = Vector<std::int32_t> {};
+
+        for (auto word: find(slot).uints)
+            values.add(std::bit_cast<std::int32_t>(word));
+
+        return values;
+    }
+
     const HostArray& find(int slot) const
     {
         for (const auto& array: arrays)
@@ -235,6 +255,25 @@ public:
         output(Uniform<AtomicBuffer>& member, int elements, std::uint32_t fill = 0u)
     {
         return output(member, filled(elements, fill));
+    }
+
+    // The signed buffers, held as the words their int32s are.
+    CrossCheck& output(Uniform<IntAtomicBuffer>& member,
+                       const Vector<std::int32_t>& initial)
+    {
+        return addInts(member, initial);
+    }
+
+    CrossCheck& input(Uniform<IntInputBuffer>& member,
+                      const Vector<std::int32_t>& values)
+    {
+        return addInts(member, values);
+    }
+
+    CrossCheck& output(Uniform<IntOutputBuffer>& member,
+                       const Vector<std::int32_t>& initial)
+    {
+        return addInts(member, initial);
     }
 
     // After both halves have run, every array the GPU read back is compared
@@ -342,6 +381,26 @@ private:
     using GpuDispatch = std::function<void(ComputePass&, ComputeProgram&)>;
 
     static constexpr auto elementBytes = std::int64_t {4};
+
+    template <typename Member>
+    CrossCheck& addInts(Member& member, const Vector<std::int32_t>& values)
+    {
+        auto words = Vector<std::uint32_t> {};
+
+        for (auto value: values)
+            words.add(std::bit_cast<std::uint32_t>(value));
+
+        auto& array = add(member.slot, words, 0, -1);
+        array.bindOnCpu = [&member](CpuCompute::Bindings& bindings, HostArray& host)
+        {
+            auto held = host.uintRange();
+            auto ints = std::span<std::int32_t> {
+                reinterpret_cast<std::int32_t*>(held.data()), held.size()};
+            nano::check(bindings.set(member, ints));
+        };
+        array.bindOnGpu = [&member](const BufferRange& range) { member = range; };
+        return *this;
+    }
 
     template <typename T>
     HostArray& add(int slot, const Vector<T>& values, int first, int count)

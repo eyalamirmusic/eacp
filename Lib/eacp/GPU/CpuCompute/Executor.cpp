@@ -53,6 +53,24 @@ void executorSplatExtents(const Plan& plan, Workspace& workspace, Extents extent
     }
 }
 
+void executorSplatGroupCounts(const Plan& plan, Workspace& workspace, Extents groups)
+{
+    for (const auto& builtIn: plan.builtInNodes())
+    {
+        if (static_cast<ShaderBuiltIn>(builtIn.index) != ShaderBuiltIn::GroupCount)
+            continue;
+
+        const auto& node = plan.node(builtIn.node);
+
+        for (auto component = 0; component < node.components; ++component)
+            Lanes::fill(workspace.at(node.scratch
+                                     + static_cast<std::uint32_t>(
+                                         component * plan.laneStride())),
+                        groups[static_cast<std::size_t>(component)],
+                        plan.laneStride());
+    }
+}
+
 // A run of consecutive x groups in one (y, z) row: the first group's id and
 // thread origin, and how many of the plan's groups per batch are real.
 struct Batch
@@ -480,6 +498,7 @@ bool Executor::dispatchGroups(const PreparedDispatch& prepared,
 
     executorSplatUniforms(executionPlan, prepared.uniforms.data(), workspace);
     executorSplatExtents(executionPlan, workspace, prepared.extents);
+    executorSplatGroupCounts(executionPlan, workspace, prepared.groupsPerAxis);
     executorEvaluate(context, executionPlan.dispatchSchedule());
     executorRunGroups(context,
                       prepared.groupsPerAxis,
