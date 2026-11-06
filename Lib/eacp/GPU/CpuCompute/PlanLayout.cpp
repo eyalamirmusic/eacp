@@ -102,7 +102,7 @@ public:
             forms[id] = calculateNodeForm(id);
     }
 
-    void markRampRead(Plan::Node& node, int id) const
+    void markRampRead(Plan::Node& node, NodeId id) const
     {
         if (node.op != Op::BufferRead && node.op != Op::BufferVectorRead)
             return;
@@ -116,7 +116,7 @@ public:
         }
     }
 
-    void markInvariantDivisor(Plan::Node& node, int id) const
+    void markInvariantDivisor(Plan::Node& node, NodeId id) const
     {
         if (node.op != Op::DivU && node.op != Op::RemU)
             return;
@@ -201,7 +201,7 @@ private:
         }
     }
 
-    LaneForm getArgumentForm(int id, const Plan::Node& node, int which) const
+    LaneForm getArgumentForm(NodeId id, const Plan::Node& node, int which) const
     {
         auto argument = plan.argument(node, which);
         return argument < id ? forms[argument] : LaneForm {};
@@ -216,7 +216,7 @@ private:
         return true;
     }
 
-    LaneForm calculateNodeForm(int id) const
+    LaneForm calculateNodeForm(NodeId id) const
     {
         const auto& node = plan.node(id);
 
@@ -232,7 +232,7 @@ private:
         return calculateOperationForm(id, node);
     }
 
-    LaneForm calculateOperationForm(int id, const Plan::Node& node) const
+    LaneForm calculateOperationForm(NodeId id, const Plan::Node& node) const
     {
         auto first = [&] { return getArgumentForm(id, node, 0); };
         auto second = [&] { return getArgumentForm(id, node, 1); };
@@ -439,14 +439,14 @@ void PlanBuilder::layOut()
             maxWords);
 }
 
-bool PlanBuilder::hasOwnScratch(int id) const
+bool PlanBuilder::hasOwnScratch(NodeId id) const
 {
     return plan.nodes[id].used && ownsScratch(graph.expr(id).kind);
 }
 
 // A node evaluated in a statement's schedule, whose scratch is free again once
 // its last use has read it.
-bool PlanBuilder::isPooled(int id) const
+bool PlanBuilder::isPooled(NodeId id) const
 {
     return hasOwnScratch(id) && plan.nodes[id].op != Op::Leaf
            && levels[id] == PlanLevel::Lane;
@@ -454,7 +454,7 @@ bool PlanBuilder::isPooled(int id) const
 
 // The commit time of the last step a loop's body holds, or -1 for a step that
 // is not a loop.
-int PlanBuilder::getLoopEnd(int step) const
+int PlanBuilder::getLoopEnd(StepId step) const
 {
     if (plan.steps[step].kind != StatementKind::Loop)
         return -1;
@@ -464,7 +464,7 @@ int PlanBuilder::getLoopEnd(int step) const
 
 // A value defined outside a loop and read inside it is read again on the next
 // iteration, so it lives to the end of every loop between the two.
-int PlanBuilder::calculateLoopExtent(int site, int definedAt) const
+int PlanBuilder::calculateLoopExtent(Site site, Site definedAt) const
 {
     if (site < 0 || definedAt == unhoisted)
         return -1;
@@ -486,7 +486,7 @@ int PlanBuilder::calculateLoopExtent(int site, int definedAt) const
     return end;
 }
 
-void PlanBuilder::notePooledUse(int id, int time, int site)
+void PlanBuilder::notePooledUse(NodeId id, ScheduleTime time, Site site)
 {
     if (id < 0 || !isPooled(id))
         return;
@@ -499,9 +499,9 @@ void PlanBuilder::notePooledUse(int id, int time, int site)
     lastUses[id] = std::max(lastUses[id], end);
 }
 
-void PlanBuilder::noteScheduled(int site, int begin, int end)
+void PlanBuilder::noteScheduled(Site site, const Plan::Range& range)
 {
-    for (auto position = begin; position < end; ++position)
+    for (auto position = range.begin; position < range.end; ++position)
     {
         auto id = plan.scheduleList[position];
         const auto& node = plan.nodes[id];
@@ -537,7 +537,7 @@ void PlanBuilder::noteLiveRanges()
 
 void PlanBuilder::noteArrayLiveRanges(const Plan::ArrayLayout& layout)
 {
-    noteScheduled(arraySite, layout.schedule.begin, layout.schedule.end);
+    noteScheduled(arraySite, layout.schedule);
 
     for (auto element = 0; element < layout.elementCount; ++element)
         notePooledUse(plan.arrayElement(layout, element),
@@ -545,10 +545,10 @@ void PlanBuilder::noteArrayLiveRanges(const Plan::ArrayLayout& layout)
                       arraySite);
 }
 
-void PlanBuilder::noteStepLiveRanges(int stepId)
+void PlanBuilder::noteStepLiveRanges(StepId stepId)
 {
     const auto& step = plan.steps[stepId];
-    noteScheduled(stepId, step.scheduleBegin, step.scheduleEnd);
+    noteScheduled(stepId, {step.scheduleBegin, step.scheduleEnd});
 
     for (auto root: pending[stepId].roots)
         notePooledUse(root, getCommitTime(step.scheduleEnd), stepId);
