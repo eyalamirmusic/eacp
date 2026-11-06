@@ -1,6 +1,6 @@
 # Find by task
 
-Read by `Scripts/generate-llm-docs.py` into the "Find by task" table of the
+Read by jamierpond/eacp-agent-docs (`agent-docs.toml` names this file) into the "Find by task" table of the
 generated `index.md`. One row per task; the symbol is fully qualified and must
 exist in the generated reference; several symbols are separated by ` + ` (the script warns when one does not).
 Symbols outside `eacp::` are external and link to their own repository.
