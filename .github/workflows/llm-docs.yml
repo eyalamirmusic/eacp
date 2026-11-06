@@ -2,7 +2,7 @@ name: LLM Docs
 
 on:
   push:
-    branches: [main, develop, jp/llm-docs] # jp/llm-docs: temporary, remove before merge
+    branches: [main, develop]
 
 concurrency:
   group: llm-docs-${{ github.ref }}
@@ -37,8 +37,6 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_NAME" == main ]]; then
             Scripts/publish-llm-docs.sh "${GITHUB_SHA::7}" main stable
-          elif [[ "$GITHUB_REF_NAME" == develop ]]; then
-            Scripts/publish-llm-docs.sh "${GITHUB_SHA::7}" latest develop
           else
-            Scripts/publish-llm-docs.sh "${GITHUB_SHA::7}" "${GITHUB_REF_NAME//\//-}"
+            Scripts/publish-llm-docs.sh "${GITHUB_SHA::7}" latest develop
           fi
