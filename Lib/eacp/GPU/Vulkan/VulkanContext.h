@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Internal: the Vulkan backend's per-process and per-Device state. Not part of
+    GPU.h.
+*/
+
 #include "../Spirv/SpirvCompiler.h"
 #include "../Texture/Texture.h"
 
@@ -17,8 +22,8 @@
 #include <span>
 #include <string>
 
-// VulkanShared is one per process, VulkanContext one per GPU::Device. Nothing
-// in a context is synchronized. Not part of GPU.h.
+/// VulkanShared is one per process, VulkanContext one per GPU::Device. Nothing
+/// in a context is synchronized. Not part of GPU.h.
 
 namespace eacp::GPU
 {
@@ -26,7 +31,7 @@ class Device;
 class VulkanContext;
 struct VulkanTextureData;
 
-// A range of a recording's upload arena, valid until that recording completes.
+/// A range of a recording's upload arena, valid until that recording completes.
 struct UploadRange
 {
     bool isValid() const { return mapped != nullptr; }
@@ -36,7 +41,7 @@ struct UploadRange
     VkDeviceSize offset = 0;
 };
 
-// A block of the constant ring, as a UNIFORM_BUFFER_DYNAMIC binds one.
+/// A block of the constant ring, as a UNIFORM_BUFFER_DYNAMIC binds one.
 struct ConstantRange
 {
     bool isValid() const { return buffer != VK_NULL_HANDLE; }
@@ -44,7 +49,7 @@ struct ConstantRange
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceSize offset = 0;
 
-    // The block rounded up to std140's multiple of 16, not its byte count.
+    /// The block rounded up to std140's multiple of 16, not its byte count.
     VkDeviceSize range = 0;
 };
 
@@ -80,8 +85,8 @@ inline constexpr auto bufferGraphicsRead = BufferUse {
     VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
     VK_ACCESS_2_SHADER_STORAGE_READ_BIT};
 
-// One recording in flight: a command pool and its buffer, plus the transient
-// storage its commands reference. Reusable once completionValue has passed.
+/// One recording in flight: a command pool and its buffer, plus the transient
+/// storage its commands reference. Reusable once completionValue has passed.
 struct CommandContext
 {
     struct UploadChunk
@@ -93,13 +98,13 @@ struct CommandContext
         std::size_t used = 0;
     };
 
-    // Only sound once the recording's completion value has passed.
+    /// Only sound once the recording's completion value has passed.
     void rewindUploads();
 
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer buffer = VK_NULL_HANDLE;
 
-    // Zero for a recording that has not been submitted.
+    /// Zero for a recording that has not been submitted.
     std::uint64_t completionValue = 0;
 
     VulkanContext* context = nullptr;
@@ -114,21 +119,21 @@ struct CommandContext
     Vector<int> readbackTaken;
     Vector<int> constantsTaken;
 
-    // A buffer first touched under a new id needs no barrier.
+    /// A buffer first touched under a new id needs no barrier.
     std::uint64_t recordingId = 0;
 
-    // The images whose deferred initial transition this recording carries, so
-    // that discarding it owes them again.
+    /// The images whose deferred initial transition this recording carries, so
+    /// that discarding it owes them again.
     Vector<VulkanTextureData*> settledImages;
 };
 
-// What the driver cannot be asked to do. Empty today.
+/// What the driver cannot be asked to do. Empty today.
 struct DriverQuirks
 {
 };
 
-// The binary semaphores a swapchain frame's submission carries. Of a frame that
-// flushes, only the first submission waits and only the last signals.
+/// The binary semaphores a swapchain frame's submission carries. Of a frame that
+/// flushes, only the first submission waits and only the last signals.
 struct SubmitSync
 {
     bool isEmpty() const
@@ -158,14 +163,14 @@ struct VulkanRenderPassKey
     bool depthResolve = false;
 };
 
-// A framebuffer dies with the first of its views: a destroyed view's handle can be
-// reused.
+/// A framebuffer dies with the first of its views: a destroyed view's handle can be
+/// reused.
 class VulkanRenderPassCache
 {
 public:
     VkRenderPass get(VkDevice device, const VulkanRenderPassKey& key);
 
-    // `views` in the render pass's attachment order.
+    /// `views` in the render pass's attachment order.
     VkFramebuffer getFramebuffer(VkDevice device,
                                  VkRenderPass renderPass,
                                  const Vector<VkImageView>& views,
@@ -207,7 +212,7 @@ struct PipelineLayouts
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 };
 
-// The process-wide half. Created on first use by getVulkanShared().
+/// The process-wide half. Created on first use by getVulkanShared().
 class VulkanShared
 {
 public:
@@ -247,48 +252,48 @@ public:
 
     Spirv::Target getSpirvTarget() const { return spirvTarget; }
 
-    // Whether a multisampled depth image can be resolved for sampling. The spec
-    // requires sample zero in both masks, so this only fails on a driver that
-    // does not offer the resolve at all.
+    /// Whether a multisampled depth image can be resolved for sampling. The spec
+    /// requires sample zero in both masks, so this only fails on a driver that
+    /// does not offer the resolve at all.
     bool resolvesDepthBySampleZero() const { return depthResolvesBySampleZero; }
 
-    // Handed to every pipeline creation, and null when the driver refused one.
+    /// Handed to every pipeline creation, and null when the driver refused one.
     VkPipelineCache getPipelineCache() const { return pipelineCache; }
 
-    // Whether the surface and swapchain extensions came up. Says nothing about a
-    // particular surface, which vkGetPhysicalDeviceSurfaceSupportKHR answers.
+    /// Whether the surface and swapchain extensions came up. Says nothing about a
+    /// particular surface, which vkGetPhysicalDeviceSurfaceSupportKHR answers.
     bool supportsPresentation() const { return presentationSupported; }
 
-    // Nanoseconds per timestamp tick.
+    /// Nanoseconds per timestamp tick.
     float getTimestampPeriod() const { return properties.limits.timestampPeriod; }
 
     const PipelineLayouts& getComputeLayouts() const { return computeLayouts; }
 
     const PipelineLayouts& getRenderLayouts() const { return renderLayouts; }
 
-    // Serialises vkQueueSubmit; the queue is shared by every Device.
+    /// Serialises vkQueueSubmit; the queue is shared by every Device.
     std::mutex& getQueueMutex() { return queueMutex; }
 
-    // Enabled at device creation wherever the device offers it.
+    /// Enabled at device creation wherever the device offers it.
     bool supportsSamplerAnisotropy() const;
 
-    // Several records per vkCmdDrawIndirect, and a non-zero firstInstance in a
-    // record; each enabled wherever the device offers it.
+    /// Several records per vkCmdDrawIndirect, and a non-zero firstInstance in a
+    /// record; each enabled wherever the device offers it.
     bool supportsMultiDrawIndirect() const;
 
-    // vkCmdDrawIndirectCount: the Vulkan 1.2 feature on the core floor, the
-    // VK_KHR_draw_indirect_count extension below it.
+    /// vkCmdDrawIndirectCount: the Vulkan 1.2 feature on the core floor, the
+    /// VK_KHR_draw_indirect_count extension below it.
     bool supportsIndirectCount() const;
 
-    // An occlusion query that counts samples exactly, VK_QUERY_CONTROL_PRECISE_BIT;
-    // enabled wherever the device offers it.
+    /// An occlusion query that counts samples exactly, VK_QUERY_CONTROL_PRECISE_BIT;
+    /// enabled wherever the device offers it.
     bool supportsPreciseOcclusionQueries() const;
 
-    // gl_Layer from a vertex shader: shaderOutputLayer on the core floor,
-    // VK_EXT_shader_viewport_index_layer below it.
+    /// gl_Layer from a vertex shader: shaderOutputLayer on the core floor,
+    /// VK_EXT_shader_viewport_index_layer below it.
     bool supportsLayeredRendering() const;
 
-    // Null before the device came up.
+    /// Null before the device came up.
     VkSampler getSampler(const TextureSampling& sampling) const;
 
 private:
@@ -358,17 +363,17 @@ public:
     VmaAllocator getAllocator() const { return getVulkanShared().getAllocator(); }
     VkQueue getQueue() const { return getVulkanShared().getQueue(); }
 
-    // Owned by the caller until submit() or discard(). Callable only from the
-    // thread that constructed the Device this context belongs to.
+    /// Owned by the caller until submit() or discard(). Callable only from the
+    /// thread that constructed the Device this context belongs to.
     CommandContext* acquire();
 
-    // The recording an upload joins; its bytes cannot be read back until it
-    // submits.
+    /// The recording an upload joins; its bytes cannot be read back until it
+    /// submits.
     void setOpenRecording(CommandContext* commands) { openRecording = commands; }
     CommandContext* getOpenRecording() const { return openRecording; }
 
-    // Null while a render pass instance is running, a copy inside
-    // vkCmdBeginRendering being illegal.
+    /// Null while a render pass instance is running, a copy inside
+    /// vkCmdBeginRendering being illegal.
     CommandContext* getRecordingForCopy() const
     {
         return renderPassOpen ? nullptr : openRecording;
@@ -377,30 +382,30 @@ public:
     void setRenderPassOpen(bool open) { renderPassOpen = open; }
     bool isRenderPassOpen() const { return renderPassOpen; }
 
-    // An image no upload wrote is in UNDEFINED, which nothing may be bound at,
-    // so it needs one barrier into its resting layout. Recording it here rather
-    // than at creation costs a burst of such textures one submission instead of
-    // one each: acquire() drains the queue onto the front of the next recording,
-    // which is before anything that recording could bind or copy them.
+    /// An image no upload wrote is in UNDEFINED, which nothing may be bound at,
+    /// so it needs one barrier into its resting layout. Recording it here rather
+    /// than at creation costs a burst of such textures one submission instead of
+    /// one each: acquire() drains the queue onto the front of the next recording,
+    /// which is before anything that recording could bind or copy them.
     void deferImageSettle(VulkanTextureData& data);
     void cancelImageSettle(VulkanTextureData& data);
 
-    // Returns the timeline value the submission signals, zero if nothing was
-    // submitted. Same thread rule as acquire().
+    /// Returns the timeline value the submission signals, zero if nothing was
+    /// submitted. Same thread rule as acquire().
     std::uint64_t submit(CommandContext* commands, const SubmitSync& sync = {});
 
     void discard(CommandContext* commands);
 
     std::uint64_t lastSubmitted() const { return lastSubmittedValue; }
 
-    // For the tests: how many recordings this context has submitted.
+    /// For the tests: how many recordings this context has submitted.
     std::uint64_t submissionCount() const { return submissions; }
 
     bool hasCompleted(std::uint64_t value) const;
     void waitFor(std::uint64_t value);
     void waitIdle();
 
-    // Fires inline if `value` has passed, else from a poll on the event loop.
+    /// Fires inline if `value` has passed, else from a poll on the event loop.
     void notifyWhenCompleted(std::uint64_t value, Callback done);
 
     ConstantRange uploadConstants(CommandContext& commands,
@@ -409,7 +414,7 @@ public:
 
     UploadRange allocateUpload(CommandContext& commands, std::size_t bytes);
 
-    // Owned by the pool, and returned to it once `commands` completes.
+    /// Owned by the pool, and returned to it once `commands` completes.
     VkBuffer acquireStagingBuffer(CommandContext& commands,
                                   std::size_t bytes,
                                   std::byte*& mapped);
@@ -418,17 +423,17 @@ public:
                                    std::size_t bytes,
                                    std::byte*& mapped);
 
-    // Valid until the recording is recycled.
+    /// Valid until the recording is recycled.
     VkDescriptorSet allocateDescriptorSet(CommandContext& commands,
                                           VkDescriptorSetLayout layout);
 
-    // Runs `destroy` once the GPU is done and no recording is open.
+    /// Runs `destroy` once the GPU is done and no recording is open.
     void deferRelease(Callback destroy);
 
     void deferReleaseBuffer(VkBuffer buffer, VmaAllocation allocation);
 
-    // A host-visible, coherent buffer mapped for its whole life; cached where
-    // it is read back. Released with deferReleaseBuffer.
+    /// A host-visible, coherent buffer mapped for its whole life; cached where
+    /// it is read back. Released with deferReleaseBuffer.
     bool makeHostBuffer(std::size_t bytes,
                         VkBufferUsageFlags usage,
                         bool readBack,
@@ -436,7 +441,7 @@ public:
                         VmaAllocation& allocation,
                         std::byte*& mapped);
 
-    // Follows the main thread rather than the one that constructed this.
+    /// Follows the main thread rather than the one that constructed this.
     void followMainThread() { mainThreadOwned = true; }
 
 private:
@@ -495,7 +500,6 @@ private:
 
     ConstantPage* pageFor(CommandContext& commands, std::size_t bytes);
 
-
     VkBuffer acquirePooled(Vector<PooledBuffer>& pool,
                            Vector<int>& taken,
                            std::size_t bytes,
@@ -543,6 +547,6 @@ private:
     std::optional<Threads::Timer> completionPoll;
 };
 
-// A resource does not cross Devices.
+/// A resource does not cross Devices.
 VulkanContext& getVulkanContext(const Device& device);
 } // namespace eacp::GPU

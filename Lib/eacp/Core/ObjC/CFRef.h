@@ -1,9 +1,12 @@
 #pragma once
+/** @file CFRef: move-only owner of a Core Foundation reference. Apple only. */
 
 #import <Foundation/Foundation.h>
 
 namespace eacp
 {
+/// Takes ownership of a +1 reference without retaining it and calls CFRelease on
+/// destruction.
 template <typename T>
 class CFRef
 {
@@ -16,11 +19,11 @@ public:
 
     ~CFRef() { release(); }
 
-    // Move-only, and deliberately so. The implicitly generated copy duplicated
-    // the pointer without a matching CFRetain, so both copies released it — a
-    // double free surfacing as a crash inside CFRelease, a long way from the
-    // copy that caused it. Anything that wants a second owning reference has to
-    // say so with an explicit CFRetain.
+    /// Move-only, and deliberately so. The implicitly generated copy duplicated
+    /// the pointer without a matching CFRetain, so both copies released it — a
+    /// double free surfacing as a crash inside CFRelease, a long way from the
+    /// copy that caused it. Anything that wants a second owning reference has to
+    /// say so with an explicit CFRetain.
     CFRef(const CFRef&) = delete;
     CFRef& operator=(const CFRef&) = delete;
 
@@ -42,6 +45,7 @@ public:
         return *this;
     }
 
+    /// Releases now and leaves the CFRef empty; safe to call twice.
     void release()
     {
         if (ref)

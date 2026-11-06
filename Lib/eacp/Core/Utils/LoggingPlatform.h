@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: per-platform log sink behind logMessage; not for direct use. */
+
 #include <ctime>
 #include <string_view>
 

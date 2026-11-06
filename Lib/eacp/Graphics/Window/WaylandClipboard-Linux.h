@@ -5,15 +5,15 @@
 
 #include <memory>
 
-// wl_data_device, behind the Clipboard::Backend hooks. Owned by WaylandDisplay,
-// which offers the backend to LinuxWindowSystem as soon as the connection is
-// up and takes it away again on the way down, so a build with no compositor
-// keeps Core's empty answers.
-//
-// Wayland has no clipboard the way X11 has none either: the selection belongs
-// to whichever client owns it, and a paste is a pipe the owner writes into. So
-// a copy is a wl_data_source this process serves until something replaces it,
-// and a paste blocks the message thread while the connection is pumped by hand.
+/** @file Internal: Linux only. wl_data_device, behind the Clipboard::Backend
+    hooks. Owned by WaylandDisplay, which offers the backend to LinuxWindowSystem
+    as soon as the connection is up and takes it away again on the way down, so a
+    build with no compositor keeps Core's empty answers.
+
+    Wayland has no clipboard the way X11 has none either: the selection belongs
+    to whichever client owns it, and a paste is a pipe the owner writes into. So
+    a copy is a wl_data_source this process serves until something replaces it,
+    and a paste blocks the message thread while the connection is pumped by hand. */
 
 namespace eacp::Graphics
 {
@@ -36,12 +36,12 @@ public:
 private:
     friend struct WaylandClipboardDispatch;
 
-    // The seat can arrive after the connection, so the device is made on the
-    // first call that needs one.
+    /// The seat can arrive after the connection, so the device is made on the
+    /// first call that needs one.
     bool ensureDevice();
 
-    // The first of `mimes` the current selection offers, and null when it
-    // offers none of them or there is no selection at all.
+    /// The first of `mimes` the current selection offers, and null when it
+    /// offers none of them or there is no selection at all.
     const std::string* pickMime(const Vector<std::string>& mimes) const;
 
     bool offerSelection(std::string data, const Vector<std::string>& mimes);
@@ -65,8 +65,8 @@ private:
 
     wl_data_source* source = nullptr;
 
-    // Shared, because the thread that writes it may outlive the source: a
-    // receiver that stopped reading is not allowed to hold up a copy.
+    /// Shared, because the thread that writes it may outlive the source: a
+    /// receiver that stopped reading is not allowed to hold up a copy.
     std::shared_ptr<const std::string> sourceData;
 };
 } // namespace eacp::Graphics

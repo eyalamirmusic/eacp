@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Linux and Android only: the native surface record a presenting view
+    (GPUView) draws into. */
+
 #include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics

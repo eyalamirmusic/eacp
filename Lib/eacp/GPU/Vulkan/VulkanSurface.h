@@ -1,12 +1,17 @@
 #pragma once
 
+/** @file
+    Internal: creates a Vulkan surface for a window-system handle, one file per
+    platform.
+*/
+
 #include "VulkanContext.h"
 
 #include <eacp/Graphics/View/View-Linux.h>
 
-// The window-system half of presenting, one file per platform: each build
-// defines only its own VK_USE_PLATFORM_* macros, so only its own create-info
-// structs exist.
+/// The window-system half of presenting, one file per platform: each build
+/// defines only its own VK_USE_PLATFORM_* macros, so only its own create-info
+/// structs exist.
 
 namespace eacp::GPU
 {

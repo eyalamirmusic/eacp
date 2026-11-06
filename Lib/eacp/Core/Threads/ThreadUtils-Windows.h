@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: windows thread helpers used inside eacp. */
+
 #include "../Utils/WinInclude.h"
 
 #include "ThreadUtils.h"

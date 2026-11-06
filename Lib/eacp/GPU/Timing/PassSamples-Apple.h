@@ -1,12 +1,16 @@
 #pragma once
 
+/** @file
+    Internal: where a timed pass's samples sit in a Metal counter sample buffer.
+*/
+
 #import <Metal/Metal.h>
 
-// Where a timed pass's samples sit in a Metal counter sample buffer: four to a
-// pass, one per stage boundary of a render pass. A compute encoder has only its
-// own start and end, so it takes the first and last of its four and leaves the
-// two between unwritten - which the resolve tells apart by their being outside
-// the pass's own start and end.
+/// Where a timed pass's samples sit in a Metal counter sample buffer: four to a
+/// pass, one per stage boundary of a render pass. A compute encoder has only its
+/// own start and end, so it takes the first and last of its four and leaves the
+/// two between unwritten - which the resolve tells apart by their being outside
+/// the pass's own start and end.
 
 namespace eacp::GPU::PassSamples
 {

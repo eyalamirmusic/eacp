@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: per-platform seams behind Files.cpp; not for direct use. */
+
 #include "FilePath.h"
 
 #include <filesystem>

@@ -1,3 +1,4 @@
+/** @file A minimal protobuf wire-format writer. */
 #pragma once
 
 #include "../Common.h"
@@ -23,9 +24,9 @@ Span<const std::uint8_t> asBytes(const Container& values)
 }
 } // namespace eacp::ML
 
-// The protobuf wire format, as much of it as Model.proto and MIL.proto use.
-// Fields are written in the order the caller writes them; proto3 scalars at
-// their default value are omitted, messages never are.
+/// The protobuf wire format, as much of it as Model.proto and MIL.proto use.
+/// Fields are written in the order the caller writes them; proto3 scalars at
+/// their default value are omitted, messages never are.
 namespace eacp::ML::Protobuf
 {
 enum class WireType : std::uint8_t

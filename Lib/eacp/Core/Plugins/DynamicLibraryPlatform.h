@@ -1,4 +1,5 @@
 #pragma once
+/** @file Internal: platform loader primitives behind DynamicLibrary. */
 
 #include "../Utils/FilePath.h"
 

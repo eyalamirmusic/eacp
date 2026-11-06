@@ -1,5 +1,11 @@
 #pragma once
 
+/** @file Internal: per-dispatch context shared by the CPU executor's translation
+    units; not for callers.
+
+    Internal: the per-dispatch context shared by the executor's translation units.
+*/
+
 #include "Lanes.h"
 #include "Plan.h"
 
@@ -7,8 +13,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstring>
-
-// Internal: the per-dispatch context shared by the executor's translation units.
 
 namespace eacp::GPU::CpuCompute
 {

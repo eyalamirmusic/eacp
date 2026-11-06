@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Polling watcher that reports changed files on the main thread. */
+
 #include "Common.h"
 #include "FilePath.h"
 
@@ -9,26 +11,26 @@ struct FileWatcherOptions
 {
     Time::MS pollInterval {250};
 
-    // How long a poll must find nothing new before the accumulated changes
-    // are reported, so a burst of saves or a write-then-rename is one call.
+    /// How long a poll must find nothing new before the accumulated changes
+    /// are reported, so a burst of saves or a write-then-rename is one call.
     Time::MS settle {150};
 
     bool recursive = true;
 
-    // A matchesWildcard pattern that files in a watched directory must match.
-    // Empty watches every file.
+    /// A matchesWildcard pattern that files in a watched directory must match.
+    /// Empty watches every file.
     std::string pattern;
     bool includeHidden = false;
 
-    // Directories under a watched one that are neither listed nor descended.
+    /// Directories under a watched one that are neither listed nor descended.
     Vector<FilePath> excludedDirectories;
 };
 
-// Polls files and directories on the main thread and reports what was
-// modified, added or removed since the last report, once a burst of changes
-// has settled. A path that does not exist yet is watched for appearing.
-//
-// The callback runs on the main thread and must not destroy the watcher.
+/// Polls files and directories on the main thread and reports what was
+/// modified, added or removed since the last report, once a burst of changes
+/// has settled. A path that does not exist yet is watched for appearing.
+///
+/// The callback runs on the main thread and must not destroy the watcher.
 class FileWatcher
 {
 public:

@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Windows only: the hooks a window procedure calls to route its menu bar
+    messages. */
+
 #include <eacp/Core/Utils/WinInclude.h>
 
 namespace eacp::Graphics::detail
@@ -11,19 +14,19 @@ namespace eacp::Graphics::detail
 // owns the menu and its command table, and Window-Windows.cpp owns the WndProc
 // that has to route WM_COMMAND and WM_INITMENUPOPUP into it.
 
-// WM_COMMAND. True when the id belonged to this window's menu bar and the
-// action was run, false for every other source of WM_COMMAND — the WndProc
-// should fall through to DefWindowProcW on false.
+/// WM_COMMAND. True when the id belonged to this window's menu bar and the
+/// action was run, false for every other source of WM_COMMAND — the WndProc
+/// should fall through to DefWindowProcW on false.
 bool handleWin32MenuCommand(HWND hwnd, unsigned id);
 
-// WM_INITMENUPOPUP. Greys each item from its own predicate just before the
-// popup is drawn, which is where Win32 asks the question that
-// NSMenuValidation's validateMenuItem: answers on macOS. Doing it here rather
-// than at build time is what lets an app install its bar once and still have
-// the greying follow live state.
+/// WM_INITMENUPOPUP. Greys each item from its own predicate just before the
+/// popup is drawn, which is where Win32 asks the question that
+/// NSMenuValidation's validateMenuItem: answers on macOS. Doing it here rather
+/// than at build time is what lets an app install its bar once and still have
+/// the greying follow live state.
 void updateWin32MenuEnabledState(HWND hwnd);
 
-// Frees the menu and forgets the window. Called from the window's teardown, so
-// a destroyed HWND cannot be matched by a later window that reuses its address.
+/// Frees the menu and forgets the window. Called from the window's teardown, so
+/// a destroyed HWND cannot be matched by a later window that reuses its address.
 void removeWin32MenuBar(HWND hwnd);
 } // namespace eacp::Graphics::detail

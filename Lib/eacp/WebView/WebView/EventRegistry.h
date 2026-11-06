@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The process-wide registry of bridge events, read by TypeScript codegen. */
+
 #include <Miro/Reflect.h>
 #include <Miro/TypeExport/Context.h>
 
@@ -24,9 +26,9 @@
 namespace eacp::Graphics
 {
 
-// Aliases Miro's framework-neutral EventInfo so the static-init path
-// and the inversion-driven Context::events can use the same struct
-// without translation. Same field set the format functors expect.
+/// Aliases Miro's framework-neutral EventInfo so the static-init path
+/// and the inversion-driven Context::events can use the same struct
+/// without translation. Same field set the format functors expect.
 using EventEntry = Miro::TypeExport::EventInfo;
 
 namespace Detail

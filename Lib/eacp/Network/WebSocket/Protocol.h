@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file RFC 6455 WebSocket framing and handshake, shared by the server and the Android client. */
+
 #include "WebSocket.h"
 
 #include <optional>
@@ -36,22 +38,22 @@ struct Error : std::runtime_error
     using std::runtime_error::runtime_error;
 };
 
-// §4.2.2: base64(SHA-1(key + GUID))
+/// §4.2.2: base64(SHA-1(key + GUID))
 std::string acceptKeyFor(std::string_view clientKey);
 
-// §5.2. A masked frame is what a client sends; the mask is random.
+/// §5.2. A masked frame is what a client sends; the mask is random.
 std::string encode(const Frame& frame, bool masked = false);
 
-// One frame off the front of buffer, nullopt while bytes are still missing;
-// throws Error on a header no peer may send.
+/// One frame off the front of buffer, nullopt while bytes are still missing;
+/// throws Error on a header no peer may send.
 std::optional<Decoded> decode(std::string_view buffer);
 
-// §5.5.1's close payload, both ways; an empty payload reads as 1005
+/// §5.5.1's close payload, both ways; an empty payload reads as 1005
 std::string encodeClose(int code, std::string_view reason);
 CloseStatus decodeClose(std::string_view payload);
 
-// A ws:// or wss:// URL taken apart. The host is bare, an IPv6 literal without
-// its brackets; target is the path and query, "/" when the URL has neither.
+/// A ws:// or wss:// URL taken apart. The host is bare, an IPv6 literal without
+/// its brackets; target is the path and query, "/" when the URL has neither.
 struct Address
 {
     bool secure = false;
@@ -62,10 +64,10 @@ struct Address
 
 std::optional<Address> parseUrl(std::string_view url);
 
-// §4.1: sixteen random bytes, base64
+/// §4.1: sixteen random bytes, base64
 std::string randomClientKey();
 
-// The client's upgrade request, header block and blank line included
+/// The client's upgrade request, header block and blank line included
 std::string clientHandshakeRequest(const Address& address,
                                    std::string_view key,
                                    const Options& options);
@@ -77,8 +79,8 @@ struct HandshakeResult
     std::string protocol;
 };
 
-// §4.1's checks on the server's answer, given its header block - the status
-// line through the blank line, or without it.
+/// §4.1's checks on the server's answer, given its header block - the status
+/// line through the blank line, or without it.
 HandshakeResult validateHandshakeResponse(std::string_view head,
                                           std::string_view key,
                                           const Vector<std::string>& offered);

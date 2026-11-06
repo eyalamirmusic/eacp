@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: compute kernel that sums each pixel row's backdrop
+    winding. */
+
 #include "CoverageKernel.h"
 
 namespace eacp::GPUWidgets
@@ -23,20 +26,20 @@ namespace eacp::GPUWidgets
 // has one for floats. See backdropFixedScale for what that costs, which is
 // nothing that reaches a coverage step.
 
-// One pixel row's cells, summed left to right in place.
-//
-// A thread per row rather than a group per row. The rows are the parallelism -
-// a canvas is tens of thousands of them - and a thread walking its row column by
-// column reads a cell its neighbours' cells sit next to, the array being stored
-// a column at a time. A group cooperating on one row would buy a shorter
-// dependency chain and lose that.
-//
-// It does bite on a single wide path, which has few rows and many columns: an
-// automation curve is 356 rows of 151, so six threadgroups each walking 151
-// dependent loads, and cutting the walk to one column takes the stage from 0.207
-// to 0.090ms. On a canvas it does not - 128 lanes is 45,568 rows - and a
-// log-depth scan does several times the work of a serial one, so buying the solo
-// case would cost the case this exists for.
+/// One pixel row's cells, summed left to right in place.
+///
+/// A thread per row rather than a group per row. The rows are the parallelism -
+/// a canvas is tens of thousands of them - and a thread walking its row column by
+/// column reads a cell its neighbours' cells sit next to, the array being stored
+/// a column at a time. A group cooperating on one row would buy a shorter
+/// dependency chain and lose that.
+///
+/// It does bite on a single wide path, which has few rows and many columns: an
+/// automation curve is 356 rows of 151, so six threadgroups each walking 151
+/// dependent loads, and cutting the walk to one column takes the stage from 0.207
+/// to 0.090ms. On a canvas it does not - 128 lanes is 45,568 rows - and a
+/// log-depth scan does several times the work of a serial one, so buying the solo
+/// case would cost the case this exists for.
 struct BackdropScanKernel final : PathIndexedKernel
 {
     BackdropScanKernel();

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Keyboard, mouse and gamepad state polled once a frame for a game loop. */
+
 #include "GameInputQueue.h"
 #include "../Window/WindowInput.h"
 
@@ -11,36 +13,39 @@ namespace eacp::Graphics
 struct GameInputBackend;
 class Window;
 
+/// Where a GameInput takes its events from.
 enum class GameInputSource
 {
-    // The platform's game input API where there is one (GameController on
-    // Apple, XInput for gamepads on Windows), the window's own events for
-    // whatever it does not cover.
+    /// The platform's game input API where there is one (GameController on
+    /// Apple, XInput for gamepads on Windows), the window's own events for
+    /// whatever it does not cover.
     Automatic,
 
-    // Only the window's own key and mouse events.
+    /// Only the window's own key and mouse events.
     WindowEvents
 };
 
-// Keyboard, mouse and gamepad state for a game loop, polled once a frame,
-// beside the View key/mouse callbacks (which stay what UI and text entry use).
-//
-//     auto& frame = input.snapshot();   // once per frame, in update()
-//     if (frame.isDown(KeyCode::W)) ...
-//     if (frame.wasPressed(KeyCode::Space)) ...
-//     yaw -= frame.mouseDelta().x * sensitivity;
-//     for (auto& pad: frame.gamepads()) walk(pad.leftStick());
-//
-// Gamepads come only from the platform feed (GCController's extended gamepads
-// on Apple, XInput on Windows, polled from a thread of its own); where there
-// is none, frame.gamepads() stays empty.
-//
-// On Apple the events come from GameController (GCKeyboard, GCMouse) on a
-// high-priority queue of their own, so they are captured and timestamped even
-// while the main thread is busy drawing; elsewhere, and on Apple until a
-// GameController device shows up, from the window's key and mouse events.
-// Either way only while the window has key focus: losing it releases every
-// key and button. Construct it on the main thread; the window must outlive it.
+/// Keyboard, mouse and gamepad state for a game loop, polled once a frame,
+/// beside the View key/mouse callbacks (which stay what UI and text entry use).
+///
+///     auto& frame = input.snapshot();   // once per frame, in update()
+///     if (frame.isDown(KeyCode::W)) ...
+///     if (frame.wasPressed(KeyCode::Space)) ...
+///     yaw -= frame.mouseDelta().x * sensitivity;
+///     for (auto& pad: frame.gamepads()) walk(pad.leftStick());
+///
+/// Gamepads come only from the platform feed (GCController's extended gamepads
+/// on Apple, XInput on Windows, polled from a thread of its own); where there
+/// is none, frame.gamepads() stays empty.
+///
+/// On Apple the events come from GameController (GCKeyboard, GCMouse) on a
+/// high-priority queue of their own, so they are captured and timestamped even
+/// while the main thread is busy drawing; elsewhere, and on Apple until a
+/// GameController device shows up, from the window's key and mouse events.
+/// Either way only while the window has key focus: losing it releases every
+/// key and button. Construct it on the main thread; the window must outlive it. A component
+/// that needs one is handed the Window& by whoever owns the window, and calls
+/// snapshot() once per frame in its update().
 class GameInput : WindowInputListener
 {
 public:
@@ -51,14 +56,14 @@ public:
     GameInput(const GameInput&) = delete;
     GameInput& operator=(const GameInput&) = delete;
 
-    // Drains everything that arrived since the previous call. The reference
-    // stays valid until the next call.
+    /// Drains everything that arrived since the previous call. The reference
+    /// stays valid until the next call.
     const GameInputFrame& snapshot();
 
-    // Which feed is delivering keys and mouse right now.
+    /// Which feed is delivering keys and mouse right now.
     std::string_view backendName() const;
 
-    // The clock every InputEvent and GameInputFrame::time() is on.
+    /// The clock every InputEvent and GameInputFrame::time() is on.
     static double now();
 
 private:

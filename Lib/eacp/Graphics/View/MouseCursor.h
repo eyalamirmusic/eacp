@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file MouseCursor: a named pointer shape or an image cursor, set with
+    View::setMouseCursor. */
+
 #include "../Primitives/Primitives.h"
 
 #include <memory>

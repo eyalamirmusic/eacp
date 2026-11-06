@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file ShapeLayer: a retained filled and stroked Path. EACP_HAS_CONTEXT only. */
+
 #include "../Common.h"
 
 #include "../Primitives/Path.h"

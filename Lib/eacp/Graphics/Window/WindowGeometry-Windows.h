@@ -4,46 +4,46 @@
 
 #include "../Primitives/Primitives.h"
 
-// The geometry behind the placement rules a Win32 surface has to enforce for
-// itself, kept apart from the HWND that feeds them so all of it can be checked
-// without a display: where a point lands on a window's own resize band, how a
-// window too big for its display is brought back within reach, and which
-// pixels a rect measured in points covers.
+/** @file Internal: Windows only. The geometry behind the placement rules a Win32
+    surface has to enforce for itself, kept apart from the HWND that feeds them
+    so all of it can be checked without a display: where a point lands on a
+    window's own resize band, how a window too big for its display is brought
+    back within reach, and which pixels a rect measured in points covers. */
 namespace eacp::Graphics::detail
 {
-// The pixels a rect of ours covers, for placing and sizing a window in the
-// physical units Win32 measures one in. `scale` is pixels per point.
-//
-// Grown to the smallest pixel rect containing the points, rather than rounded
-// to the nearest. A surface rounded down leaves a seam of whatever is behind
-// it showing along its right and bottom edges, and against a host's own window
-// that seam is visible in a way half a pixel of overlap is not.
+/// The pixels a rect of ours covers, for placing and sizing a window in the
+/// physical units Win32 measures one in. `scale` is pixels per point.
+///
+/// Grown to the smallest pixel rect containing the points, rather than rounded
+/// to the nearest. A surface rounded down leaves a seam of whatever is behind
+/// it showing along its right and bottom edges, and against a host's own window
+/// that seam is visible in a way half a pixel of overlap is not.
 RECT toPhysicalPixels(const Rect& bounds, float scale);
 
-// Shrinks and slides a window rect until the whole of it lies inside `work`
-// (the display's work area — the monitor minus the taskbar and any appbars).
-//
-// A window is asked for in points and opens in pixels, so a size that is
-// comfortable on the display it was chosen on is routinely bigger than a 200%
-// laptop's whole screen. What then hangs off the bottom right is the resize
-// corner, which is also the way back — so the one window the user cannot fix
-// by dragging is the one that most needs it.
-//
-// The sides are trimmed independently; a window with a shape rule puts the
-// result back through its WindowOptions::sizeConstraint afterwards.
+/// Shrinks and slides a window rect until the whole of it lies inside `work`
+/// (the display's work area — the monitor minus the taskbar and any appbars).
+///
+/// A window is asked for in points and opens in pixels, so a size that is
+/// comfortable on the display it was chosen on is routinely bigger than a 200%
+/// laptop's whole screen. What then hangs off the bottom right is the resize
+/// corner, which is also the way back — so the one window the user cannot fix
+/// by dragging is the one that most needs it.
+///
+/// The sides are trimmed independently; a window with a shape rule puts the
+/// result back through its WindowOptions::sizeConstraint afterwards.
 void containWithinWorkArea(RECT& frame, const RECT& work);
 
-// Where `point` (screen coordinates) lands on a window whose client area is
-// its whole rect, as an HT* hit-test code.
-//
-// A frameless window eats its frame in WM_NCCALCSIZE, and DefWindowProc
-// answers HTCLIENT for every point inside the client rect — so eating the
-// frame also ate the border band it hit-tests for resizing, and no edge of the
-// window can be dragged, WS_THICKFRAME or not. This measures out the band the
-// frame would have reserved.
-//
-// `band` is the edge thickness in physical pixels. A corner reaches twice that
-// far along both of its edges, the way a titled window's does: a band-square
-// diagonal grab is a target the user has to aim at.
+/// Where `point` (screen coordinates) lands on a window whose client area is
+/// its whole rect, as an HT* hit-test code.
+///
+/// A frameless window eats its frame in WM_NCCALCSIZE, and DefWindowProc
+/// answers HTCLIENT for every point inside the client rect — so eating the
+/// frame also ate the border band it hit-tests for resizing, and no edge of the
+/// window can be dragged, WS_THICKFRAME or not. This measures out the band the
+/// frame would have reserved.
+///
+/// `band` is the edge thickness in physical pixels. A corner reaches twice that
+/// far along both of its edges, the way a titled window's does: a band-square
+/// diagonal grab is a target the user has to aim at.
 LRESULT resizeBandHitTest(const RECT& frame, POINT point, LONG band);
 } // namespace eacp::Graphics::detail

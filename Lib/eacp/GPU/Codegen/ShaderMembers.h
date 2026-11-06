@@ -1,5 +1,14 @@
 #pragma once
 
+/** @file Uniform<T> members, EACP_SHADER and the member walks shared by
+    ShaderProgram and ComputeKernel.
+
+    The member half of a struct-authored shader or kernel, which needs no device:
+    the typed Uniform<T> members, the visitor their EACP_SHADER list is walked
+    with, and the build and upload walks every program runs. ShaderProgram and
+    ComputeKernel are both written on top of it.
+*/
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <array>
@@ -11,17 +20,12 @@
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
 
-// The member half of a struct-authored shader or kernel, which needs no device:
-// the typed Uniform<T> members, the visitor their EACP_SHADER list is walked
-// with, and the build and upload walks every program runs. ShaderProgram and
-// ComputeKernel are both written on top of it.
-
 namespace eacp::GPU
 {
-// The CPU-side storage type mirroring each shader value type. A scalar is a
-// float; a vector is a packed Array, so a uniform reads like the data it is.
-// Array wraps std::array with no added state, so the packed layout the upload
-// walk memcpys is the same either way.
+/// The CPU-side storage type mirroring each shader value type. A scalar is a
+/// float; a vector is a packed Array, so a uniform reads like the data it is.
+/// Array wraps std::array with no added state, so the packed layout the upload
+/// walk memcpys is the same either way.
 template <typename T>
 struct CpuValueOf;
 
@@ -67,9 +71,9 @@ struct CpuValueOf<Int>
     using type = std::int32_t;
 };
 
-// The integer vectors cross from the CPU exactly as the float ones do, and read
-// as the packed data they are. There is deliberately no CpuValueOf for a Bool
-// or a boolean vector: ShaderBuilder refuses those as uniforms.
+/// The integer vectors cross from the CPU exactly as the float ones do, and read
+/// as the packed data they are. There is deliberately no CpuValueOf for a Bool
+/// or a boolean vector: ShaderBuilder refuses those as uniforms.
 template <>
 struct CpuValueOf<UInt2>
 {
@@ -106,14 +110,14 @@ struct CpuValueOf<Int4>
     using type = Array<std::int32_t, 4>;
 };
 
-// The shader value a CPU type maps to. Built in for float / float[N] / array; a
-// user type opts in either intrusively (a `using ShaderValue = Float3;` member,
-// like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
-// MIRO_REFLECT_EXTERNAL). This is what lets a `Color` struct stand in for a
-// float3 vertex field or uniform. The unmapped primary stays empty so the
-// sub-type assignment constraint below fails softly for plain types (e.g. an
-// int assigned to a Uniform<UInt> picks the CPU-value overload) instead of
-// erroring inside `typename T::ShaderValue`.
+/// The shader value a CPU type maps to. Built in for float / float[N] / array; a
+/// user type opts in either intrusively (a `using ShaderValue = Float3;` member,
+/// like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
+/// MIRO_REFLECT_EXTERNAL). This is what lets a `Color` struct stand in for a
+/// float3 vertex field or uniform. The unmapped primary stays empty so the
+/// sub-type assignment constraint below fails softly for plain types (e.g. an
+/// int assigned to a Uniform<UInt> picks the CPU-value overload) instead of
+/// erroring inside `typename T::ShaderValue`.
 template <typename T>
 struct ShaderValueOf
 {
@@ -150,9 +154,9 @@ struct ShaderValueOf<float[4]>
     using type = Float4;
 };
 
-// The shader EDSL reads a caller's own vertex-struct members and uniform
-// assignments, so it keeps recognising std::array alongside EA::Array -- the
-// container migration moved eacp's interfaces, not what a consumer may hand in.
+/// The shader EDSL reads a caller's own vertex-struct members and uniform
+/// assignments, so it keeps recognising std::array alongside EA::Array -- the
+/// container migration moved eacp's interfaces, not what a consumer may hand in.
 template <>
 struct ShaderValueOf<std::array<float, 2>>
 {
@@ -201,13 +205,13 @@ struct ShaderValueOf<Array<float, 16>>
     using type = Float4x4;
 };
 
-// True when V is a CPU type registered as the shader value type T.
+/// True when V is a CPU type registered as the shader value type T.
 template <typename V, typename T>
 concept ShaderValueIs = requires { typename ShaderValueOf<V>::type; }
                         && std::same_as<typename ShaderValueOf<V>::type, T>;
 
-// Byte offset of a data member within its struct, computed from a real object so
-// it stays within defined behaviour (unlike the classic null-pointer offsetof).
+/// Byte offset of a data member within its struct, computed from a real object so
+/// it stays within defined behaviour (unlike the classic null-pointer offsetof).
 template <typename C, typename M>
 int memberOffset(M C::* member)
 {
@@ -216,10 +220,10 @@ int memberOffset(M C::* member)
                   - reinterpret_cast<const std::byte*>(&object));
 }
 
-// A per-frame constant, declared as a member. It is both the graph value used in
-// define() and a typed CPU slot: `shader.angle = 0.5f` writes the value the upload
-// walk packs into the uniform block. It also accepts any registered sub-type of
-// the matching shape, e.g. `shader.tint = Color {1, 0, 0}` for a Uniform<Float3>.
+/// A per-frame constant, declared as a member. It is both the graph value used in
+/// define() and a typed CPU slot: `shader.angle = 0.5f` writes the value the upload
+/// walk packs into the uniform block. It also accepts any registered sub-type of
+/// the matching shape, e.g. `shader.tint = Color {1, 0, 0}` for a Uniform<Float3>.
 template <typename T>
 struct Uniform : T
 {
@@ -243,18 +247,18 @@ struct Uniform : T
     Cpu value {};
 };
 
-// A texture member: the Texture2D handle used by define()'s sample() calls and
-// the slot the bound GPU::Texture is set on. Assign the texture to draw with
-// (`shader.image = checkerboard`); the program binds it (with its baked
-// sampler) when drawn. The program stores a pointer, so the texture must
-// outlive the draw.
-//
-// Which is why a temporary is refused outright, here and on every resource
-// member below. `shader.image = device.makeTexture(...)` would store a pointer
-// into a texture destroyed at the semicolon, and there is nothing later that
-// could report it: the draw reads freed memory or a live resource that happens
-// to have taken the same address. Deleting the rvalue overload moves that from
-// a wrong picture to a compile error, and the fix is to name the resource.
+/// A texture member: the Texture2D handle used by define()'s sample() calls and
+/// the slot the bound GPU::Texture is set on. Assign the texture to draw with
+/// (`shader.image = checkerboard`); the program binds it (with its baked
+/// sampler) when drawn. The program stores a pointer, so the texture must
+/// outlive the draw.
+///
+/// Which is why a temporary is refused outright, here and on every resource
+/// member below. `shader.image = device.makeTexture(...)` would store a pointer
+/// into a texture destroyed at the semicolon, and there is nothing later that
+/// could report it: the draw reads freed memory or a live resource that happens
+/// to have taken the same address. Deleting the rvalue overload moves that from
+/// a wrong picture to a compile error, and the fix is to name the resource.
 template <>
 struct Uniform<Texture2D> : Texture2D
 {
@@ -268,22 +272,22 @@ struct Uniform<Texture2D> : Texture2D
 
     const Texture* value = nullptr;
 
-    // How this texture is sampled. Set it before compile() runs - the build walk
-    // reads it to place the sampler - so a shader assigns it in its constructor
-    // ahead of the compile() call. See TextureSampling for why the shader owns
-    // this rather than the Texture.
+    /// How this texture is sampled. Set it before compile() runs - the build walk
+    /// reads it to place the sampler - so a shader assigns it in its constructor
+    /// ahead of the compile() call. See TextureSampling for why the shader owns
+    /// this rather than the Texture.
     TextureSampling sampling {};
 };
 
-// The cube form of the same member, and deliberately the same shape: the handle
-// define()'s sample() calls read, the GPU::Texture bound on its slot, and the
-// sampling baked into the shader. What differs is one line of the build walk -
-// the handle comes from cubeTexture() rather than texture() - and what sample()
-// will take, which is a Float3 direction.
-//
-// The GPU::Texture assigned here has to have been created with
-// TextureDescriptor::cube. Nothing in the type system says so, and neither
-// backend reports the mismatch: Texture::isCube is what a caller checks with.
+/// The cube form of the same member, and deliberately the same shape: the handle
+/// define()'s sample() calls read, the GPU::Texture bound on its slot, and the
+/// sampling baked into the shader. What differs is one line of the build walk -
+/// the handle comes from cubeTexture() rather than texture() - and what sample()
+/// will take, which is a Float3 direction.
+///
+/// The GPU::Texture assigned here has to have been created with
+/// TextureDescriptor::cube. Nothing in the type system says so, and neither
+/// backend reports the mismatch: Texture::isCube is what a caller checks with.
 template <>
 struct Uniform<TextureCube> : TextureCube
 {
@@ -300,16 +304,16 @@ struct Uniform<TextureCube> : TextureCube
     TextureSampling sampling {};
 };
 
-// The depth form, and the one place the pattern bends: what is assigned here is
-// the *render target whose depth buffer this samples*, not a texture of its own.
-// A depth attachment is created with its colour texture and lives exactly as
-// long, so there is nothing else to name it by - and the bind is
-// RenderPass::setFragmentDepthTexture, which takes the target for the same
-// reason.
-//
-// It has to have been created with TextureDescriptor::sampleableDepth;
-// Texture::hasSampleableDepth is what says whether it was, and a bind through
-// one that was not draws nothing rather than reading something undefined.
+/// The depth form, and the one place the pattern bends: what is assigned here is
+/// the *render target whose depth buffer this samples*, not a texture of its own.
+/// A depth attachment is created with its colour texture and lives exactly as
+/// long, so there is nothing else to name it by - and the bind is
+/// RenderPass::setFragmentDepthTexture, which takes the target for the same
+/// reason.
+///
+/// It has to have been created with TextureDescriptor::sampleableDepth;
+/// Texture::hasSampleableDepth is what says whether it was, and a bind through
+/// one that was not draws nothing rather than reading something undefined.
 template <>
 struct Uniform<TextureDepth2D> : TextureDepth2D
 {
@@ -326,9 +330,9 @@ struct Uniform<TextureDepth2D> : TextureDepth2D
     TextureSampling sampling {};
 };
 
-// The array forms. A colour array is assigned a TwoDArray texture; a depth
-// array is assigned the TwoDArray render target whose whole depth plane it
-// samples, as Uniform<TextureDepth2D> is assigned a target.
+/// The array forms. A colour array is assigned a TwoDArray texture; a depth
+/// array is assigned the TwoDArray render target whose whole depth plane it
+/// samples, as Uniform<TextureDepth2D> is assigned a target.
 template <>
 struct Uniform<Texture2DArray> : Texture2DArray
 {
@@ -361,11 +365,11 @@ struct Uniform<TextureDepth2DArray> : TextureDepth2DArray
     TextureSampling sampling {};
 };
 
-// Storage-buffer members of a compute program, following the texture pattern:
-// the slot-indexed handle define() reads or writes, and the slot the assigned
-// GPU::Buffer is bound at when dispatched. A Buffer binds whole, a BufferRange
-// from its offset (see ComputePass::setInputBuffer). The member holds a
-// BufferRange, so the buffer must outlive the dispatch.
+/// Storage-buffer members of a compute program, following the texture pattern:
+/// the slot-indexed handle define() reads or writes, and the slot the assigned
+/// GPU::Buffer is bound at when dispatched. A Buffer binds whole, a BufferRange
+/// from its offset (see ComputePass::setInputBuffer). The member holds a
+/// BufferRange, so the buffer must outlive the dispatch.
 template <>
 struct Uniform<InputBuffer> : InputBuffer
 {
@@ -398,9 +402,9 @@ struct Uniform<OutputBuffer> : OutputBuffer
     BufferRange value {};
 };
 
-// The integer siblings, bound through the same two calls. What the buffer
-// holds is uint32s rather than floats, so that is what the bytes given to it
-// want to be.
+/// The integer siblings, bound through the same two calls. What the buffer
+/// holds is uint32s rather than floats, so that is what the bytes given to it
+/// want to be.
 template <>
 struct Uniform<UIntInputBuffer> : UIntInputBuffer
 {
@@ -433,10 +437,10 @@ struct Uniform<UIntOutputBuffer> : UIntOutputBuffer
     BufferRange value {};
 };
 
-// The atomic sibling, bound the same way an output is. The buffer's contents
-// are unsigned integers rather than floats, so the bytes handed to it want to
-// start as such - a buffer of zeroed uint32s, not of zeroed floats, though the
-// two happen to agree on zero.
+/// The atomic sibling, bound the same way an output is. The buffer's contents
+/// are unsigned integers rather than floats, so the bytes handed to it want to
+/// start as such - a buffer of zeroed uint32s, not of zeroed floats, though the
+/// two happen to agree on zero.
 template <>
 struct Uniform<AtomicBuffer> : AtomicBuffer
 {
@@ -453,11 +457,11 @@ struct Uniform<AtomicBuffer> : AtomicBuffer
     BufferRange value {};
 };
 
-// A kernel's output image, following the Uniform<Texture2D> pattern: the
-// slot-indexed handle define() writes through, and the slot the assigned
-// GPU::Texture is bound at when dispatched. It carries no sampling - nothing
-// samples a written texture - and the texture must have been created with
-// TextureDescriptor::computeWrite.
+/// A kernel's output image, following the Uniform<Texture2D> pattern: the
+/// slot-indexed handle define() writes through, and the slot the assigned
+/// GPU::Texture is bound at when dispatched. It carries no sampling - nothing
+/// samples a written texture - and the texture must have been created with
+/// TextureDescriptor::computeWrite.
 template <>
 struct Uniform<WritableTexture2D> : WritableTexture2D
 {
@@ -472,9 +476,9 @@ struct Uniform<WritableTexture2D> : WritableTexture2D
     const Texture* value = nullptr;
 };
 
-// The non-templated surface the uniform member walk bottoms out in. The templated
-// operator() adapts any Uniform<T> onto it, the same way Miro's Property adapts
-// arbitrary fields onto its Reflector - but shaped for the GPU job.
+/// The non-templated surface the uniform member walk bottoms out in. The templated
+/// operator() adapts any Uniform<T> onto it, the same way Miro's Property adapts
+/// arbitrary fields onto its Reflector - but shaped for the GPU job.
 class ShaderVisitor
 {
 public:
@@ -514,8 +518,8 @@ protected:
                            detail::ValueHandle& handle,
                            const void* data) = 0;
 
-    // Texture and storage-buffer members are not packed into the uniform block,
-    // so only the walks that care (build, resource bind) override these.
+    /// Texture and storage-buffer members are not packed into the uniform block,
+    /// so only the walks that care (build, resource bind) override these.
     virtual void onTexture(const char*, Texture2D&, const Texture*, TextureSampling);
     virtual void
         onCubeTexture(const char*, TextureCube&, const Texture*, TextureSampling);
@@ -541,8 +545,8 @@ protected:
     virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*);
 };
 
-// Build walk: each uniform member adopts a freshly added graph slot, so define()
-// can use it as a live value.
+/// Build walk: each uniform member adopts a freshly added graph slot, so define()
+/// can use it as a live value.
 class ShaderBuildVisitor final : public ShaderVisitor
 {
 public:
@@ -605,12 +609,12 @@ private:
     ShaderBuilder& builder;
 };
 
-// Upload walk: copy each uniform's current value into the block at its aligned
-// offset. The caller runs finish() once the walk (and any appended tail, like
-// the compute count) is done: MSL pads sizeof(Uniforms) up to the widest
-// member's alignment, and Metal's validation layer checks the bound length
-// against that padded size - a block that stops at the last member's end binds
-// short and aborts the first draw whenever the members end off that boundary.
+/// Upload walk: copy each uniform's current value into the block at its aligned
+/// offset. The caller runs finish() once the walk (and any appended tail, like
+/// the compute count) is done: MSL pads sizeof(Uniforms) up to the widest
+/// member's alignment, and Metal's validation layer checks the bound length
+/// against that padded size - a block that stops at the last member's end binds
+/// short and aborts the first draw whenever the members end off that boundary.
 class ShaderUploadVisitor final : public ShaderVisitor
 {
 public:

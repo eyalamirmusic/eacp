@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file GPUView, a View drawn by the GPU on demand or every display refresh. */
+
 #include "../Common.h"
 
 #include <eacp/Core/Utils/Pimpl.h>
@@ -12,174 +14,175 @@ namespace eacp::GPU
 {
 class Frame;
 
-// A View that renders with the GPU. Backed by a CAMetalLayer (on Metal) added
-// as a sublayer of the standard View backing layer, so it lives inside the
-// normal eacp::Graphics::View hierarchy and reuses its window, events and
-// sizing. Override render() to draw.
-//
-// Rendering is on-demand and uses the normal View invalidation path: call the
-// inherited repaint() (e.g. after changing state) and render() runs on the next
-// draw cycle. While nothing is dirty no GPU work is submitted at all. Enable
-// continuous mode for animation, where render() runs every display refresh
-// (vsync) via an internal display link.
+/// A View that renders with the GPU. Backed by a CAMetalLayer (on Metal) added
+/// as a sublayer of the standard View backing layer, so it lives inside the
+/// normal eacp::Graphics::View hierarchy and reuses its window, events and
+/// sizing. Override render() to draw.
+///
+/// Rendering is on-demand and uses the normal View invalidation path: call the
+/// inherited repaint() (e.g. after changing state) and render() runs on the next
+/// draw cycle. While nothing is dirty no GPU work is submitted at all. Enable
+/// continuous mode for animation, where render() runs every display refresh
+/// (vsync) via an internal display link.
 class GPUView : public Graphics::View
 {
 public:
     GPUView();
     ~GPUView() override;
 
+    /// Draws one frame on the main thread. The default draws nothing.
     virtual void render(Frame&);
 
-    // Called once per display refresh while continuous mode is on; the view
-    // then redraws via render(). Advance animation state here, scaled by the
-    // frame's delta time, so motion stays smooth and rate-independent.
+    /// Called once per display refresh while continuous mode is on; the view
+    /// then redraws via render(). Advance animation state here, scaled by the
+    /// frame's delta time, so motion stays smooth and rate-independent.
     virtual void update(Threads::FrameTime);
 
-    // The drawable is resized before the subclass answers the new size, and the
-    // resize's own frame drawn after it on the backends that draw one -- so a
-    // subclass overriding resized() or backingScaleChanged() calls neither base.
+    /// The drawable is resized before the subclass answers the new size, and the
+    /// resize's own frame drawn after it on the backends that draw one -- so a
+    /// subclass overriding resized() or backingScaleChanged() calls neither base.
     void resizeStarted() override;
     void resizeFinished() override;
 
-    // Multisample (MSAA) count used for rendering; defaults to 4 for smooth
-    // edges. Feed this into your RenderPipelineDescriptor::sampleCount so the
-    // pipeline matches the render target. Set before building the pipeline.
+    /// Multisample (MSAA) count used for rendering; defaults to 4 for smooth
+    /// edges. Feed this into your RenderPipelineDescriptor::sampleCount so the
+    /// pipeline matches the render target. Set before building the pipeline.
     int sampleCount() const;
     void setSampleCount(int count);
 
-    // Enables a depth buffer for this view so 3D content occludes correctly. Pair
-    // with RenderPipelineDescriptor::depth on the pipeline. Off by default.
+    /// Enables a depth buffer for this view so 3D content occludes correctly. Pair
+    /// with RenderPipelineDescriptor::depth on the pipeline. Off by default.
     void setDepth(bool enabled);
     bool hasDepth() const;
 
-    // Adds a stencil plane to that buffer, for pipelines setting
-    // RenderPipelineDescriptor::stencil. Off by default.
-    //
-    // Turns depth on with it rather than beside it: both APIs carry the two
-    // planes in one attachment of one combined format, so a view asking for
-    // stencil allocates the depth plane whether or not anything tests it.
-    // Turning depth back off afterwards drops the stencil plane too, there
-    // being no attachment left to hold it.
+    /// Adds a stencil plane to that buffer, for pipelines setting
+    /// RenderPipelineDescriptor::stencil. Off by default.
+    ///
+    /// Turns depth on with it rather than beside it: both APIs carry the two
+    /// planes in one attachment of one combined format, so a view asking for
+    /// stencil allocates the depth plane whether or not anything tests it.
+    /// Turning depth back off afterwards drops the stencil plane too, there
+    /// being no attachment left to hold it.
     void setStencil(bool enabled);
     bool hasStencil() const;
 
-    // On macOS continuous mode pauses while the view's window is minimised,
-    // ordered out, covered or on a sleeping display, and resumes when it can
-    // be seen again; update() does not run in between.
+    /// On macOS continuous mode pauses while the view's window is minimised,
+    /// ordered out, covered or on a sleeping display, and resumes when it can
+    /// be seen again; update() does not run in between.
     void setContinuous(bool continuous);
     bool isContinuous() const;
 
-    // Whether the drawable can be copied out of as well as presented -
-    // Frame::copyDrawable, a window's screenshot. Off by default, because on
-    // Metal it costs the layer's framebufferOnly, which lets the drawable be
-    // kept in a form only the display reads, and on Vulkan a TRANSFER_SRC
-    // usage bit the swapchain is rebuilt with (and that a compositor is free
-    // not to offer, in which case the copy is refused). D3D12's back buffers
-    // copy either way. An off-screen frame's target is always readable.
+    /// Whether the drawable can be copied out of as well as presented -
+    /// Frame::copyDrawable, a window's screenshot. Off by default, because on
+    /// Metal it costs the layer's framebufferOnly, which lets the drawable be
+    /// kept in a form only the display reads, and on Vulkan a TRANSFER_SRC
+    /// usage bit the swapchain is rebuilt with (and that a compositor is free
+    /// not to offer, in which case the copy is refused). D3D12's back buffers
+    /// copy either way. An off-screen frame's target is always readable.
     void setReadableDrawable(bool readable);
     bool hasReadableDrawable() const;
 
-    // Whether the view's alpha reaches what is beneath it, so a pass cleared
-    // to alpha 0 shows the views and windows behind it rather than black. The
-    // colour a pass leaves is premultiplied. Off by default, which is opaque:
-    // the clear colour's alpha is ignored and the view is a solid rectangle.
-    //
-    // A view in a WindowOptions::transparentBackground window is transparent
-    // whatever this says, since that window's alpha already reaches the
-    // desktop. On Windows this is also what lets a view draw over a child
-    // window (a NativeChildSurface) in a top-level Window and still show it.
+    /// Whether the view's alpha reaches what is beneath it, so a pass cleared
+    /// to alpha 0 shows the views and windows behind it rather than black. The
+    /// colour a pass leaves is premultiplied. Off by default, which is opaque:
+    /// the clear colour's alpha is ignored and the view is a solid rectangle.
+    ///
+    /// A view in a WindowOptions::transparentBackground window is transparent
+    /// whatever this says, since that window's alpha already reaches the
+    /// desktop. On Windows this is also what lets a view draw over a child
+    /// window (a NativeChildSurface) in a top-level Window and still show it.
     void setTransparent(bool shouldBeTransparent);
     bool isTransparent() const;
 
-    // Caps how often continuous mode renders. The display link still wakes
-    // at every refresh, but update()/render() run at most `fps` times a
-    // second — the frame's delta time spans the skipped ticks, so
-    // delta-scaled animation is unaffected. For content that changes slower
-    // than the display refreshes (a 30fps camera on a 120Hz panel), this is
-    // most of continuous mode's GPU cost back. Zero (the default) renders
-    // at the refresh rate. On-demand rendering (repaint()/renderNow()) is
-    // not throttled. Survives setContinuous toggles; retune any time.
+    /// Caps how often continuous mode renders. The display link still wakes
+    /// at every refresh, but update()/render() run at most `fps` times a
+    /// second — the frame's delta time spans the skipped ticks, so
+    /// delta-scaled animation is unaffected. For content that changes slower
+    /// than the display refreshes (a 30fps camera on a 120Hz panel), this is
+    /// most of continuous mode's GPU cost back. Zero (the default) renders
+    /// at the refresh rate. On-demand rendering (repaint()/renderNow()) is
+    /// not throttled. Survives setContinuous toggles; retune any time.
     void setMaxFps(int fps);
     int maxFps() const;
 
-    // How many frames the renderer may have on the go at once.
-    //
-    // The two backends mean different things by that, and only one of them is a
-    // latency knob:
-    //
-    // On DXGI it is the depth of the present queue. Every frame queued is a
-    // frame of delay between a hand moving and the picture answering, because
-    // what the user is looking at was built that many refreshes ago. Left to
-    // itself DXGI queues three; two lets the CPU prepare a frame while the GPU
-    // draws the last and queues nothing further, so two is the Windows default.
-    //
-    // On Metal it is `maximumDrawableCount`: the size of the pool of buffers the
-    // layer hands out to draw into, not a queue of finished frames waiting their
-    // turn. A display-link-driven view presents exactly one frame per refresh
-    // whichever way this is set, so shrinking the pool dequeues nothing — it
-    // just means that when the renderer asks for a buffer there may not be a
-    // free one, and `nextDrawable` blocks the calling thread until the display
-    // hands one back. That wait lands squarely between sampling the input and
-    // drawing with it, so a smaller pool measurably *raises* latency: on the
-    // Maze view, sample-to-screen goes from 23ms at three to 32ms at two. Three
-    // is therefore the Apple default and there is no reason to lower it.
-    //
-    // Clamped to what the backend allows (Metal will not take fewer than two).
-    // Set before the first frame is drawn.
+    /// How many frames the renderer may have on the go at once.
+    ///
+    /// The two backends mean different things by that, and only one of them is a
+    /// latency knob:
+    ///
+    /// On DXGI it is the depth of the present queue. Every frame queued is a
+    /// frame of delay between a hand moving and the picture answering, because
+    /// what the user is looking at was built that many refreshes ago. Left to
+    /// itself DXGI queues three; two lets the CPU prepare a frame while the GPU
+    /// draws the last and queues nothing further, so two is the Windows default.
+    ///
+    /// On Metal it is `maximumDrawableCount`: the size of the pool of buffers the
+    /// layer hands out to draw into, not a queue of finished frames waiting their
+    /// turn. A display-link-driven view presents exactly one frame per refresh
+    /// whichever way this is set, so shrinking the pool dequeues nothing — it
+    /// just means that when the renderer asks for a buffer there may not be a
+    /// free one, and `nextDrawable` blocks the calling thread until the display
+    /// hands one back. That wait lands squarely between sampling the input and
+    /// drawing with it, so a smaller pool measurably *raises* latency: on the
+    /// Maze view, sample-to-screen goes from 23ms at three to 32ms at two. Three
+    /// is therefore the Apple default and there is no reason to lower it.
+    ///
+    /// Clamped to what the backend allows (Metal will not take fewer than two).
+    /// Set before the first frame is drawn.
     void setFramesInFlight(int count);
     int framesInFlight() const;
 
-    // Device pixels per logical point for the display this view is on: 2 on a
-    // Retina screen, 1 on a conventional one, and fractional under a Windows
-    // display scale. The public geometry (Rect, Point, the view's bounds) is all
-    // in logical points, but anything sized in real pixels needs this: a glyph
-    // atlas has to rasterize at the device scale to land 1:1 on the panel, and
-    // RenderPass::setScissorRect takes pixels.
+    /// Device pixels per logical point for the display this view is on: 2 on a
+    /// Retina screen, 1 on a conventional one, and fractional under a Windows
+    /// display scale. The public geometry (Rect, Point, the view's bounds) is all
+    /// in logical points, but anything sized in real pixels needs this: a glyph
+    /// atlas has to rasterize at the device scale to land 1:1 on the panel, and
+    /// RenderPass::setScissorRect takes pixels.
     float backingScale() const;
 
-    // Fired when the view moves to a display with a different backing scale, or
-    // that display's scale changes. Pixel-sized resources built for the old
-    // scale are now wrong — a glyph atlas rasterized at 2x is blurry at 1x — so
-    // rebuild them here. Not called for the initial scale; read backingScale()
-    // for that.
+    /// Fired when the view moves to a display with a different backing scale, or
+    /// that display's scale changes. Pixel-sized resources built for the old
+    /// scale are now wrong — a glyph atlas rasterized at 2x is blurry at 1x — so
+    /// rebuild them here. Not called for the initial scale; read backingScale()
+    /// for that.
     std::function<void(float)> onBackingScaleChanged = [](float) {};
 
-    // Fired after the GPU device was lost and replaced (driver update, GPU
-    // reset — Windows only). The view's swapchain and MSAA/depth targets are
-    // already rebuilt; recreate app-owned Buffers and pipelines here, since
-    // resources created on the lost device no longer render.
+    /// Fired after the GPU device was lost and replaced (driver update, GPU
+    /// reset — Windows only). The view's swapchain and MSAA/depth targets are
+    /// already rebuilt; recreate app-owned Buffers and pipelines here, since
+    /// resources created on the lost device no longer render.
     std::function<void()> onDeviceRestored = [] {};
 
-    // Renders one frame of this view right now, with `draw` in place of
-    // render(): takes the view's next drawable, opens a Frame on it, calls
-    // draw, and presents when draw returns. Returns whether there was a
-    // drawable to render into - false for a view with no size yet, no
-    // swapchain (headless Linux and Windows), or a frame of its own already
-    // open.
-    //
-    // **Callable from inside another view's render()**, which is how one
-    // renderer draws into several windows in one go - bgfx's frame into each
-    // of its swapchains. The frame open on the device is flushed first, so
-    // everything it recorded before the call reaches the queue ahead of this
-    // frame's work, and it carries on recording when this returns, behind it:
-    // what the outer frame drew into a texture before the call, this frame
-    // sees, and what this frame drew, the outer one's later passes see. **No
-    // pass may be open** on the outer frame, the rule Frame::flush states.
-    // The nested frame is presented as it ends, before the outer one, is not
-    // timed, and streams into the outer frame's pools (Device::enterFrame).
+    /// Renders one frame of this view right now, with `draw` in place of
+    /// render(): takes the view's next drawable, opens a Frame on it, calls
+    /// draw, and presents when draw returns. Returns whether there was a
+    /// drawable to render into - false for a view with no size yet, no
+    /// swapchain (headless Linux and Windows), or a frame of its own already
+    /// open.
+    ///
+    /// **Callable from inside another view's render()**, which is how one
+    /// renderer draws into several windows in one go - bgfx's frame into each
+    /// of its swapchains. The frame open on the device is flushed first, so
+    /// everything it recorded before the call reaches the queue ahead of this
+    /// frame's work, and it carries on recording when this returns, behind it:
+    /// what the outer frame drew into a texture before the call, this frame
+    /// sees, and what this frame drew, the outer one's later passes see. **No
+    /// pass may be open** on the outer frame, the rule Frame::flush states.
+    /// The nested frame is presented as it ends, before the outer one, is not
+    /// timed, and streams into the outer frame's pools (Device::enterFrame).
     bool renderFrame(const std::function<void(Frame&)>& draw);
 
 protected:
-    // Renders and presents one frame right now, on the caller's (main)
-    // thread. For subclasses whose content is driven by an external source
-    // (a camera frame arriving): rendering at the moment the content
-    // changes puts it on glass at the next refresh, where waiting to be
-    // noticed by a display link tick adds up to a full one.
+    /// Renders and presents one frame right now, on the caller's (main)
+    /// thread. For subclasses whose content is driven by an external source
+    /// (a camera frame arriving): rendering at the moment the content
+    /// changes puts it on glass at the next refresh, where waiting to be
+    /// noticed by a display link tick adds up to a full one.
     void renderNow();
 
-    // The subclass's half of a device restore, called just before
-    // onDeviceRestored: what a view built on this one rebuilds for itself, so
-    // the hook stays free for the app. Windows only, as the restore is.
+    /// The subclass's half of a device restore, called just before
+    /// onDeviceRestored: what a view built on this one rebuilds for itself, so
+    /// the hook stays free for the app. Windows only, as the restore is.
     virtual void deviceRestored();
 
 private:

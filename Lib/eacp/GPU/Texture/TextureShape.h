@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file Internal: checks a texture descriptor's kind, sizes and levels against each
+    other, shared by every backend.
+*/
+
 #include "MipChain.h"
 #include "Texture.h"
 
@@ -10,10 +14,10 @@
 
 namespace eacp::GPU
 {
-// What a TextureDescriptor resolves to once its kind, sizes and levels have
-// been checked against each other: the part of a texture's validity every
-// backend shares. A backend adds only what its device decides (sample counts,
-// block compression, typed stores, cube arrays).
+/// What a TextureDescriptor resolves to once its kind, sizes and levels have
+/// been checked against each other: the part of a texture's validity every
+/// backend shares. A backend adds only what its device decides (sample counts,
+/// block compression, typed stores, cube arrays).
 struct TextureShape
 {
     TextureType kind = TextureType::TwoD;
@@ -23,7 +27,7 @@ struct TextureShape
     int layers = 1;
     int levels = 1;
 
-    // The levels are the caller's or the GPU's: never built by eacp.
+    /// The levels are the caller's or the GPU's: never built by eacp.
     bool explicitLevels = false;
 
     bool isCubeKind() const;
@@ -53,8 +57,8 @@ int maxMipLevels(TextureType kind, int width, int height, int depth);
 std::optional<TextureShape> resolveTextureShape(const TextureDescriptor& descriptor,
                                                 InitialData data);
 
-// One box of one level of one slice, with the source it is copied from: the
-// unit every backend's upload records.
+/// One box of one level of one slice, with the source it is copied from: the
+/// unit every backend's upload records.
 struct SubresourceUpload
 {
     int level = 0;
@@ -70,7 +74,7 @@ struct SubresourceUpload
     int bytesPerImage = 0;
 };
 
-// Uploads and the chains eacp built for them, which the uploads point into.
+/// Uploads and the chains eacp built for them, which the uploads point into.
 struct TextureUploadPlan
 {
     Vector<SubresourceUpload> uploads;

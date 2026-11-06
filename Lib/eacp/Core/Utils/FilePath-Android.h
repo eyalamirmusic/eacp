@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: hands FilePath its Android data directory; not for direct use. */
+
 #include <string>
 
 namespace eacp

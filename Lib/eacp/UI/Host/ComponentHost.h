@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file The GPUView that owns a component tree and draws it in one pass per frame. */
+
 #include "../Component/Component.h"
 #include "../DragAndDrop/FileDropTarget.h"
 #include "../Render/DrawPlayer.h"
@@ -12,214 +14,214 @@
 
 namespace eacp::UI
 {
-// The one native view a whole component tree lives in.
-//
-// A GPUView, so it sits in the ordinary eacp::Graphics::View hierarchy and
-// reuses its window, sizing and events -- and so a component tree can be one
-// leaf of a larger native layout, or fill a window, or be embedded in a host
-// application through Graphics::EmbeddedView, without knowing which.
-//
-// It owns the renderers the painter draws through and the root component, and
-// it converts the native view's events into component-local ones.
-//
-// Rendering is the View's ordinary on-demand cycle, and a frame is two walks of
-// the tree rather than one. The first records: a component whose drawing is
-// stale is painted into a DrawList of its own and every other one is stepped
-// over, so paint() runs where repaint() was called and nowhere else. The second
-// replays those lists into the batches in tree order. Nothing is submitted while
-// nothing is dirty, and an animation costs the paint of the one component that
-// is animating however large the tree around it is.
+/// The one native view a whole component tree lives in.
+///
+/// A GPUView, so it sits in the ordinary eacp::Graphics::View hierarchy and
+/// reuses its window, sizing and events -- and so a component tree can be one
+/// leaf of a larger native layout, or fill a window, or be embedded in a host
+/// application through Graphics::EmbeddedView, without knowing which.
+///
+/// It owns the renderers the painter draws through and the root component, and
+/// it converts the native view's events into component-local ones.
+///
+/// Rendering is the View's ordinary on-demand cycle, and a frame is two walks of
+/// the tree rather than one. The first records: a component whose drawing is
+/// stale is painted into a DrawList of its own and every other one is stepped
+/// over, so paint() runs where repaint() was called and nowhere else. The second
+/// replays those lists into the batches in tree order. Nothing is submitted while
+/// nothing is dirty, and an animation costs the paint of the one component that
+/// is animating however large the tree around it is.
 class ComponentHost : public GPU::GPUView
 {
 public:
     ComponentHost();
     ~ComponentHost() override;
 
-    // The tree to draw. The component is not owned and has to outlive the host.
-    // It is resized to fill the host -- inside the safe area, see below -- so
-    // its own bounds are ignored.
+    /// The tree to draw. The component is not owned and has to outlive the host.
+    /// It is resized to fill the host -- inside the safe area, see below -- so
+    /// its own bounds are ignored.
     void setRootComponent(Component& newRoot);
     Component* getRootComponent() const;
 
-    // Whether the root is laid out inside the view's safe area -- clear of the
-    // status bar, a display cutout, the gesture bar and an on-screen keyboard
-    // -- rather than over the whole view. On by default. Zero on a desktop, so
-    // nothing moves there.
-    //
-    // The background colour fills the whole view either way, so the edges the
-    // root leaves are the host's colour. Off is for a root that paints its own
-    // full-bleed backdrop and reads the insets itself.
+    /// Whether the root is laid out inside the view's safe area -- clear of the
+    /// status bar, a display cutout, the gesture bar and an on-screen keyboard
+    /// -- rather than over the whole view. On by default. Zero on a desktop, so
+    /// nothing moves there.
+    ///
+    /// The background colour fills the whole view either way, so the edges the
+    /// root leaves are the host's colour. Off is for a root that paints its own
+    /// full-bleed backdrop and reads the insets itself.
     void setRespectsSafeArea(bool shouldRespect);
     bool getRespectsSafeArea() const;
 
-    // Where the root is placed, in the view's coordinates.
+    /// Where the root is placed, in the view's coordinates.
     Rect getRootBounds() const;
 
     void setBackgroundColour(const Color& colour);
 
-    // The face every component starts painting in. A component can set another
-    // for its own paint(), and they share one glyph atlas, so what this decides
-    // is what the tree looks like rather than what it costs.
+    /// The face every component starts painting in. A component can set another
+    /// for its own paint(), and they share one glyph atlas, so what this decides
+    /// is what the tree looks like rather than what it costs.
     void setFont(const Font& font);
     const Font& getFont() const;
 
     void setFontPointSize(float points);
     void setFontFamily(const std::string& family);
 
-    // What every component in the tree reads its colours, corners and other
-    // keyed values from (Component::getHostTheme): a product's look for one
-    // tree, without touching another tree in the same process -- a plugin's
-    // editor and its host's window, say. Empty until set, which reads as
-    // defaultTheme(). A theme that holds ThemeKeys::font or
-    // ThemeKeys::background also gives the host its face or its backdrop, as
-    // setFont and setBackgroundColour would. Repaints the whole tree.
+    /// What every component in the tree reads its colours, corners and other
+    /// keyed values from (Component::getHostTheme): a product's look for one
+    /// tree, without touching another tree in the same process -- a plugin's
+    /// editor and its host's window, say. Empty until set, which reads as
+    /// defaultTheme(). A theme that holds ThemeKeys::font or
+    /// ThemeKeys::background also gives the host its face or its backdrop, as
+    /// setFont and setBackgroundColour would. Repaints the whole tree.
     void setTheme(const Theme& theme);
     const Theme& getTheme() const;
 
-    // Measurement without a paint in progress -- see Component::measureText,
-    // which is where a component should ask. Builds the renderer if the host has
-    // not drawn yet: measuring needs the fonts and not the GPU, so a component
-    // can lay itself out before the first frame.
+    /// Measurement without a paint in progress -- see Component::measureText,
+    /// which is where a component should ask. Builds the renderer if the host has
+    /// not drawn yet: measuring needs the fonts and not the GPU, so a component
+    /// can lay itself out before the first frame.
     float measureText(std::string_view text, const Font& font) const;
     float getLineHeight(const Font& font) const;
     float getAscent(const Font& font) const;
 
-    // Where an image a component draws comes from: the host turns a decoded
-    // image into a texture once, and the reference it hands back is what
-    // Graphics::drawImage takes. See ImageCache for who keeps it alive.
+    /// Where an image a component draws comes from: the host turns a decoded
+    /// image into a texture once, and the reference it hands back is what
+    /// Graphics::drawImage takes. See ImageCache for who keeps it alive.
     ImageCache& getImageCache();
 
-    // How many image textures the host is holding: everything some recording
-    // in the tree, or some caller, still draws. What a screen of pictures
-    // costs in memory, one entry per distinct image.
+    /// How many image textures the host is holding: everything some recording
+    /// in the tree, or some caller, still draws. What a screen of pictures
+    /// costs in memory, one entry per distinct image.
     int getCachedImageCount() const;
 
-    // Image draws in the last frame's own pass: one per run of quads out of
-    // one texture, so a row of icons out of one image is one and a page of
-    // photographs is one apiece. See ImageBatch.
+    /// Image draws in the last frame's own pass: one per run of quads out of
+    /// one texture, so a row of icons out of one image is one and a page of
+    /// photographs is one apiece. See ImageBatch.
     int getLastImageDrawCount() const;
 
-    // What the last frame cost. `clipChanges` is the number of batch breaks:
-    // between two of them every quad goes out as one instanced draw, so this is
-    // the figure that should stay flat as the tree grows.
+    /// What the last frame cost. `clipChanges` is the number of batch breaks:
+    /// between two of them every quad goes out as one instanced draw, so this is
+    /// the figure that should stay flat as the tree grows.
     int getLastClipChangeCount() const;
     int getLastComponentCount() const;
 
-    // How many components were actually painted, as against how many were drawn.
-    // The figure this tier's redrawing policy is judged by: it is the count of
-    // repaint()s the frame answered, so a settled interface reports zero however
-    // many components it has, and an animation reports the one that is moving.
+    /// How many components were actually painted, as against how many were drawn.
+    /// The figure this tier's redrawing policy is judged by: it is the count of
+    /// repaint()s the frame answered, so a settled interface reports zero however
+    /// many components it has, and an animation reports the one that is moving.
     int getLastPaintedComponentCount() const;
 
-    // Draws spent alternating between masked and meshed shapes. See
-    // DrawPlayer::getRendererSwitchCount.
+    /// Draws spent alternating between masked and meshed shapes. See
+    /// DrawPlayer::getRendererSwitchCount.
     int getLastRendererSwitchCount() const;
 
-    // Layers in the tree that were rendered into a texture of their own this
-    // frame, each one a render pass before the frame's. Zero once nothing is
-    // changing: a layer whose content is unchanged is drawn from the texture it
-    // already has, which is what makes an animated opacity cheap.
+    /// Layers in the tree that were rendered into a texture of their own this
+    /// frame, each one a render pass before the frame's. Zero once nothing is
+    /// changing: a layer whose content is unchanged is drawn from the texture it
+    /// already has, which is what makes an animated opacity cheap.
     int getLastRenderedLayerCount() const;
 
-    // GPUComponents in the tree as the last frame found them: rendered (its
-    // render() ran), culled (showing, but clipped or scrolled out entirely, or
-    // of zero size) and hidden (it or an ancestor not visible). The three are
-    // disjoint; one on screen with nothing new to render is in none.
+    /// GPUComponents in the tree as the last frame found them: rendered (its
+    /// render() ran), culled (showing, but clipped or scrolled out entirely, or
+    /// of zero size) and hidden (it or an ancestor not visible). The three are
+    /// disjoint; one on screen with nothing new to render is in none.
     int getLastRenderedGPUComponentCount() const;
     int getLastCulledGPUComponentCount() const;
     int getLastHiddenGPUComponentCount() const;
 
-    // Vector shapes in the tree that have no mask, the coverage atlas having had
-    // no room for them: each one draws as nothing. Zero unless an interface has
-    // reached the atlas ceiling, which is a real limit rather than an error --
-    // the atlas grows to 4096 square and then compacts, and a tree whose masks
-    // do not fit in that at once loses the ones that arrive last.
-    //
-    // Worth reading somewhere, because nothing else says it happened. A shape
-    // dropped this way comes back the next time the atlas is rebuilt -- a
-    // resize, a display change, or any later allocation that compacts it.
+    /// Vector shapes in the tree that have no mask, the coverage atlas having had
+    /// no room for them: each one draws as nothing. Zero unless an interface has
+    /// reached the atlas ceiling, which is a real limit rather than an error --
+    /// the atlas grows to 4096 square and then compacts, and a tree whose masks
+    /// do not fit in that at once loses the ones that arrive last.
+    ///
+    /// Worth reading somewhere, because nothing else says it happened. A shape
+    /// dropped this way comes back the next time the atlas is rebuilt -- a
+    /// resize, a display change, or any later allocation that compacts it.
     int getLastDroppedPathCount() const;
 
-    // Called when that figure changes, for a client that would rather be told
-    // than poll. Once on the way up and once on the way back down.
+    /// Called when that figure changes, for a client that would rather be told
+    /// than poll. Once on the way up and once on the way back down.
     std::function<void(int droppedCount)> onPathsDropped = [](int) {};
 
-    // Vector shapes in the tree drawn as triangles rather than out of the atlas,
-    // being too large for a mask to be worth storing. Zero for an interface,
-    // whose shapes are widget-sized; artwork is what meets the threshold, and
-    // this is the figure that says how much of a document stopped competing for
-    // the atlas. See PathShape::Backing.
+    /// Vector shapes in the tree drawn as triangles rather than out of the atlas,
+    /// being too large for a mask to be worth storing. Zero for an interface,
+    /// whose shapes are widget-sized; artwork is what meets the threshold, and
+    /// this is the figure that says how much of a document stopped competing for
+    /// the atlas. See PathShape::Backing.
     int getLastMeshedPathCount() const;
 
-    // Shapes in the tree drawing through a mask somebody else rasterized. A
-    // census like the meshed count beside it rather than a tally of what this
-    // frame did, since what is worth knowing is how much of the tree is costing
-    // the atlas nothing: an interface built out of repeated parts reports every
-    // copy but the first of each shape it repeats.
+    /// Shapes in the tree drawing through a mask somebody else rasterized. A
+    /// census like the meshed count beside it rather than a tally of what this
+    /// frame did, since what is worth knowing is how much of the tree is costing
+    /// the atlas nothing: an interface built out of repeated parts reports every
+    /// copy but the first of each shape it repeats.
     int getLastSharedMaskCount() const;
 
-    // How full the coverage atlas is, and how large it has grown, as the
-    // distance to that ceiling while there is still distance to it. Room
-    // reserved rather than room used: the shelf never gives space back.
+    /// How full the coverage atlas is, and how large it has grown, as the
+    /// distance to that ceiling while there is still distance to it. Room
+    /// reserved rather than room used: the shelf never gives space back.
     float getAtlasFillFraction() const;
     int getAtlasSize() const;
 
-    // How many walks without a grow the atlas waits before giving room back.
-    // See CoverageAtlas::setQuietWalksToShrink.
+    /// How many walks without a grow the atlas waits before giving room back.
+    /// See CoverageAtlas::setQuietWalksToShrink.
     void setAtlasQuietWalksToShrink(int walks);
 
-    // Paints every component in the tree that has asked for it, into the list
-    // the next frame replays, and returns how many were painted.
-    //
-    // The frame calls this itself, at the top. It is public because it is the
-    // half of a frame that touches no pass and no drawable: a tree can be warmed
-    // up before it is ever shown, and what a change actually repainted can be
-    // asked without drawing anything.
+    /// Paints every component in the tree that has asked for it, into the list
+    /// the next frame replays, and returns how many were painted.
+    ///
+    /// The frame calls this itself, at the top. It is public because it is the
+    /// half of a frame that touches no pass and no drawable: a tree can be warmed
+    /// up before it is ever shown, and what a change actually repainted can be
+    /// asked without drawing anything.
     int paintDirtyComponents();
 
     void resized() override;
     void render(GPU::Frame& frame) override;
     void safeAreaInsetsChanged() override;
 
-    // Steps every animating component by `seconds` (see
-    // Component::startAnimating). The host calls it from a display link of its
-    // own while anything animates; public so a test can step time by hand.
+    /// Steps every animating component by `seconds` (see
+    /// Component::startAnimating). The host calls it from a display link of its
+    /// own while anything animates; public so a test can step time by hand.
     void advanceAnimations(double seconds);
     bool isAnimating() const;
 
-    // Whether the host runs that display link. On by default; off leaves
-    // advanceAnimations to the caller, which is what makes an animation
-    // deterministic under test.
+    /// Whether the host runs that display link. On by default; off leaves
+    /// advanceAnimations to the caller, which is what makes an animation
+    /// deterministic under test.
     void setAnimationClockEnabled(bool shouldRun);
 
-    // Caps how often that display link ticks, and so every animation in the
-    // tree with it, continuous GPUComponents included. Zero (the default)
-    // ticks at the display's refresh. See DisplayLink::setMaxFps.
+    /// Caps how often that display link ticks, and so every animation in the
+    /// tree with it, continuous GPUComponents included. Zero (the default)
+    /// ticks at the display's refresh. See DisplayLink::setMaxFps.
     void setAnimationMaxFps(int fps);
     int getAnimationMaxFps() const;
 
-    // The component keys are offered to first. Null means none has been focused,
-    // and the tree's keys go to the root -- which is what makes a shortcut work
-    // before anything has been clicked.
-    //
-    // Setting it tells the two components involved (focusLost, then focusGained)
-    // and asks the window for the keyboard, a component tree only hearing a key
-    // at all if the one native view it lives in is the first responder.
+    /// The component keys are offered to first. Null means none has been focused,
+    /// and the tree's keys go to the root -- which is what makes a shortcut work
+    /// before anything has been clicked.
+    ///
+    /// Setting it tells the two components involved (focusLost, then focusGained)
+    /// and asks the window for the keyboard, a component tree only hearing a key
+    /// at all if the one native view it lives in is the first responder.
     void setFocusedComponent(Component* component);
     Component* getFocusedComponent() const;
 
-    // Whether Tab moves focus through the tree. On by default; off for a tree
-    // where Tab means something else, an editor that indents being the case that
-    // wants it.
+    /// Whether Tab moves focus through the tree. On by default; off for a tree
+    /// where Tab means something else, an editor that indents being the case that
+    /// wants it.
     void setTabMovesFocus(bool shouldMoveFocus);
 
     void keyDown(const eacp::Graphics::KeyEvent& event) override;
     void keyUp(const eacp::Graphics::KeyEvent& event) override;
 
-    // Shows the cursor of the component under the pointer again, for a cursor
-    // that changed without the pointer moving. Component::setMouseCursor calls
-    // it for the hovered component, so this is only needed by hand where
-    // something else decides the shape.
+    /// Shows the cursor of the component under the pointer again, for a cursor
+    /// that changed without the pointer moving. Component::setMouseCursor calls
+    /// it for the hovered component, so this is only needed by hand where
+    /// something else decides the shape.
     void updateMouseCursor();
 
     void mouseDown(const eacp::Graphics::MouseEvent& event) override;
@@ -230,34 +232,34 @@ public:
     void mouseWheel(const eacp::Graphics::MouseEvent& event) override;
     void mouseMagnify(const eacp::Graphics::MouseEvent& event) override;
 
-    // Files dragged in from the OS, handed to the FileDropTarget components in
-    // the tree. The host accepts file drops from construction; turn it off with
-    // setAcceptsFileDrops(false) for a tree that should let them pass.
+    /// Files dragged in from the OS, handed to the FileDropTarget components in
+    /// the tree. The host accepts file drops from construction; turn it off with
+    /// setAcceptsFileDrops(false) for a tree that should let them pass.
     bool fileDragEnter(const Vector<std::string>& files, Point position) override;
     bool fileDragMove(const Vector<std::string>& files, Point position) override;
     void fileDragExit() override;
     void filesDropped(const Vector<std::string>& files, Point position) override;
 
-    // The component a file dragged over `positionInRoot` would go to, or null.
+    /// The component a file dragged over `positionInRoot` would go to, or null.
     Component* findFileDropTarget(const Vector<std::string>& files,
                                   Point positionInRoot) const;
 
 protected:
-    // Everything the host made on the lost device is made again - its
-    // renderers, the coverage atlas, the glyph and image textures and every
-    // layer's texture - the tree is painted from scratch, and every
-    // GPUComponent in it is told through its onDeviceRestored.
+    /// Everything the host made on the lost device is made again - its
+    /// renderers, the coverage atlas, the glyph and image textures and every
+    /// layer's texture - the tree is painted from scratch, and every
+    /// GPUComponent in it is told through its onDeviceRestored.
     void deviceRestored() override;
 
 private:
     friend class Component;
 
-    // A component in this tree is going away. Drops every pointer the host
-    // holds to it -- the root, the hover, the press capture -- because a host
-    // outliving its tree by even one destructor is the normal case: a root held
-    // as a member of a ComponentHost subclass is destroyed before the host's
-    // own base, so the host would otherwise write through a dead pointer on its
-    // way out.
+    /// A component in this tree is going away. Drops every pointer the host
+    /// holds to it -- the root, the hover, the press capture -- because a host
+    /// outliving its tree by even one destructor is the normal case: a root held
+    /// as a member of a ComponentHost subclass is destroyed before the host's
+    /// own base, so the host would otherwise write through a dead pointer on its
+    /// way out.
     void componentDeleted(Component& component);
 
     void startAnimating(Component& component);
@@ -265,49 +267,49 @@ private:
     bool isAnimating(const Component& component) const;
     void forgetAnimationsIn(Component& subtree);
 
-    // A subtree joined the tree: every continuous GPUComponent in it that is
-    // not already ticking starts again.
+    /// A subtree joined the tree: every continuous GPUComponent in it that is
+    /// not already ticking starts again.
     void subtreeAttached(Component& subtree);
 
     void startAnimationClock();
     void retireAnimationClockWhenIdle();
 
-    // The event as the root sees it: the root sits inside the safe area, and
-    // everything below the host measures from the root's corner.
+    /// The event as the root sees it: the root sits inside the safe area, and
+    /// everything below the host measures from the root's corner.
     eacp::Graphics::MouseEvent
         inRootSpace(const eacp::Graphics::MouseEvent& event) const;
 
-    // `from` or the nearest ancestor of it that takes the touch gesture, or
-    // null.
+    /// `from` or the nearest ancestor of it that takes the touch gesture, or
+    /// null.
     Component* findTouchInterceptor(Component* from,
                                     const eacp::Graphics::MouseEvent& event);
 
-    // Moves the gesture from the pressed component to `interceptor`: the first
-    // is cancelled, the second is pressed where the finger went down.
+    /// Moves the gesture from the pressed component to `interceptor`: the first
+    /// is cancelled, the second is pressed where the finger went down.
     void handTouchTo(Component& interceptor,
                      const eacp::Graphics::MouseEvent& event);
 
-    // Settles whether the moving finger stays with what it pressed or goes to
-    // an ancestor that scrolls.
+    /// Settles whether the moving finger stays with what it pressed or goes to
+    /// an ancestor that scrolls.
     void settleTouchDrag(const eacp::Graphics::MouseEvent& event);
 
-    // A finger lifting where it went down, from a press nothing took away.
+    /// A finger lifting where it went down, from a press nothing took away.
     bool wasTouchTap(const eacp::Graphics::MouseEvent& event) const;
 
-    // Paints every component in the tree whose drawing is stale, into a list of
-    // its own, and steps over every subtree that has nothing to record. Returns
-    // whether this subtree still has work waiting -- which only a hidden one
-    // does, since a visible one is recorded on the frame it is marked.
+    /// Paints every component in the tree whose drawing is stale, into a list of
+    /// its own, and steps over every subtree that has nothing to record. Returns
+    /// whether this subtree still has work waiting -- which only a hidden one
+    /// does, since a visible one is recorded on the frame it is marked.
     bool recordComponent(Component& component);
 
     void recordTree();
     void recordDirtyTree();
     void record(Component& component);
 
-    // Draws the recorded lists, in tree order, offsetting each by where its
-    // component sits and clipping it to what its ancestors left of it. Steps
-    // over a subtree a Layer captures, which is drawn into that layer instead
-    // -- by playSubtree, the same walk without that one check at its root.
+    /// Draws the recorded lists, in tree order, offsetting each by where its
+    /// component sits and clipping it to what its ancestors left of it. Steps
+    /// over a subtree a Layer captures, which is drawn into that layer instead
+    /// -- by playSubtree, the same walk without that one check at its root.
     void playComponent(Component& component,
                        DrawPlayer& player,
                        Point origin,
@@ -317,12 +319,12 @@ private:
                      Point origin,
                      const Rect& clip);
 
-    // Everything in the subtree has to be painted again: the scale changed, the
-    // atlas moved under the uvs, or the tree's default face did.
+    /// Everything in the subtree has to be painted again: the scale changed, the
+    /// atlas moved under the uvs, or the tree's default face did.
     static void markTreeDirty(Component& component);
 
-    // What one walk of the tree found: whether the atlas moved under it, how
-    // many shapes are on it with no mask, and how many never asked for one.
+    /// What one walk of the tree found: whether the atlas moved under it, how
+    /// many shapes are on it with no mask, and how many never asked for one.
     struct PathWalk
     {
         bool atlasMoved = false;
@@ -331,19 +333,19 @@ private:
         int shared = 0;
     };
 
-    // The logical space every batch projects from. Set at the top of each frame
-    // from the frame's own size rather than cached at layout: it is the size of
-    // the target being drawn into, so it cannot be a resize behind the drawable.
+    /// The logical space every batch projects from. Set at the top of each frame
+    /// from the frame's own size rather than cached at layout: it is the size of
+    /// the target being drawn into, so it cannot be a resize behind the drawable.
     void setSurfaceSize(Point size);
 
-    // Rendering every Layer in the tree whose content changed, each into a pass
-    // of its own, before the frame's own pass opens -- which is the only place
-    // it can happen, a pass not being able to begin inside another one.
-    //
-    // The walk tracks where each component sits and what its ancestors leave
-    // of it exactly as playSubtree does, so a GPUComponent the frame would not
-    // draw is not rendered either. A captured subtree starts again unclipped,
-    // being drawn into its layer rather than where it sits.
+    /// Rendering every Layer in the tree whose content changed, each into a pass
+    /// of its own, before the frame's own pass opens -- which is the only place
+    /// it can happen, a pass not being able to begin inside another one.
+    ///
+    /// The walk tracks where each component sits and what its ancestors leave
+    /// of it exactly as playSubtree does, so a GPUComponent the frame would not
+    /// draw is not rendered either. A captured subtree starts again unclipped,
+    /// being drawn into its layer rather than where it sits.
     void renderLayers(GPU::Frame& frame);
     void renderLayers(Component& component,
                       GPU::Frame& frame,
@@ -353,9 +355,9 @@ private:
     void renderLayer(Layer& layer, GPU::Frame& frame);
     void renderOwnPass(Layer& layer, GPU::Frame& frame);
 
-    // A GPUComponent's layer: kept at the component's bounds, culled when
-    // `visibleLocal` is empty, and otherwise rendered by the component's own
-    // render() through the frame, redirected. Returns whether it rendered.
+    /// A GPUComponent's layer: kept at the component's bounds, culled when
+    /// `visibleLocal` is empty, and otherwise rendered by the component's own
+    /// render() through the frame, redirected. Returns whether it rendered.
     bool renderFrameLayer(Layer& layer,
                           GPU::Frame& frame,
                           const Rect& visibleLocal,
@@ -366,14 +368,14 @@ private:
     void dropLayerTextures(Component& component);
     void notifyDeviceRestored(Component& component);
 
-    // Records the subtree a layer captures, if anything in it is stale, so the
-    // layer is drawn from this frame's recordings rather than the last one's.
-    // Returns whether anything was painted, which is what makes the layer
-    // dirty.
+    /// Records the subtree a layer captures, if anything in it is stale, so the
+    /// layer is drawn from this frame's recordings rather than the last one's.
+    /// Returns whether anything was painted, which is what makes the layer
+    /// dirty.
     bool recordContent(Layer& layer);
 
-    // Rasterizing every PathShape in the tree whose geometry changed, before
-    // the render pass opens. See the definition for why it can only happen here.
+    /// Rasterizing every PathShape in the tree whose geometry changed, before
+    /// the render pass opens. See the definition for why it can only happen here.
     void rasterizePaths(GPU::Frame& frame);
     void rasterizeDirtyPaths(Component& component,
                              GPUWidgets::CoverageBatch& batch,
@@ -381,8 +383,8 @@ private:
     void markAllPathsDirty(Component& component);
     void reportDroppedPaths(int count);
 
-    // Builds the event a component sees: the position converted into its own
-    // space, and the fields the native event already carries.
+    /// Builds the event a component sees: the position converted into its own
+    /// space, and the fields the native event already carries.
     MouseEvent makeEvent(const Component& target,
                          const eacp::Graphics::MouseEvent& event) const;
 
@@ -394,19 +396,19 @@ private:
     void setHoveredComponent(Component* component,
                              const eacp::Graphics::MouseEvent& event);
 
-    // Offers the event to `target` and then to each of its parents, stopping at
-    // the first that consumes it. Returns whether any of them did.
+    /// Offers the event to `target` and then to each of its parents, stopping at
+    /// the first that consumes it. Returns whether any of them did.
     bool dispatchKey(const eacp::Graphics::KeyEvent& event, bool isDown);
 
-    // The pressed component, or the nearest ancestor of it, that wants the
-    // keyboard. A press on something that wants nothing leaves focus alone
-    // rather than clearing it, so clicking a panel does not silently disarm the
-    // editor next to it. Returns the component that wanted it, or null.
+    /// The pressed component, or the nearest ancestor of it, that wants the
+    /// keyboard. A press on something that wants nothing leaves focus alone
+    /// rather than clearing it, so clicking a panel does not silently disarm the
+    /// editor next to it. Returns the component that wanted it, or null.
     Component* moveFocusToPressed(Component* pressed);
 
-    // A finger's moveFocusToPressed. A tap on the component that already has
-    // focus asks for the keyboard again, which is how an editor whose
-    // on-screen keyboard Back put away gets it back.
+    /// A finger's moveFocusToPressed. A tap on the component that already has
+    /// focus asks for the keyboard again, which is how an editor whose
+    /// on-screen keyboard Back put away gets it back.
     void focusTapped(Component* pressed);
 
     bool moveFocusByTab(const eacp::Graphics::KeyEvent& event);
@@ -419,84 +421,84 @@ private:
 
     Theme theme;
 
-    // Built on the first resize, once there is a size to build them against.
-    // The atlas comes first and outlives the batch that reads it.
+    /// Built on the first resize, once there is a size to build them against.
+    /// The atlas comes first and outlives the batch that reads it.
     std::optional<CoverageAtlas> paths;
     int atlasQuietWalks = CoverageAtlas::defaultQuietWalksToShrink;
 
-    // What is already in the atlas, by the geometry that put it there, so that
-    // a shape drawn in forty-eight places is rasterized once. Dropped with the
-    // atlas's allocations and never apart from them -- an entry naming a slot
-    // the shelf has given to somebody else is the one way this draws the wrong
-    // shape rather than merely too often.
+    /// What is already in the atlas, by the geometry that put it there, so that
+    /// a shape drawn in forty-eight places is rasterized once. Dropped with the
+    /// atlas's allocations and never apart from them -- an entry naming a slot
+    /// the shelf has given to somebody else is the one way this draws the wrong
+    /// shape rather than merely too often.
     MaskCache masks;
 
-    // The ramps are not among them: painting resolves a gradient to a row, and a
-    // tree can be painted before it is sized. Mutable for the same reason the
-    // text renderer beside it is -- see gradientRamps().
+    /// The ramps are not among them: painting resolves a gradient to a row, and a
+    /// tree can be painted before it is sized. Mutable for the same reason the
+    /// text renderer beside it is -- see gradientRamps().
     mutable std::optional<GradientRamps> ramps;
 
-    // Every path the frame rasterizes, gathered and dispatched as one. Held
-    // across frames rather than made per frame, because what it holds is the
-    // buffers -- a canvas whose paths all move re-fills them and allocates
-    // nothing.
-    //
-    // Optional only so a restored device can have it made again.
+    /// Every path the frame rasterizes, gathered and dispatched as one. Held
+    /// across frames rather than made per frame, because what it holds is the
+    /// buffers -- a canvas whose paths all move re-fills them and allocates
+    /// nothing.
+    ///
+    /// Optional only so a restored device can have it made again.
     std::optional<GPUWidgets::CoverageBatch> pathBatch {std::in_place};
 
     std::optional<ShapeBatch> shapes;
 
-    // Where the shapes too large for the atlas go. Built alongside the quad
-    // batch and drawn into the same pass, so the two interleave in the order the
-    // tree painted them.
+    /// Where the shapes too large for the atlas go. Built alongside the quad
+    /// batch and drawn into the same pass, so the two interleave in the order the
+    /// tree painted them.
     std::optional<MeshBatch> meshes;
 
-    // Where the pictures go, batched by texture. Built with the two shape
-    // batches and drawn into the same pass, in the order the tree painted.
+    /// Where the pictures go, batched by texture. Built with the two shape
+    /// batches and drawn into the same pass, in the order the tree painted.
     std::optional<ImageBatch> images;
 
-    // What composites a layer's texture back into the picture. One draw apiece
-    // and nothing queued, so it holds no state between frames.
+    /// What composites a layer's texture back into the picture. One draw apiece
+    /// and nothing queued, so it holds no state between frames.
     std::optional<LayerRenderer> layers;
 
-    // The textures behind every image the tree draws, shared by content. Needs
-    // no size to exist, so unlike the batches it is a plain member: a component
-    // can ask for a texture before the host has ever been shown.
+    /// The textures behind every image the tree draws, shared by content. Needs
+    /// no size to exist, so unlike the batches it is a plain member: a component
+    /// can ask for a texture before the host has ever been shown.
     ImageCache imageCache;
 
-    // Mutable because measuring is a const question with a lazily built answer:
-    // a component asking for a width before the first frame has to be able to
-    // build the renderer to get one.
+    /// Mutable because measuring is a const question with a lazily built answer:
+    /// a component asking for a width before the first frame has to be able to
+    /// build the renderer to get one.
     mutable std::optional<Text::TextRenderer> text;
 
     Text::TextRenderer& renderer() const;
 
-    // The ramp table, built on the first ask. Painting needs one and drawing is
-    // what the batches are for, so this cannot wait for a size the way they do.
+    /// The ramp table, built on the first ask. Painting needs one and drawing is
+    /// what the batches are for, so this cannot wait for a size the way they do.
     GradientRamps& gradientRamps() const;
 
-    // The scale everything in the atlas was rasterized at, so a move between
-    // displays can be noticed.
+    /// The scale everything in the atlas was rasterized at, so a move between
+    /// displays can be noticed.
     float lastPathScale = 0.f;
 
-    // And the scale the tree's recordings were made at. A glyph's source rect
-    // and a mask's uv are both in the pixels of the display they were built
-    // for, so a move between two of them makes every list in the tree wrong.
+    /// And the scale the tree's recordings were made at. A glyph's source rect
+    /// and a mask's uv are both in the pixels of the display they were built
+    /// for, so a move between two of them makes every list in the tree wrong.
     float lastRecordScale = 0.f;
 
-    // Where the button went down, in root space, carried through the drag so
-    // every event can report it.
+    /// Where the button went down, in root space, carried through the drag so
+    /// every event can report it.
     Point dragOrigin;
     Point lastMousePosition;
 
-    // The component a press captured. Drags and the matching release go to it
-    // wherever the pointer has since travelled -- a fader keeps tracking once
-    // the pointer leaves it, which is the behaviour a drag has to have.
+    /// The component a press captured. Drags and the matching release go to it
+    /// wherever the pointer has since travelled -- a fader keeps tracking once
+    /// the pointer leaves it, which is the behaviour a drag has to have.
     Component* mouseDownTarget = nullptr;
 
-    // The press's click count, kept for its release: a platform is free to
-    // report 1 on the up of a double-click, and mouseDoubleClick goes by the
-    // down.
+    /// The press's click count, kept for its release: a platform is free to
+    /// report 1 on the up of a double-click, and mouseDoubleClick goes by the
+    /// down.
     int pressClickCount = 1;
 
     Component* hoveredComponent = nullptr;
@@ -508,8 +510,8 @@ private:
     bool tabMovesFocus = true;
     bool respectsSafeArea = true;
 
-    // A press made by a finger, which an ancestor may still take as a scroll
-    // until it is settled one way or the other.
+    /// A press made by a finger, which an ancestor may still take as a scroll
+    /// until it is settled one way or the other.
     struct TouchGesture
     {
         bool active = false;
@@ -520,8 +522,8 @@ private:
 
     TouchGesture touch;
 
-    // Null entries are components that stopped while the list was being
-    // walked, swept once the walk is over.
+    /// Null entries are components that stopped while the list was being
+    /// walked, swept once the walk is over.
     Vector<Component*> animating;
     bool advancingAnimations = false;
 
@@ -530,8 +532,8 @@ private:
     bool animationClockEnabled = true;
     bool animationClockRetiring = false;
 
-    // What a deferred retirement checks before touching the host, since the
-    // link cannot be destroyed from inside its own tick.
+    /// What a deferred retirement checks before touching the host, since the
+    /// link cannot be destroyed from inside its own tick.
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
     int lastClipChanges = 0;
@@ -542,7 +544,7 @@ private:
     int lastDroppedPaths = 0;
     int lastMeshedPaths = 0;
 
-    // Shapes that drew through a mask somebody else had already rasterized.
+    /// Shapes that drew through a mask somebody else had already rasterized.
     int lastSharedMasks = 0;
     int lastRenderedLayers = 0;
     int lastRenderedGPUComponents = 0;
@@ -552,8 +554,8 @@ private:
     int culledGPUComponentsThisWalk = 0;
     int hiddenGPUComponentsThisWalk = 0;
 
-    // The captured subtree recordContent is recording, whose layer is about to
-    // be rendered and so needs no telling that its content changed.
+    /// The captured subtree recordContent is recording, whose layer is about to
+    /// be rendered and so needs no telling that its content changed.
     Component* recordingContent = nullptr;
     int lastImageDraws = 0;
 };

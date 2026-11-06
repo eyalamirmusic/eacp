@@ -1,0 +1,15 @@
+/** @dir Lib/eacp/Video
+    Video recording and playback (namespace eacp::Video). Built where
+    EACP_HAS_CAPTURE is on, except iOS and Android. There is no umbrella
+    header: include the piece you use.
+
+    - Recording: VideoRecorder writes a View to H.264 (.mov or .mp4) in one of
+      three CaptureMode tiers. Snapshot needs no permission but leaves a
+      WebView blank; Screen records the whole window and needs Screen Recording
+      permission on macOS; GpuDirect is for a GPUView only. start() and stop()
+      run on the main thread, pushAudio() on the audio thread, and the
+      VideoRecorder must outlive the Async stop() returns.
+    - Playback: Decoder is synchronous and policy-free; FrameStream runs it
+      ahead on a thread and answers frameAt(time); Player is a clock the
+      caller advances. To draw, use VideoView.
+*/

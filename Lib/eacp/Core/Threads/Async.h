@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Async<T>, a value that resolves later, with continuations run on the main thread.
+*/
+
 #include "EventLoop.h"
 #include "ThreadUtils.h"
 
@@ -11,6 +15,7 @@
 namespace eacp::Threads
 {
 
+/// Thrown by Async::waitFor and co_await when the Async was rejected or timed out.
 struct AsyncError : std::runtime_error
 {
     using std::runtime_error::runtime_error;
@@ -67,6 +72,8 @@ struct AsyncState : AsyncValue<T>
 template <typename T>
 class Async;
 
+/// The producer side of an Async. Every call is main thread only (asserted);
+/// only the first resolve or reject counts, later ones are ignored.
 template <typename T = void>
 class AsyncPromise
 {
@@ -111,9 +118,9 @@ public:
         state->settle();
     }
 
-    // Leaves the Async pending forever and drops every continuation queued
-    // on it, so nothing runs and nothing it captured is kept alive. For an
-    // owner going away whose callers must not hear from it again.
+    /// Leaves the Async pending forever and drops every continuation queued
+    /// on it, so nothing runs and nothing it captured is kept alive. For an
+    /// owner going away whose callers must not hear from it again.
     void abandon() const
     {
         assertMainThread();
@@ -145,6 +152,10 @@ struct PromiseReturn<void>
 };
 } // namespace detail
 
+/// A value or error that arrives later, settled by an AsyncPromise on the main
+/// thread. Continuations run on the main thread, synchronously when it settles
+/// or at once if it already has. Also a coroutine return type: an exception
+/// escaping the coroutine rejects it with what().
 template <typename T = void>
 class Async
 {
@@ -171,6 +182,7 @@ public:
         return state && state->status == detail::AsyncState<T>::Status::Rejected;
     }
 
+    /// Runs onValue or onError when it settles, or now if it already has.
     void then(OnValueCallback onValue, OnErrorCallback onError = {}) const
     {
         auto s = state;
@@ -195,6 +207,10 @@ public:
             cont();
     }
 
+    /// Main thread only; pumps the event loop until the value settles. Off the
+    /// main thread debug builds assert and release builds are undefined; use
+    /// then(), or a wait of your own, there. Throws
+    /// AsyncError when rejected, on timeout or on an empty Async.
     T waitFor(Time::MS timeout)
     {
         pumpUntilSettled(timeout);
@@ -292,6 +308,7 @@ private:
     std::shared_ptr<detail::AsyncState<T>> state;
 };
 
+/// Resolves on the main thread after duration, through callAfter.
 Async<void> delay(Time::MS duration);
 
 } // namespace eacp::Threads

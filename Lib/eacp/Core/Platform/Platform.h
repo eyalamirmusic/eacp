@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Compile-time platform queries and the running app's embedded name, company and
+    version.
+*/
+
 #include <string_view>
 
 #if defined(__APPLE__)
@@ -9,6 +14,7 @@
 namespace eacp::Platform
 {
 
+/// Use the constexpr queries below instead of platform macros.
 enum class OS
 {
     MacOS,
@@ -18,11 +24,11 @@ enum class OS
     Android
 };
 
-// The operating system this binary was built for. The single compile-time
-// platform check in the library — the one place that branches on platform
-// macros. Everything else queries it instead, so shared code can pick
-// behaviour without preprocessor switches. constexpr, so those queries fold
-// away and `if constexpr` works on them.
+/// The operating system this binary was built for. The single compile-time
+/// platform check in the library — the one place that branches on platform
+/// macros. Everything else queries it instead, so shared code can pick
+/// behaviour without preprocessor switches. constexpr, so those queries fold
+/// away and `if constexpr` works on them.
 constexpr OS current()
 {
 #if defined(_WIN32)
@@ -65,9 +71,9 @@ constexpr bool isAndroid()
     return current() == OS::Android;
 }
 
-// Desktop Linux only. Android shares its kernel, its Vulkan backend and its
-// GLSL, and nothing else — not its fonts, its files or its process model — so
-// code that means the backend asks isLinuxFamily().
+/// Desktop Linux only. Android shares its kernel, its Vulkan backend and its
+/// GLSL, and nothing else — not its fonts, its files or its process model — so
+/// code that means the backend asks isLinuxFamily().
 constexpr bool isLinux()
 {
     return current() == OS::Linux;
@@ -101,7 +107,7 @@ constexpr std::string_view name()
     return "Unknown";
 }
 
-// The CPU architecture this binary was built for: "arm64" or "x64".
+/// The CPU architecture this binary was built for: "arm64" or "x64".
 constexpr std::string_view architectureName()
 {
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -111,20 +117,20 @@ constexpr std::string_view architectureName()
 #endif
 }
 
-// Linkage of this eacp copy: isStandalone when it is compiled into the
-// process executable, isDLL when it lives in a dynamic library (a
-// runtime-loaded plugin). Resolved at runtime from this copy's own image
-// (Plugins::isDynamicLibrary), so every statically linked eacp copy in a
-// process answers for itself, and so these cannot be constexpr. Apps::run<T>
-// uses it to decide loop ownership: a DLL app is scheduled onto the host's
-// loop instead of running its own.
+/// Linkage of this eacp copy: isStandalone when it is compiled into the
+/// process executable, isDLL when it lives in a dynamic library (a
+/// runtime-loaded plugin). Resolved at runtime from this copy's own image
+/// (Plugins::isDynamicLibrary), so every statically linked eacp copy in a
+/// process answers for itself, and so these cannot be constexpr. Apps::run<T>
+/// uses it to decide loop ownership: a DLL app is scheduled onto the host's
+/// loop instead of running its own.
 bool isStandalone();
 bool isDLL();
 
-// The running app's name, company and version, read from the AppInfo.json
-// that eacp_set_gui_subsystem embeds via ResEmbed. Empty when this binary has
-// no embedded AppInfo (e.g. a console app that never called the CMake helper);
-// the company is also empty when the target set none.
+/// The running app's name, company and version, read from the AppInfo.json
+/// that eacp_set_gui_subsystem embeds via ResEmbed. Empty when this binary has
+/// no embedded AppInfo (e.g. a console app that never called the CMake helper);
+/// the company is also empty when the target set none.
 std::string_view getAppName();
 std::string_view getCompanyName();
 std::string_view getAppVersion();

@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file TextLayer: a retained single run of text in one font and color.
+    EACP_HAS_CONTEXT only. */
+
 #include "../Primitives/Font.h"
 #include "Layer.h"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file OptionalView: a view owning at most one child that fills it. */
+
 #include "View.h"
 
 namespace eacp::Graphics

@@ -1,0 +1,42 @@
+name: LLM Docs
+
+on:
+  push:
+    branches: [main, develop, jp/llm-docs] # jp/llm-docs: temporary, remove before merge
+
+concurrency:
+  group: llm-docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish agent docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Doxygen
+        run: Scripts/install-doxygen.sh
+
+      - name: Generate docs
+        run: python3 Scripts/generate-llm-docs.py --html
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.EACP_DOCS_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.EACP_DOCS_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Publish
+        run: |
+          if [[ "$GITHUB_REF_NAME" == main ]]; then
+            Scripts/publish-llm-docs.sh "${GITHUB_SHA::7}" main stable
+          elif [[ "$GITHUB_REF_NAME" == develop ]]; then
+            Scripts/publish-llm-docs.sh "${GITHUB_SHA::7}" latest develop
+          else
+            Scripts/publish-llm-docs.sh "${GITHUB_SHA::7}" "${GITHUB_REF_NAME//\//-}"
+          fi

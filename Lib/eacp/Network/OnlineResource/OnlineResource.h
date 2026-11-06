@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A file an app needs from the network, downloaded once and kept on disk. */
+
 #include "../Common.h"
 
 #include <eacp/Core/Threads/Async.h>
@@ -7,27 +9,27 @@
 
 namespace eacp
 {
-// A file an app needs from the network, kept on disk and fetched at most
-// once: a fetch finds the local copy, asks the server whether it changed
-// when the server gave it something to ask with, and downloads only when it
-// has to. Each successful download leaves a sidecar (<path>.resource.json)
-// recording the URL, the version and the server's validators; a later fetch
-// reads it back to decide. A .zip is unpacked and path() is the folder.
-//
-// Three ways in, from the most to the least hands-on:
-//
-//  * An OnlineResource object: start() returns an Async, and the object is
-//    where cancel() and progress() live. For a view that draws a progress
-//    bar and offers a cancel button.
-//  * fetchAsync(Options): the object is owned for you and the callbacks in
-//    Options are called on the main thread as it goes.
-//  * fetch(Options): the same, blocking until the resource is on disk. For a
-//    console app that needs the file before it does anything else.
-//
-// The transfer runs on a worker thread. It writes to <path>.part and renames
-// into place only once whole, so an interrupted download never passes for a
-// complete one. Destroying the object cancels a transfer in flight and
-// abandons its Async, so no continuation runs into a view that is gone.
+/// A file an app needs from the network, kept on disk and fetched at most
+/// once: a fetch finds the local copy, asks the server whether it changed
+/// when the server gave it something to ask with, and downloads only when it
+/// has to. Each successful download leaves a sidecar (`<path>.resource.json`)
+/// recording the URL, the version and the server's validators; a later fetch
+/// reads it back to decide. A .zip is unpacked and path() is the folder.
+///
+/// Three ways in, from the most to the least hands-on:
+///
+///  * An OnlineResource object: start() returns an Async, and the object is
+///    where cancel() and progress() live. For a view that draws a progress
+///    bar and offers a cancel button.
+///  * fetchAsync(Options): the object is owned for you and the callbacks in
+///    Options are called on the main thread as it goes.
+///  * fetch(Options): the same, blocking until the resource is on disk. For a
+///    console app that needs the file before it does anything else.
+///
+/// The transfer runs on a worker thread. It writes to `<path>.part` and renames
+/// into place only once whole, so an interrupted download never passes for a
+/// complete one. Destroying the object cancels a transfer in flight and
+/// abandons its Async, so no continuation runs into a view that is gone.
 class OnlineResource
 {
 public:
@@ -101,14 +103,14 @@ public:
         float fraction = -1.0f;
     };
 
-    // OnlineResources::get().getDirectory(): the app's one place for
-    // resources, FilePath::appSupportDirectory() / "Resources" unless set.
+    /// OnlineResources::get().getDirectory(): the app's one place for
+    /// resources, FilePath::appSupportDirectory() / "Resources" unless set.
     static FilePath defaultDirectory();
 
-    // Everything the free functions need in one place: the resource, where
-    // it goes, and what to call as it arrives. Both callbacks run on the
-    // main thread; onProgress every progressInterval while a transfer is
-    // under way and once more when it is over, onFinished exactly once.
+    /// Everything the free functions need in one place: the resource, where
+    /// it goes, and what to call as it arrives. Both callbacks run on the
+    /// main thread; onProgress every progressInterval while a transfer is
+    /// under way and once more when it is over, onFinished exactly once.
     struct Options
     {
         Info info {};
@@ -121,17 +123,17 @@ public:
         Time::MS progressInterval {100};
     };
 
-    // Runs the whole fetch with no object to hold: resolves on the main
-    // thread, and calls the Options callbacks along the way.
+    /// Runs the whole fetch with no object to hold: resolves on the main
+    /// thread, and calls the Options callbacks along the way.
     static Threads::Async<Result> fetchAsync(Options options);
 
-    // fetchAsync, pumping the event loop until it is done. Main thread only,
-    // and not from inside another event-loop callback; meant for the start
-    // of a console app, before its own loop runs. Throws std::runtime_error
-    // when the resource could not be had - a failed transfer, Info::timeout
-    // included - so the caller uses the path without checking. It returns
-    // only once the transfer has wound down, so exiting straight after is
-    // safe.
+    /// fetchAsync, pumping the event loop until it is done. Main thread only,
+    /// and not from inside another event-loop callback; meant for the start
+    /// of a console app, before its own loop runs. Throws std::runtime_error
+    /// when the resource could not be had - a failed transfer, Info::timeout
+    /// included - so the caller uses the path without checking. It returns
+    /// only once the transfer has wound down, so exiting straight after is
+    /// safe.
     static Result fetch(Options options);
 
     explicit OnlineResource(Info info,
@@ -145,30 +147,30 @@ public:
     const Info& info() const;
     const FilePath& directory() const;
 
-    // Where the resource is, or will be, on disk.
+    /// Where the resource is, or will be, on disk.
     FilePath path() const;
 
-    // A complete copy of this URL and version is on disk. Local only:
-    // start() may still ask the server whether it changed.
+    /// A complete copy of this URL and version is on disk. Local only:
+    /// start() may still ask the server whether it changed.
     bool isAvailable() const;
 
-    // Resolves on the main thread, exactly once, unless this object is
-    // destroyed first. Resolves at once with downloaded=false when the copy
-    // is trusted. While one is running a second start() resolves !ok with
-    // an error saying so.
+    /// Resolves on the main thread, exactly once, unless this object is
+    /// destroyed first. Resolves at once with downloaded=false when the copy
+    /// is trusted. While one is running a second start() resolves !ok with
+    /// an error saying so.
     Threads::Async<Result> start();
 
-    // Asks the transfer to stop; it still resolves, with cancelled set. A
-    // server that has gone quiet delays that: the cancel lands with the next
-    // byte or Info::timeout, whichever comes first.
+    /// Asks the transfer to stop; it still resolves, with cancelled set. A
+    /// server that has gone quiet delays that: the cancel lands with the next
+    /// byte or Info::timeout, whichever comes first.
     void cancel();
 
     bool isRunning() const;
 
-    // Readable from any thread, for a progress bar drawn while running.
+    /// Readable from any thread, for a progress bar drawn while running.
     Progress progress() const;
 
-    // Deletes the local copy and its sidecar. Not while running.
+    /// Deletes the local copy and its sidecar. Not while running.
     bool remove();
 
 private:

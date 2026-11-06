@@ -1,3 +1,7 @@
+/** @file
+    The Model.proto and MIL.proto subset an ML Program uses, as plain data, and its
+    protobuf encoding.
+*/
 #pragma once
 
 #include "Protobuf.h"
@@ -5,8 +9,8 @@
 #include <string>
 #include <variant>
 
-// The slice of Model.proto and MIL.proto an ML Program uses, as plain data, and
-// its encoding. Field numbers are coremltools' mlmodel/format ones.
+/// The slice of Model.proto and MIL.proto an ML Program uses, as plain data, and
+/// its encoding. Field numbers are coremltools' mlmodel/format ones.
 namespace eacp::ML::MIL
 {
 enum class DataType
@@ -49,7 +53,7 @@ struct StringList
     Vector<std::string> values;
 };
 
-// Raw little-endian elements, which is how an fp16 tensor goes inline.
+/// Raw little-endian elements, which is how an fp16 tensor goes inline.
 struct RawBytes
 {
     Bytes values;

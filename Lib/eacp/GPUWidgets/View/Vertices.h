@@ -1,21 +1,24 @@
 #pragma once
 
+/** @file Vertex types for the path shaders, and Point and Color registered as
+    shader values. */
+
 #include "../Common.h"
 
 #include <eacp/GPU/Codegen/Codegen.h>
 
 namespace eacp::GPUWidgets
 {
-// Position-only vertex, used for solid fills and strokes. A Graphics::Point is
-// exactly a float2, so it is the position field directly.
+/// Position-only vertex, used for solid fills and strokes. A Graphics::Point is
+/// exactly a float2, so it is the position field directly.
 struct FillVertex
 {
     Graphics::Point position;
 };
 
-// Position + RGBA colour vertex, used for gradient fills: PathView bakes a sampled
-// gradient colour into each vertex and the shader interpolates it across each
-// triangle.
+/// Position + RGBA colour vertex, used for gradient fills: PathView bakes a sampled
+/// gradient colour into each vertex and the shader interpolates it across each
+/// triangle.
 struct GradientVertex
 {
     Graphics::Point position;

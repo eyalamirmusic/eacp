@@ -1,9 +1,14 @@
 #pragma once
 
+/** @file
+    Thread, a joining thread wrapper that keeps `<thread>` out of public headers.
+*/
+
 #include "../Utils/Common.h"
 
 namespace eacp::Threads
 {
+/// A thread that joins in its destructor, like std::jthread without the stop token.
 class Thread
 {
 public:

@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Trim, case, split, hex, UTF-8/wide, toString and tryParse. */
+
 #include "Containers.h"
 
 #include <charconv>
@@ -11,69 +13,69 @@
 
 namespace eacp::Strings
 {
-// Strips leading and trailing spaces, tabs, CRs and LFs.
+/// Strips leading and trailing spaces, tabs, CRs and LFs.
 std::string trim(std::string_view s);
 
-// The last line holding anything but whitespace, its trailing whitespace and
-// line ending stripped; empty when there is none.
+/// The last line holding anything but whitespace, its trailing whitespace and
+/// line ending stripped; empty when there is none.
 std::string lastNonEmptyLine(std::string_view text);
-// The whole line, without its line ending, holding the first occurrence of
-// needle; empty when needle is absent. An empty needle matches the first line.
+/// The whole line, without its line ending, holding the first occurrence of
+/// needle; empty when needle is absent. An empty needle matches the first line.
 std::string lineContaining(std::string_view text, std::string_view needle);
 
-// ASCII-only lowercasing, for matching extensions, header names and the like.
+/// ASCII-only lowercasing, for matching extensions, header names and the like.
 std::string toLower(std::string_view s);
 std::string toUpper(std::string_view s);
 
-// Changes the case of the first character only, leaving the rest as written -
-// for identifiers and labels, where lowercasing the whole string would destroy
-// casing that is already meaningful ("Escape", not "ESCAPE"). Empty in, empty
-// out.
+/// Changes the case of the first character only, leaving the rest as written -
+/// for identifiers and labels, where lowercasing the whole string would destroy
+/// casing that is already meaningful ("Escape", not "ESCAPE"). Empty in, empty
+/// out.
 std::string capitalize(std::string_view s);
 std::string uncapitalize(std::string_view s);
 
 bool equalsCaseInsensitive(std::string_view a, std::string_view b);
 
-// The pieces between each delimiter, empty ones included. With maximumParts
-// above zero the last piece is the unsplit rest, so "a b c" split on ' ' into
-// two is {"a", "b c"}.
+/// The pieces between each delimiter, empty ones included. With maximumParts
+/// above zero the last piece is the unsplit rest, so "a b c" split on ' ' into
+/// two is {"a", "b c"}.
 Vector<std::string>
     split(std::string_view text, char delimiter, int maximumParts = 0);
 
-// The parts with separator between each, empty parts included.
+/// The parts with separator between each, empty parts included.
 std::string join(const Vector<std::string>& parts, std::string_view separator);
 
 int hexCharToInt(char c);
 
-// A hexadecimal number, with or without a leading "0x" or "0X", the whole of
-// text: nullopt for empty text, any other character, or a value past 64 bits.
+/// A hexadecimal number, with or without a leading "0x" or "0X", the whole of
+/// text: nullopt for empty text, any other character, or a value past 64 bits.
 std::optional<std::uint64_t> parseHex(std::string_view text);
 
-// Two lowercase hex digits per byte, in order: {0x0a, 0xff} is "0aff".
+/// Two lowercase hex digits per byte, in order: {0x0a, 0xff} is "0aff".
 std::string toHex(Span<const std::uint8_t> bytes);
 
-// UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
-// (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the
-// framework crosses that boundary - every Win32 -W call, Media Foundation URL
-// and DirectWrite string goes through here.
-//
-// Hand-rolled rather than MultiByteToWideChar so one implementation serves every
-// platform, and so the answer never depends on a code page or a locale.
-//
-// Malformed input is not an error: each ill-formed byte becomes U+FFFD and the
-// scan resumes at the next one, so this neither throws nor fails. Callers that
-// must reject bad UTF-8 have to check before converting.
+/// UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
+/// (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the
+/// framework crosses that boundary - every Win32 -W call, Media Foundation URL
+/// and DirectWrite string goes through here.
+///
+/// Hand-rolled rather than MultiByteToWideChar so one implementation serves every
+/// platform, and so the answer never depends on a code page or a locale.
+///
+/// Malformed input is not an error: each ill-formed byte becomes U+FFFD and the
+/// scan resumes at the next one, so this neither throws nor fails. Callers that
+/// must reject bad UTF-8 have to check before converting.
 std::wstring widen(std::string_view utf8);
 
-// The reverse leg, on the same contract: unpaired surrogates and units past
-// U+10FFFF become U+FFFD, so it neither throws nor fails. Together these two are
-// the framework's only encoding conversions - nothing else should call
-// MultiByteToWideChar or WideCharToMultiByte.
+/// The reverse leg, on the same contract: unpaired surrogates and units past
+/// U+10FFFF become U+FFFD, so it neither throws nor fails. Together these two are
+/// the framework's only encoding conversions - nothing else should call
+/// MultiByteToWideChar or WideCharToMultiByte.
 std::string narrow(std::wstring_view wide);
 
-// Number/bool → string. String-like and char inputs pass through unchanged so
-// callers can concatenate heterogeneous values without minding their types.
-// This is the single place the framework turns a value into text (see LOG).
+/// Number/bool → string. String-like and char inputs pass through unchanged so
+/// callers can concatenate heterogeneous values without minding their types.
+/// This is the single place the framework turns a value into text (see LOG).
 std::string toString(const std::string& s);
 std::string toString(std::string_view s);
 std::string toString(const char* s);
@@ -94,7 +96,7 @@ std::string toString(const T& value)
     }
 }
 
-// Concatenates any mix of the above into one string, left to right.
+/// Concatenates any mix of the above into one string, left to right.
 template <typename... Args>
 std::string concat(const Args&... args)
 {
@@ -113,10 +115,10 @@ bool parseFloating(std::string_view s, float& out);
 bool parseFloating(std::string_view s, double& out);
 } // namespace Detail
 
-// string → number, the counterpart to toString. Integers go through from_chars
-// and float/double through Detail::parseFloating, so neither throws nor depends
-// on the locale, and both reject trailing junk. Returns nullopt unless the
-// whole string is a valid T.
+/// string → number, the counterpart to toString. Integers go through from_chars
+/// and float/double through a locale-free parser, so neither throws nor depends
+/// on the locale, and both reject trailing junk. Returns nullopt unless the
+/// whole string is a valid T.
 template <typename T>
 std::optional<T> tryParse(std::string_view s)
 {
@@ -142,8 +144,8 @@ std::optional<T> tryParse(std::string_view s)
     return value;
 }
 
-// true/yes/on/1 and false/no/off/0, in any case. Nothing else, not even
-// surrounding whitespace.
+/// true/yes/on/1 and false/no/off/0, in any case. Nothing else, not even
+/// surrounding whitespace.
 std::optional<bool> tryParseBool(std::string_view s);
 
 template <typename T>

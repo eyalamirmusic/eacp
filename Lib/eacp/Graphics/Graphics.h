@@ -1,3 +1,20 @@
+/** @file
+    Windows, views and native 2D drawing. A `View` is a rectangle in a tree that
+    paints through `paint(Context&)` and takes mouse, key and touch events; a
+    `Window` is the platform window (Cocoa, Win32, UIKit, Wayland or X11) whose
+    content is one view. Use views and windows from the main thread.
+
+    To get a view on screen, pair it with its window in one member,
+    `Graphics::ViewWindow<MyView>`, or skip the app struct entirely with
+    `return Graphics::runWindowedApp<MyView>(options, viewArgs...);`.
+
+    `Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and the
+    image codecs exist only where `EACP_HAS_CONTEXT` is 1 (Apple and Windows).
+    On Linux and Android they are left out, not stubbed: draw with the GPU and
+    `eacp-text`/`eacp-ui` there. GPU rendering inside a component tree goes
+    through `UI::GPUComponent`, never a native child `GPUView`, which sits
+    above the whole tree unclipped and cannot present at all on Android.
+*/
 #pragma once
 
 #include "Image/ImageOps.h"

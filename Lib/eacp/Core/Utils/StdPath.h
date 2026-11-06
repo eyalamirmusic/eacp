@@ -1,5 +1,9 @@
 #pragma once
 
+/** @file
+    Internal: conversion between FilePath and std::filesystem::path, for .cpp files.
+*/
+
 #include "FilePath.h"
 
 #include <filesystem>

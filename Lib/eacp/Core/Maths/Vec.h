@@ -1,4 +1,7 @@
 #pragma once
+/** @file
+    Vec2, Vec3 and Vec4: plain float vectors laid out exactly as shader float2/3/4.
+*/
 
 #include "Constants.h"
 
@@ -7,18 +10,18 @@
 
 namespace eacp::Maths
 {
-// Plain float vectors: named components, no padding, nothing virtual, so one is
-// laid out exactly as the float2 / float3 / float4 a shader reads. That is what
-// lets the same struct be the CPU value you do arithmetic on and the vertex
-// field or uniform you hand the GPU — see GPU/Codegen/MathValues.h, which
-// registers the shader shape of each.
-//
-// Graphics::Point stays what it is: the y-down point the 2D layer measures a
-// window in. Vec2 is the geometry sibling of Vec3 and Vec4, with no orientation
-// of its own.
-//
-// operator[] is what the shared arithmetic below is written against, so each
-// operator is defined once for all three rather than three times over.
+/// Plain float vectors: named components, no padding, nothing virtual, so one is
+/// laid out exactly as the float2 / float3 / float4 a shader reads. That is what
+/// lets the same struct be the CPU value you do arithmetic on and the vertex
+/// field or uniform you hand the GPU — see GPU/Codegen/MathValues.h, which
+/// registers the shader shape of each.
+///
+/// Graphics::Point stays what it is: the y-down point the 2D layer measures a
+/// window in. Vec2 is the geometry sibling of Vec3 and Vec4, with no orientation
+/// of its own.
+///
+/// operator[] is what the shared arithmetic below is written against, so each
+/// operator is defined once for all three rather than three times over.
 struct Vec2
 {
     static constexpr auto size = 2;
@@ -122,8 +125,8 @@ constexpr V operator-(const V& a, const V& b)
     return detail::zip(a, b, [](float x, float y) { return x - y; });
 }
 
-// Component-wise, the way a shader multiplies two vectors — a colour scaled by a
-// tint. The products with a geometric meaning are dot() and cross() below.
+/// Component-wise, the way a shader multiplies two vectors — a colour scaled by a
+/// tint. The products with a geometric meaning are dot() and cross() below.
 template <AnyVec V>
 constexpr V operator*(const V& a, const V& b)
 {
@@ -218,8 +221,8 @@ float distance(const V& a, const V& b)
     return length(a - b);
 }
 
-// A vector shorter than epsilon has no direction worth keeping, so it comes back
-// as the zero vector rather than as NaNs.
+/// A vector shorter than epsilon has no direction worth keeping, so it comes back
+/// as the zero vector rather than as NaNs.
 template <AnyVec V>
 V normalize(const V& value)
 {

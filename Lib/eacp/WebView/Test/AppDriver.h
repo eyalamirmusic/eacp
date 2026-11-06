@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file AppDriver, which drives and inspects a live WebView page from a test. */
+
 #include "../Common.h"
 
 #include "DomNode.h"
@@ -16,19 +18,19 @@ namespace eacp::WebView::Test
 
 struct CallOptions
 {
-    // Per-call timeout override. Empty -> driver default; if that's
-    // also empty, defaultTimeoutMs constant below.
+    /// Per-call timeout override. Empty -> driver default; if that's
+    /// also empty, defaultTimeoutMs constant below.
     std::optional<int> timeoutMs;
 };
 
 struct AppDriverOptions
 {
-    // Default per-command timeout for this driver. Empty -> the
-    // built-in 5s applies.
+    /// Default per-command timeout for this driver. Empty -> the
+    /// built-in 5s applies.
     std::optional<int> defaultTimeoutMs;
 
-    // Directory snapshot() writes <name>.html + <name>.png into.
-    // Empty -> "<cwd>/test-results/snapshots". Created lazily.
+    /// Directory snapshot() writes <name>.html + <name>.png into.
+    /// Empty -> "<cwd>/test-results/snapshots". Created lazily.
     std::string snapshotDir;
 };
 
@@ -36,16 +38,16 @@ struct ScreenshotOptions
 {
     std::optional<int> timeoutMs;
 
-    // Write the screenshot to this path; the image format is inferred
-    // from the extension (.png / .jpg / .jpeg). Empty -> do not write.
+    /// Write the screenshot to this path; the image format is inferred
+    /// from the extension (.png / .jpg / .jpeg). Empty -> do not write.
     std::string path;
 };
 
 struct ScreenshotResult
 {
-    // Decoded snapshot pixels. Re-encode via image.toPng()/toJpeg().
+    /// Decoded snapshot pixels. Re-encode via image.toPng()/toJpeg().
     Graphics::Image image;
-    // Set only when ScreenshotOptions::path was non-empty.
+    /// Set only when ScreenshotOptions::path was non-empty.
     std::string path;
 };
 
@@ -53,10 +55,10 @@ struct SnapshotOptions
 {
     std::optional<int> timeoutMs;
 
-    // Override the driver's configured snapshot directory.
+    /// Override the driver's configured snapshot directory.
     std::string dir;
 
-    // DOM selector to scope the HTML snapshot to. Empty -> whole doc.
+    /// DOM selector to scope the HTML snapshot to. Empty -> whole doc.
     std::string selector;
 };
 
@@ -69,15 +71,15 @@ struct SnapshotResult
     std::string screenshotPath;
 };
 
-// In-process driver for a WebView app. Lives on the main thread
-// (same thread the WebView and its bridge run on). Each operation
-// schedules work on the WebView, then pumps the event loop via
-// runEventLoopFor() until the callback completes. No threading,
-// no HTTP — everything is direct calls.
-//
-// Methods throw std::runtime_error on JS exceptions, timeouts, or
-// missing selectors. Use exists()/waitFor() to gate optional
-// behaviour instead of catching.
+/// In-process driver for a WebView app. Lives on the main thread
+/// (same thread the WebView and its bridge run on). Each operation
+/// schedules work on the WebView, then pumps the event loop via
+/// runEventLoopFor() until the callback completes. No threading,
+/// no HTTP — everything is direct calls.
+///
+/// Methods throw std::runtime_error on JS exceptions, timeouts, or
+/// missing selectors. Use exists()/waitFor() to gate optional
+/// behaviour instead of catching.
 class AppDriver
 {
 public:
@@ -91,7 +93,7 @@ public:
     AppDriver(AppDriver&&) = delete;
     AppDriver& operator=(AppDriver&&) = delete;
 
-    // Application bridge commands — direct dispatch, no JS hop.
+    /// Application bridge commands — direct dispatch, no JS hop.
     Miro::JSON invoke(const std::string& command, const Miro::JSON& payload = {});
 
     template <typename Resp, typename Req>
@@ -128,14 +130,14 @@ public:
     int count(const std::string& selector, CallOptions opts = {});
     bool waitFor(const std::string& selector, CallOptions opts = {});
 
-    // Polls until exactly `count` elements match the selector (or the
-    // timeout elapses). A readiness gate for lists that stream their
-    // items in over several renders: waitFor(selector) returns on the
-    // first match, which can race a count() of the still-growing list.
+    /// Polls until exactly `count` elements match the selector (or the
+    /// timeout elapses). A readiness gate for lists that stream their
+    /// items in over several renders: waitFor(selector) returns on the
+    /// first match, which can race a count() of the still-growing list.
     bool waitForCount(const std::string& selector, int count, CallOptions opts = {});
 
-    // Evaluates an arbitrary JS expression. Wrapped so the result is
-    // round-trip JSON-shaped; the unwrapped value is returned.
+    /// Evaluates an arbitrary JS expression. Wrapped so the result is
+    /// round-trip JSON-shaped; the unwrapped value is returned.
     Miro::JSON evaluate(const std::string& expression, CallOptions opts = {});
 
     template <typename T>
@@ -149,21 +151,21 @@ public:
 
     std::string dom(std::string_view selector = {}, CallOptions opts = {});
 
-    // Structured DOM capture. query()/queryAll() serialise the matched
-    // element(s) and their element subtree into DomNode values that can
-    // be inspected in C++ without further round-trips — tag(), attr(),
-    // hasClass(), children, find()/findAll(), etc. query() throws when
-    // nothing matches; tryQuery() returns nullopt; queryAll() returns
-    // every match (empty when there are none).
+    /// Structured DOM capture. query()/queryAll() serialise the matched
+    /// element(s) and their element subtree into DomNode values that can
+    /// be inspected in C++ without further round-trips — tag(), attr(),
+    /// hasClass(), children, find()/findAll(), etc. query() throws when
+    /// nothing matches; tryQuery() returns nullopt; queryAll() returns
+    /// every match (empty when there are none).
     DomNode query(const std::string& selector, CallOptions opts = {});
     std::optional<DomNode> tryQuery(const std::string& selector,
                                     CallOptions opts = {});
     Vector<DomNode> queryAll(const std::string& selector, CallOptions opts = {});
 
-    // Async siblings of the above. Each returns an Async that resolves
-    // on the main thread; use with co_await inside a coroutine test
-    // body. Rejection surfaces as an AsyncError (same message the
-    // sync variant would throw as std::runtime_error).
+    /// Async siblings of the above. Each returns an Async that resolves
+    /// on the main thread; use with co_await inside a coroutine test
+    /// body. Rejection surfaces as an AsyncError (same message the
+    /// sync variant would throw as std::runtime_error).
     Threads::Async<bool> clickAsync(const std::string& selector,
                                     CallOptions opts = {});
     Threads::Async<bool> fillAsync(const std::string& selector,

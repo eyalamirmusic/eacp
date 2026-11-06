@@ -1,9 +1,13 @@
 #pragma once
 
+/** @file ViewList: an owning list of child views of one parent. */
+
 #include "View.h"
 
 namespace eacp::Graphics
 {
+/// Owns child views and adds each one created to `parent`; erasing
+/// destroys the view, which removes it from the parent.
 template <typename T = View>
 struct ViewList
 {

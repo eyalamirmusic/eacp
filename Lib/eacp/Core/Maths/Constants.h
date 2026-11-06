@@ -1,4 +1,5 @@
 #pragma once
+/** @file Float constants, degree/radian conversion and tolerant float comparison. */
 
 #include <concepts>
 
@@ -16,39 +17,41 @@ constexpr auto pi = (float) detail::exactPi;
 constexpr auto twoPi = 2.f * pi;
 constexpr auto halfPi = 0.5f * pi;
 
-// The length below which a vector counts as having no direction, so normalize()
-// answers with a zero vector instead of dividing by it and handing back NaNs.
+/// The length below which a vector counts as having no direction, so normalize()
+/// answers with a zero vector instead of dividing by it and handing back NaNs.
 constexpr auto epsilon = 1.e-6f;
 
-// How near two floats have to be for nearlyEqual to call them equal. Wider than
-// epsilon on purpose: this is the rounding a few operations leave behind — a
-// matrix product, a normalize, a trig call — rather than a threshold for a value
-// being nothing at all.
+/// How near two floats have to be for nearlyEqual to call them equal. Wider than
+/// epsilon on purpose: this is the rounding a few operations leave behind — a
+/// matrix product, a normalize, a trig call — rather than a threshold for a value
+/// being nothing at all.
 constexpr auto tolerance = 1.e-5f;
 
+/// Degrees to radians.
 template <std::floating_point T>
 constexpr T radians(T degreeValue)
 {
     return degreeValue * (T) (detail::exactPi / 180.L);
 }
 
+/// Radians to degrees.
 template <std::floating_point T>
 constexpr T degrees(T radianValue)
 {
     return radianValue * (T) (180.L / detail::exactPi);
 }
 
-// std::abs is not constexpr until C++26, and the things built on this one — the
-// comparison below, the matrix inverse — are worth having at compile time.
+/// std::abs is not constexpr until C++26, and the things built on this one — the
+/// comparison below, the matrix inverse — are worth having at compile time.
 template <std::floating_point T>
 constexpr T magnitude(T value)
 {
     return value < T {} ? -value : value;
 }
 
-// Float equality with slack, which is the only kind worth asking for once a
-// value has been through any arithmetic at all. A NaN on either side is never
-// nearly equal to anything, itself included.
+/// Float equality with slack, which is the only kind worth asking for once a
+/// value has been through any arithmetic at all. A NaN on either side is never
+/// nearly equal to anything, itself included.
 template <std::floating_point T>
 constexpr bool nearlyEqual(T a, T b, T allowed = (T) tolerance)
 {

@@ -1,5 +1,11 @@
 #pragma once
 
+/** @file Plan, a compute graph decoded once into the immutable form the CPU executor
+    runs.
+
+    A compute graph decoded once; immutable, and holds no pointer to the graph.
+*/
+
 #include "Lanes.h"
 
 #include <eacp/GPU/Codegen/ShaderGraph.h>
@@ -9,8 +15,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-
-// A compute graph decoded once; immutable, and holds no pointer to the graph.
 
 namespace eacp::GPU::CpuCompute
 {
@@ -88,7 +92,7 @@ enum class Op : std::uint8_t
     Helper
 };
 
-// The eacp* shader helpers, run through Helpers.h.
+/// The eacp* shader helpers, run through Helpers.h.
 enum class HelperFunction : std::uint8_t
 {
     Erf,
@@ -147,11 +151,11 @@ enum class MathFunction : std::uint8_t
     Abs
 };
 
-// A kernel with no group-scope feature runs several consecutive x groups as
-// one batch of about targetBatchLanes lanes; 1 keeps a group per batch. A
-// batch whose workspace would pass maxBatchBytes is halved until it fits or
-// is one group, since every per-lane row - array constants included - grows
-// with it.
+/// A kernel with no group-scope feature runs several consecutive x groups as
+/// one batch of about targetBatchLanes lanes; 1 keeps a group per batch. A
+/// batch whose workspace would pass maxBatchBytes is halved until it fits or
+/// is one group, since every per-lane row - array constants included - grows
+/// with it.
 struct PlanOptions
 {
     static constexpr int defaultBatchLanes = 1024;
@@ -161,12 +165,14 @@ struct PlanOptions
     std::size_t maxBatchBytes = defaultBatchBytes;
 };
 
+/// Immutable once built; Executor owns one.
+/// A graph the interpreter cannot run gives an invalid plan, never a throw.
 class Plan
 {
 public:
     static constexpr int maxSlots = ComputePass::portableBufferSlots;
 
-    // Metal's setBytes limit: the uniforms tightly packed, a word per scalar.
+    /// Metal's setBytes limit: the uniforms tightly packed, a word per scalar.
     static constexpr int maxUniformWords = 1024;
 
     struct Node
@@ -182,12 +188,12 @@ public:
         std::uint32_t scratch = 0;
         bool used = false;
 
-        // A buffer read whose index is lane 0's plus lane * rampScale on every
-        // real lane, wrapping, with the batch spanning less than 2^32 elements.
+        /// A buffer read whose index is lane 0's plus lane * rampScale on every
+        /// real lane, wrapping, with the batch spanning less than 2^32 elements.
         bool ramp = false;
         Word rampScale = 0;
 
-        // An unsigned / or % whose scalar divisor is the same on every lane.
+        /// An unsigned / or % whose scalar divisor is the same on every lane.
         bool invariantDivisor = false;
     };
 
@@ -212,8 +218,8 @@ public:
         SimdMatrixMemory memory = SimdMatrixMemory::Shared;
         SimdMatrixElement element = SimdMatrixElement::Float;
 
-        // A store whose index is a ramp (as Node::ramp) that never gives two
-        // (lane, component) pairs the same element.
+        /// A store whose index is a ramp (as Node::ramp) that never gives two
+        /// (lane, component) pairs the same element.
         bool ramp = false;
         Word rampScale = 0;
     };
@@ -246,8 +252,8 @@ public:
         std::uint32_t storage = 0;
     };
 
-    // Element e, component c of a shared array is the word at
-    // storage + e * components + c: one copy per group, not per lane.
+    /// Element e, component c of a shared array is the word at
+    /// storage + e * components + c: one copy per group, not per lane.
     struct SharedLayout
     {
         int elements = 0;
@@ -274,14 +280,14 @@ public:
     constexpr bool isValid() const { return failure.empty(); }
     constexpr const std::string& reason() const { return failure; }
 
-    // Unique to each plan built, and shared by its copies, which have its
-    // layout: what a Workspace or a PreparedDispatch is checked against.
+    /// Unique to each plan built, and shared by its copies, which have its
+    /// layout: what a Workspace or a PreparedDispatch is checked against.
     constexpr std::uint64_t serial() const { return planSerial; }
 
     constexpr DispatchRank rank() const { return dispatchRank; }
     constexpr ThreadGroupShape groupShape() const { return shape; }
 
-    // One group's lanes, and a batch's: groupsPerBatch() groups back to back.
+    /// One group's lanes, and a batch's: groupsPerBatch() groups back to back.
     constexpr int lanes() const { return laneCount; }
     constexpr int groupsPerBatch() const { return groupsInBatch; }
     constexpr int batchLanes() const { return laneCount * groupsInBatch; }
@@ -296,8 +302,8 @@ public:
     int uniformCount() const;
     ValueType uniformType(int slot) const;
 
-    // Uniform slot s is the byteSize words at uniformOffset(s) of a block of
-    // uniformBlockWords(), packed in slot order.
+    /// Uniform slot s is the byteSize words at uniformOffset(s) of a block of
+    /// uniformBlockWords(), packed in slot order.
     int uniformOffset(int slot) const;
     constexpr int uniformBlockWords() const { return uniformWordCount; }
 
@@ -312,8 +318,8 @@ public:
 
     constexpr const Vector<int>& schedule() const { return scheduleList; }
 
-    // The nodes every lane of a dispatch, or of a group, computes alike: run
-    // once after the uniforms are read, and once per group after its ids.
+    /// The nodes every lane of a dispatch, or of a group, computes alike: run
+    /// once after the uniforms are read, and once per group after its ids.
     constexpr const Range& dispatchSchedule() const { return dispatchRange; }
     constexpr const Range& groupSchedule() const { return groupRange; }
 
@@ -349,8 +355,8 @@ public:
 
     constexpr std::uint32_t reductionScratch() const { return reductionOffset; }
 
-    // Fragment f of SIMD group g is a dense row-major 8x8 at
-    // fragment(f, g): held whole per SIMD group, not spread over its lanes.
+    /// Fragment f of SIMD group g is a dense row-major 8x8 at
+    /// fragment(f, g): held whole per SIMD group, not spread over its lanes.
     static constexpr int fragmentElements = simdMatrixSize * simdMatrixSize;
 
     constexpr int simdGroupCount() const
@@ -381,8 +387,8 @@ public:
 
     constexpr std::uint32_t realLanes() const { return realLaneOffset; }
 
-    // Per lane of a batch: which of its groups the lane is in, and its x
-    // offset from the batch's first thread (groupInBatch * shape.x + local x).
+    /// Per lane of a batch: which of its groups the lane is in, and its x
+    /// offset from the batch's first thread (groupInBatch * shape.x + local x).
     constexpr std::uint32_t groupInBatch() const { return groupInBatchOffset; }
     constexpr std::uint32_t batchX() const { return batchXOffset; }
 

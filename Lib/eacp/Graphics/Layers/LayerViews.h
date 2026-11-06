@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Views that each own one TextLayer or ShapeLayer sized to their bounds.
+    EACP_HAS_CONTEXT only. */
+
 #include "TextLayer.h"
 #include "ShapeLayer.h"
 #include "../View/View.h"

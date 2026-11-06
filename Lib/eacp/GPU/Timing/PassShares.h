@@ -1,20 +1,25 @@
 #pragma once
 
+/** @file
+    Splits overlapping pass intervals into per-pass shares of a frame that can be
+    summed.
+*/
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <algorithm>
 
 namespace eacp::GPU
 {
-// When one timed pass had work in flight on the GPU, as up to two intervals in
-// milliseconds from an origin every pass of the frame shares.
-//
-// Two because of Metal: on a tile-based GPU a render pass's vertex stage runs
-// well ahead of its fragment stage - often while the passes before it are still
-// shading - and the gap between the two is the pass waiting its turn, not
-// working. A render pass there is its vertex and its fragment stage; everything
-// else, on every backend, is one interval. A pass whose samples never arrived
-// has none.
+/// When one timed pass had work in flight on the GPU, as up to two intervals in
+/// milliseconds from an origin every pass of the frame shares.
+///
+/// Two because of Metal: on a tile-based GPU a render pass's vertex stage runs
+/// well ahead of its fragment stage - often while the passes before it are still
+/// shading - and the gap between the two is the pass waiting its turn, not
+/// working. A render pass there is its vertex and its fragment stage; everything
+/// else, on every backend, is one interval. A pass whose samples never arrived
+/// has none.
 struct PassActivity
 {
     struct Interval
@@ -33,17 +38,17 @@ struct PassActivity
     int count = 0;
 };
 
-// Each pass's share of the frame, and its span.
-//
-// The share divides the GPU's busy time between the passes that were busy: the
-// timeline is cut at every interval boundary, and each piece goes in equal parts
-// to the passes with work in flight across it. A pass that ran alone is charged
-// exactly its own time, two that overlapped split the overlap, and the shares
-// add up to the time at least one timed pass was running - so, unlike the
-// spans, they can be summed into a frame.
-//
-// The span is the first interval's start to the last one's end, waiting
-// included. Where passes never overlap - D3D12 and Vulkan - it equals the share.
+/// Each pass's share of the frame, and its span.
+///
+/// The share divides the GPU's busy time between the passes that were busy: the
+/// timeline is cut at every interval boundary, and each piece goes in equal parts
+/// to the passes with work in flight across it. A pass that ran alone is charged
+/// exactly its own time, two that overlapped split the overlap, and the shares
+/// add up to the time at least one timed pass was running - so, unlike the
+/// spans, they can be summed into a frame.
+///
+/// The span is the first interval's start to the last one's end, waiting
+/// included. Where passes never overlap - D3D12 and Vulkan - it equals the share.
 template <int MaxPasses>
 void sharePassTimes(const PassActivity* activity,
                     int passCount,

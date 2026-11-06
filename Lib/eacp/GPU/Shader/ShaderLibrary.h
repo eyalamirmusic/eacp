@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    ShaderLibrary, a ShaderSource compiled on a Device, or loaded from a binary
+    compiled at build time.
+*/
+
 #include "../Common.h"
 
 #include "ShaderSource.h"
@@ -8,32 +13,35 @@ namespace eacp::GPU
 {
 class Device;
 
-// A compiled shader library (MTLLibrary on Metal). Holds the entry-point names
-// it was built with so a pipeline only needs to reference the library.
+/// A compiled shader library (MTLLibrary on Metal). Holds the entry-point names
+/// it was built with so a pipeline only needs to reference the library.
 class ShaderLibrary
 {
 public:
+    /// Loads the build-time binary for `source` when one is embedded, else
+    /// compiles the source on `device`. Failure, an invalid device or an empty
+    /// source leaves isValid() false; nothing throws.
     ShaderLibrary(Device& device, const ShaderSource& source);
 
     const std::string& vertexEntry() const;
     const std::string& fragmentEntry() const;
     const std::string& computeEntry() const;
 
-    // False for a vertex-only library (ShaderSource::withFragment with an empty
-    // entry), whose pipelines have no fragment stage.
+    /// False for a vertex-only library (ShaderSource::withFragment with an empty
+    /// entry), whose pipelines have no fragment stage.
     bool hasFragment() const;
 
-    // The group the kernel was emitted for, carried to the pipeline the pass
-    // dispatches through.
+    /// The group the kernel was emitted for, carried to the pipeline the pass
+    /// dispatches through.
     ThreadGroupShape threadGroupShape() const;
 
     bool isValid() const;
 
-    // True when the library was loaded from a binary compiled ahead of time
-    // (PrecompiledShaders.h) rather than compiled from its source at runtime.
+    /// True when the library was loaded from a binary compiled ahead of time
+    /// (PrecompiledShaders.h) rather than compiled from its source at runtime.
     bool isPrecompiled() const;
 
-    // Opaque native handle for cross-translation-unit use by the pipeline.
+    /// Opaque native handle for cross-translation-unit use by the pipeline.
     void* nativeLibrary() const;
 
 private:

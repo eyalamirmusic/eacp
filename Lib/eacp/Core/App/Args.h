@@ -1,5 +1,10 @@
 #pragma once
 
+/** @file
+    Args::Parser, a command-line parser that binds options to variables the caller
+    already has.
+*/
+
 #include "../Utils/Containers.h"
 #include "../Utils/FilePath.h"
 #include "../Utils/Strings.h"
@@ -14,31 +19,31 @@
 #include <type_traits>
 #include <utility>
 
-// A declarative command-line parser that binds each option to a variable the
-// caller already has, so there is no parallel options struct to copy out of:
-//
-//   auto cli = Args::Parser {"Scanner", "Describes every plugin."};
-//   cli.option("--output", "-o", options.cachePath, "the database to write");
-//   cli.option("--jobs", options.jobs, "parallel workers").atLeast(1);
-//   cli.flag("--force", options.force, "rescan everything");
-//   cli.positional(bundles, "bundle");
-//
-//   if (auto code = cli.exitCodeFor(cli.parse()))
-//       return *code;
-//
-// parse() reads the command line runConsole stored; parse(argc, argv) and
-// parse(args) take one explicitly.
-//
-// The bound variables' values when parse() is first called are the defaults the
-// help text shows, so they never drift from the code.
+/// A declarative command-line parser that binds each option to a variable the
+/// caller already has, so there is no parallel options struct to copy out of:
+///
+///   auto cli = Args::Parser {"Scanner", "Describes every plugin."};
+///   cli.option("--output", "-o", options.cachePath, "the database to write");
+///   cli.option("--jobs", options.jobs, "parallel workers").atLeast(1);
+///   cli.flag("--force", options.force, "rescan everything");
+///   cli.positional(bundles, "bundle");
+///
+///   if (auto code = cli.exitCodeFor(cli.parse()))
+///       return *code;
+///
+/// parse() reads the command line runConsole stored; parse(argc, argv) and
+/// parse(args) take one explicitly.
+///
+/// The bound variables' values when parse() is first called are the defaults the
+/// help text shows, so they never drift from the code.
 namespace eacp::Args
 {
-// The exit code for arguments that did not parse: the usual one for a usage
-// error (getopt tools, Python's argparse).
+/// The exit code for arguments that did not parse: the usual one for a usage
+/// error (getopt tools, Python's argparse).
 constexpr int badArguments = 2;
 
-// ok: the program should go on. help: -h/--help was asked for. Otherwise
-// error says what was wrong, e.g. "--jobs needs a whole number, not 'abc'".
+/// ok: the program should go on. help: -h/--help was asked for. Otherwise
+/// error says what was wrong, e.g. "--jobs needs a whole number, not 'abc'".
 struct Result
 {
     bool ok = false;
@@ -446,8 +451,8 @@ struct TypedOption : Option
 };
 } // namespace Detail
 
-// What option() and flag() return, to refine the option just declared. It
-// refers to the parser's own record of it, so use it in the same statement.
+/// What option() and flag() return, to refine the option just declared. It
+/// refers to the parser's own record of it, so use it in the same statement.
 template <typename T>
 class OptionBuilder
 {
@@ -459,20 +464,20 @@ public:
     {
     }
 
-    // A rule every value must pass, for a Vector each element. It returns
-    // nullopt to accept, or a phrase to follow the option's name: a rule
-    // answering "must be even" for 3 reports "--jobs must be even, not '3'".
+    /// A rule every value must pass, for a Vector each element. It returns
+    /// nullopt to accept, or a phrase to follow the option's name: a rule
+    /// answering "must be even" for 3 reports "--jobs must be even, not '3'".
     OptionBuilder check(std::function<std::optional<std::string>(const Value&)> rule)
     {
         option.rules.add(std::move(rule));
         return *this;
     }
 
-    // Bounds on a number, checked before check()'s rules. An integer is
-    // compared at full width before it is narrowed, so a uint16_t port with
-    // atMost(1024) reports "--port must be at most 1024, not '70000'" rather
-    // than the type's own range, which is reported only when no bound already
-    // turned the value away.
+    /// Bounds on a number, checked before check()'s rules. An integer is
+    /// compared at full width before it is narrowed, so a uint16_t port with
+    /// atMost(1024) reports "--port must be at most 1024, not '70000'" rather
+    /// than the type's own range, which is reported only when no bound already
+    /// turned the value away.
     OptionBuilder atLeast(Value minimum)
         requires(std::is_arithmetic_v<Value> && !std::is_same_v<Value, bool>)
     {
@@ -487,17 +492,17 @@ public:
         return *this;
     }
 
-    // parse() fails with "--format is required (try --help)" unless the
-    // command line or the environment gave a value. The help marks it, and the
-    // usage line lists it before [options] (a positional without brackets).
+    /// parse() fails with "--format is required (try --help)" unless the
+    /// command line or the environment gave a value. The help marks it, and the
+    /// usage line lists it before [options] (a positional without brackets).
     OptionBuilder required()
     {
         option.required = true;
         return *this;
     }
 
-    // For a Vector: a value the Vector already holds is skipped, so
-    // "--folder a --folder a" gives one entry. Without it every value is kept.
+    /// For a Vector: a value the Vector already holds is skipped, so
+    /// "--folder a --folder a" gives one entry. Without it every value is kept.
     OptionBuilder unique()
         requires(Detail::TargetTraits<T>::isVector)
     {
@@ -505,9 +510,9 @@ public:
         return *this;
     }
 
-    // For a flag(): being present sets the bool to false rather than true, as
-    // "--no-default-folders" does to a field that defaults to true. An
-    // environment variable from fromEnv() still holds the bool's own value.
+    /// For a flag(): being present sets the bool to false rather than true, as
+    /// "--no-default-folders" does to a field that defaults to true. An
+    /// environment variable from fromEnv() still holds the bool's own value.
     OptionBuilder negated()
         requires(std::is_same_v<T, bool>)
     {
@@ -515,20 +520,20 @@ public:
         return *this;
     }
 
-    // Reads the variable `name` at parse time when it is set and not empty,
-    // parsed and checked like a command-line value, and lets the command line
-    // override it. For a flag the variable holds true/false, yes/no, on/off or
-    // 1/0.
+    /// Reads the variable `name` at parse time when it is set and not empty,
+    /// parsed and checked like a command-line value, and lets the command line
+    /// override it. For a flag the variable holds true/false, yes/no, on/off or
+    /// 1/0.
     OptionBuilder fromEnv(std::string name)
     {
         option.environmentVariable = std::move(name);
         return *this;
     }
 
-    // Accepts only these values, matched in any case (a string takes the
-    // spelling given here), and lists only them in the help. Anything else,
-    // unparseable or merely not allowed, reports
-    // "--format must be one of vst3, au, not 'clap'".
+    /// Accepts only these values, matched in any case (a string takes the
+    /// spelling given here), and lists only them in the help. Anything else,
+    /// unparseable or merely not allowed, reports
+    /// "--format must be one of vst3, au, not 'clap'".
     OptionBuilder choices(Vector<Value> allowed)
         requires(std::is_enum_v<Value> || std::is_same_v<Value, std::string>)
     {
@@ -536,16 +541,16 @@ public:
         return *this;
     }
 
-    // The value's placeholder in the help, such as "<file>" or "<ms>", in place
-    // of the one the type gives.
+    /// The value's placeholder in the help, such as "<file>" or "<ms>", in place
+    /// of the one the type gives.
     OptionBuilder hint(std::string_view text)
     {
         option.hintOverride = std::string {text};
         return *this;
     }
 
-    // What the help shows as "[default: ...]", in place of the bound value,
-    // and shown even when that value is empty or zero: "the core count".
+    /// What the help shows as "[default: ...]", in place of the bound value,
+    /// and shown even when that value is empty or zero: "the core count".
     OptionBuilder defaultText(std::string_view text)
     {
         option.defaultOverride = std::string {text};
@@ -556,13 +561,14 @@ private:
     Detail::TypedOption<T>& option;
 };
 
-// Accepts --name value, --name=value, -short value, -h/--help, and "--" to make
-// everything after it positional. An option whose bound variable is a Vector
-// may repeat, each occurrence adding one element (one the Vector already holds
-// is skipped only with unique()); the first replaces whatever the Vector held
-// as its default. A value is the next argument unless that is
-// missing or is itself an option ("--" anything, or a declared name), so
-// "--offset -5" works. Parsing stops at the first error.
+/// Accepts --name value, --name=value, -short value, -h/--help, and "--" to make
+/// everything after it positional. An option whose bound variable is a Vector
+/// may repeat, each occurrence adding one element (one the Vector already holds
+/// is skipped only with unique()); the first replaces whatever the Vector held
+/// as its default. A value is the next argument unless that is
+/// missing or is itself an option ("--" anything, or a declared name), so
+/// "--offset -5" works. Parsing stops at the first error and never throws; the
+/// error comes back in Result.
 class Parser
 {
 public:
@@ -571,11 +577,11 @@ public:
     Parser(const Parser&) = delete;
     Parser& operator=(const Parser&) = delete;
 
-    // Binds `--name value` to `target`. T is an integer, float, double, bool
-    // (which then takes a value: --name=false), an enum reflected through Miro,
-    // std::string, FilePath, or a Vector or std::optional of one of those. An
-    // optional is set only when the command line or the environment gives a
-    // value, so the caller can tell "given" from "left alone".
+    /// Binds `--name value` to `target`. T is an integer, float, double, bool
+    /// (which then takes a value: --name=false), an enum reflected through Miro,
+    /// std::string, FilePath, or a Vector or std::optional of one of those. An
+    /// optional is set only when the command line or the environment gives a
+    /// value, so the caller can tell "given" from "left alone".
     template <typename T>
     OptionBuilder<T>
         option(std::string_view name, T& target, std::string_view description)
@@ -583,7 +589,7 @@ public:
         return option(name, {}, target, description);
     }
 
-    // The same with a short alias, such as "-o".
+    /// The same with a short alias, such as "-o".
     template <typename T>
     OptionBuilder<T> option(std::string_view name,
                             std::string_view shortName,
@@ -595,7 +601,7 @@ public:
         return OptionBuilder<T> {added};
     }
 
-    // A switch with no value: present sets `target` to true.
+    /// A switch with no value: present sets `target` to true.
     OptionBuilder<bool>
         flag(std::string_view name, bool& target, std::string_view description);
     OptionBuilder<bool> flag(std::string_view name,
@@ -603,11 +609,11 @@ public:
                              bool& target,
                              std::string_view description);
 
-    // Binds the arguments that are not options, in order. A Vector takes every
-    // one that is left, so it goes last; anything else takes one. An argument
-    // with nowhere to go is an error. The description, when given, lists the
-    // positional in the help text. The builder's check(), atLeast(), atMost()
-    // and choices() apply to it as to an option.
+    /// Binds the arguments that are not options, in order. A Vector takes every
+    /// one that is left, so it goes last; anything else takes one. An argument
+    /// with nowhere to go is an error. The description, when given, lists the
+    /// positional in the help text. The builder's check(), atLeast(), atMost()
+    /// and choices() apply to it as to an option.
     template <typename T>
     OptionBuilder<T> positional(T& target,
                                 std::string_view name,
@@ -618,31 +624,31 @@ public:
         return OptionBuilder<T> {added};
     }
 
-    // Free text printed after the options, such as the exit codes.
+    /// Free text printed after the options, such as the exit codes.
     void epilogue(std::string text);
 
-    // The command line Apps::getAppEnvironment() stored, without its program
-    // name: for a program running under Apps::runConsole, or after
-    // Apps::setCommandLineArgs, so argc/argv need not be passed down to it.
+    /// The command line Apps::getAppEnvironment() stored, without its program
+    /// name: for a program running under Apps::runConsole, or after
+    /// Apps::setCommandLineArgs, so argc/argv need not be passed down to it.
     Result parse();
 
-    // `args` without the program name.
+    /// `args` without the program name.
     Result parse(const Vector<std::string>& args);
 
-    // main()'s own, argv[0] included. A null entry is read as empty.
+    /// main()'s own, argv[0] included. A null entry is read as empty.
     Result parse(int argc, const char* const* argv);
 
     std::string helpText() const;
 
-    // nullopt when the program should go on. Otherwise prints the help to
-    // stdout and returns 0, or prints "<name>: <error>" to stderr and returns
-    // badArguments.
+    /// nullopt when the program should go on. Otherwise prints the help to
+    /// stdout and returns 0, or prints "<name>: <error>" to stderr and returns
+    /// badArguments.
     std::optional<int> exitCodeFor(const Result& result) const;
 
-    // Reports a problem found after parsing ("--serve and --connect cannot be
-    // combined") the way exitCodeFor reports a parse error: prints
-    // "<name>: <error>" to stderr and returns badArguments, for
-    // `return cli.fail("...");`.
+    /// Reports a problem found after parsing ("--serve and --connect cannot be
+    /// combined") the way exitCodeFor reports a parse error: prints
+    /// "<name>: <error>" to stderr and returns badArguments, for
+    /// `return cli.fail("...");`.
     int fail(std::string_view error) const;
 
 private:

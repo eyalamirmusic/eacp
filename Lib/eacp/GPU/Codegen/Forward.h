@@ -1,9 +1,13 @@
 #pragma once
 
-#include <functional>
+/** @file Forward declarations of the shader EDSL types, for headers that name them
+    without including the EDSL.
 
-// Names from the shader codegen layer, for headers that mention them without
-// needing the EDSL itself.
+    Names from the shader codegen layer, for headers that mention them without
+    needing the EDSL itself.
+*/
+
+#include <functional>
 
 namespace eacp::GPU
 {
@@ -33,6 +37,6 @@ struct Float2x2;
 struct Float3x3;
 struct Float4x4;
 
-// How a module hands over a shader whose program type is nested in a .cpp.
+/// How a module hands over a shader whose program type is nested in a .cpp.
 using ShaderGraphVisitor = std::function<void(const ShaderGraph&)>;
 } // namespace eacp::GPU

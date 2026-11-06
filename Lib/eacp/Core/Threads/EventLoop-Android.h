@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: android event loop internals. */
+
 #include "EventLoop-Linux.h"
 
 namespace eacp::Threads

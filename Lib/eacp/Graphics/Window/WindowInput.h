@@ -1,14 +1,17 @@
 #pragma once
 
+/** @file A tap on a window's raw key, mouse and focus events, for input layers
+    beside the view tree. */
+
 #include "../View/View.h"
 
 namespace eacp::Graphics
 {
 
-// Sees every key and mouse event the platform hands a window, before its views
-// do, and every change of the window's key focus. For input layers that sit
-// beside the view tree rather than in it (GameInput), so they need no view's
-// cooperation. Everything arrives on the main thread.
+/// Sees every key and mouse event the platform hands a window, before its views
+/// do, and every change of the window's key focus. For input layers that sit
+/// beside the view tree rather than in it (GameInput), so they need no view's
+/// cooperation. Everything arrives on the main thread.
 struct WindowInputListener
 {
     virtual ~WindowInputListener() = default;
@@ -18,8 +21,8 @@ struct WindowInputListener
     virtual void windowActivationChanged(bool);
 };
 
-// The platform layer reports into this; listeners subscribe to it. A listener
-// must remove itself before it is destroyed, and the window must outlive it.
+/// The platform layer reports into this; listeners subscribe to it. A listener
+/// must remove itself before it is destroyed, and the window must outlive it.
 class WindowInputTap
 {
 public:
@@ -30,7 +33,7 @@ public:
     void mouseEvent(const MouseEvent& event) const;
     void activationChanged(bool isKey);
 
-    // Whether the window last reported having key focus.
+    /// Whether the window last reported having key focus.
     constexpr bool isActive() const { return active; }
 
 private:

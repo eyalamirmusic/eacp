@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file BuildRunner, one command rerun on demand on a background thread. */
+
 #include "../Threads/Thread.h"
 #include "Process.h"
 
@@ -9,11 +11,11 @@
 
 namespace eacp::Processes
 {
-// Runs one command again on demand, on a background thread. The command runs
-// with its stderr merged into its stdout; onOutput and onFinished are called
-// on the main thread, every chunk of a run before its onFinished. A run()
-// while a run is in flight asks for exactly one more run once it finishes.
-// Main thread only.
+/// Runs one command again on demand, on a background thread. The command runs
+/// with its stderr merged into its stdout; onOutput and onFinished are called
+/// on the main thread, every chunk of a run before its onFinished. A run()
+/// while a run is in flight asks for exactly one more run once it finishes.
+/// Main thread only.
 class BuildRunner
 {
 public:
@@ -27,7 +29,9 @@ public:
 
     void run();
 
-    // A cancelled run still finishes, with ProcessResult::exited false.
+    /// Kills the running command and drops a pending rerun. Only the direct
+    /// child is killed, so ninja under cmake keeps running. A cancelled run
+    /// still finishes, with ProcessResult::exited false.
     void cancel();
 
     [[nodiscard]] bool isRunning() const;

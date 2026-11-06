@@ -1,31 +1,35 @@
 #pragma once
 
+/** @file Uniform block offsets and sizes under the MSL and std140 rules, shared by
+    the upload walk and emitters.
+*/
+
 #include "../Common.h"
 
 #include "ShaderTypes.h"
 
 namespace eacp::GPU
 {
-// Uniform-block layout follows the native MSL struct rules: a vec2 aligns to 8,
-// a vec3/vec4/matrix to 16, and a vec3 still occupies a full 16-byte slot. The
-// CPU upload walk and both shader emitters derive their offsets from these
-// helpers, so the packed bytes and the generated source cannot disagree. The
-// block's total size follows the same rules - sizeof(Uniforms) is padded up to
-// the widest member's alignment, which ShaderUploadVisitor::finish applies to
-// the packed block, Metal's validation layer holding the bound length to it.
-//
-// Float2x2 and Float3x3 appear here for completeness only: ShaderBuilder
-// refuses them as uniforms, because this is the one place the two backends
-// cannot be reconciled by padding. MSL packs a float2x2 as two float2 columns,
-// 16 bytes in all, while an HLSL cbuffer gives every matrix row a register of
-// its own and takes 32 - a disagreement inside the value, which no pad scalar
-// between fields can correct. Both agree on a float4x4, which is why that one
-// crosses the boundary and these two stay shader-local values. The boolean
-// vectors appear here for the same reason and are refused for the same one the
-// scalar Bool is: the two languages disagree on what a bool occupies. The
-// integer vectors, signed and unsigned alike, are not in that position - both
-// pack an int2 or a uint2 exactly where they pack a float2 - so those cross like
-// their scalars do.
+/// Uniform-block layout follows the native MSL struct rules: a vec2 aligns to 8,
+/// a vec3/vec4/matrix to 16, and a vec3 still occupies a full 16-byte slot. The
+/// CPU upload walk and both shader emitters derive their offsets from these
+/// helpers, so the packed bytes and the generated source cannot disagree. The
+/// block's total size follows the same rules - sizeof(Uniforms) is padded up to
+/// the widest member's alignment, which ShaderUploadVisitor::finish applies to
+/// the packed block, Metal's validation layer holding the bound length to it.
+///
+/// Float2x2 and Float3x3 appear here for completeness only: ShaderBuilder
+/// refuses them as uniforms, because this is the one place the two backends
+/// cannot be reconciled by padding. MSL packs a float2x2 as two float2 columns,
+/// 16 bytes in all, while an HLSL cbuffer gives every matrix row a register of
+/// its own and takes 32 - a disagreement inside the value, which no pad scalar
+/// between fields can correct. Both agree on a float4x4, which is why that one
+/// crosses the boundary and these two stay shader-local values. The boolean
+/// vectors appear here for the same reason and are refused for the same one the
+/// scalar Bool is: the two languages disagree on what a bool occupies. The
+/// integer vectors, signed and unsigned alike, are not in that position - both
+/// pack an int2 or a uint2 exactly where they pack a float2 - so those cross like
+/// their scalars do.
 constexpr int uniformAlignment(ValueType type)
 {
     switch (type)
@@ -76,13 +80,13 @@ constexpr int alignUp(int value, int alignment)
     return (value + alignment - 1) / alignment * alignment;
 }
 
-// The byte offset of every uniform field in the packed block.
+/// The byte offset of every uniform field in the packed block.
 Vector<int> uniformOffsets(const Vector<ValueType>& types);
 
-// Where HLSL cbuffer packing would place a field on its own: it only forbids a
-// value straddling a 16-byte register, it does not align a vector to its size
-// the way MSL does. Wherever this lands below the MSL offset the HLSL emitter
-// inserts explicit pad scalars so both backends read the same packed bytes.
+/// Where HLSL cbuffer packing would place a field on its own: it only forbids a
+/// value straddling a 16-byte register, it does not align a vector to its size
+/// the way MSL does. Wherever this lands below the MSL offset the HLSL emitter
+/// inserts explicit pad scalars so both backends read the same packed bytes.
 constexpr int hlslPackedOffset(int cursor, ValueType type)
 {
     if (isMatrix(type))
@@ -93,7 +97,7 @@ constexpr int hlslPackedOffset(int cursor, ValueType type)
     return crossesRegister ? alignUp(cursor, 16) : cursor;
 }
 
-// std140 sizes a vec3 at 12 bytes where MSL gives 16, so a scalar after one pads.
+/// std140 sizes a vec3 at 12 bytes where MSL gives 16, so a scalar after one pads.
 constexpr int std140PackedOffset(int cursor, ValueType type)
 {
     return alignUp(cursor, uniformAlignment(type));
@@ -101,7 +105,7 @@ constexpr int std140PackedOffset(int cursor, ValueType type)
 
 int uniformBlockSize(const Vector<ValueType>& types);
 
-// A dynamic uniform range shorter than the std140 block fails validation.
+/// A dynamic uniform range shorter than the std140 block fails validation.
 constexpr int std140BlockAlignment = 16;
 
 int std140BlockSize(const Vector<ValueType>& types);

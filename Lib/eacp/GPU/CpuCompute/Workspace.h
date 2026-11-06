@@ -1,15 +1,20 @@
 #pragma once
 
-#include "Plan.h"
+/** @file Workspace, the scratch memory one thread needs to run part of a CPU
+    dispatch.
 
-// Every word a run writes: the lanes of each node, the variables, the arrays,
-// the shared arrays, the SIMD-group fragments and the reduction scratch, the
-// mask frames and the local coordinates. Allocated once, to the plan's layout,
-// and never resized; a plan can have any number of these, one per thread that
-// runs Executor::dispatchGroups.
+    Every word a run writes: the lanes of each node, the variables, the arrays,
+    the shared arrays, the SIMD-group fragments and the reduction scratch, the
+    mask frames and the local coordinates. Allocated once, to the plan's layout,
+    and never resized; a plan can have any number of these, one per thread that
+    runs Executor::dispatchGroups.
+*/
+
+#include "Plan.h"
 
 namespace eacp::GPU::CpuCompute
 {
+/// Scratch for one thread, sized to one plan and never resized.
 class Workspace
 {
 public:
@@ -17,11 +22,11 @@ public:
 
     Workspace(const Workspace&) = delete;
     Workspace& operator=(const Workspace&) = delete;
-    // A moved-from workspace matches no plan.
+    /// A moved-from workspace matches no plan.
     Workspace(Workspace&& other) noexcept;
     Workspace& operator=(Workspace&& other) noexcept;
 
-    // The serial of the plan this was laid out for.
+    /// The serial of the plan this was laid out for.
     constexpr std::uint64_t planSerial() const { return serial; }
 
     constexpr Word* words() { return base; }

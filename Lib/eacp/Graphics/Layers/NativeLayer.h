@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: Apple only: the CALayer wrapper behind every Layer. */
+
 #import <QuartzCore/QuartzCore.h>
 #include "../Primitives/Primitives.h"
 

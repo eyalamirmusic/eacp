@@ -1,26 +1,28 @@
 #pragma once
 
+/** @file A Miro::Bridge served to this user's other processes over a named channel. */
+
 #include "../IPC/Messenger.h"
 #include "../Rpc/AsyncCommand.h"
 
 namespace eacp::IPC
 {
 
-// Typed RPC between this user's processes: a Miro::Bridge mounted on the
-// message channel. The server side turns each incoming envelope into a
-// bridge dispatch and answers by id; every bridge emit fans out to all
-// connected clients as an event. The wire shapes are the WebView bridge's
-// - {id, command, payload} up, {reply, result | error} back, {event,
-// payload} pushed - so one Bridge can serve a window and a sibling
-// process with the same handlers.
-//
-// Main-thread objects, like the Messenger they ride on.
+/// Typed RPC between this user's processes: a Miro::Bridge mounted on the
+/// message channel. The server side turns each incoming envelope into a
+/// bridge dispatch and answers by id; every bridge emit fans out to all
+/// connected clients as an event. The wire shapes are the WebView bridge's
+/// - {id, command, payload} up, {reply, result | error} back, {event,
+/// payload} pushed - so one Bridge can serve a window and a sibling
+/// process with the same handlers.
+///
+/// Main-thread objects, like the Messenger they ride on.
 class RpcServer
 {
 public:
-    // Claims name (the ChannelServer rules apply) and serves bridgeToUse's
-    // commands to every client that dials in. The bridge must outlive
-    // this server, the same contract every Miro transport has.
+    /// Claims name (the ChannelServer rules apply) and serves bridgeToUse's
+    /// commands to every client that dials in. The bridge must outlive
+    /// this server, the same contract every Miro transport has.
     RpcServer(std::string_view name, Miro::Bridge& bridgeToUse);
 
     RpcServer(const RpcServer&) = delete;
@@ -28,7 +30,7 @@ public:
     RpcServer(RpcServer&&) = delete;
     RpcServer& operator=(RpcServer&&) = delete;
 
-    // Where incoming command handlers run; see Rpc::CommandExecution.
+    /// Where incoming command handlers run; see Rpc::CommandExecution.
     void setCommandExecution(Rpc::CommandExecution mode);
 
     [[nodiscard]] int connectedClients() const;
@@ -47,11 +49,13 @@ private:
     Vector<Messenger*> clients;
     Listener emitListener;
 
-    // Last member on purpose: destroying the MessageServer first is what
-    // retires the sessions - and with them every handler capturing this.
+    /// Last member on purpose: destroying the MessageServer first is what
+    /// retires the sessions - and with them every handler capturing this.
     MessageServer server;
 };
 
+/// Constructs an RpcServer, logging and returning null instead of throwing
+/// when the name cannot be claimed.
 OwningPointer<RpcServer> createRPCServer(std::string_view name,
                                          Miro::Bridge& bridgeToUse);
 

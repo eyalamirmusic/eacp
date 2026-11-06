@@ -1,3 +1,6 @@
+/** @file Internal: swizzle-accessor macro grid included by ShaderValue.h and
+    ShaderValue.cpp; not for callers.
+*/
 // The cross product of the component set with itself, once per swizzle width.
 // The action macro passed in is what makes one accessor out of a set of
 // components: ShaderValue.h declares them inside Swizzles and ShaderValue.cpp

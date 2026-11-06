@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file A WebSocket client connection whose callbacks run on the main thread. */
+
 #include "../Common.h"
 
 #include <map>
@@ -19,7 +21,7 @@ struct Message
     MessageType type = MessageType::text;
 };
 
-// RFC 6455 §7.4: 1000 normal, 1005 no status received, 1006 abnormal closure
+/// RFC 6455 §7.4: 1000 normal, 1005 no status received, 1006 abnormal closure
 struct CloseStatus
 {
     int code = 1005;
@@ -34,8 +36,8 @@ enum class State
     closed,
 };
 
-// closeTimeout bounds the closing handshake: a peer that answers close()
-// with neither a close frame nor an end of stream is dropped, as 1006.
+/// closeTimeout bounds the closing handshake: a peer that answers close()
+/// with neither a close frame nor an end of stream is dropped, as 1006.
 struct Options
 {
     std::map<std::string, std::string> headers;
@@ -45,9 +47,9 @@ struct Options
     int maxMessageSize = 64 * 1024 * 1024;
 };
 
-// Every callback runs on the message thread, none inside a Connection call
-// and none once the Connection is destroyed. onError comes at most once and
-// is followed by onClose with code 1006.
+/// Every callback runs on the message thread, none inside a Connection call
+/// and none once the Connection is destroyed. onError comes at most once and
+/// is followed by onClose with code 1006.
 struct Callbacks
 {
     std::function<void(const std::string& protocol)> onOpen =
@@ -58,8 +60,11 @@ struct Callbacks
         [](const std::string&) {};
 };
 
-// A client connection: constructing one starts the handshake, destroying it
-// closes the socket. Used from the message thread only.
+/// A client connection: constructing one starts the handshake, destroying it
+/// closes the socket. Used from the message thread only. There is no automatic
+/// reconnect. Never destroy or replace a Connection inside its own callbacks:
+/// reconnect only from onClose, deferred with Threads::callAfter, never from
+/// onError (onClose follows it).
 class Connection
 {
 public:
@@ -71,22 +76,22 @@ public:
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
 
-    // False where the platform's HTTP stack cannot speak the protocol - a
-    // libcurl built without it. Constructing one there fails through onError.
+    /// False where the platform's HTTP stack cannot speak the protocol - a
+    /// libcurl built without it. Constructing one there fails through onError.
     static bool isSupported();
 
-    // Dropped unless the connection is open
+    /// Dropped unless the connection is open
     void send(std::string_view text);
     void sendBinary(std::string_view bytes);
 
-    // Starts the closing handshake. Before open it abandons the attempt,
-    // reporting onClose with 1006 and no onError.
+    /// Starts the closing handshake. Before open it abandons the attempt,
+    /// reporting onClose with 1006 and no onError.
     void close(int code = 1000, std::string_view reason = {});
 
     [[nodiscard]] State state() const;
     [[nodiscard]] const std::string& url() const;
 
-    // The subprotocol the server picked, empty until open
+    /// The subprotocol the server picked, empty until open
     [[nodiscard]] const std::string& protocol() const;
 
 private:

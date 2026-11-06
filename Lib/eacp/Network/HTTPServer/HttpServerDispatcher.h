@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file How the HTTP server runs a request handler: on the event loop or a thread pool. */
+
 #include "HttpServer.h"
 
 namespace eacp::HTTP
@@ -21,6 +23,7 @@ struct Dispatcher
     virtual void shutdown() = 0;
 };
 
+/// A dispatcher for options.threading: main-thread or thread-pool.
 OwningPointer<Dispatcher> makeDispatcher(const ServerOptions& options);
 
 // How a streaming body reaches the decoder: the bytes the header read already

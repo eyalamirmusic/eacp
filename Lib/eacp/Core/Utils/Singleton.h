@@ -1,11 +1,15 @@
 #pragma once
 
+/** @file Function-local static singletons, including one that is never destroyed. */
+
 #include <cstddef>
 #include <new>
 #include <utility>
 
 namespace eacp::Singleton
 {
+/// The one T for this binary, built on first call (thread-safe) and
+/// destroyed at exit.
 template <typename T>
 T& get()
 {
@@ -13,9 +17,9 @@ T& get()
     return object;
 }
 
-// Constructor-arg overload. Args are forwarded to T's constructor on
-// first call; subsequent calls return the same object and ignore the
-// args (standard static-local semantics).
+/// Constructor-arg overload. Args are forwarded to T's constructor on
+/// first call; subsequent calls return the same object and ignore the
+/// args (standard static-local semantics).
 template <typename T, typename Arg, typename... Args>
 T& get(Arg&& arg, Args&&... args)
 {
@@ -23,21 +27,21 @@ T& get(Arg&& arg, Args&&... args)
     return object;
 }
 
-// The same, deliberately never destroyed. For a process-wide registry whose
-// entries deregister themselves from a destructor: anything constructed before
-// the registry is destroyed after it, so a holder that outlives it — one owned
-// by another singleton, or by a namespace-scope object — would deregister into
-// a destroyed container. Since first use decides construction order, and that
-// order varies with which caller happens to run first, get() cannot be relied
-// on here at all.
-//
-// The bytes are a static array rather than a heap block because eacp links
-// statically into runtime-loaded plugins (eacp_add_plugin), so every loaded
-// image holds its own copy of each singleton. This storage unmaps with the
-// image; a heap block would outlive it on the host's heap, once per load. Only
-// the pointer needs a guard, and a pointer is trivially destructible, so the
-// module registers nothing for atexit and nothing of ours can fault while it
-// detaches.
+/// The same, deliberately never destroyed. For a process-wide registry whose
+/// entries deregister themselves from a destructor: anything constructed before
+/// the registry is destroyed after it, so a holder that outlives it — one owned
+/// by another singleton, or by a namespace-scope object — would deregister into
+/// a destroyed container. Since first use decides construction order, and that
+/// order varies with which caller happens to run first, get() cannot be relied
+/// on here at all.
+///
+/// The bytes are a static array rather than a heap block because eacp links
+/// statically into runtime-loaded plugins (eacp_add_plugin), so every loaded
+/// image holds its own copy of each singleton. This storage unmaps with the
+/// image; a heap block would outlive it on the host's heap, once per load. Only
+/// the pointer needs a guard, and a pointer is trivially destructible, so the
+/// module registers nothing for atexit and nothing of ours can fault while it
+/// detaches.
 template <typename T>
 T& getImmortal()
 {

@@ -1,3 +1,4 @@
+/** @file Conversion between float and IEEE half-precision bits. */
 #pragma once
 
 #include "../Common.h"
@@ -6,8 +7,8 @@
 
 namespace eacp::ML
 {
-// IEEE binary16 bits, rounded to nearest even: the form every fp16 tensor
-// takes in the weight blob and every fp16 scalar takes inline.
+/// IEEE binary16 bits, rounded to nearest even: the form every fp16 tensor
+/// takes in the weight blob and every fp16 scalar takes inline.
 std::uint16_t floatToHalf(float value);
 float halfToFloat(std::uint16_t bits);
 

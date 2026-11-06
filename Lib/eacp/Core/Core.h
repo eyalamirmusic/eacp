@@ -1,5 +1,21 @@
 #pragma once
 
+/** @file
+    Core: the app lifecycle, the main-thread event loop, timers, threads, child
+    processes, dynamic libraries and hot reload, files, zip, hashing, logging
+    and string utilities. Builds on every platform, Linux and Android included;
+    nothing here is behind an EACP_HAS_* gate.
+
+    Entry points: Apps::run<T>() for an app, Apps::runConsole() for a
+    command-line tool, Threads::callAsync / callAfter / Timer for deferred work.
+
+    Rules: callbacks (Timer, callAsync, Async continuations, BuildRunner) run on
+    the main thread unless a header says otherwise. Read Docs/Toolbox.md before
+    writing a helper; Core probably has it. Use Threads::Thread rather than
+    std::thread in headers. Reloadable (Plugins/Reloadable.h) is included
+    directly, never through this header.
+*/
+
 #include "App/Alert.h"
 #include "App/App.h"
 #include "App/Clipboard.h"

@@ -1,15 +1,17 @@
 #pragma once
 
+/** @file Zip archive reading and writing, and raw deflate, over vendored miniz. */
+
 #include "Common.h"
 #include "FilePath.h"
 
-// Zip archives and raw deflate, over a vendored miniz (ThirdParty/miniz) that
-// nothing outside Zip.cpp sees. Archives are read from a file or from bytes
-// already in memory and written to either, and single blobs can be deflated
-// on their own for a cache entry or a wire format that carries no archive.
+/// Zip archives and raw deflate, over a vendored miniz (ThirdParty/miniz) that
+/// nothing outside Zip.cpp sees. Archives are read from a file or from bytes
+/// already in memory and written to either, and single blobs can be deflated
+/// on their own for a cache entry or a wire format that carries no archive.
 namespace eacp::Zip
 {
-// An archive or an entry can outgrow an int, so count one with getSize().
+/// An archive or an entry can outgrow an int, so count one with getSize().
 using Bytes = Vector<std::uint8_t>;
 
 enum class Level
@@ -22,20 +24,20 @@ enum class Level
 
 struct Entry
 {
-    // As stored, '/' separated, with a trailing '/' on a directory.
+    /// As stored, '/' separated, with a trailing '/' on a directory.
     std::string name;
     std::uint64_t size = 0;
     std::uint64_t compressedSize = 0;
 
-    // Seconds since the Unix epoch, 0 when the archive stores none.
+    /// Seconds since the Unix epoch, 0 when the archive stores none.
     std::int64_t modificationTime = 0;
     bool isDirectory = false;
 };
 
-// How far an extraction has got. Every entry counts, directories and skipped
-// ones included, and bytes are uncompressed sizes as the archive declares
-// them, so a run that keeps going past a bad entry still ends with both
-// counters at their totals.
+/// How far an extraction has got. Every entry counts, directories and skipped
+/// ones included, and bytes are uncompressed sizes as the archive declares
+/// them, so a run that keeps going past a bad entry still ends with both
+/// counters at their totals.
 struct ExtractProgress
 {
     int entriesDone = 0;
@@ -44,71 +46,72 @@ struct ExtractProgress
     std::uint64_t bytesTotal = 0;
 };
 
-// Called as an extraction moves; return false to cancel it.
+/// Called as an extraction moves; return false to cancel it.
 using ExtractProgressFunc = std::function<bool(const ExtractProgress&)>;
 
-// Extraction inflates an entry this many bytes at a time and writes each
-// piece straight to disk, so memory stays bounded whatever the entry's size.
-// Progress is reported at most this many bytes apart.
+/// Extraction inflates an entry this many bytes at a time and writes each
+/// piece straight to disk, so memory stays bounded whatever the entry's size.
+/// Progress is reported at most this many bytes apart.
 inline constexpr std::size_t extractChunkSize = std::size_t {1} << 20;
 
-// Reads an existing archive. Never throws: ask isValid(). A file is mapped
-// rather than copied, so the same hazard MemoryMappedFile documents applies -
-// read what something else may truncate through the Bytes constructor.
-//
-// Non-copyable (it owns the mapping or the bytes); move it.
+/// Reads an existing archive. Never throws: ask isValid(). A file is mapped
+/// rather than copied, so the same hazard MemoryMappedFile documents applies -
+/// read what something else may truncate through the Bytes constructor.
+///
+/// Non-copyable (it owns the mapping or the bytes); move it.
 class Reader
 {
 public:
+    /// Opens the archive; never throws. Check isValid() and errorMessage().
     explicit Reader(const FilePath& path);
     explicit Reader(Bytes bytes);
 
     bool isValid() const;
 
-    // Why the last operation failed, empty when it did not.
+    /// Why the last operation failed, empty when it did not.
     std::string errorMessage() const;
 
     int numEntries() const;
     Vector<Entry> entries() const;
 
-    // Names match exactly, case included.
+    /// Names match exactly, case included.
     bool contains(std::string_view name) const;
     std::optional<Entry> find(std::string_view name) const;
 
-    // The whole entry, inflated. Nullopt when there is no such entry, it is a
-    // directory, or its data is corrupt.
+    /// The whole entry, inflated. Nullopt when there is no such entry, it is a
+    /// directory, or its data is corrupt.
     std::optional<Bytes> read(std::string_view name) const;
     std::optional<std::string> readText(std::string_view name) const;
 
-    // The entry `name` written to the file `target`, streamed in
-    // extractChunkSize pieces rather than inflated in memory, creating
-    // target's parent directories and replacing whatever file is there.
-    // False when there is no such entry, it is a directory, its data is
-    // corrupt, the file could not be written or onProgress cancelled; the
-    // incomplete file is then removed. onProgress, when given, is called
-    // once before the first byte, after every chunk and once at the end,
-    // with an entriesTotal of 1.
+    /// The entry `name` written to the file `target`, streamed in
+    /// extractChunkSize pieces rather than inflated in memory, creating
+    /// target's parent directories and replacing whatever file is there.
+    /// False when there is no such entry, it is a directory, its data is
+    /// corrupt, the file could not be written or onProgress cancelled; the
+    /// incomplete file is then removed. onProgress, when given, is called
+    /// once before the first byte, after every chunk and once at the end,
+    /// with an entriesTotal of 1.
     bool extract(std::string_view name,
                  const FilePath& target,
                  const ExtractProgressFunc& onProgress = {}) const;
 
-    // Every entry under `directory`, creating it and any intermediate
-    // directories, each file streamed to disk as extract() does, so memory
-    // stays bounded however large the archive or its entries are. Names are
-    // read as UTF-8 with '\' taken as '/'. An entry whose name would land
-    // outside `directory` - an absolute path, or one climbing through ".." -
-    // is skipped rather than written, so an archive from an untrusted source
-    // cannot reach past it. A failed or skipped entry does not stop the rest.
-    // False when any entry could not be written or was skipped.
-    //
-    // onProgress, when given, is called once before the first entry, after
-    // every chunk written and after every entry, with counters that never
-    // go down; returning false stops at once and returns false. The entries
-    // already finished stay on disk; the one being written is removed.
+    /// Every entry under `directory`, creating it and any intermediate
+    /// directories, each file streamed to disk as extract() does, so memory
+    /// stays bounded however large the archive or its entries are. Names are
+    /// read as UTF-8 with '\' taken as '/'. An entry whose name would land
+    /// outside `directory` - an absolute path, or one climbing through ".." -
+    /// is skipped rather than written, so an archive from an untrusted source
+    /// cannot reach past it. A failed or skipped entry does not stop the rest.
+    /// False when any entry could not be written or was skipped.
+    ///
+    /// onProgress, when given, is called once before the first entry, after
+    /// every chunk written and after every entry, with counters that never
+    /// go down; returning false stops at once and returns false. The entries
+    /// already finished stay on disk; the one being written is removed.
     bool extractAll(const FilePath& directory,
                     const ExtractProgressFunc& onProgress) const;
 
-    // extractAll() with no progress reporting.
+    /// extractAll() with no progress reporting.
     bool extractAll(const FilePath& directory) const;
 
 private:
@@ -116,16 +119,16 @@ private:
     Pimpl<Impl> impl;
 };
 
-// Builds an archive in memory. Add entries, then take the bytes with finish()
-// or put them on disk with writeTo(); either ends the writer.
-//
-// Non-copyable; move it.
+/// Builds an archive in memory. Add entries, then take the bytes with finish()
+/// or put them on disk with writeTo(); either ends the writer.
+///
+/// Non-copyable; move it.
 class Writer
 {
 public:
     Writer();
 
-    // Why the last operation failed, empty when it did not.
+    /// Why the last operation failed, empty when it did not.
     std::string errorMessage() const;
 
     bool add(std::string_view name,
@@ -136,24 +139,24 @@ public:
              std::string_view text,
              Level level = Level::normal);
 
-    // The file at `path` under `name`, read in full at the call.
+    /// The file at `path` under `name`, read in full at the call.
     bool addFile(std::string_view name,
                  const FilePath& path,
                  Level level = Level::normal);
 
-    // Every regular file under `directory`, recursively, named by its path
-    // relative to `directory` under `prefix` ("" puts them at the root).
+    /// Every regular file under `directory`, recursively, named by its path
+    /// relative to `directory` under `prefix` ("" puts them at the root).
     bool addDirectory(const FilePath& directory,
                       std::string_view prefix = {},
                       Level level = Level::normal);
 
-    // The finished archive. Empty when nothing was added or the central
-    // directory could not be written; check errorMessage() to tell the two
-    // apart.
+    /// The finished archive. Empty when nothing was added or the central
+    /// directory could not be written; check errorMessage() to tell the two
+    /// apart.
     Bytes finish();
 
-    // finish(), written with Files::writeFile. False when the archive could
-    // not be finalized or the file could not be written.
+    /// finish(), written with Files::writeFile. False when the archive could
+    /// not be finalized or the file could not be written.
     bool writeTo(const FilePath& path);
 
 private:
@@ -161,17 +164,17 @@ private:
     Pimpl<Impl> impl;
 };
 
-// A single blob as a zlib stream (RFC 1950): what a cache entry or a custom
-// wire format wants when there is no archive to speak of.
+/// A single blob as a zlib stream (RFC 1950): what a cache entry or a custom
+/// wire format wants when there is no archive to speak of.
 Bytes compress(Span<const std::uint8_t> bytes, Level level = Level::normal);
 Bytes compress(std::string_view text, Level level = Level::normal);
 
-// A single blob as a gzip member (RFC 1952), what an HTTP upload or a .gz file
-// carries.
+/// A single blob as a gzip member (RFC 1952), what an HTTP upload or a .gz file
+/// carries. Both are empty on failure.
 Bytes gzip(Span<const std::uint8_t> bytes, Level level = Level::normal);
 Bytes gzip(std::string_view text, Level level = Level::normal);
 
-// The reverse. Nullopt when the stream is not a valid zlib stream.
+/// The reverse. Nullopt when the stream is not a valid zlib stream.
 std::optional<Bytes> decompress(Span<const std::uint8_t> stream);
 std::optional<std::string> decompressText(Span<const std::uint8_t> stream);
 } // namespace eacp::Zip

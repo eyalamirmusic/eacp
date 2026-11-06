@@ -1,13 +1,14 @@
+/** @file An .mlpackage as bytes in memory, and writing it to disk. */
 #pragma once
 
 #include "Protobuf.h"
 
 namespace eacp::ML
 {
-// A written .mlpackage, as bytes: Data/com.apple.CoreML/model.mlmodel (the
-// Model.proto), Data/com.apple.CoreML/weights/weight.bin (the MILBlob, absent
-// when the program has no tensor constants) and Manifest.json, whose
-// identifiers are fixed so a package's bytes are a function of its graph.
+/// A written .mlpackage, as bytes: Data/com.apple.CoreML/model.mlmodel (the
+/// Model.proto), Data/com.apple.CoreML/weights/weight.bin (the MILBlob, absent
+/// when the program has no tensor constants) and Manifest.json, whose
+/// identifiers are fixed so a package's bytes are a function of its graph.
 struct Package
 {
     Bytes model;
@@ -16,8 +17,8 @@ struct Package
 
     bool isEmpty() const;
 
-    // Deletes whatever is at the path first, so refuses one that exists and
-    // does not end in .mlpackage.
+    /// Deletes whatever is at the path first, so refuses one that exists and
+    /// does not end in .mlpackage.
     bool write(const FilePath& mlpackageDirectory) const;
 
     static std::string standardManifest();

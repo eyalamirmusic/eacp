@@ -1,16 +1,20 @@
 #pragma once
 
+/** @file The EDSL value handles (Float, Float2, UInt, Bool, matrices...) whose
+    operators record graph nodes.
+
+    The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
+    handles into a ShaderGraph: operators and the free float2/float3/float4()
+    constructors record IR nodes instead of touching strings. Nothing here knows
+    about a backend - the graph it builds is emitted later by ShaderEmitter.
+*/
+
 #include "Forward.h"
 #include "ShaderGraph.h"
 #include "ShaderTypes.h"
 
 #include <cassert>
 #include <initializer_list>
-
-// The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
-// handles into a ShaderGraph: operators and the free float2/float3/float4()
-// constructors record IR nodes instead of touching strings. Nothing here knows
-// about a backend - the graph it builds is emitted later by ShaderEmitter.
 
 namespace eacp::GPU
 {
@@ -177,32 +181,32 @@ struct Float : detail::ValueHandle
 {
 };
 
-// The compute thread id and any index computed from it (+ - * / %, the bitwise
-// set, the two shifts, ~, min/max, uint uniforms and unsigned literals).
-// Deliberately outside the float operator vocabulary; it indexes storage
-// buffers and crosses into float arithmetic via toFloat().
+/// The compute thread id and any index computed from it (+ - * / %, the bitwise
+/// set, the two shifts, ~, min/max, uint uniforms and unsigned literals).
+/// Deliberately outside the float operator vocabulary; it indexes storage
+/// buffers and crosses into float arithmetic via toFloat().
 struct UInt : detail::ValueHandle
 {
 };
 
-// The signed integer: what subscripts an array. It carries the operators no
-// float has - the remainder, the bitwise set and the two shifts - as UInt does,
-// and adds the unary minus UInt has no use for. Like UInt it stays outside the
-// float operator vocabulary and crosses into it explicitly, with toInt() and
-// toFloat().
-//
-// Signed rather than unsigned because that is what an index computed from a
-// coordinate needs: int(uv.x * 4.0) is negative left of the origin, and a
-// negative index has to survive as one long enough to be masked or clamped
-// rather than wrapping to a huge number on the way in.
+/// The signed integer: what subscripts an array. It carries the operators no
+/// float has - the remainder, the bitwise set and the two shifts - as UInt does,
+/// and adds the unary minus UInt has no use for. Like UInt it stays outside the
+/// float operator vocabulary and crosses into it explicitly, with toInt() and
+/// toFloat().
+///
+/// Signed rather than unsigned because that is what an index computed from a
+/// coordinate needs: int(uv.x * 4.0) is negative left of the origin, and a
+/// negative index has to survive as one long enough to be masked or clamped
+/// rather than wrapping to a huge number on the way in.
 struct Int : detail::ValueHandle
 {
 };
 
-// What a comparison yields: the condition an if, a while or a select tests.
-// Like UInt it stays outside the float operator vocabulary - it is produced by
-// the comparison operators, combined with && || !, and consumed by control
-// flow, and there is no arithmetic on it.
+/// What a comparison yields: the condition an if, a while or a select tests.
+/// Like UInt it stays outside the float operator vocabulary - it is produced by
+/// the comparison operators, combined with && || !, and consumed by control
+/// flow, and there is no arithmetic on it.
 struct Bool : detail::ValueHandle
 {
 };
@@ -219,10 +223,10 @@ struct Float4 : detail::Swizzles<detail::Floats, 4>
 {
 };
 
-// The unsigned integer vectors: the pair of indices a kernel addresses a buffer
-// with, the lanes of a hash, a thread position held as one value. They carry the
-// whole integer operator set componentwise - arithmetic wrapping at 2^32, as the
-// scalar's does - and cross into the other families explicitly.
+/// The unsigned integer vectors: the pair of indices a kernel addresses a buffer
+/// with, the lanes of a hash, a thread position held as one value. They carry the
+/// whole integer operator set componentwise - arithmetic wrapping at 2^32, as the
+/// scalar's does - and cross into the other families explicitly.
 struct UInt2 : detail::Swizzles<detail::UInts, 2>
 {
 };
@@ -235,10 +239,10 @@ struct UInt4 : detail::Swizzles<detail::UInts, 4>
 {
 };
 
-// The integer vectors: the cell a shader working on a grid counts, the texel
-// coordinate it addresses, the pair of counters it walks a neighbourhood with.
-// They carry the whole integer operator set componentwise, and cross into float
-// arithmetic explicitly with toInt() and toFloat(), exactly as the scalar does.
+/// The integer vectors: the cell a shader working on a grid counts, the texel
+/// coordinate it addresses, the pair of counters it walks a neighbourhood with.
+/// They carry the whole integer operator set componentwise, and cross into float
+/// arithmetic explicitly with toInt() and toFloat(), exactly as the scalar does.
 struct Int2 : detail::Swizzles<detail::Ints, 2>
 {
 };
@@ -251,10 +255,10 @@ struct Int4 : detail::Swizzles<detail::Ints, 4>
 {
 };
 
-// The boolean vectors: what comparing two vectors yields, one component at a
-// time. There is no arithmetic on one and nothing tests one directly - a branch
-// and a select take a scalar condition - so what a shader does with one is
-// collapse it with any() or all(), which is what makes the comparison useful.
+/// The boolean vectors: what comparing two vectors yields, one component at a
+/// time. There is no arithmetic on one and nothing tests one directly - a branch
+/// and a select take a scalar condition - so what a shader does with one is
+/// collapse it with any() or all(), which is what makes the comparison useful.
 struct Bool2 : detail::Swizzles<detail::Bools, 2>
 {
 };
@@ -267,16 +271,16 @@ struct Bool4 : detail::Swizzles<detail::Bools, 4>
 {
 };
 
-// The square matrix values. No swizzles; their operations are matrix * vector
-// and matrix * matrix, which record a Mul node so the emitter can spell it
-// per-backend.
-//
-// Float2x2 and Float3x3 are shader-local values only - the 2D rotation a
-// procedural shader builds inline, the tangent basis a lighting term assembles
-// - and ShaderBuilder refuses them as uniforms: MSL and HLSL pack them to
-// different sizes inside the value itself, which the uniform block's padding
-// cannot bridge. See UniformLayout.h. A Float4x4, which both languages agree
-// on, is the matrix to send from the CPU.
+/// The square matrix values. No swizzles; their operations are matrix * vector
+/// and matrix * matrix, which record a Mul node so the emitter can spell it
+/// per-backend.
+///
+/// Float2x2 and Float3x3 are shader-local values only - the 2D rotation a
+/// procedural shader builds inline, the tangent basis a lighting term assembles
+/// - and ShaderBuilder refuses them as uniforms: MSL and HLSL pack them to
+/// different sizes inside the value itself, which the uniform block's padding
+/// cannot bridge. See UniformLayout.h. A Float4x4, which both languages agree
+/// on, is the matrix to send from the CPU.
 struct Float2x2 : detail::ValueHandle
 {
 };
@@ -289,11 +293,11 @@ struct Float4x4 : detail::ValueHandle
 {
 };
 
-// A 2D texture declared by the shader, identified by its slot rather than an
-// expression node: it is not a value, its one operation is sample(). Sampling
-// is a fragment-stage operation, so it must only feed the fragment expression,
-// never the position. Bind the matching GPU::Texture with
-// RenderPass::setFragmentTexture at the same slot.
+/// A 2D texture declared by the shader, identified by its slot rather than an
+/// expression node: it is not a value, its one operation is sample(). Sampling
+/// is a fragment-stage operation, so it must only feed the fragment expression,
+/// never the position. Bind the matching GPU::Texture with
+/// RenderPass::setFragmentTexture at the same slot.
 struct Texture2D
 {
     ShaderGraph* graph = nullptr;
@@ -302,73 +306,73 @@ struct Texture2D
 
 Float4 sample(const Texture2D& texture, const Float2& coordinates);
 
-// A cube texture declared by the shader: six square faces, sampled with a
-// direction out of the cube's centre rather than with a coordinate on an image.
-// Like Texture2D it is slot-identified rather than an expression node, it takes
-// its slot from the same counter, and it is bound the same way - with
-// RenderPass::setFragmentTexture, handed a GPU::Texture created from a
-// TextureDescriptor whose `cube` is set. That last pairing is the one thing
-// neither type can check: Texture::isCube is what says whether the texture
-// bound is the shape the shader declared.
+/// A cube texture declared by the shader: six square faces, sampled with a
+/// direction out of the cube's centre rather than with a coordinate on an image.
+/// Like Texture2D it is slot-identified rather than an expression node, it takes
+/// its slot from the same counter, and it is bound the same way - with
+/// RenderPass::setFragmentTexture, handed a GPU::Texture created from a
+/// TextureDescriptor whose `cube` is set. That last pairing is the one thing
+/// neither type can check: Texture::isCube is what says whether the texture
+/// bound is the shape the shader declared.
 struct TextureCube
 {
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// The direction need not be normalized. Which face is read is decided by the
-// largest component's axis and sign, and where in it by the other two divided by
-// that component - so a reflection vector goes in exactly as the arithmetic
-// produced it, and a normalize() before this would change nothing but the cost.
+/// The direction need not be normalized. Which face is read is decided by the
+/// largest component's axis and sign, and where in it by the other two divided by
+/// that component - so a reflection vector goes in exactly as the arithmetic
+/// produced it, and a normalize() before this would change nothing but the cost.
 Float4 sample(const TextureCube& texture, const Float3& direction);
 
-// The depth buffer of a render target, declared as a slot like the two above and
-// taking its slot from the same counter - but bound with
-// RenderPass::setFragmentDepthTexture, which takes the *target* rather than a
-// texture, a depth attachment having no existence apart from the colour texture
-// it was created with.
-//
-// The pass that wrote the depth must have ended before the pass that samples it
-// begins, and must have been told to keep it (DepthAction::Keep): a texture is
-// not sampleable by the pass rendering into it, and the depth plane is no
-// different.
-//
-// Render stage only. ComputePass::setInputTexture takes a Texture, and a depth
-// attachment is not one; a kernel that wants scene depth reads a copy of it in
-// a colour format, which is what the render pass this exists for produces.
+/// The depth buffer of a render target, declared as a slot like the two above and
+/// taking its slot from the same counter - but bound with
+/// RenderPass::setFragmentDepthTexture, which takes the *target* rather than a
+/// texture, a depth attachment having no existence apart from the colour texture
+/// it was created with.
+///
+/// The pass that wrote the depth must have ended before the pass that samples it
+/// begins, and must have been told to keep it (DepthAction::Keep): a texture is
+/// not sampleable by the pass rendering into it, and the depth plane is no
+/// different.
+///
+/// Render stage only. ComputePass::setInputTexture takes a Texture, and a depth
+/// attachment is not one; a kernel that wants scene depth reads a copy of it in
+/// a colour format, which is what the render pass this exists for produces.
 struct TextureDepth2D
 {
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// One float, not four, and that is the shape of a depth format on both backends
-// rather than a convenience: Metal's depth2d and an R32_FLOAT SRV each give a
-// single channel, and a Float4 here would be three components the hardware never
-// produced. What comes back is the window-space depth the pass wrote - 0 at the
-// near plane, 1 at the far one, after whatever depth range the viewport set.
+/// One float, not four, and that is the shape of a depth format on both backends
+/// rather than a convenience: Metal's depth2d and an R32_FLOAT SRV each give a
+/// single channel, and a Float4 here would be three components the hardware never
+/// produced. What comes back is the window-space depth the pass wrote - 0 at the
+/// near plane, 1 at the far one, after whatever depth range the viewport set.
 Float sample(const TextureDepth2D& texture, const Float2& coordinates);
 
-// A TwoDArray texture, sampled at a coordinate within one layer. Bound like a
-// Texture2D, with RenderPass::setFragmentTexture.
+/// A TwoDArray texture, sampled at a coordinate within one layer. Bound like a
+/// Texture2D, with RenderPass::setFragmentTexture.
 struct Texture2DArray
 {
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// The whole depth plane of a TwoDArray render target: the cascades of a shadow
-// map in one bind, RenderPass::setFragmentDepthTexture of the target, where a
-// TextureDepth2D takes one layer of it through setFragmentDepthTextureSlice.
+/// The whole depth plane of a TwoDArray render target: the cascades of a shadow
+/// map in one bind, RenderPass::setFragmentDepthTexture of the target, where a
+/// TextureDepth2D takes one layer of it through setFragmentDepthTextureSlice.
 struct TextureDepth2DArray
 {
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// The layer is an index: a Float one is rounded to the nearest (even) layer on
-// every backend, and one outside the array is undefined on Metal, where the
-// other two clamp it.
+/// The layer is an index: a Float one is rounded to the nearest (even) layer on
+/// every backend, and one outside the array is undefined on Metal, where the
+/// other two clamp it.
 Float4 sample(const Texture2DArray& texture,
               const Float2& coordinates,
               const Int& layer);
@@ -387,11 +391,11 @@ Float sample(const TextureDepth2DArray& texture,
              const Float2& coordinates,
              int layer);
 
-// A shadow lookup: 1 where `reference <= stored depth`, 0 where not, and with a
-// Linear sampling the fraction of the 2x2 footprint that passes - the hardware
-// PCF tap. The texture must be declared with TextureCompare::LessEqual, which
-// is also what makes sample() unavailable on it: GLSL's shadow sampler has no
-// plain read.
+/// A shadow lookup: 1 where `reference <= stored depth`, 0 where not, and with a
+/// Linear sampling the fraction of the 2x2 footprint that passes - the hardware
+/// PCF tap. The texture must be declared with TextureCompare::LessEqual, which
+/// is also what makes sample() unavailable on it: GLSL's shadow sampler has no
+/// plain read.
 Float sampleCompare(const TextureDepth2D& texture,
                     const Float2& coordinates,
                     const Float& reference);
@@ -408,57 +412,57 @@ Float sampleCompare(const TextureDepth2DArray& texture,
                     int layer,
                     const Float& reference);
 
-// Sampling at a mip level the shader chooses rather than the one the hardware
-// derives from the neighbouring fragments. Two things need this: a sample taken
-// where the derivatives are meaningless - of a coordinate that jumps between
-// fragments - and a deliberate blur, which walks up the pyramid on purpose.
-//
-// A texture with one level ignores the level, since there is nothing else to
-// read; GPU::Texture has no mips yet, so that is every texture today.
+/// Sampling at a mip level the shader chooses rather than the one the hardware
+/// derives from the neighbouring fragments. Two things need this: a sample taken
+/// where the derivatives are meaningless - of a coordinate that jumps between
+/// fragments - and a deliberate blur, which walks up the pyramid on purpose.
+///
+/// A texture with one level ignores the level, since there is nothing else to
+/// read; GPU::Texture has no mips yet, so that is every texture today.
 Float4
     sample(const Texture2D& texture, const Float2& coordinates, const Float& level);
 
-// The level is a literal far more often than not - a shader reaching for this
-// usually wants the top of the pyramid and nothing else - and a plain float has
-// no graph to record itself into. The texture carries one, so this spells what
-// the caller would otherwise need a ShaderBuilder in scope to anchor.
+/// The level is a literal far more often than not - a shader reaching for this
+/// usually wants the top of the pyramid and nothing else - and a plain float has
+/// no graph to record itself into. The texture carries one, so this spells what
+/// the caller would otherwise need a ShaderBuilder in scope to anchor.
 Float4 sample(const Texture2D& texture, const Float2& coordinates, float level);
 
-// One texel, addressed in texels rather than in the [0, 1] the sampler works
-// in, and read without it: no filtering, no wrap, no interpolation. A
-// coordinate outside the texture reads as zero on both backends.
-//
-// An Int2 is what a texel index is, and what GLSL's texelFetch takes. The
-// Float2 form stays because a shader usually has the coordinate in hand as one:
-// it truncates towards zero, exactly as GLSL's ivec2 conversion does.
+/// One texel, addressed in texels rather than in the [0, 1] the sampler works
+/// in, and read without it: no filtering, no wrap, no interpolation. A
+/// coordinate outside the texture reads as zero on both backends.
+///
+/// An Int2 is what a texel index is, and what GLSL's texelFetch takes. The
+/// Float2 form stays because a shader usually has the coordinate in hand as one:
+/// it truncates towards zero, exactly as GLSL's ivec2 conversion does.
 Float4 fetch(const Texture2D& texture, const Int2& coordinates);
 
 Float4 fetch(const Texture2D& texture, const Float2& coordinates);
 
-// A 2D texture a kernel writes. Like Texture2D it is slot-identified rather
-// than an expression node, and like an OutputBuffer its one operation is the
-// store recorded via ShaderBuilder::write - there is nothing to read back from
-// one, on either backend. Bind the matching GPU::Texture, created with
-// TextureDescriptor::computeWrite, at the same slot
-// (ComputePass::setOutputTexture).
+/// A 2D texture a kernel writes. Like Texture2D it is slot-identified rather
+/// than an expression node, and like an OutputBuffer its one operation is the
+/// store recorded via ShaderBuilder::write - there is nothing to read back from
+/// one, on either backend. Bind the matching GPU::Texture, created with
+/// TextureDescriptor::computeWrite, at the same slot
+/// (ComputePass::setOutputTexture).
 struct WritableTexture2D
 {
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// Where a 2D kernel's work item sits in the grid. A struct of handles rather
-// than a uint2 value type, following the idiom the GPU README states: the two
-// components are what a kernel indexes with, and neither shading language has
-// an operation on the pair that the components do not already have.
+/// Where a 2D kernel's work item sits in the grid. A struct of handles rather
+/// than a uint2 value type, following the idiom the GPU README states: the two
+/// components are what a kernel indexes with, and neither shading language has
+/// an operation on the pair that the components do not already have.
 struct ThreadPosition
 {
     UInt x;
     UInt y;
 };
 
-// The same for a kernel over a volume. A type of its own rather than a third
-// component on the one above, so a 2D kernel carries no z it cannot dispatch.
+/// The same for a kernel over a volume. A type of its own rather than a third
+/// component on the one above, so a 2D kernel carries no z it cannot dispatch.
 struct ThreadPosition3
 {
     UInt x;
@@ -466,46 +470,46 @@ struct ThreadPosition3
     UInt z;
 };
 
-// Eight values out of one word, which is wider than any vector the three
-// languages share - none of them has a float8, and inventing one in the EDSL
-// would leave nothing to emit it into. So the eight nibbles of a word come back
-// as the two Float4s they unpack into: .low is nibbles 0..3 and .high nibbles
-// 4..7, in the order the word holds them.
-//
-// A pair rather than a readInt4x8Low beside a readInt4x8High, because one fetch
-// should read as one call. The graph would now share the two loads of the word
-// either way - a read of a read-only buffer at a settled index is one node
-// however many calls named it - but one read unpacked twice in registers is
-// what a kernel consuming eight consecutive weights means, and the call site
-// says so because it is one:
-//
-//     auto weights = quantized.readInt4x8(block);
-//     sum += dot(weights.low, activations.read4(block * 2u))
-//          + dot(weights.high, activations.read4(block * 2u + 1u));
+/// Eight values out of one word, which is wider than any vector the three
+/// languages share - none of them has a float8, and inventing one in the EDSL
+/// would leave nothing to emit it into. So the eight nibbles of a word come back
+/// as the two Float4s they unpack into: .low is nibbles 0..3 and .high nibbles
+/// 4..7, in the order the word holds them.
+///
+/// A pair rather than a readInt4x8Low beside a readInt4x8High, because one fetch
+/// should read as one call. The graph would now share the two loads of the word
+/// either way - a read of a read-only buffer at a settled index is one node
+/// however many calls named it - but one read unpacked twice in registers is
+/// what a kernel consuming eight consecutive weights means, and the call site
+/// says so because it is one:
+///
+///     auto weights = quantized.readInt4x8(block);
+///     sum += dot(weights.low, activations.read4(block * 2u))
+///          + dot(weights.high, activations.read4(block * 2u + 1u));
 struct Float4Pair
 {
     Float4 low;
     Float4 high;
 };
 
-// Sixteen values out of one record, for the same reason and one width further:
-// the widest single load the three backends have is sixteen bytes, and what
-// that many quantized weights unpack into is four Float4s.
-//
-// Lettered a..d rather than extended from .low/.high, because those two words
-// name a two-way split honestly and there is no equally honest pair of words
-// for the middle of a four-way one - .lowMid and .highMid would invent a
-// vocabulary, and read as an ordering of magnitudes where this is an ordering
-// of addresses. Inside a Float4 the components already run x, y, z, w in the
-// order the bytes sit; across the quad they run a, b, c, d the same way, so
-// q.a.x is the record's first element and q.d.w its sixteenth, and the whole
-// thing reads left to right:
-//
-//     auto weights = quantized.readInt8x16(block);
-//     sum += dot(weights.a, activations.read4(block * 4u))
-//          + dot(weights.b, activations.read4(block * 4u + 1u))
-//          + dot(weights.c, activations.read4(block * 4u + 2u))
-//          + dot(weights.d, activations.read4(block * 4u + 3u));
+/// Sixteen values out of one record, for the same reason and one width further:
+/// the widest single load the three backends have is sixteen bytes, and what
+/// that many quantized weights unpack into is four Float4s.
+///
+/// Lettered a..d rather than extended from .low/.high, because those two words
+/// name a two-way split honestly and there is no equally honest pair of words
+/// for the middle of a four-way one - .lowMid and .highMid would invent a
+/// vocabulary, and read as an ordering of magnitudes where this is an ordering
+/// of addresses. Inside a Float4 the components already run x, y, z, w in the
+/// order the bytes sit; across the quad they run a, b, c, d the same way, so
+/// q.a.x is the record's first element and q.d.w its sixteenth, and the whole
+/// thing reads left to right:
+///
+///     auto weights = quantized.readInt8x16(block);
+///     sum += dot(weights.a, activations.read4(block * 4u))
+///          + dot(weights.b, activations.read4(block * 4u + 1u))
+///          + dot(weights.c, activations.read4(block * 4u + 2u))
+///          + dot(weights.d, activations.read4(block * 4u + 3u));
 struct Float4Quad
 {
     Float4 a;
@@ -514,43 +518,43 @@ struct Float4Quad
     Float4 d;
 };
 
-// Storage buffers of float elements, declared by a compute kernel. Like
-// Texture2D they are slot-identified rather than expression nodes: an input's
-// one operation is the indexed read, an output's is the store recorded via
-// ShaderBuilder::write. Bind the matching GPU::Buffer, or a BufferRange over
-// part of one, at the same slot (ComputePass::setInputBuffer /
-// setOutputBuffer). Index zero is the buffer's first element, or the range's.
-//
-// One GPU::Buffer must not be bound to an input slot and an output slot of the
-// same kernel. A kernel that computes in place declares one OutputBuffer and
-// reads it.
+/// Storage buffers of float elements, declared by a compute kernel. Like
+/// Texture2D they are slot-identified rather than expression nodes: an input's
+/// one operation is the indexed read, an output's is the store recorded via
+/// ShaderBuilder::write. Bind the matching GPU::Buffer, or a BufferRange over
+/// part of one, at the same slot (ComputePass::setInputBuffer /
+/// setOutputBuffer). Index zero is the buffer's first element, or the range's.
+///
+/// One GPU::Buffer must not be bound to an input slot and an output slot of the
+/// same kernel. A kernel that computes in place declares one OutputBuffer and
+/// reads it.
 struct InputBuffer
 {
     Float operator[](const UInt& index) const;
 
-    // A literal index, which is what a broadcast reads: the one element every
-    // thread of a dispatch wants has no index to compute, and manufacturing one
-    // through a var() would name a mutable local for a constant.
+    /// A literal index, which is what a broadcast reads: the one element every
+    /// thread of a dispatch wants has no index to compute, and manufacturing one
+    /// through a var() would name a mutable local for a constant.
     Float operator[](unsigned index) const;
 
-    // The vector reads, for a buffer whose elements are records rather than
-    // single floats: read4(i) is elements 4i..4i+3 as a Float4, which is what a
-    // kernel walking a struct of four floats wants instead of four subscripts
-    // and the index arithmetic to go with them.
-    //
-    // The index is in records, not in floats - read4(i) and the matching
-    // write(output, i, Float4) address the same record - so a kernel never
-    // spells the stride itself.
-    //
-    // And on Metal it is one load rather than that many: the run of elements is
-    // read through a packed vector pointer, sixteen bytes in one instruction
-    // for read4. HLSL and GLSL emit the componentwise construct, because a
-    // StructuredBuffer<float> and an std430 block of floats have no spelling
-    // for reinterpreting themselves - see ExprKind::BufferVectorRead and the
-    // emitter's metalPackedVectorType.
-    //
-    // OutputBuffer's siblings stay scalar on every backend on purpose; the
-    // comment on readBufferVector in ShaderValue.cpp says why.
+    /// The vector reads, for a buffer whose elements are records rather than
+    /// single floats: read4(i) is elements 4i..4i+3 as a Float4, which is what a
+    /// kernel walking a struct of four floats wants instead of four subscripts
+    /// and the index arithmetic to go with them.
+    ///
+    /// The index is in records, not in floats - read4(i) and the matching
+    /// write(output, i, Float4) address the same record - so a kernel never
+    /// spells the stride itself.
+    ///
+    /// And on Metal it is one load rather than that many: the run of elements is
+    /// read through a packed vector pointer, sixteen bytes in one instruction
+    /// for read4. HLSL and GLSL emit the componentwise construct, because a
+    /// StructuredBuffer<float> and an std430 block of floats have no spelling
+    /// for reinterpreting themselves - see ExprKind::BufferVectorRead and the
+    /// emitter's metalPackedVectorType.
+    ///
+    /// OutputBuffer's siblings stay scalar on every backend on purpose; the
+    /// comment on readBufferVector in ShaderValue.cpp says why.
     Float2 read2(const UInt& index) const;
     Float3 read3(const UInt& index) const;
     Float4 read4(const UInt& index) const;
@@ -558,16 +562,16 @@ struct InputBuffer
     Float3 read3(unsigned index) const;
     Float4 read4(unsigned index) const;
 
-    // The fp16 reads, for a buffer whose elements are halves: readHalf counts
-    // in halves, readHalf2 in the words that hold two of them, readHalf4 in
-    // records of four - the two words starting at word 2 * i. Declared here
-    // and defined further down, since they are spelled in terms of asUInt and
-    // unpackHalf2, neither of which exists yet at this point in the header.
-    // All of them fetch whole words, so the buffer needs a whole number of them.
-    //
-    // The four-wide one is the width a weight walk wants: it takes its two
-    // words through read2, so on Metal the eight bytes arrive in one load and
-    // the unpacking is register arithmetic over them.
+    /// The fp16 reads, for a buffer whose elements are halves: readHalf counts
+    /// in halves, readHalf2 in the words that hold two of them, readHalf4 in
+    /// records of four - the two words starting at word 2 * i. Declared here
+    /// and defined further down, since they are spelled in terms of asUInt and
+    /// unpackHalf2, neither of which exists yet at this point in the header.
+    /// All of them fetch whole words, so the buffer needs a whole number of them.
+    ///
+    /// The four-wide one is the width a weight walk wants: it takes its two
+    /// words through read2, so on Metal the eight bytes arrive in one load and
+    /// the unpacking is register arithmetic over them.
     Float readHalf(const UInt& index) const;
     Float readHalf(unsigned index) const;
     Float2 readHalf2(const UInt& index) const;
@@ -575,10 +579,10 @@ struct InputBuffer
     Float4 readHalf4(const UInt& index) const;
     Float4 readHalf4(unsigned index) const;
 
-    // The bf16 reads, on exactly those terms: readBFloat16 counts in bfloat16s,
-    // readBFloat16x2 in the words that hold two, readBFloat16x4 in records of
-    // four. The wide names carry an x rather than a bare digit, which after
-    // "16" would read as one number.
+    /// The bf16 reads, on exactly those terms: readBFloat16 counts in bfloat16s,
+    /// readBFloat16x2 in the words that hold two, readBFloat16x4 in records of
+    /// four. The wide names carry an x rather than a bare digit, which after
+    /// "16" would read as one number.
     Float readBFloat16(const UInt& index) const;
     Float readBFloat16(unsigned index) const;
     Float2 readBFloat16x2(const UInt& index) const;
@@ -586,13 +590,13 @@ struct InputBuffer
     Float4 readBFloat16x4(const UInt& index) const;
     Float4 readBFloat16x4(unsigned index) const;
 
-    // The byte reads, for the int8 half of a block-quantized checkpoint, on the
-    // same two index conventions: readInt8 and readUInt8 count bytes, so a
-    // buffer of N quantized weights is walked 0..N-1, and readInt8x4 and
-    // readUInt8x4 count the words that hold four. Each hands back the stored
-    // integer widened to a float exactly - the block's scale is a multiply the
-    // kernel does itself, since which scale belongs to which run of weights is
-    // the format's business and not a buffer read's.
+    /// The byte reads, for the int8 half of a block-quantized checkpoint, on the
+    /// same two index conventions: readInt8 and readUInt8 count bytes, so a
+    /// buffer of N quantized weights is walked 0..N-1, and readInt8x4 and
+    /// readUInt8x4 count the words that hold four. Each hands back the stored
+    /// integer widened to a float exactly - the block's scale is a multiply the
+    /// kernel does itself, since which scale belongs to which run of weights is
+    /// the format's business and not a buffer read's.
     Float readInt8(const UInt& index) const;
     Float readInt8(unsigned index) const;
     Float readUInt8(const UInt& index) const;
@@ -602,18 +606,18 @@ struct InputBuffer
     Float4 readUInt8x4(const UInt& index) const;
     Float4 readUInt8x4(unsigned index) const;
 
-    // The wide byte reads, on the same convention one width up: readInt8x8
-    // counts records of eight bytes - the two words starting at word 2 * i -
-    // and readInt8x16 records of sixteen, the four words starting at word
-    // 4 * i. Both take their words through a single record read, so the eight
-    // or sixteen bytes arrive in one load wherever the backend has one and the
-    // widening is register arithmetic over what it brought back.
-    //
-    // That is the whole point of them. readInt8x4 fetches four bytes in a
-    // four-byte load, so a kernel walking a row with it issues as many loads as
-    // the same walk in bf16 does for twice the data, and becomes bound by how
-    // fast it can issue them rather than by memory. These two put the same
-    // bytes behind a load as wide as the bf16 one.
+    /// The wide byte reads, on the same convention one width up: readInt8x8
+    /// counts records of eight bytes - the two words starting at word 2 * i -
+    /// and readInt8x16 records of sixteen, the four words starting at word
+    /// 4 * i. Both take their words through a single record read, so the eight
+    /// or sixteen bytes arrive in one load wherever the backend has one and the
+    /// widening is register arithmetic over what it brought back.
+    ///
+    /// That is the whole point of them. readInt8x4 fetches four bytes in a
+    /// four-byte load, so a kernel walking a row with it issues as many loads as
+    /// the same walk in bf16 does for twice the data, and becomes bound by how
+    /// fast it can issue them rather than by memory. These two put the same
+    /// bytes behind a load as wide as the bf16 one.
     Float4Pair readInt8x8(const UInt& index) const;
     Float4Pair readInt8x8(unsigned index) const;
     Float4Pair readUInt8x8(const UInt& index) const;
@@ -623,18 +627,18 @@ struct InputBuffer
     Float4Quad readUInt8x16(const UInt& index) const;
     Float4Quad readUInt8x16(unsigned index) const;
 
-    // The nibble reads, for the int4 half of one. The index counts words - one
-    // word is eight nibbles, nibble 0 in the low four bits - and the eight
-    // values arrive as a Float4Pair for the reason that type gives. A signed
-    // nibble is two's complement over [-8, 7] and an unsigned one is [0, 15].
+    /// The nibble reads, for the int4 half of one. The index counts words - one
+    /// word is eight nibbles, nibble 0 in the low four bits - and the eight
+    /// values arrive as a Float4Pair for the reason that type gives. A signed
+    /// nibble is two's complement over [-8, 7] and an unsigned one is [0, 15].
     Float4Pair readInt4x8(const UInt& index) const;
     Float4Pair readInt4x8(unsigned index) const;
     Float4Pair readUInt4x8(const UInt& index) const;
     Float4Pair readUInt4x8(unsigned index) const;
 
-    // Sixteen nibbles, which is the same eight bytes readInt8x8 fetches and so
-    // the same single load: two words read as one record, each unpacked into
-    // the pair of Float4s it holds. The index counts records of sixteen.
+    /// Sixteen nibbles, which is the same eight bytes readInt8x8 fetches and so
+    /// the same single load: two words read as one record, each unpacked into
+    /// the pair of Float4s it holds. The index counts records of sixteen.
     Float4Quad readInt4x16(const UInt& index) const;
     Float4Quad readInt4x16(unsigned index) const;
     Float4Quad readUInt4x16(const UInt& index) const;
@@ -646,28 +650,28 @@ struct InputBuffer
 
 struct OutputBuffer
 {
-    // What the element holds: what this thread stored into it earlier in the
-    // kernel, or what the buffer was bound holding where it stored nothing.
-    // Both backends declare an output writable - `device float*` on Metal, an
-    // RWStructuredBuffer on HLSL - so reading one is the same subscript the
-    // store is, and a kernel that needs its own result back reads it instead of
-    // computing it a second time. A softmax is the case that asks: normalising
-    // wants the exponentials it just wrote, not exp() evaluated twice.
-    //
-    // Read-after-write *within one thread* is the whole of what this promises,
-    // and it is what the emitter's statement order gives. Another thread's
-    // store is visible only once the dispatch has ended, exactly as
-    // AtomicBuffer::load says of the count it hands back.
-    //
-    // It is also how a kernel computes in place: write(output, i, f(output[i]))
-    // over the buffer it was handed, one binding and no second allocation.
+    /// What the element holds: what this thread stored into it earlier in the
+    /// kernel, or what the buffer was bound holding where it stored nothing.
+    /// Both backends declare an output writable - `device float*` on Metal, an
+    /// RWStructuredBuffer on HLSL - so reading one is the same subscript the
+    /// store is, and a kernel that needs its own result back reads it instead of
+    /// computing it a second time. A softmax is the case that asks: normalising
+    /// wants the exponentials it just wrote, not exp() evaluated twice.
+    ///
+    /// Read-after-write *within one thread* is the whole of what this promises,
+    /// and it is what the emitter's statement order gives. Another thread's
+    /// store is visible only once the dispatch has ended, exactly as
+    /// AtomicBuffer::load says of the count it hands back.
+    ///
+    /// It is also how a kernel computes in place: write(output, i, f(output[i]))
+    /// over the buffer it was handed, one binding and no second allocation.
     Float operator[](const UInt& index) const;
     Float operator[](unsigned index) const;
 
-    // The record reads, pairing with the Float2/Float3/Float4 overloads of
-    // ShaderBuilder::write on the same terms InputBuffer's do: the index counts
-    // records, so a kernel reading back what it wrote spells the same index it
-    // wrote at.
+    /// The record reads, pairing with the Float2/Float3/Float4 overloads of
+    /// ShaderBuilder::write on the same terms InputBuffer's do: the index counts
+    /// records, so a kernel reading back what it wrote spells the same index it
+    /// wrote at.
     Float2 read2(const UInt& index) const;
     Float3 read3(const UInt& index) const;
     Float4 read4(const UInt& index) const;
@@ -679,22 +683,22 @@ struct OutputBuffer
     int slot = -1;
 };
 
-// The integer siblings of the pair above: the same slots, the same binds, and
-// elements a kernel reads and writes as UInt rather than as Float. What they
-// are for is data that is not a number to compute with - the token ids a
-// gather looks rows up by, the index an argmax arrived at, a count - which a
-// float buffer can only carry as bits to cast, and only while it stays under
-// 2^24.
+/// The integer siblings of the pair above: the same slots, the same binds, and
+/// elements a kernel reads and writes as UInt rather than as Float. What they
+/// are for is data that is not a number to compute with - the token ids a
+/// gather looks rows up by, the index an argmax arrived at, a count - which a
+/// float buffer can only carry as bits to cast, and only while it stays under
+/// 2^24.
 struct UIntInputBuffer
 {
     UInt operator[](const UInt& index) const;
     UInt operator[](unsigned index) const;
 
-    // The record reads, for a buffer whose elements are records of integers
-    // rather than single ones: read4(i) is elements 4i..4i+3 as a UInt4. The
-    // index is in records, not in elements - read4(i) and the matching
-    // write(output, i, UInt4) address the same record - so a kernel never
-    // spells the stride itself. One load on Metal, as InputBuffer's are.
+    /// The record reads, for a buffer whose elements are records of integers
+    /// rather than single ones: read4(i) is elements 4i..4i+3 as a UInt4. The
+    /// index is in records, not in elements - read4(i) and the matching
+    /// write(output, i, UInt4) address the same record - so a kernel never
+    /// spells the stride itself. One load on Metal, as InputBuffer's are.
     UInt2 read2(const UInt& index) const;
     UInt3 read3(const UInt& index) const;
     UInt4 read4(const UInt& index) const;
@@ -708,16 +712,16 @@ struct UIntInputBuffer
 
 struct UIntOutputBuffer
 {
-    // What the element holds: what this thread stored into it earlier in the
-    // kernel, or what the buffer was bound holding where it stored nothing -
-    // read-after-write within one thread, on the terms OutputBuffer sets.
+    /// What the element holds: what this thread stored into it earlier in the
+    /// kernel, or what the buffer was bound holding where it stored nothing -
+    /// read-after-write within one thread, on the terms OutputBuffer sets.
     UInt operator[](const UInt& index) const;
     UInt operator[](unsigned index) const;
 
-    // The record reads, pairing with the UInt2/UInt3/UInt4 overloads of
-    // ShaderBuilder::write on the terms UIntInputBuffer's do: the index counts
-    // records, so a kernel reading back what it wrote spells the same index it
-    // wrote at.
+    /// The record reads, pairing with the UInt2/UInt3/UInt4 overloads of
+    /// ShaderBuilder::write on the terms UIntInputBuffer's do: the index counts
+    /// records, so a kernel reading back what it wrote spells the same index it
+    /// wrote at.
     UInt2 read2(const UInt& index) const;
     UInt3 read3(const UInt& index) const;
     UInt4 read4(const UInt& index) const;
@@ -725,38 +729,38 @@ struct UIntOutputBuffer
     UInt3 read3(unsigned index) const;
     UInt4 read4(unsigned index) const;
 
-    // A literal anchored on this buffer's own graph, as AtomicBuffer's is: an
-    // id a kernel writes outright rather than computes.
+    /// A literal anchored on this buffer's own graph, as AtomicBuffer's is: an
+    /// id a kernel writes outright rather than computes.
     UInt literal(unsigned value) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// A storage buffer of unsigned integers every thread in the dispatch may
-// read-modify-write at once, which is what makes one kernel able to hand out
-// slots of a shared array to threads that know nothing about each other.
-//
-// The elements are integers and not floats, and that is not a detail: the same
-// GPU::Buffer bound to an InputBuffer in a later kernel reads those bits as
-// floats and yields nonsense. Bind it to a UIntInputBuffer instead, or read it
-// back through load().
-//
-// The add itself is ShaderBuilder::atomicAdd rather than a method here, because
-// it is a statement: see StatementKind::AtomicAdd for why the two backends
-// leave no other option.
+/// A storage buffer of unsigned integers every thread in the dispatch may
+/// read-modify-write at once, which is what makes one kernel able to hand out
+/// slots of a shared array to threads that know nothing about each other.
+///
+/// The elements are integers and not floats, and that is not a detail: the same
+/// GPU::Buffer bound to an InputBuffer in a later kernel reads those bits as
+/// floats and yields nonsense. Bind it to a UIntInputBuffer instead, or read it
+/// back through load().
+///
+/// The add itself is ShaderBuilder::atomicAdd rather than a method here, because
+/// it is a statement: see StatementKind::AtomicAdd for why the two backends
+/// leave no other option.
 struct AtomicBuffer
 {
-    // What the element holds now. Ordered against this thread's own earlier
-    // operations and nothing else - relaxed, like the add - so it answers "how
-    // many are there" after a dispatch, not "what is the other threads' state"
-    // during one.
+    /// What the element holds now. Ordered against this thread's own earlier
+    /// operations and nothing else - relaxed, like the add - so it answers "how
+    /// many are there" after a dispatch, not "what is the other threads' state"
+    /// during one.
     UInt load(const UInt& index) const;
 
-    // A literal index, anchored on this buffer's own graph - the same courtesy
-    // the intrinsics extend to a float literal, and worth more here, because a
-    // single shared counter is spelled at element zero and would otherwise be
-    // the one index a kernel could not write.
+    /// A literal index, anchored on this buffer's own graph - the same courtesy
+    /// the intrinsics extend to a float literal, and worth more here, because a
+    /// single shared counter is spelled at element zero and would otherwise be
+    /// the one index a kernel could not write.
     UInt load(unsigned index) const;
 
     UInt literal(unsigned value) const;
@@ -919,11 +923,11 @@ Bool3 handleOf(const Bool3&);
 Bool4 handleOf(const Bool4&);
 } // namespace detail
 
-// The handle type T stands in for, in whichever family it belongs to.
+/// The handle type T stands in for, in whichever family it belongs to.
 template <typename T>
 using ShaderHandle = decltype(detail::handleOf(std::declval<const T&>()));
 
-// T is a handle (or a Uniform<> of one) in the given family.
+/// T is a handle (or a Uniform<> of one) in the given family.
 template <typename T>
 concept ShaderHandleLike = requires(const T& value) { detail::handleOf(value); };
 
@@ -939,8 +943,8 @@ template <typename T>
 concept BoolValueLike =
     ShaderHandleLike<T> && isBoolean(ValueTypeOf<ShaderHandle<T>>::value);
 
-// An integer or boolean *vector* specifically - what a componentwise operator
-// takes and what any()/all() collapses.
+/// An integer or boolean *vector* specifically - what a componentwise operator
+/// takes and what any()/all() collapses.
 template <typename T>
 concept UIntVectorLike =
     UIntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value != ValueType::UInt;
@@ -961,29 +965,29 @@ template <typename T>
 concept IntScalarLike =
     IntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value == ValueType::Int;
 
-// Two handles of exactly the same type, whichever family they are in - the
-// integer and boolean counterpart of SameShaderShape, so that an Int2 and a
-// Uniform<Int2> count as the same operand shape.
+/// Two handles of exactly the same type, whichever family they are in - the
+/// integer and boolean counterpart of SameShaderShape, so that an Int2 and a
+/// Uniform<Int2> count as the same operand shape.
 template <typename T, typename Other>
 concept SameShaderHandle =
     ShaderHandleLike<Other> && std::same_as<ShaderHandle<T>, ShaderHandle<Other>>;
 
-// Any value handle, or a type derived from one (e.g. a Uniform<> member), so
-// uniforms and vertex inputs work directly in expressions.
+/// Any value handle, or a type derived from one (e.g. a Uniform<> member), so
+/// uniforms and vertex inputs work directly in expressions.
 template <typename T>
 concept ShaderValueLike = requires(const T& value) { detail::baseOf(value); };
 
-// The handle type T stands in for.
+/// The handle type T stands in for.
 template <typename T>
 using ShaderBase = decltype(detail::baseOf(std::declval<const T&>()));
 
-// Every family outside the float vocabulary: the unsigned index, the signed
-// integers and the booleans.
+/// Every family outside the float vocabulary: the unsigned index, the signed
+/// integers and the booleans.
 template <typename T>
 concept NonFloatHandle = ShaderHandleLike<T> && !ShaderValueLike<T>;
 
-// T stands in for exactly the given base handle: ShaderShape<Float3> accepts a
-// Float3 or a Uniform<Float3>.
+/// T stands in for exactly the given base handle: ShaderShape<Float3> accepts a
+/// Float3 or a Uniform<Float3>.
 template <typename T, typename Base>
 concept ShaderShape = ShaderValueLike<T> && std::same_as<ShaderBase<T>, Base>;
 
@@ -993,9 +997,9 @@ concept ShaderScalarLike = ShaderShape<T, Float>;
 template <typename T>
 concept ShaderVectorLike = ShaderValueLike<T> && !ShaderScalarLike<T>;
 
-// An operand of the same shape as another, written as a type constraint with
-// the reference type as its argument: template <typename L, SameShaderShape<L> R>
-// reads "R shaped like L" and accepts e.g. a Float3 next to a Uniform<Float3>.
+/// An operand of the same shape as another, written as a type constraint with
+/// the reference type as its argument: template <typename L, SameShaderShape<L> R>
+/// reads "R shaped like L" and accepts e.g. a Float3 next to a Uniform<Float3>.
 template <typename T, typename Other>
 concept SameShaderShape =
     ShaderValueLike<Other> && ShaderShape<T, ShaderBase<Other>>;
@@ -1182,19 +1186,19 @@ Result intrinsic(const char* name, const Args&... arguments)
 }
 } // namespace detail
 
-// An argument written beside a value of a given shape: the same shape, a scalar
-// broadcast across it, or a float literal. It is what GLSL takes wherever it
-// takes a genType, and what both languages under this take as well.
+/// An argument written beside a value of a given shape: the same shape, a scalar
+/// broadcast across it, or a float literal. It is what GLSL takes wherever it
+/// takes a genType, and what both languages under this take as well.
 template <typename T, typename Shape>
 concept ShapedBeside =
     detail::LiteralArgument<T> || SameShaderShape<T, Shape> || ShaderScalarLike<T>;
 
-// The thread id as a float, e.g. a value computed from the element index. The
-// constructor-style cast spells identically in MSL and HLSL.
+/// The thread id as a float, e.g. a value computed from the element index. The
+/// constructor-style cast spells identically in MSL and HLSL.
 Float toFloat(const UInt& value);
 
-// Componentwise builtins. Call nodes carry the MSL spelling; the emitter
-// translates the few HLSL spells differently (fract -> frac, mix -> lerp).
+/// Componentwise builtins. Call nodes carry the MSL spelling; the emitter
+/// translates the few HLSL spells differently (fract -> frac, mix -> lerp).
 template <ShaderValueLike T>
 ShaderBase<T> sin(const T& value)
 {
@@ -1231,8 +1235,8 @@ ShaderBase<T> sqrt(const T& value)
     return detail::componentCall(value, "sqrt");
 }
 
-// The reciprocal square root, spelled rsqrt in both backends (GLSL calls it
-// inversesqrt).
+/// The reciprocal square root, spelled rsqrt in both backends (GLSL calls it
+/// inversesqrt).
 template <ShaderValueLike T>
 ShaderBase<T> rsqrt(const T& value)
 {
@@ -1245,10 +1249,10 @@ ShaderBase<T> tan(const T& value)
     return detail::componentCall(value, "tan");
 }
 
-// The hyperbolics, which both languages spell exactly as C does. tanh is the
-// one a network reaches for - it is the saturating activation itself, and half
-// of GELU's tanh approximation - and the other two come with it because a
-// language that has one has all three.
+/// The hyperbolics, which both languages spell exactly as C does. tanh is the
+/// one a network reaches for - it is the saturating activation itself, and half
+/// of GELU's tanh approximation - and the other two come with it because a
+/// language that has one has all three.
 template <ShaderValueLike T>
 ShaderBase<T> sinh(const T& value)
 {
@@ -1267,22 +1271,22 @@ ShaderBase<T> tanh(const T& value)
     return detail::componentCall(value, "tanh");
 }
 
-// tanh with its tails answered rather than computed: exactly +/-1 past an
-// argument of ten, the native builtin inside it.
-//
-// What the native one does with a large argument is the driver's business, and
-// on the backend eacp compiles with fast math - Metal, whose library is built
-// with no MTLCompileOptions - tanh(990) is a NaN rather than a one. That is not
-// a contrived argument: a tanh GELU cubes its input on the way in, so an
-// activation of thirty arrives here as nine hundred, and the NaN it comes back
-// with is the whole rest of a transformer's residual stream.
-//
-// The two spellings agree everywhere either is defined. Float32 resolves
-// nothing between tanh(9.011) and one, so every argument this answers with a
-// constant is one whose correctly rounded tanh is that same constant - which is
-// what makes this a repair of the tails and not a different function. Reach for
-// it wherever the argument is not bounded by construction, and for a saturating
-// activation that is always.
+/// tanh with its tails answered rather than computed: exactly +/-1 past an
+/// argument of ten, the native builtin inside it.
+///
+/// What the native one does with a large argument is the driver's business, and
+/// on the backend eacp compiles with fast math - Metal, whose library is built
+/// with no MTLCompileOptions - tanh(990) is a NaN rather than a one. That is not
+/// a contrived argument: a tanh GELU cubes its input on the way in, so an
+/// activation of thirty arrives here as nine hundred, and the NaN it comes back
+/// with is the whole rest of a transformer's residual stream.
+///
+/// The two spellings agree everywhere either is defined. Float32 resolves
+/// nothing between tanh(9.011) and one, so every argument this answers with a
+/// constant is one whose correctly rounded tanh is that same constant - which is
+/// what makes this a repair of the tails and not a different function. Reach for
+/// it wherever the argument is not bounded by construction, and for a saturating
+/// activation that is always.
 template <ShaderValueLike T>
 ShaderBase<T> saturatingTanh(const T& value)
 {
@@ -1307,9 +1311,9 @@ ShaderBase<T> atan(const T& value)
     return detail::componentCall(value, "atan");
 }
 
-// atan2(y, x): the quadrant-aware arctangent, the form polar coordinates want.
-// Both backends spell it atan2; GLSL overloads atan for it, which is why a
-// ported shader picks this one by argument count.
+/// atan2(y, x): the quadrant-aware arctangent, the form polar coordinates want.
+/// Both backends spell it atan2; GLSL overloads atan for it, which is why a
+/// ported shader picks this one by argument count.
 template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> atan2(const L& y, const R& x)
 {
@@ -1346,33 +1350,33 @@ ShaderBase<T> log2(const T& value)
     return detail::componentCall(value, "log2");
 }
 
-// Native in both languages, which is worth spelling out because the obvious
-// workaround is not equivalent: log(x) * 0.4342944819 changes the base with an
-// extra rounding on a value that has already lost the accuracy a logarithm of
-// a very small number needs. A mel front-end takes log10 of magnitudes down
-// around 1e-10, so that is not a hypothetical.
+/// Native in both languages, which is worth spelling out because the obvious
+/// workaround is not equivalent: log(x) * 0.4342944819 changes the base with an
+/// extra rounding on a value that has already lost the accuracy a logarithm of
+/// a very small number needs. A mel front-end takes log10 of magnitudes down
+/// around 1e-10, so that is not a hypothetical.
 template <ShaderValueLike T>
 ShaderBase<T> log10(const T& value)
 {
     return detail::componentCall(value, "log10");
 }
 
-// The error function and its complement. GELU is erf, exactly - the tanh form
-// every framework offers beside it is an approximation of this one - so a
-// transformer's activation is a single call rather than a hand-rolled
-// polynomial in each kernel that wants it.
-//
-// Emitted through a helper rather than as a bare call, and for a harder reason
-// than unpackHalf2's: neither shading language has an error function at all, so
-// what the helper hides is a polynomial approximation rather than a different
-// spelling. See ShaderEmitter's shaderHelpers for it and for the accuracy it
-// holds to - it is a float32 approximation, not the libm-grade function the
-// same name has on the CPU.
-//
-// erfc is its own helper rather than 1 - erf(x). The two differ by nothing in
-// exact arithmetic and by everything in float32: erf saturates at 1 well before
-// erfc reaches zero, so the subtraction gives up every digit of the tail, which
-// is the half of erfc that anything asks for it by name.
+/// The error function and its complement. GELU is erf, exactly - the tanh form
+/// every framework offers beside it is an approximation of this one - so a
+/// transformer's activation is a single call rather than a hand-rolled
+/// polynomial in each kernel that wants it.
+///
+/// Emitted through a helper rather than as a bare call, and for a harder reason
+/// than unpackHalf2's: neither shading language has an error function at all, so
+/// what the helper hides is a polynomial approximation rather than a different
+/// spelling. See ShaderEmitter's shaderHelpers for it and for the accuracy it
+/// holds to - it is a float32 approximation, not the libm-grade function the
+/// same name has on the CPU.
+///
+/// erfc is its own helper rather than 1 - erf(x). The two differ by nothing in
+/// exact arithmetic and by everything in float32: erf saturates at 1 well before
+/// erfc reaches zero, so the subtraction gives up every digit of the tail, which
+/// is the half of erfc that anything asks for it by name.
 template <ShaderValueLike T>
 ShaderBase<T> erf(const T& value)
 {
@@ -1403,21 +1407,21 @@ ShaderBase<T> trunc(const T& value)
     return detail::componentCall(value, "trunc");
 }
 
-// Rounds to the nearest integer. The two backends disagree on exact halves -
-// Metal rounds them away from zero, HLSL to even - so a value landing on .5 is
-// the one case this is not bit-identical across them. GLSL leaves the same case
-// implementation-defined; floor(x + 0.5) is the way to pin it down.
+/// Rounds to the nearest integer. The two backends disagree on exact halves -
+/// Metal rounds them away from zero, HLSL to even - so a value landing on .5 is
+/// the one case this is not bit-identical across them. GLSL leaves the same case
+/// implementation-defined; floor(x + 0.5) is the way to pin it down.
 template <ShaderValueLike T>
 ShaderBase<T> round(const T& value)
 {
     return detail::componentCall(value, "round");
 }
 
-// Screen-space partial derivatives and their sum of magnitudes, the width of
-// one pixel in whatever the argument measures - the usual way to antialias a
-// procedural edge. Fragment-stage only, like sample(): the rasteriser supplies
-// them from the neighbouring pixels in the quad, so they must never feed the
-// position expression.
+/// Screen-space partial derivatives and their sum of magnitudes, the width of
+/// one pixel in whatever the argument measures - the usual way to antialias a
+/// procedural edge. Fragment-stage only, like sample(): the rasteriser supplies
+/// them from the neighbouring pixels in the quad, so they must never feed the
+/// position expression.
 template <ShaderValueLike T>
 ShaderBase<T> dfdx(const T& value)
 {
@@ -1436,10 +1440,10 @@ ShaderBase<T> fwidth(const T& value)
     return detail::componentCall(value, "fwidth");
 }
 
-// min/max, and every intrinsic from here down, take a float literal in any
-// argument position - see ShapedBeside above. What decides the result is the
-// argument the shape is taken from, which is why each of these has a second
-// form for the case where that argument is itself the literal.
+/// min/max, and every intrinsic from here down, take a float literal in any
+/// argument position - see ShapedBeside above. What decides the result is the
+/// argument the shape is taken from, which is why each of these has a second
+/// form for the case where that argument is itself the literal.
 template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> min(const L& a, const R& b)
 {
@@ -1476,9 +1480,9 @@ ShaderBase<R> pow(float base, const R& exponent)
     return detail::intrinsic<ShaderBase<R>>("pow", base, exponent);
 }
 
-// step(edge, x): 0 where x < edge, 1 elsewhere - the branchless building block
-// until comparisons and select arrive. The shape is x's, since that is what a
-// step is taken across.
+/// step(edge, x): 0 where x < edge, 1 elsewhere - the branchless building block
+/// until comparisons and select arrive. The shape is x's, since that is what a
+/// step is taken across.
 template <typename E, ShaderValueLike T>
     requires ShapedBeside<E, T>
 ShaderBase<T> step(const E& edge, const T& value)
@@ -1522,17 +1526,17 @@ Float distance(const L& a, const R& b)
     return detail::call2<Float>(a, b, ValueType::Float, "distance");
 }
 
-// reflect(incident, normal): the incident direction mirrored in the surface,
-// with the normal taken as already unit length.
+/// reflect(incident, normal): the incident direction mirrored in the surface,
+/// with the normal taken as already unit length.
 template <ShaderVectorLike I, SameShaderShape<I> N>
 ShaderBase<I> reflect(const I& incident, const N& normal)
 {
     return detail::componentCall2(incident, normal, "reflect");
 }
 
-// refract(incident, normal, eta): the incident direction bent by the ratio of
-// refractive indices, or zero under total internal reflection. Both arguments
-// are taken as unit length.
+/// refract(incident, normal, eta): the incident direction bent by the ratio of
+/// refractive indices, or zero under total internal reflection. Both arguments
+/// are taken as unit length.
 template <ShaderVectorLike I, SameShaderShape<I> N, ShaderScalarLike E>
 ShaderBase<I> refract(const I& incident, const N& normal, const E& eta)
 {
@@ -1550,8 +1554,8 @@ ShaderBase<I> refract(const I& incident, const N& normal, float eta)
                                         "refract");
 }
 
-// faceforward(normal, incident, reference): the normal flipped, if needed, to
-// face away from the incident direction.
+/// faceforward(normal, incident, reference): the normal flipped, if needed, to
+/// face away from the incident direction.
 template <ShaderVectorLike N, SameShaderShape<N> I, SameShaderShape<N> R>
 ShaderBase<N> faceforward(const N& normal, const I& incident, const R& reference)
 {
@@ -1568,9 +1572,9 @@ ShaderBase<T> clamp(const T& value, const Low& low, const High& high)
     return detail::intrinsic<ShaderBase<T>>("clamp", value, low, high);
 }
 
-// And the same two forms the rest of them have, for the shader that clamps a
-// literal between two values it computed: what decides the result is the first
-// argument that is not itself a literal.
+/// And the same two forms the rest of them have, for the shader that clamps a
+/// literal between two values it computed: what decides the result is the first
+/// argument that is not itself a literal.
 template <ShaderValueLike Low, ShapedBeside<Low> High>
 ShaderBase<Low> clamp(float value, const Low& low, const High& high)
 {
@@ -1583,10 +1587,10 @@ ShaderBase<High> clamp(float value, float low, const High& high)
     return detail::intrinsic<ShaderBase<High>>("clamp", value, low, high);
 }
 
-// mix(from, to, amount): linear interpolation (HLSL lerp). The amount is a
-// value of the same shape, a scalar broadcast across a vector, or a literal -
-// and so are the two endpoints, which is what a shader fading between two
-// constants writes: mix(0.5, 1.0, h).
+/// mix(from, to, amount): linear interpolation (HLSL lerp). The amount is a
+/// value of the same shape, a scalar broadcast across a vector, or a literal -
+/// and so are the two endpoints, which is what a shader fading between two
+/// constants writes: mix(0.5, 1.0, h).
 template <ShaderValueLike A, ShapedBeside<A> B, ShapedBeside<A> T>
 ShaderBase<A> mix(const A& from, const B& to, const T& amount)
 {
@@ -1605,9 +1609,9 @@ ShaderBase<T> mix(float from, float to, const T& amount)
     return detail::intrinsic<ShaderBase<T>>("mix", from, to, amount);
 }
 
-// smoothstep(edge0, edge1, x): the shape is x's, and either edge is a literal
-// or a value independently of the other - smoothstep(0.0, zo * zi, -d) is what
-// an antialiased edge whose width the shader computes looks like.
+/// smoothstep(edge0, edge1, x): the shape is x's, and either edge is a literal
+/// or a value independently of the other - smoothstep(0.0, zo * zi, -d) is what
+/// an antialiased edge whose width the shader computes looks like.
 template <typename E0, typename E1, ShaderValueLike T>
     requires ShapedBeside<E0, T> && ShapedBeside<E1, T>
 ShaderBase<T> smoothstep(const E0& edge0, const E1& edge1, const T& value)
@@ -1615,7 +1619,7 @@ ShaderBase<T> smoothstep(const E0& edge0, const E1& edge1, const T& value)
     return detail::intrinsic<ShaderBase<T>>("smoothstep", edge0, edge1, value);
 }
 
-// Componentwise arithmetic between two values of the same shape.
+/// Componentwise arithmetic between two values of the same shape.
 template <typename L, SameShaderShape<L> R>
 ShaderBase<L> operator+(const L& lhs, const R& rhs)
 {
@@ -1646,7 +1650,7 @@ ShaderBase<T> operator-(const T& value)
     return detail::unaryOp<ShaderBase<T>>('-', value);
 }
 
-// Scalar float literals on either side, broadcast across vectors.
+/// Scalar float literals on either side, broadcast across vectors.
 template <ShaderValueLike T>
 ShaderBase<T> operator+(const T& lhs, float rhs)
 {
@@ -1695,10 +1699,10 @@ ShaderBase<T> operator/(float lhs, const T& rhs)
     return detail::scalarOpLeft<ShaderBase<T>>('/', lhs, rhs);
 }
 
-// vector op scalar handle broadcasts, e.g. a colour scaled by a lighting term
-// or a coordinate offset by a time uniform. All four operators, on both sides,
-// the way the shading languages themselves broadcast: a scalar that happens to
-// live in a uniform behaves like the literal it stands in for.
+/// vector op scalar handle broadcasts, e.g. a colour scaled by a lighting term
+/// or a coordinate offset by a time uniform. All four operators, on both sides,
+/// the way the shading languages themselves broadcast: a scalar that happens to
+/// live in a uniform behaves like the literal it stands in for.
 template <ShaderVectorLike T, ShaderScalarLike S>
 ShaderBase<T> operator+(const T& vector, const S& scalar)
 {
@@ -1747,15 +1751,15 @@ ShaderBase<T> operator/(const S& scalar, const T& vector)
     return detail::binaryOp<ShaderBase<T>>('/', scalar, vector);
 }
 
-// mod(x, y): the floored modulus, x - y * floor(x / y), whose result takes the
-// sign of the divisor - so mod(-0.25, 1.0) is 0.75 and a tiling pattern is
-// continuous across the origin.
-//
-// Recorded as that expression rather than as a call, which is the whole point:
-// the only modulus either backend offers is fmod(), and fmod() truncates
-// instead, so it returns -0.25 there and every tile left of the origin comes
-// out mirrored. Building it from nodes both languages already agree on is what
-// makes the two backends bit-identical here.
+/// mod(x, y): the floored modulus, x - y * floor(x / y), whose result takes the
+/// sign of the divisor - so mod(-0.25, 1.0) is 0.75 and a tiling pattern is
+/// continuous across the origin.
+///
+/// Recorded as that expression rather than as a call, which is the whole point:
+/// the only modulus either backend offers is fmod(), and fmod() truncates
+/// instead, so it returns -0.25 there and every tile left of the origin comes
+/// out mirrored. Building it from nodes both languages already agree on is what
+/// makes the two backends bit-identical here.
 template <typename L, SameShaderShape<L> R>
 ShaderBase<L> mod(const L& x, const R& y)
 {
@@ -1791,15 +1795,15 @@ Mask compareWide(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
 }
 } // namespace detail
 
-// Comparisons, on scalars and against scalar literals on either side. Two
-// values of the same shape or a value and a float, the way every other binary
-// operator here takes them.
-// The scalar comparisons' result, named through an operand so that a
-// non-shader operand fails substitution while the signature is still being
-// formed. An enum beside a built-in number (`status != SUCCESS` under a using
-// directive for this namespace) makes C++ weigh these templates, and clang 21
-// rejects a deduced operator over two built-in types before any constraint is
-// checked; a failure in the return type is the ordinary, silent kind.
+/// Comparisons, on scalars and against scalar literals on either side. Two
+/// values of the same shape or a value and a float, the way every other binary
+/// operator here takes them.
+/// The scalar comparisons' result, named through an operand so that a
+/// non-shader operand fails substitution while the signature is still being
+/// formed. An enum beside a built-in number (`status != SUCCESS` under a using
+/// directive for this namespace) makes C++ weigh these templates, and clang 21
+/// rejects a deduced operator over two built-in types before any constraint is
+/// checked; a failure in the return type is the ordinary, silent kind.
 template <ShaderScalarLike T>
 using ScalarComparison = Bool;
 
@@ -1875,31 +1879,31 @@ EACP_VECTOR_COMPARISON(operator!=, "!=")
 #undef EACP_VECTOR_COMPARISON_AT
 #undef EACP_HANDLE_VECTOR_COMPARISON_AT
 
-// The logical connectives. Overloading && and || gives up C++'s short-circuit -
-// both operands are recorded either way - but the emitted operator is the
-// language's own, so the shader itself still skips the right-hand side. That
-// only matters for what it costs, never for what it computes: a recorded node
-// has no side effects to skip.
+/// The logical connectives. Overloading && and || gives up C++'s short-circuit -
+/// both operands are recorded either way - but the emitted operator is the
+/// language's own, so the shader itself still skips the right-hand side. That
+/// only matters for what it costs, never for what it computes: a recorded node
+/// has no side effects to skip.
 Bool operator&&(const Bool& lhs, const Bool& rhs);
 
 Bool operator||(const Bool& lhs, const Bool& rhs);
 
 Bool operator!(const Bool& value);
 
-// Two conditions compared rather than combined, which is what a shader asking
-// whether two tests agreed writes. GLSL has it, both languages under this have
-// it, and it is not the connectives: `a == b` is true when both are false.
+/// Two conditions compared rather than combined, which is what a shader asking
+/// whether two tests agreed writes. GLSL has it, both languages under this have
+/// it, and it is not the connectives: `a == b` is true when both are false.
 Bool operator==(const Bool& lhs, const Bool& rhs);
 
 Bool operator!=(const Bool& lhs, const Bool& rhs);
 
-// What collapses a mask into something a branch or a select can test: true when
-// every component is, and when any one is. Both languages spell them the same,
-// and both take the scalar Bool too, where they are the identity - so a shader
-// that widens a comparison later does not have to unpick them.
-//
-// This is the half that makes a componentwise comparison worth having. GLSL
-// needs them for exactly the same reason, under exactly these names.
+/// What collapses a mask into something a branch or a select can test: true when
+/// every component is, and when any one is. Both languages spell them the same,
+/// and both take the scalar Bool too, where they are the identity - so a shader
+/// that widens a comparison later does not have to unpick them.
+///
+/// This is the half that makes a componentwise comparison worth having. GLSL
+/// needs them for exactly the same reason, under exactly these names.
 template <BoolValueLike T>
 Bool all(const T& mask)
 {
@@ -1912,8 +1916,8 @@ Bool any(const T& mask)
     return detail::call<Bool>(mask, ValueType::Bool, "any");
 }
 
-// The componentwise negation, which GLSL spells not() because it cannot
-// overload the operator. Both backends take the operator itself on a mask.
+/// The componentwise negation, which GLSL spells not() because it cannot
+/// overload the operator. Both backends take the operator itself on a mask.
 template <BoolVectorLike T>
 ShaderHandle<T> operator!(const T& mask)
 {
@@ -1935,11 +1939,11 @@ Result selectOp(const ValueHandle& condition,
 }
 } // namespace detail
 
-// select(condition, whenTrue, whenFalse): GLSL's ternary, and the branchless
-// half of control flow - both branches are values already computed, so this
-// picks between them rather than skipping one. Where the two sides are
-// expensive, or where one of them must not run at all, an if is what to reach
-// for instead.
+/// select(condition, whenTrue, whenFalse): GLSL's ternary, and the branchless
+/// half of control flow - both branches are values already computed, so this
+/// picks between them rather than skipping one. Where the two sides are
+/// expensive, or where one of them must not run at all, an if is what to reach
+/// for instead.
 template <typename T, SameShaderShape<T> U>
 ShaderBase<T> select(const Bool& condition, const T& whenTrue, const U& whenFalse)
 {
@@ -1962,9 +1966,9 @@ Float select(const Bool& condition, float whenTrue, const T& whenFalse)
 
 Float select(const Bool& condition, float whenTrue, float whenFalse);
 
-// The same, over the families the float overload above does not reach: an index
-// or a mask picked without a branch. The condition is a scalar Bool in all of
-// them.
+/// The same, over the families the float overload above does not reach: an index
+/// or a mask picked without a branch. The condition is a scalar Bool in all of
+/// them.
 template <NonFloatHandle T, SameShaderHandle<T> U>
 ShaderHandle<T> select(const Bool& condition, const T& whenTrue, const U& whenFalse)
 {
@@ -2019,16 +2023,16 @@ Bool select(const Bool& condition, bool whenTrue, const T& whenFalse)
 
 Bool select(const Bool& condition, bool whenTrue, bool whenFalse);
 
-// A mutable shader local: the one handle in the EDSL that names a place rather
-// than a value. Reading it records a node at the point of the read, so what it
-// evaluates to is whatever the statements before it left there - which is the
-// whole point of it, and why it is the only handle whose meaning is not fixed
-// the moment it is built.
-//
-// It is declared where it is created, so one made inside a loop body is a local
-// of that body and the C++ handle leaves scope at the same brace the emitted
-// one does. Non-copyable, so `auto b = a` cannot quietly alias a's slot: take
-// the value with a.get(), or assign it to a Var of its own.
+/// A mutable shader local: the one handle in the EDSL that names a place rather
+/// than a value. Reading it records a node at the point of the read, so what it
+/// evaluates to is whatever the statements before it left there - which is the
+/// whole point of it, and why it is the only handle whose meaning is not fixed
+/// the moment it is built.
+///
+/// It is declared where it is created, so one made inside a loop body is a local
+/// of that body and the C++ handle leaves scope at the same brace the emitted
+/// one does. Non-copyable, so `auto b = a` cannot quietly alias a's slot: take
+/// the value with a.get(), or assign it to a Var of its own.
 template <typename T>
 struct Var
 {
@@ -2041,9 +2045,9 @@ struct Var
     Var(const Var&) = delete;
     Var(Var&&) = delete;
 
-    // The value the variable holds where the read appears. get() and the
-    // implicit conversion are the same thing; the explicit one is what a
-    // generated port spells, so a read is visible in the source it produces.
+    /// The value the variable holds where the read appears. get() and the
+    /// implicit conversion are the same thing; the explicit one is what a
+    /// generated port spells, so a read is visible in the source it produces.
     T get() const
     {
         auto value = T {};
@@ -2098,10 +2102,10 @@ struct Var
         return *this;
     }
 
-    // The compound operators, over whatever the free operators above accept:
-    // another value of the same shape, a scalar broadcast across a vector, or a
-    // literal. A combination they reject fails here rather than silently
-    // assigning something of the wrong shape.
+    /// The compound operators, over whatever the free operators above accept:
+    /// another value of the same shape, a scalar broadcast across a vector, or a
+    /// literal. A combination they reject fails here rather than silently
+    /// assigning something of the wrong shape.
     template <typename R>
     Var& operator+=(const R& value)
     {
@@ -2155,8 +2159,8 @@ EACP_UINT_OPERATOR(operator>>)
 
 #undef EACP_UINT_OPERATOR
 
-// The bitwise complement; there is no unary minus, an unsigned value having no
-// negation to take.
+/// The bitwise complement; there is no unary minus, an unsigned value having no
+/// negation to take.
 UInt operator~(const UInt& value);
 
 // The same componentwise on the unsigned vectors, together with the operators
@@ -2211,16 +2215,16 @@ EACP_UINT_VECTOR_OPERATOR(operator>>, ">>")
 
 #undef EACP_UINT_VECTOR_OPERATOR
 
-// The bitwise complement; there is no unary minus, an unsigned value having no
-// negation to take.
+/// The bitwise complement; there is no unary minus, an unsigned value having no
+/// negation to take.
 template <UIntVectorLike T>
 ShaderHandle<T> operator~(const T& value)
 {
     return detail::unaryOp<ShaderHandle<T>>('~', value);
 }
 
-// min/max componentwise, which is what holds a pair of indices inside a grid.
-// There is no abs: an unsigned value is already its own magnitude.
+/// min/max componentwise, which is what holds a pair of indices inside a grid.
+/// There is no abs: an unsigned value is already its own magnitude.
 template <UIntVectorLike L, SameShaderHandle<L> R>
 ShaderHandle<L> min(const L& a, const R& b)
 {
@@ -2265,7 +2269,7 @@ EACP_INT_OPERATOR(operator>>)
 
 Int operator-(const Int& value);
 
-// The bitwise complement, the one unary operator no float has.
+/// The bitwise complement, the one unary operator no float has.
 Int operator~(const Int& value);
 
 // The same set componentwise, on the integer vectors: against another vector of
@@ -2331,8 +2335,8 @@ ShaderHandle<T> operator~(const T& value)
     return detail::unaryOp<ShaderHandle<T>>('~', value);
 }
 
-// min/max/abs componentwise, the vector half of what holds a scalar index in
-// range - here it is a cell held inside a grid.
+/// min/max/abs componentwise, the vector half of what holds a scalar index in
+/// range - here it is a cell held inside a grid.
 template <IntVectorLike L, SameShaderHandle<L> R>
 ShaderHandle<L> min(const L& a, const R& b)
 {
@@ -2389,14 +2393,14 @@ EACP_UINT_COMPARISON(operator!=)
 
 #undef EACP_UINT_COMPARISON
 
-// int min/max/abs: the branchless way to hold an index inside an array, for the
-// shader that would rather clamp than mask.
+/// int min/max/abs: the branchless way to hold an index inside an array, for the
+/// shader that would rather clamp than mask.
 Int min(const Int& a, const Int& b);
 
 Int min(const Int& a, int b);
 
-// The literal on the left as well, for the same reason the float intrinsics
-// take one in any position: a shader writes max(0, -i) as readily as max(i, 0).
+/// The literal on the left as well, for the same reason the float intrinsics
+/// take one in any position: a shader writes max(0, -i) as readily as max(i, 0).
 Int min(int a, const Int& b);
 
 Int max(const Int& a, const Int& b);
@@ -2407,9 +2411,9 @@ Int max(int a, const Int& b);
 
 Int abs(const Int& value);
 
-// Crossing between the integer and the float vocabularies, explicit in both
-// directions. The constructor-style cast spells identically in MSL and HLSL,
-// and truncates towards zero on the way to an int exactly as GLSL's int() does.
+/// Crossing between the integer and the float vocabularies, explicit in both
+/// directions. The constructor-style cast spells identically in MSL and HLSL,
+/// and truncates towards zero on the way to an int exactly as GLSL's int() does.
 namespace detail
 {
 // The cast is spelled with the target's own type name, so the two can never
@@ -2424,10 +2428,10 @@ Result convertTo(const T& value)
 
 Float toFloat(const Int& value);
 
-// And out of a condition, which is the other crossing GLSL spells with a
-// constructor: int(a > b) is 1 or 0, and both languages under this cast a bool
-// the same way. It is not a select - there is nothing to choose between - and
-// it is what a shader counting how many of its tests passed adds up.
+/// And out of a condition, which is the other crossing GLSL spells with a
+/// constructor: int(a > b) is 1 or 0, and both languages under this cast a bool
+/// the same way. It is not a select - there is nothing to choose between - and
+/// it is what a shader counting how many of its tests passed adds up.
 Int toInt(const Bool& value);
 
 Float toFloat(const Bool& value);
@@ -2438,149 +2442,149 @@ Int toInt(const T& value)
     return detail::convertTo<Int>(value);
 }
 
-// And between the two integer vocabularies, which a guarded index crosses
-// twice: into the signed one for arithmetic that may go below zero - the tap
-// of a padded convolution, a backwards step - and back out through toUInt for
-// the subscript once it is clamped. toUInt of a float scalar truncates
-// towards zero on the way, exactly as toInt does.
+/// And between the two integer vocabularies, which a guarded index crosses
+/// twice: into the signed one for arithmetic that may go below zero - the tap
+/// of a padded convolution, a backwards step - and back out through toUInt for
+/// the subscript once it is clamped. toUInt of a float scalar truncates
+/// towards zero on the way, exactly as toInt does.
 Int toInt(const UInt& value);
 
 UInt toUInt(const Int& value);
 
-// A float's *bits*, not its value: the reinterpretation, where toUInt above is
-// the conversion. 1.0f arrives as 0x3f800000 rather than as 1.
-//
-// What this is for is data a buffer carries that is not really float. Storage
-// buffers are runs of floats on both backends, so a kernel reading anything
-// packed - two halves in a word, four bytes, a bitfield - gets it as a float
-// whose value is meaningless and whose bits are the payload. This is the way
-// back to them, and it is exact: neither backend rounds or canonicalizes a
-// bitcast, including of a pattern that would read as a denormal.
+/// A float's *bits*, not its value: the reinterpretation, where toUInt above is
+/// the conversion. 1.0f arrives as 0x3f800000 rather than as 1.
+///
+/// What this is for is data a buffer carries that is not really float. Storage
+/// buffers are runs of floats on both backends, so a kernel reading anything
+/// packed - two halves in a word, four bytes, a bitfield - gets it as a float
+/// whose value is meaningless and whose bits are the payload. This is the way
+/// back to them, and it is exact: neither backend rounds or canonicalizes a
+/// bitcast, including of a pattern that would read as a denormal.
 UInt asUInt(const Float& value);
 
-// And the way back, which is what lets a kernel *write* something packed: a
-// store takes a Float, so two halves reach an output buffer as
-// write(output, i, asFloat(packHalf2(pair))).
-//
-// Recorded through detail::call rather than detail::intrinsic for the reason
-// unpackHalf2 gives: the argument is a UInt, which is deliberately outside the
-// float vocabulary intrinsic() takes.
+/// And the way back, which is what lets a kernel *write* something packed: a
+/// store takes a Float, so two halves reach an output buffer as
+/// write(output, i, asFloat(packHalf2(pair))).
+///
+/// Recorded through detail::call rather than detail::intrinsic for the reason
+/// unpackHalf2 gives: the argument is a UInt, which is deliberately outside the
+/// float vocabulary intrinsic() takes.
 Float asFloat(const UInt& value);
 
-// The two half-precision floats packed into one 32-bit word, widened: .x is
-// the low sixteen bits, .y the high.
-//
-// Half of a model's file can be fp16 weights - hand tracking's landmark model
-// stores 102 of its constant tensors that way - and widening them on the CPU
-// to feed a float buffer doubles exactly the traffic the format existed to
-// halve. Unpacking here instead keeps them packed all the way to the ALU, and
-// costs nothing in accuracy: every fp16 value, subnormals and infinities
-// included, is exactly representable in fp32, so this widening is lossless by
-// construction rather than by tolerance.
-//
-// Emitted through a helper function rather than a bare call, because the two
-// languages do not merely spell this differently - MSL bitcasts the word to a
-// half2 and converts, HLSL calls f16tof32 twice against a shift - and a call
-// node is one name and one argument list on both. See ShaderEmitter's
-// helperDefinitions.
-// Recorded against the graph directly rather than through detail::intrinsic,
-// which takes float-vocabulary arguments only: UInt is deliberately outside it
-// (see baseOf), and an index type is exactly what a packed word arrives as.
+/// The two half-precision floats packed into one 32-bit word, widened: .x is
+/// the low sixteen bits, .y the high.
+///
+/// Half of a model's file can be fp16 weights - hand tracking's landmark model
+/// stores 102 of its constant tensors that way - and widening them on the CPU
+/// to feed a float buffer doubles exactly the traffic the format existed to
+/// halve. Unpacking here instead keeps them packed all the way to the ALU, and
+/// costs nothing in accuracy: every fp16 value, subnormals and infinities
+/// included, is exactly representable in fp32, so this widening is lossless by
+/// construction rather than by tolerance.
+///
+/// Emitted through a helper function rather than a bare call, because the two
+/// languages do not merely spell this differently - MSL bitcasts the word to a
+/// half2 and converts, HLSL calls f16tof32 twice against a shift - and a call
+/// node is one name and one argument list on both. See ShaderEmitter's
+/// helperDefinitions.
+/// Recorded against the graph directly rather than through detail::intrinsic,
+/// which takes float-vocabulary arguments only: UInt is deliberately outside it
+/// (see baseOf), and an index type is exactly what a packed word arrives as.
 Float2 unpackHalf2(const UInt& bits);
 
-// The inverse: two floats narrowed to fp16 and packed into one word, .x in the
-// low sixteen bits. What a kernel producing fp16 output writes, and the other
-// half of a weight cache that stays packed on the GPU.
-//
-// A value fp16 holds exactly - anything that came from unpackHalf2, and so
-// every round trip through a packed buffer - comes back bit-for-bit on both
-// backends. A value it does not hold is where they part, and this is one of
-// the two places in the EDSL that are not bit-identical across them (round()
-// is the other):
-//
-//   Metal converts per IEEE - round to nearest even, and a finite magnitude
-//   past 65504 becomes an infinity.
-//   D3D specifies round-to-zero for a narrowing float conversion, and takes
-//   such a magnitude to the largest finite half instead, explicitly not to an
-//   infinity (D3D11.3 functional spec 3.2.2; f32tof16 follows those rules).
-//
-// So the two can differ by one ulp on an ordinary weight, and disagree
-// outright about what a too-large one becomes. Neither is wrong and nothing
-// here can reconcile them - the rounding belongs to the instruction. A kernel
-// that needs a pinned answer rounds before it narrows.
-//
-// A helper for the same reason unpackHalf2 is one: MSL converts to a half2 and
-// bitcasts the pair, HLSL narrows each component and shifts one into place.
+/// The inverse: two floats narrowed to fp16 and packed into one word, .x in the
+/// low sixteen bits. What a kernel producing fp16 output writes, and the other
+/// half of a weight cache that stays packed on the GPU.
+///
+/// A value fp16 holds exactly - anything that came from unpackHalf2, and so
+/// every round trip through a packed buffer - comes back bit-for-bit on both
+/// backends. A value it does not hold is where they part, and this is one of
+/// the two places in the EDSL that are not bit-identical across them (round()
+/// is the other):
+///
+///   Metal converts per IEEE - round to nearest even, and a finite magnitude
+///   past 65504 becomes an infinity.
+///   D3D specifies round-to-zero for a narrowing float conversion, and takes
+///   such a magnitude to the largest finite half instead, explicitly not to an
+///   infinity (D3D11.3 functional spec 3.2.2; f32tof16 follows those rules).
+///
+/// So the two can differ by one ulp on an ordinary weight, and disagree
+/// outright about what a too-large one becomes. Neither is wrong and nothing
+/// here can reconcile them - the rounding belongs to the instruction. A kernel
+/// that needs a pinned answer rounds before it narrows.
+///
+/// A helper for the same reason unpackHalf2 is one: MSL converts to a half2 and
+/// bitcasts the pair, HLSL narrows each component and shifts one into place.
 UInt packHalf2(const Float2& values);
 
-// The bfloat16 pair in one word, widened: .x the low sixteen bits, .y the high,
-// on exactly the layout unpackHalf2 promises for fp16.
-//
-// bf16 is fp32 with sixteen mantissa bits thrown away, so a widening is the
-// bits back in the top half of a word and nothing else - no exponent to rebias,
-// no subnormal case, no rounding. That makes it exact and, unlike the fp16
-// path, identical on every backend down to the instruction: the three dialects
-// differ only in how they spell a bitcast.
-//
-// Which is why this may not go through fp16. bf16 has eight exponent bits and
-// fp16 five, so 1e-6 and 1e30 are ordinary bf16 values that fp16 flushes to
-// zero and to infinity. A checkpoint routed through half is not less precise,
-// it is wrong.
+/// The bfloat16 pair in one word, widened: .x the low sixteen bits, .y the high,
+/// on exactly the layout unpackHalf2 promises for fp16.
+///
+/// bf16 is fp32 with sixteen mantissa bits thrown away, so a widening is the
+/// bits back in the top half of a word and nothing else - no exponent to rebias,
+/// no subnormal case, no rounding. That makes it exact and, unlike the fp16
+/// path, identical on every backend down to the instruction: the three dialects
+/// differ only in how they spell a bitcast.
+///
+/// Which is why this may not go through fp16. bf16 has eight exponent bits and
+/// fp16 five, so 1e-6 and 1e30 are ordinary bf16 values that fp16 flushes to
+/// zero and to infinity. A checkpoint routed through half is not less precise,
+/// it is wrong.
 Float2 unpackBFloat16x2(const UInt& bits);
 
-// The inverse: two floats narrowed to bf16 and packed into one word, .x in the
-// low sixteen bits.
-//
-// Unlike packHalf2 this *is* bit-identical across the backends, and that is the
-// point of doing it by hand. The rounding is round-to-nearest-even written in
-// integer arithmetic - add half an ulp plus the low bit of what survives, then
-// shift - so no dialect's narrowing instruction is involved and none of their
-// disagreements can reach it. A NaN is quieted rather than rounded, since
-// carrying one into the exponent would land it on an infinity, which is a
-// different answer rather than a coarser one.
+/// The inverse: two floats narrowed to bf16 and packed into one word, .x in the
+/// low sixteen bits.
+///
+/// Unlike packHalf2 this *is* bit-identical across the backends, and that is the
+/// point of doing it by hand. The rounding is round-to-nearest-even written in
+/// integer arithmetic - add half an ulp plus the low bit of what survives, then
+/// shift - so no dialect's narrowing instruction is involved and none of their
+/// disagreements can reach it. A NaN is quieted rather than rounded, since
+/// carrying one into the exponent would land it on an infinity, which is a
+/// different answer rather than a coarser one.
 UInt packBFloat16x2(const Float2& values);
 
-// The four bytes of one word, widened: .x the low eight bits through .w the
-// high, which is little-endian order and so the order a memcpy of a row of
-// int8 weights already leaves them in.
-//
-// The sign extension is an exclusive-or and a subtraction rather than a cast or
-// a pair of shifts, because that is the one spelling the three languages define
-// identically: a byte read as unsigned is the signed value (b ^ 0x80) - 128,
-// which is arithmetic entirely inside the range a uint holds and moves no bit
-// into or out of a sign position. as_type<char4> would be Metal's answer and
-// nothing else's, and shifting a byte up into the sign bit and
-// arithmetically back leans on each language's own rule for what the sign bit
-// does under a shift - three rules, spelled three ways, for a widening that has
-// to be bit-identical.
+/// The four bytes of one word, widened: .x the low eight bits through .w the
+/// high, which is little-endian order and so the order a memcpy of a row of
+/// int8 weights already leaves them in.
+///
+/// The sign extension is an exclusive-or and a subtraction rather than a cast or
+/// a pair of shifts, because that is the one spelling the three languages define
+/// identically: a byte read as unsigned is the signed value (b ^ 0x80) - 128,
+/// which is arithmetic entirely inside the range a uint holds and moves no bit
+/// into or out of a sign position. as_type<char4> would be Metal's answer and
+/// nothing else's, and shifting a byte up into the sign bit and
+/// arithmetically back leans on each language's own rule for what the sign bit
+/// does under a shift - three rules, spelled three ways, for a widening that has
+/// to be bit-identical.
 Float4 unpackInt8x4(const UInt& bits);
 
 Float4 unpackUInt8x4(const UInt& bits);
 
-// The inverse: four integers packed into one word, .x in the low eight bits.
-//
-// It takes an Int4 rather than a Float4 on purpose. Narrowing a float to an
-// integer is a rounding decision, and the three dialects each make their own -
-// which is exactly the disagreement packHalf2 documents. An already-integral
-// vector leaves nothing to disagree about, and a kernel that has floats rounds
-// them itself, with round() or floor(), where the choice is visible.
-//
-// Only the low eight bits of each component are stored, so a value outside
-// [-128, 127] wraps rather than saturating. Quantization clamps before it gets
-// here; nothing is spent re-clamping in the shader.
+/// The inverse: four integers packed into one word, .x in the low eight bits.
+///
+/// It takes an Int4 rather than a Float4 on purpose. Narrowing a float to an
+/// integer is a rounding decision, and the three dialects each make their own -
+/// which is exactly the disagreement packHalf2 documents. An already-integral
+/// vector leaves nothing to disagree about, and a kernel that has floats rounds
+/// them itself, with round() or floor(), where the choice is visible.
+///
+/// Only the low eight bits of each component are stored, so a value outside
+/// [-128, 127] wraps rather than saturating. Quantization clamps before it gets
+/// here; nothing is spent re-clamping in the shader.
 UInt packInt8x4(const Int4& values);
 
 UInt packUInt8x4(const UInt4& values);
 
-// The eight nibbles of one word, widened, as the two halves Float4Pair
-// describes. Two float4s rather than one returned aggregate because no dialect
-// spells a returned struct the way the others do, and a float4 is what all
-// three have.
-//
-// The high half is the low half of the word shifted down sixteen, so it is the
-// same helper over a shift node rather than a second helper - one definition
-// covers both halves, and the shift is a pure binary the graph shares with any
-// other use of it.
+/// The eight nibbles of one word, widened, as the two halves Float4Pair
+/// describes. Two float4s rather than one returned aggregate because no dialect
+/// spells a returned struct the way the others do, and a float4 is what all
+/// three have.
+///
+/// The high half is the low half of the word shifted down sixteen, so it is the
+/// same helper over a shift node rather than a second helper - one definition
+/// covers both halves, and the shift is a pure binary the graph shares with any
+/// other use of it.
 Float4Pair unpackInt4x8(const UInt& bits);
 
 Float4Pair unpackUInt4x8(const UInt& bits);
@@ -2591,9 +2595,9 @@ UInt toUInt(const T& value)
     return detail::convertTo<UInt>(value);
 }
 
-// And the same crossing a whole vector at a time, which is what a shader
-// counting a grid cell out of a coordinate writes: every component truncates
-// towards zero, exactly as the scalar does.
+/// And the same crossing a whole vector at a time, which is what a shader
+/// counting a grid cell out of a coordinate writes: every component truncates
+/// towards zero, exactly as the scalar does.
 template <ShaderShape<Float2> T>
 Int2 toInt(const T& value)
 {
@@ -2679,19 +2683,19 @@ EACP_UINT_VECTOR_CONVERSIONS(4)
 
 #undef EACP_UINT_VECTOR_CONVERSIONS
 
-// A constant array the shader subscripts: a palette, a set of offsets, any small
-// lookup table a shader would otherwise spell out as a chain of selects. Like
-// Texture2D it is slot-identified rather than an expression node - it is a
-// declaration and not a value, and its one operation is the subscript.
-//
-// Its elements are evaluated once where the array is declared, at the top of the
-// shader body, so one may read a uniform or a varying but not a mutable local:
-// no local exists yet at that point.
-//
-// The size is part of the type, so a literal index is checked here. An Int index
-// is the shader's own business, exactly as it is in GLSL - reading past the end
-// is undefined in both languages - so mask it (`i & 3`) or clamp it
-// (`min(max(i, 0), 3)`) unless it is already in range.
+/// A constant array the shader subscripts: a palette, a set of offsets, any small
+/// lookup table a shader would otherwise spell out as a chain of selects. Like
+/// Texture2D it is slot-identified rather than an expression node - it is a
+/// declaration and not a value, and its one operation is the subscript.
+///
+/// Its elements are evaluated once where the array is declared, at the top of the
+/// shader body, so one may read a uniform or a varying but not a mutable local:
+/// no local exists yet at that point.
+///
+/// The size is part of the type, so a literal index is checked here. An Int index
+/// is the shader's own business, exactly as it is in GLSL - reading past the end
+/// is undefined in both languages - so mask it (`i & 3`) or clamp it
+/// (`min(max(i, 0), 3)`) unless it is already in range.
 template <typename T, int Size>
 struct ConstantArray
 {
@@ -2718,15 +2722,15 @@ struct ConstantArray
     int slot = -1;
 };
 
-// A threadgroup-shared array, created inside a kernel body: the tile a
-// reduction or a blocked matmul stages in on-chip memory so a group of
-// threads reads it instead of re-reading global memory. It is never
-// CPU-visible - there is nothing to bind - so the element type is any value
-// type, a float4 record included; a subscript reads the current element, and
-// writes go through write(shared, index, value) beside the buffer writes.
-// What one thread wrote is visible to the rest of its group only after
-// barrier(), and a value read before a barrier does not stand for the same
-// element after it - the emitter gives up any name spanning one.
+/// A threadgroup-shared array, created inside a kernel body: the tile a
+/// reduction or a blocked matmul stages in on-chip memory so a group of
+/// threads reads it instead of re-reading global memory. It is never
+/// CPU-visible - there is nothing to bind - so the element type is any value
+/// type, a float4 record included; a subscript reads the current element, and
+/// writes go through write(shared, index, value) beside the buffer writes.
+/// What one thread wrote is visible to the rest of its group only after
+/// barrier(), and a value read before a barrier does not stand for the same
+/// element after it - the emitter gives up any name spanning one.
 template <typename T>
 struct Shared
 {
@@ -2738,8 +2742,8 @@ struct Shared
         return result;
     }
 
-    // The literal subscript, for the fixed element a reduction converges on:
-    // the group leader reads tile[0u] after the last barrier.
+    /// The literal subscript, for the fixed element a reduction converges on:
+    /// the group leader reads tile[0u] after the last barrier.
     T operator[](unsigned index) const
     {
         auto result = T {};
@@ -2752,28 +2756,28 @@ struct Shared
     int slot = -1;
 };
 
-// An 8x8 patch of a float matrix, held between the registers of a whole SIMD
-// group rather than by one thread. It is the one handle here that stands for
-// nothing a thread can read: there is no element of it to subscript and no
-// value to take out of it, only the four operations ShaderBuilder spells -
-// filled, loaded from an 8x8 patch of memory, multiplied into an accumulator,
-// stored back to one. Everything it does is a statement, so it lands where it
-// was written and cannot be hoisted.
-//
-// A copy of the handle names the same fragment, the way a copy of a Shared
-// does, and assigning one rebinds the handle rather than moving any data -
-// which is what makes an array of accumulators the plain loop it looks like.
-//
-// Every thread of the SIMD group has to reach every operation on it, and the
-// offsets and strides it is given have to be the same on all of them: they
-// address one patch for the group, not one per lane.
+/// An 8x8 patch of a float matrix, held between the registers of a whole SIMD
+/// group rather than by one thread. It is the one handle here that stands for
+/// nothing a thread can read: there is no element of it to subscript and no
+/// value to take out of it, only the four operations ShaderBuilder spells -
+/// filled, loaded from an 8x8 patch of memory, multiplied into an accumulator,
+/// stored back to one. Everything it does is a statement, so it lands where it
+/// was written and cannot be hoisted.
+///
+/// A copy of the handle names the same fragment, the way a copy of a Shared
+/// does, and assigning one rebinds the handle rather than moving any data -
+/// which is what makes an array of accumulators the plain loop it looks like.
+///
+/// Every thread of the SIMD group has to reach every operation on it, and the
+/// offsets and strides it is given have to be the same on all of them: they
+/// address one patch for the group, not one per lane.
 struct SimdMatrix
 {
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// uint min/max, the branchless way to clamp an index to a valid range.
+/// uint min/max, the branchless way to clamp an index to a valid range.
 UInt min(const UInt& a, const UInt& b);
 
 UInt min(const UInt& a, unsigned b);
@@ -2794,27 +2798,27 @@ Result matrixMul(const A& a, const B& b)
 }
 } // namespace detail
 
-// Matrix * vector, e.g. a 2D rotation applied to a texture coordinate or an MVP
-// transform applied to a clip-space position.
+/// Matrix * vector, e.g. a 2D rotation applied to a texture coordinate or an MVP
+/// transform applied to a clip-space position.
 Float2 operator*(const Float2x2& matrix, const Float2& vector);
 
 Float3 operator*(const Float3x3& matrix, const Float3& vector);
 
 Float4 operator*(const Float4x4& matrix, const Float4& vector);
 
-// Vector * matrix, which is the same product against the matrix's rows rather
-// than its columns - what a shader writes to go back through an orientation
-// instead of into one, and how half the Shadertoys that rotate a coordinate
-// spell it. It needs no per-backend form of its own beyond the one the product
-// already has: MSL's * and HLSL's mul() both read the left operand as a row
-// vector when it is the one on the left.
+/// Vector * matrix, which is the same product against the matrix's rows rather
+/// than its columns - what a shader writes to go back through an orientation
+/// instead of into one, and how half the Shadertoys that rotate a coordinate
+/// spell it. It needs no per-backend form of its own beyond the one the product
+/// already has: MSL's * and HLSL's mul() both read the left operand as a row
+/// vector when it is the one on the left.
 Float2 operator*(const Float2& vector, const Float2x2& matrix);
 
 Float3 operator*(const Float3& vector, const Float3x3& matrix);
 
 Float4 operator*(const Float4& vector, const Float4x4& matrix);
 
-// Matrix * matrix, e.g. composing two rotations, or model/view/projection.
+/// Matrix * matrix, e.g. composing two rotations, or model/view/projection.
 Float2x2 operator*(const Float2x2& a, const Float2x2& b);
 
 Float3x3 operator*(const Float3x3& a, const Float3x3& b);
@@ -2856,9 +2860,9 @@ EACP_MATRIX_SCALE(Float4x4)
 
 #undef EACP_MATRIX_SCALE
 
-// Builds a matrix from its columns. Column-major, matching Metal's
-// float4x4(c0, c1, c2, c3); the HLSL emitter transposes this construction, since
-// HLSL fills a matrix from rows rather than columns.
+/// Builds a matrix from its columns. Column-major, matching Metal's
+/// float4x4(c0, c1, c2, c3); the HLSL emitter transposes this construction, since
+/// HLSL fills a matrix from rows rather than columns.
 Float2x2 float2x2(const Float2& c0, const Float2& c1);
 
 Float3x3 float3x3(const Float3& c0, const Float3& c1, const Float3& c2);
@@ -2866,31 +2870,31 @@ Float3x3 float3x3(const Float3& c0, const Float3& c1, const Float3& c2);
 Float4x4
     float4x4(const Float4& c0, const Float4& c1, const Float4& c2, const Float4& c3);
 
-// The transpose of a matrix, spelled the same in both backends and right in
-// both for the same reason the construction above is: HLSL holds transposed
-// what MSL holds, so transposing what each holds leaves each holding the
-// transpose of the same logical value.
-//
-// There is no inverse() beside these, and that is a property of the languages
-// rather than an omission here: neither MSL nor HLSL has one, so it would have
-// to be built out of a cofactor expansion per order - which is a function a
-// caller can write out of the nodes below, and not a node the graph is missing.
+/// The transpose of a matrix, spelled the same in both backends and right in
+/// both for the same reason the construction above is: HLSL holds transposed
+/// what MSL holds, so transposing what each holds leaves each holding the
+/// transpose of the same logical value.
+///
+/// There is no inverse() beside these, and that is a property of the languages
+/// rather than an omission here: neither MSL nor HLSL has one, so it would have
+/// to be built out of a cofactor expansion per order - which is a function a
+/// caller can write out of the nodes below, and not a node the graph is missing.
 Float2x2 transpose(const Float2x2& matrix);
 
 Float3x3 transpose(const Float3x3& matrix);
 
 Float4x4 transpose(const Float4x4& matrix);
 
-// The determinant, which needs no such argument at all: a matrix and its
-// transpose have the same one, so the backends agree whatever each is holding.
+/// The determinant, which needs no such argument at all: a matrix and its
+/// transpose have the same one, so the backends agree whatever each is holding.
 Float determinant(const Float2x2& matrix);
 
 Float determinant(const Float3x3& matrix);
 
 Float determinant(const Float4x4& matrix);
 
-// A vector-constructor argument: any value handle (or derived member), or a
-// numeric literal that becomes a constant node.
+/// A vector-constructor argument: any value handle (or derived member), or a
+/// numeric literal that becomes a constant node.
 template <typename T>
 concept ShaderComponent = ShaderValueLike<T> || std::is_arithmetic_v<T>;
 
@@ -2948,17 +2952,17 @@ Result constructFrom(ValueType type, const Args&... args)
 }
 } // namespace detail
 
-// A pack that fills a vector of the given width: handles and numeric literals
-// whose components sum to it, with at least one handle to supply the graph an
-// all-literal vector lacks (those still go through constant()).
+/// A pack that fills a vector of the given width: handles and numeric literals
+/// whose components sum to it, with at least one handle to supply the graph an
+/// all-literal vector lacks (those still go through constant()).
 template <int Width, typename... Args>
 concept ComponentsFor = (ShaderComponent<Args> && ...)
                         && (detail::componentsOf<Args>() + ... + 0) == Width
                         && (ShaderValueLike<Args> || ...);
 
-// Vector constructors from any mix of value handles and numeric literals whose
-// components total the vector's width: float4(position, 0.0f, 1.0f),
-// float4(color, alpha), float3(x, uv)...
+/// Vector constructors from any mix of value handles and numeric literals whose
+/// components total the vector's width: float4(position, 0.0f, 1.0f),
+/// float4(color, alpha), float3(x, uv)...
 template <typename... Args>
     requires ComponentsFor<2, Args...>
 Float2 float2(const Args&... args)
@@ -3040,10 +3044,10 @@ Result buildFrom(const Args&... args)
 }
 } // namespace detail
 
-// A pack filling an integer or a boolean vector of the given width: handles of
-// that family and literals of the matching kind, with at least one handle to
-// supply the graph a wholly literal vector lacks - the same rule the float
-// constructors carry, for the same reason.
+/// A pack filling an integer or a boolean vector of the given width: handles of
+/// that family and literals of the matching kind, with at least one handle to
+/// supply the graph a wholly literal vector lacks - the same rule the float
+/// constructors carry, for the same reason.
 template <int Width, typename... Args>
 concept UIntComponentsFor =
     ((UIntValueLike<Args> || std::is_integral_v<Args>) && ...)

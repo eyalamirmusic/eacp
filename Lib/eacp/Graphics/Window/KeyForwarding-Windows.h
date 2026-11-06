@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Internal: Windows only. Builds a NativeKeyEvent from a Win32 key message. */
+
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "KeyForwarding.h"

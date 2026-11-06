@@ -1,5 +1,7 @@
 #pragma once
 
+/** @file Laying out and drawing strings through a GlyphAtlas and GlyphRenderer. */
+
 #include "GlyphRasterizer.h"
 #include "GlyphRenderer.h"
 
@@ -12,27 +14,19 @@ namespace eacp::Text
 {
 class GlyphAtlas;
 
-// One glyph a layout placed: its pen in the caller's own points, and which
-// glyph of which face to draw there.
-//
-// What a caller keeps when it wants the layout done once rather than once per
-// frame. Laying a string out is a walk over its bytes with an atlas lookup per
-// glyph, and a string that has not changed produces the same glyphs every time
-// -- so a caller drawing an unchanged interface should be able to hold these and
-// hand them straight back. See layoutInto and drawGlyph.
-//
-// It names the glyph rather than its texels because which bitmap it needs --
-// the glyph rasterized at which of the positions within a pixel -- is only
-// known once whatever the caller adds to the pen at draw time has been added
-// and the pen is snapped; the atlas is asked then. Which also means a recorded
-// layout survives the atlas being cleared underneath it.
+/// One glyph a layout placed: its pen in the caller's own points, and which
+/// glyph of which face to draw there.
+///
+/// Hold these (layoutInto, drawGlyph) to lay out an unchanged string once
+/// instead of every frame. They name glyphs, not texels, so they stay valid
+/// after the atlas is cleared.
 struct PlacedGlyph
 {
-    // x at the glyph's left edge, y on the baseline.
+    /// x at the glyph's left edge, y on the baseline.
     Graphics::Point pen;
 
-    // Where the bitmap lands, give or take the pixel it is snapped to on the
-    // way to the screen: what a clip is judged against.
+    /// Where the bitmap lands, give or take the pixel it is snapped to on the
+    /// way to the screen: what a clip is judged against.
     Graphics::Rect destination;
 
     GlyphKey key;
@@ -41,13 +35,13 @@ struct PlacedGlyph
     bool colored = false;
 };
 
-// Where a pen lands on the device: the pixel its x falls in and which of the
-// subpixelPhases positions within that pixel is nearest, and its baseline
-// rounded to a whole pixel. The glyph rasterized at that phase and drawn on
-// that pixel puts every texel on a device pixel of its own, which is what
-// keeps text sharp -- a pixel-aligned bitmap drawn at a fractional position
-// through a linear sampler is blurred by up to half a pixel each way, and a
-// fractional baseline blurs a whole line at once.
+/// Where a pen lands on the device: the pixel its x falls in and which of the
+/// subpixelPhases positions within that pixel is nearest, and its baseline
+/// rounded to a whole pixel. The glyph rasterized at that phase and drawn on
+/// that pixel puts every texel on a device pixel of its own, which is what
+/// keeps text sharp -- a pixel-aligned bitmap drawn at a fractional position
+/// through a linear sampler is blurred by up to half a pixel each way, and a
+/// fractional baseline blurs a whole line at once.
 struct SnappedPen
 {
     int x = 0;
@@ -55,23 +49,24 @@ struct SnappedPen
     int phase = 0;
 };
 
+/// Converts a pen in points to device pixels at `scale` and splits x into pixel and subpixel phase.
 SnappedPen snapPen(Graphics::Point pen, float scale);
 
-// Draws strings. An atlas, a glyph renderer and the layout loop that walks a
-// string placing each glyph by its own bearings — the three things every
-// consumer of this module otherwise assembles by hand, and which have to agree
-// about the device scale to land 1:1 on the panel.
-//
-// Rebuilds itself when the font or the backing scale changes, so a window
-// dragged between a Retina and a non-Retina display re-rasterizes rather than
-// magnifying a 1x atlas.
-//
-// Usage, once per frame:
-//
-//     text.setViewport({bounds.w, bounds.h}, backingScale());
-//     text.begin();
-//     text.draw("hello", {10, 20}, Graphics::Color::white());
-//     text.flush(pass);
+/// Draws strings. An atlas, a glyph renderer and the layout loop that walks a
+/// string placing each glyph by its own bearings — the three things every
+/// consumer of this module otherwise assembles by hand, and which have to agree
+/// about the device scale to land 1:1 on the panel.
+///
+/// Rebuilds itself when the font or the backing scale changes, so a window
+/// dragged between a Retina and a non-Retina display re-rasterizes rather than
+/// magnifying a 1x atlas.
+///
+/// Usage, once per frame:
+///
+///     text.setViewport({bounds.w, bounds.h}, backingScale());
+///     text.begin();
+///     text.draw("hello", {10, 20}, Graphics::Color::white());
+///     text.flush(pass);
 class TextRenderer
 {
 public:
@@ -82,40 +77,40 @@ public:
     TextRenderer(const TextRenderer&) = delete;
     TextRenderer& operator=(const TextRenderer&) = delete;
 
-    // The surface being drawn into and its device pixels per point. A changed
-    // scale rebuilds the atlas; a changed size is free.
+    /// The surface being drawn into and its device pixels per point. A changed
+    /// scale rebuilds the atlas; a changed size is free.
     void setViewport(Graphics::Point size, float scale);
 
-    // The samples per pixel of the pass flush() draws into: one, the default,
-    // for a plain view, and the view's own sampleCount() for text drawn inside
-    // a multisampled scene.
+    /// The samples per pixel of the pass flush() draws into: one, the default,
+    /// for a plain view, and the view's own sampleCount() for text drawn inside
+    /// a multisampled scene.
     void setSampleCount(int count);
 
-    // The face used by the calls that name none. Changing it costs nothing but
-    // the glyphs of the new face: sizes coexist in one atlas, so the old one is
-    // still there for whatever is still drawing in it.
+    /// The face used by the calls that name none. Changing it costs nothing but
+    /// the glyphs of the new face: sizes coexist in one atlas, so the old one is
+    /// still there for whatever is still drawing in it.
     void setFont(const Font& font);
     constexpr const Font& getFont() const { return defaultFont; }
 
     void setPointSize(float pointSizeToUse);
     constexpr float pointSize() const { return defaultFont.pointSize; }
 
-    // Distance between baselines, in logical points.
+    /// Distance between baselines, in logical points.
     float lineHeight();
     float lineHeight(const Font& font);
 
-    // Baseline offset from the top of a line, for placing text against a box
-    // rather than against a baseline.
+    /// Baseline offset from the top of a line, for placing text against a box
+    /// rather than against a baseline.
     float ascent();
     float ascent(const Font& font);
 
-    // Queue for drawing. `baselineLeft` is the pen: x at the string's left
-    // edge, y on the baseline. Returns the advance, so successive calls can be
-    // chained to build a line out of differently coloured runs.
-    //
-    // The overload taking a Font draws that face instead of the default one,
-    // and costs nothing extra: faces share the atlas and the batch, so a
-    // heading, a caption and a monospace log in one frame are one draw.
+    /// Queue for drawing. `baselineLeft` is the pen: x at the string's left
+    /// edge, y on the baseline. Returns the advance, so successive calls can be
+    /// chained to build a line out of differently coloured runs.
+    ///
+    /// The overload taking a Font draws that face instead of the default one,
+    /// and costs nothing extra: faces share the atlas and the batch, so a
+    /// heading, a caption and a monospace log in one frame are one draw.
     float draw(std::string_view text,
                Graphics::Point baselineLeft,
                const Graphics::Color& color,
@@ -126,50 +121,50 @@ public:
                const Graphics::Color& color,
                const Font& font);
 
-    // Lays the string out and appends each drawable glyph to `into` instead of
-    // queueing it, returning the advance the way draw() does.
-    //
-    // One walk for both answers, which is the point: a caller that records a
-    // frame rather than issuing one needs the placements *and* the advance, and
-    // measuring first and drawing afterwards walks the string twice for two
-    // halves of the same loop.
+    /// Lays the string out and appends each drawable glyph to `into` instead of
+    /// queueing it, returning the advance the way draw() does.
+    ///
+    /// One walk for both answers, which is the point: a caller that records a
+    /// frame rather than issuing one needs the placements *and* the advance, and
+    /// measuring first and drawing afterwards walks the string twice for two
+    /// halves of the same loop.
     float layoutInto(Vector<PlacedGlyph>& into,
                      std::string_view text,
                      Graphics::Point baselineLeft,
                      const Font& font);
 
-    // Queues a glyph an earlier layoutInto placed. The colour is given here
-    // rather than held in the glyph, so one recorded run can be drawn in
-    // whatever colour the caller is drawing in now.
+    /// Queues a glyph an earlier layoutInto placed. The colour is given here
+    /// rather than held in the glyph, so one recorded run can be drawn in
+    /// whatever colour the caller is drawing in now.
     void drawGlyph(const PlacedGlyph& glyph, const Graphics::Color& color);
 
-    // Ticks when the atlas is cleared. A PlacedGlyph names its glyph rather
-    // than its texels and is unaffected; what a clear invalidates is a
-    // GlyphSlot a caller took from the atlas itself and kept.
+    /// Ticks when the atlas is cleared. A PlacedGlyph names its glyph rather
+    /// than its texels and is unaffected; what a clear invalidates is a
+    /// GlyphSlot a caller took from the atlas itself and kept.
     std::uint32_t generation() const;
 
-    // The advance `text` would take, without drawing it.
+    /// The advance `text` would take, without drawing it.
     float measure(std::string_view text, FontStyle style = FontStyle::Regular);
     float measure(std::string_view text, const Font& font);
 
     void begin();
 
-    // Submits everything queued since begin(). Uploads whatever the atlas
-    // rasterized on the way, so it must run before the pass samples it.
+    /// Submits everything queued since begin(). Uploads whatever the atlas
+    /// rasterized on the way, so it must run before the pass samples it.
     void flush(GPU::RenderPass& pass);
 
 private:
     void rebuildIfNeeded();
 
-    // The atlas's index for `font`, building the atlas first if the viewport
-    // has not yet been seen.
+    /// The atlas's index for `font`, building the atlas first if the viewport
+    /// has not yet been seen.
     int faceFor(const Font& font);
 
-    // Walks the string, optionally emitting each glyph, and returns the total
-    // advance. One loop rather than two so measure() and draw() cannot drift.
-    //
-    // `into` is where the glyphs go when there is one: the caller's vector, for
-    // a recorded layout, or the renderer's own queue when there is not.
+    /// Walks the string, optionally emitting each glyph, and returns the total
+    /// advance. One loop rather than two so measure() and draw() cannot drift.
+    ///
+    /// `into` is where the glyphs go when there is one: the caller's vector, for
+    /// a recorded layout, or the renderer's own queue when there is not.
     float layout(std::string_view text,
                  Graphics::Point pen,
                  const Graphics::Color& color,
@@ -177,8 +172,8 @@ private:
                  bool emit,
                  Vector<PlacedGlyph>* into = nullptr);
 
-    // Snaps the pen, takes the glyph at that phase from the atlas and queues
-    // it on the pixel: the one place a glyph's final position is decided.
+    /// Snaps the pen, takes the glyph at that phase from the atlas and queues
+    /// it on the pixel: the one place a glyph's final position is decided.
     void queueGlyph(Graphics::Point pen,
                     GlyphKey key,
                     const FontVariant& variant,

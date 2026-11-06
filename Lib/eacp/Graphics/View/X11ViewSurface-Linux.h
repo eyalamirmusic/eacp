@@ -1,10 +1,13 @@
 #pragma once
 
+/** @file Internal: Linux only: the X11 child-window backend for presenting views, paced by a
+    timer. */
+
 #include "ViewSurfaceBackend-Linux.h"
 
 // The X11 half of a presenting view: an InputOutput child of the toplevel,
 // moved and sized with xcb_configure_window, and answered by a timer because
-// X11 has no wl_surface.frame (plan.md D7).
+// X11 has no wl_surface.frame.
 
 namespace eacp::Graphics
 {

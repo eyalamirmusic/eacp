@@ -1,5 +1,8 @@
 #pragma once
 
+/** @file Internal: Windows only: the OLE data object and result mapping behind
+    View::startFileDrag. */
+
 #include <eacp/Core/Utils/WinInclude.h>
 #include "FileDrag.h"
 

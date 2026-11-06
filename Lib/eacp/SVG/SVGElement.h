@@ -1,10 +1,13 @@
 #pragma once
 
+/** @file The parsed SVG element tree and id lookup. */
+
 #include "Common.h"
 
 namespace eacp::SVG
 {
 
+/// One parsed element: its tag, attributes, children and text.
 struct SVGElement
 {
     std::string attr(const std::string& name,
@@ -18,12 +21,12 @@ struct SVGElement
     std::string textContent;
 };
 
-// Every element in a document that named itself, which is what a reference has
-// to be looked up in: a <use>, a gradient's href chain, a clip-path.
+/// Every element in a document that named itself, which is what a reference has
+/// to be looked up in: a `<use>`, a gradient's href chain, a clip-path.
 using ElementsById = std::unordered_map<std::string, const SVGElement*>;
 
-// First wins where a document repeats an id, which is what a browser does with
-// the same mistake.
+/// First wins where a document repeats an id, which is what a browser does with
+/// the same mistake.
 void collectIds(const SVGElement& element, ElementsById& byId);
 
 } // namespace eacp::SVG

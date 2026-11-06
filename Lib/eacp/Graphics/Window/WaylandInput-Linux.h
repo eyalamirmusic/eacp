@@ -6,10 +6,10 @@
 
 #include <memory>
 
-// wl_seat, translated into the events View.h already knows about. The protocol
-// only: what the seat's events mean is in LinuxInput-Linux.h, and shared with
-// every other Linux backend. Every entry point tolerates there being no seat:
-// a headless Weston advertises none.
+/** @file Internal: Linux only. wl_seat, translated into the events View.h
+    already knows about. The protocol only: what the seat's events mean is in
+    LinuxInput-Linux.h, and shared with every other Linux backend. Every entry
+    point tolerates there being no seat: a headless Weston advertises none. */
 
 struct wl_cursor_theme;
 
@@ -34,8 +34,8 @@ public:
 
     WaylandWindowSurface* getKeyboardFocus() const override;
 
-    // The serial wl_data_device.set_selection wants: the last keyboard event
-    // on a surface of ours, and zero while something else has the focus.
+    /// The serial wl_data_device.set_selection wants: the last keyboard event
+    /// on a surface of ours, and zero while something else has the focus.
     uint32_t getSelectionSerial() const;
 
     WaylandWindowSurface* getPointerWindow() const override;
@@ -43,7 +43,7 @@ public:
 
     void refreshCursor() override;
 
-    // Locks the pointer only while the window also has keyboard focus.
+    /// Locks the pointer only while the window also has keyboard focus.
     void updateMouseLock(WaylandWindowSurface& window);
 
     void windowDestroyed(WaylandWindowSurface& window);
@@ -104,7 +104,7 @@ private:
     wl_surface* cursorSurface = nullptr;
     CursorTracker cursor;
 
-    // The tracker's position is already in pointerWindow's content points.
+    /// The tracker's position is already in pointerWindow's content points.
     wl_surface* pointerSurface = nullptr;
     WaylandWindowSurface* pointerWindow = nullptr;
     PointerTracker pointerState;
@@ -112,7 +112,7 @@ private:
     uint32_t lastPointerSerial = 0;
     uint32_t pointerTime = 0;
 
-    // A leave held back until the frame closes; an enter may follow it there.
+    /// A leave held back until the frame closes; an enter may follow it there.
     WaylandWindowSurface* leavingWindow = nullptr;
 
     bool pendingMove = false;
@@ -120,7 +120,7 @@ private:
     Point rawDelta;
     bool hasRawDelta = false;
 
-    // One wl_pointer.frame's worth, dispatched when the frame closes.
+    /// One wl_pointer.frame's worth, dispatched when the frame closes.
     WheelTracker wheel;
     uint32_t wheelTime = 0;
 

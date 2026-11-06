@@ -1,12 +1,14 @@
 #pragma once
 
+/** @file Maps USB HID keyboard usages (GameController's GCKeyCode) to KeyCodes. */
+
 #include "../Graphics/Keyboard.h"
 
 namespace eacp::Graphics
 {
 
-// USB HID keyboard usages (usage page 0x07), which is what a GCKeyCode is, to
-// the framework's KeyCodes. KeyCode::Unknown for a usage outside the table.
+/// USB HID keyboard usages (usage page 0x07), which is what a GCKeyCode is, to
+/// the framework's KeyCodes. KeyCode::Unknown for a usage outside the table.
 constexpr uint16_t keyCodeFromHidUsage(uint32_t usage)
 {
     struct HidMapping
