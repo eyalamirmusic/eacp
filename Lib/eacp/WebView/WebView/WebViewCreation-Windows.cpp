@@ -46,6 +46,41 @@ std::wstring defaultUserDataFolder(const std::string& suffix)
 
     return folder + L"\\" + moduleName + L"\\" + leaf;
 }
+
+using SchemeRegistrations =
+    Vector<Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>>;
+
+Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>
+    makeSchemeRegistration(const std::string& scheme)
+{
+    auto wide = Strings::widen(scheme);
+    auto registration =
+        Microsoft::WRL::Make<CoreWebView2CustomSchemeRegistration>(wide.c_str());
+
+    registration->put_TreatAsSecure(TRUE);
+    registration->put_HasAuthorityComponent(TRUE);
+    return registration;
+}
+
+void setCustomSchemeRegistrations(ICoreWebView2EnvironmentOptions* envOptions,
+                                  const SchemeRegistrations& registrations)
+{
+    auto raw = Vector<ICoreWebView2CustomSchemeRegistration*>(registrations.size());
+    for (auto i = 0; i < registrations.size(); ++i)
+        raw[i] = registrations[i].Get();
+
+    Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions4> opts4;
+    if (SUCCEEDED(envOptions->QueryInterface(IID_PPV_ARGS(&opts4))) && opts4)
+    {
+        opts4->SetCustomSchemeRegistrations(static_cast<UINT32>(raw.size()),
+                                            raw.data());
+    }
+    else
+    {
+        LOG("WebView2: ICoreWebView2EnvironmentOptions4 unavailable; "
+            "custom schemes will not navigate");
+    }
+}
 } // namespace
 
 void WebView::Native::ensureInitialized()
@@ -285,47 +320,17 @@ Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions>
     // like app://local/index.html parse the way React / fetch expect.
     auto envOptions = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
 
-    auto registrations =
-        Vector<Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>> {};
+    auto registrations = SchemeRegistrations {};
     registrations.reserveAtLeast(
         (int) (options.schemes.size() + options.streamingSchemes.size()));
 
-    auto addRegistration = [&](const std::string& scheme)
-    {
-        auto wide = Strings::widen(scheme);
-        auto registration =
-            Microsoft::WRL::Make<CoreWebView2CustomSchemeRegistration>(wide.c_str());
-
-        registration->put_TreatAsSecure(TRUE);
-        registration->put_HasAuthorityComponent(TRUE);
-
-        registrations.add(registration);
-    };
-
     for (auto& [scheme, _]: options.schemes)
-        addRegistration(scheme);
+        registrations.add(makeSchemeRegistration(scheme));
     for (auto& [scheme, _]: options.streamingSchemes)
-        addRegistration(scheme);
+        registrations.add(makeSchemeRegistration(scheme));
 
     if (!registrations.empty())
-    {
-        auto raw =
-            Vector<ICoreWebView2CustomSchemeRegistration*>(registrations.size());
-        for (auto i = 0; i < registrations.size(); ++i)
-            raw[i] = registrations[i].Get();
-
-        Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions4> opts4;
-        if (SUCCEEDED(envOptions.As(&opts4)) && opts4)
-        {
-            opts4->SetCustomSchemeRegistrations(static_cast<UINT32>(raw.size()),
-                                                raw.data());
-        }
-        else
-        {
-            LOG("WebView2: ICoreWebView2EnvironmentOptions4 unavailable; "
-                "custom schemes will not navigate");
-        }
-    }
+        setCustomSchemeRegistrations(envOptions.Get(), registrations);
 
     Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> base;
     envOptions.As(&base);

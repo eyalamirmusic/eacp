@@ -8,7 +8,6 @@ namespace WebViewMessagesTests
 {
 constexpr auto escapeVirtualKey = 27;
 constexpr auto letterAVirtualKey = 65;
-constexpr auto shiftAndCommandMask = "9";
 constexpr auto okStatus = 200;
 constexpr auto partialStatus = 206;
 constexpr auto unsatisfiableStatus = 416;
@@ -22,8 +21,8 @@ using namespace WebViewMessagesTests;
 auto tKeyVerdictReadsEveryField =
     test("WebViewMessages/keyVerdictReadsEveryField") = []
 {
-    auto verdict =
-        parseKeyVerdict(std::string {"down:0:65:"} + shiftAndCommandMask + ":1:a");
+    auto verdict = parseKeyVerdict(
+        R"({"kind":"down","consumed":false,"keyCode":65,"modifiers":9,"repeat":true,"key":"a"})");
     check(verdict.has_value());
     check(verdict->isDown);
     check(!verdict->consumed);
@@ -36,9 +35,10 @@ auto tKeyVerdictReadsEveryField =
     check(verdict->characters == "a");
 };
 
-auto tKeyVerdictKeepsColonKey = test("WebViewMessages/keyVerdictKeepsColonKey") = []
+auto tKeyVerdictColonKey = test("WebViewMessages/keyVerdictColonKey") = []
 {
-    auto verdict = parseKeyVerdict("up:1:186:0:0::");
+    auto verdict = parseKeyVerdict(
+        R"({"kind":"up","consumed":true,"keyCode":186,"modifiers":0,"repeat":false,"key":":"})");
     check(verdict.has_value());
     check(!verdict->isDown);
     check(verdict->consumed);
@@ -48,7 +48,8 @@ auto tKeyVerdictKeepsColonKey = test("WebViewMessages/keyVerdictKeepsColonKey") 
 auto tKeyVerdictNamedKeyHasNoCharacters =
     test("WebViewMessages/keyVerdictNamedKeyHasNoCharacters") = []
 {
-    auto verdict = parseKeyVerdict("down:0:27:0:0:Escape");
+    auto verdict = parseKeyVerdict(
+        R"({"kind":"down","consumed":false,"keyCode":27,"modifiers":0,"repeat":false,"key":"Escape"})");
     check(verdict.has_value());
     check(verdict->virtualKey == escapeVirtualKey);
     check(verdict->characters.empty());
@@ -57,15 +58,15 @@ auto tKeyVerdictNamedKeyHasNoCharacters =
 auto tKeyVerdictNonAsciiKeyIsText =
     test("WebViewMessages/keyVerdictNonAsciiKeyIsText") = []
 {
-    auto verdict = parseKeyVerdict("down:0:0:0:0:\xC3\xA9");
+    auto verdict = parseKeyVerdict("{\"kind\":\"down\",\"key\":\"\xC3\xA9\"}");
     check(verdict.has_value());
     check(verdict->characters == "\xC3\xA9");
 };
 
-auto tKeyVerdictShortMessageDefaults =
-    test("WebViewMessages/keyVerdictShortMessageDefaults") = []
+auto tKeyVerdictMissingFieldsDefault =
+    test("WebViewMessages/keyVerdictMissingFieldsDefault") = []
 {
-    auto verdict = parseKeyVerdict("down");
+    auto verdict = parseKeyVerdict(R"({"kind":"down"})");
     check(verdict.has_value());
     check(!verdict->consumed);
     check(verdict->virtualKey == 0);
@@ -76,8 +77,16 @@ auto tKeyVerdictShortMessageDefaults =
 auto tKeyVerdictRejectsUnknownKind =
     test("WebViewMessages/keyVerdictRejectsUnknownKind") = []
 {
-    check(!parseKeyVerdict("press:0:65:0:0:a").has_value());
+    check(!parseKeyVerdict(R"({"kind":"press","key":"a"})").has_value());
+    check(!parseKeyVerdict(R"({"key":"a"})").has_value());
+};
+
+auto tKeyVerdictRejectsInvalidJson =
+    test("WebViewMessages/keyVerdictRejectsInvalidJson") = []
+{
     check(!parseKeyVerdict("").has_value());
+    check(!parseKeyVerdict("down:0:65:0:0:a").has_value());
+    check(!parseKeyVerdict("[\"down\"]").has_value());
 };
 
 auto tEnvelopeStringBody = test("WebViewMessages/envelopeStringBody") = []
@@ -167,22 +176,4 @@ auto tMaximizedStateScript = test("WebViewMessages/maximizedStateScript") = []
 {
     check(buildMaximizedStateScript(true) == "window.__eacpSetMaximized(true)");
     check(buildMaximizedStateScript(false) == "window.__eacpSetMaximized(false)");
-};
-
-auto tKeyVerdictNonNumericFieldsReadAsZero =
-    test("WebViewMessages/keyVerdictNonNumericFieldsReadAsZero") = []
-{
-    auto verdict = parseKeyVerdict("down:0:abc::0:a");
-    check(verdict.has_value());
-    check(verdict->virtualKey == 0);
-    check(!verdict->modifiers.shift);
-    check(verdict->characters == "a");
-};
-
-auto tKeyVerdictKeepsColonsInKey =
-    test("WebViewMessages/keyVerdictKeepsColonsInKey") = []
-{
-    auto verdict = parseKeyVerdict("down:0:0:0:0:a:b");
-    check(verdict.has_value());
-    check(verdict->characters.empty());
 };
