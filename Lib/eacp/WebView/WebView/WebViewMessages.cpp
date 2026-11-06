@@ -6,10 +6,10 @@ namespace eacp::Graphics::detail
 {
 namespace
 {
-constexpr auto shiftModifierBit = 1;
-constexpr auto controlModifierBit = 2;
-constexpr auto altModifierBit = 4;
-constexpr auto commandModifierBit = 8;
+constexpr auto shiftModifierBit = 0b0001;
+constexpr auto controlModifierBit = 0b0010;
+constexpr auto altModifierBit = 0b0100;
+constexpr auto commandModifierBit = 0b1000;
 constexpr auto firstNonAsciiByte = 0x80;
 
 // Typed text only when event.key is a single code point; named keys ("Enter",
@@ -28,6 +28,8 @@ std::string getTypedCharacters(const KeyEventReport& report)
     return {};
 }
 
+// TODO: Miro::tryCreateFromJSONString<KeyEventReport> once eacp's Miro pin
+// includes eyalamirmusic/Miro#20.
 std::optional<KeyEventReport> readKeyEventReport(const std::string& json)
 {
     try
