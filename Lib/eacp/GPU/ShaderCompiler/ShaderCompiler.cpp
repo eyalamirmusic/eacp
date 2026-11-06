@@ -5,7 +5,6 @@
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
-#include <eacp/Core/Utils/Hash.h>
 #include <eacp/Core/Utils/StdPath.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/GPU/Codegen/ShaderBuilder.h>
@@ -98,7 +97,7 @@ FilePath absolutePathOf(const FilePath& path)
 bool isBlobKey(std::string_view text)
 {
     auto value = Strings::parseHex(text);
-    return value && Hashing::toHex(*value) == text;
+    return value && Strings::formatHex(*value) == text;
 }
 
 // <key>.<anything>.metallib, .dxbc or .spv: a name this compiler writes.

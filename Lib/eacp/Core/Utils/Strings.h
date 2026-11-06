@@ -2,7 +2,9 @@
 
 #include "Containers.h"
 
+#include <array>
 #include <charconv>
+#include <concepts>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -51,6 +53,27 @@ std::optional<std::uint64_t> parseHex(std::string_view text);
 
 // Two lowercase hex digits per byte, in order: {0x0a, 0xff} is "0aff".
 std::string toHex(Span<const std::uint8_t> bytes);
+
+// Two lowercase hex digits per byte of T, zero padded, no "0x". A signed value
+// writes its bit pattern, so the HRESULT -2147024891 is "80070005".
+template <std::integral T>
+std::string formatHex(T value)
+{
+    constexpr auto hexDigitsPerByte = std::size_t {2};
+    constexpr auto hexBase = 16;
+    constexpr auto width = sizeof(T) * hexDigitsPerByte;
+
+    const auto bitPattern = static_cast<std::make_unsigned_t<T>>(value);
+
+    auto digits = std::array<char, width> {};
+    const auto end =
+        std::to_chars(digits.data(), digits.data() + width, bitPattern, hexBase).ptr;
+    const auto digitCount = static_cast<std::size_t>(end - digits.data());
+
+    auto text = std::string(width - digitCount, '0');
+    text.append(digits.data(), digitCount);
+    return text;
+}
 
 // UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
 // (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the
