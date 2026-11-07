@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <chrono>
+#include <future>
 #include <memory>
 #include <thread>
 
@@ -10,8 +12,7 @@ namespace
 {
 constexpr auto concurrentChildCount = 8;
 constexpr auto startRounds = 10;
-constexpr auto exitDeadline = eacp::Time::MS {5000};
-constexpr auto exitPollInterval = 10;
+constexpr auto exitDeadline = std::chrono::seconds {5};
 
 // Reads stdin until end-of-file and prints nothing until then.
 std::string getStdinReadingCommandLine()
@@ -44,23 +45,8 @@ ProcessList startChildrenConcurrently()
     return children;
 }
 
-bool exitsBeforeDeadline(Proc::Process& process)
-{
-    const auto deadline = eacp::Time::Deadline {exitDeadline};
-
-    while (process.isRunning())
-    {
-        if (deadline.expired())
-            return false;
-
-        eacp::Time::sleepMS(exitPollInterval);
-    }
-
-    return true;
-}
-
-// A sibling holding a leaked stdout end would keep a reader joined forever in
-// ~Process, so a failing round kills every child before destroying any.
+// A sibling holding a leaked pipe end keeps wait() blocked, so a failing round
+// kills every child to let it return.
 void killAll(ProcessList& children)
 {
     for (auto& child: children)
@@ -68,8 +54,8 @@ void killAll(ProcessList& children)
 }
 } // namespace
 
-// Each child must see end-of-file as soon as its own stdin closes, which only
-// holds when no sibling started beside it inherited that pipe's write end.
+// wait() returns once a child has exited and its stdout and stderr have closed,
+// which a sibling started beside it holds up if it inherited any of its pipes.
 auto tConcurrentChildrenOwnTheirPipes =
     test("Process/concurrent/childSeesEndOfFileWhileSiblingsRun") = []
 {
@@ -84,10 +70,13 @@ auto tConcurrentChildrenOwnTheirPipes =
         {
             child->closeInput();
 
-            const auto exited = exitsBeforeDeadline(*child);
-            check(exited);
+            auto finished =
+                std::async(std::launch::async, [&child] { child->wait(); });
+            const auto inTime =
+                finished.wait_for(exitDeadline) == std::future_status::ready;
+            check(inTime);
 
-            if (!exited)
+            if (!inTime)
             {
                 killAll(children);
                 return;
