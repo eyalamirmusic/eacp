@@ -27,7 +27,8 @@ ScissorPixels calculateScissorPixels(const Graphics::Rect& rect,
     return pixels;
 }
 
-// Each refusal is tested as written, so a NaN edge passes, as it always has.
+// Written as refusals, so a NaN edge fails none of them and the viewport is kept,
+// as every backend kept it before this check was shared.
 bool isViewportInsideTarget(const Graphics::Rect& rect,
                             int targetWidth,
                             int targetHeight)

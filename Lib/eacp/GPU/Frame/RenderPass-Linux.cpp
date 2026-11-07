@@ -1,6 +1,7 @@
 #include "RenderPass.h"
 
 #include "IndirectDrawPlan.h"
+#include "RenderPassRegions.h"
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
@@ -9,7 +10,6 @@
 #include "../Vulkan/VulkanTypes.h"
 
 #include <algorithm>
-#include <cmath>
 #include <memory>
 
 namespace eacp::GPU
@@ -288,31 +288,25 @@ RenderPass::~RenderPass()
 
 void RenderPass::setScissorRect(const Graphics::Rect& rect)
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
         return;
 
-    // Outward: rounding an edge inward would shave a column of coverage off it.
-    const auto left =
-        std::clamp(static_cast<int>(std::floor(rect.x)), 0, impl->targetWidth);
-    const auto top =
-        std::clamp(static_cast<int>(std::floor(rect.y)), 0, impl->targetHeight);
-    const auto right = std::clamp(
-        static_cast<int>(std::ceil(rect.x + rect.w)), left, impl->targetWidth);
-    const auto bottom = std::clamp(
-        static_cast<int>(std::ceil(rect.y + rect.h)), top, impl->targetHeight);
+    const auto pixels =
+        calculateScissorPixels(rect, impl->targetWidth, impl->targetHeight);
 
     // Framebuffer coordinates, y down: the negative viewport height flips clip
     // space and nothing else.
-    const VkRect2D scissor {{left, top},
-                            {static_cast<std::uint32_t>(right - left),
-                             static_cast<std::uint32_t>(bottom - top)}};
+    const VkRect2D scissor {
+        {pixels.left, pixels.top},
+        {static_cast<std::uint32_t>(pixels.right - pixels.left),
+         static_cast<std::uint32_t>(pixels.bottom - pixels.top)}};
 
     vkCmdSetScissor(impl->commandBuffer(), 0, 1, &scissor);
 }
 
 void RenderPass::clearScissorRect()
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
         return;
 
     const VkRect2D scissor {{0, 0},
@@ -328,12 +322,10 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
                              float nearDepth,
                              float farDepth)
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
         return;
 
-    if (rect.w <= 0.f || rect.h <= 0.f || rect.x < 0.f || rect.y < 0.f
-        || rect.x + rect.w > static_cast<float>(impl->targetWidth)
-        || rect.y + rect.h > static_cast<float>(impl->targetHeight))
+    if (!isViewportInsideTarget(rect, impl->targetWidth, impl->targetHeight))
         return;
 
     const VkViewport viewport {
@@ -344,7 +336,7 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
 
 void RenderPass::clearViewport()
 {
-    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
         return;
 
     const VkViewport viewport {0.f,
@@ -797,15 +789,15 @@ void RenderPass::resolveOcclusionQueries()
     {
         const auto query = static_cast<std::uint32_t>(used.index);
 
-        vkCmdCopyQueryPoolResults(
-            buffer,
-            pool,
-            query,
-            1,
-            results,
-            static_cast<VkDeviceSize>(used.index) * sizeof(std::uint64_t),
-            sizeof(std::uint64_t),
-            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        vkCmdCopyQueryPoolResults(buffer,
+                                  pool,
+                                  query,
+                                  1,
+                                  results,
+                                  static_cast<VkDeviceSize>(used.index)
+                                      * sizeof(std::uint64_t),
+                                  sizeof(std::uint64_t),
+                                  VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
 
         vkCmdResetQueryPool(buffer, pool, query, 1);
     }
