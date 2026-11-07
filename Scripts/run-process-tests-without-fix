@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Runs the concurrent-pipes test against the base branch's Process sources, to
+# show it fails there, then restores the branch's. Run with the fix committed.
+# Usage: run-process-tests-without-fix [build-dir] [base-ref]
+set -uo pipefail
+build="${1:-build}"
+base="$(git merge-base HEAD "${2:-eyal/develop}")"
+git checkout "$base" -- Lib/eacp/Core/Process
+trap 'git checkout HEAD -- Lib/eacp/Core/Process' EXIT
+cmake --build "$build" --target CoreTests || exit 1
+"$build/Tests/Core/CoreTests" --test Process/concurrent/childSeesEndOfFileWhileSiblingsRun

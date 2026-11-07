@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Builds CoreTests and runs the Process cases. Usage: run-process-tests [build-dir]
+set -euo pipefail
+build="${1:-build}"
+cmake -G Ninja -B "$build" -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+      -DEACP_BUILD_GRAPHICS=OFF
+cmake --build "$build" --target CoreTests
+ctest --test-dir "$build" --output-on-failure -R '^Process' --timeout 300
