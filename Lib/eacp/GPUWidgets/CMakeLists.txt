@@ -27,3 +27,4 @@ target_sources(eacp-gpuwidgets PRIVATE
 set_default_target_setting(eacp-gpuwidgets)
 eacp_enable_unity_build(eacp-gpuwidgets)
 add_ide_sources(eacp-gpuwidgets)
+add_subdirectory(BenchmarkPaths)

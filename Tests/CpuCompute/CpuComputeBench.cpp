@@ -2,7 +2,7 @@
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 
 #if EACP_BENCH_PATHS
-#include <eacp/GPUWidgets/GPUWidgets.h>
+#include <eacp/GPUWidgets/BenchmarkPaths/BenchmarkPaths.h>
 #include <eacp/GPUWidgets/Path/BinKernels.h>
 #endif
 
@@ -548,124 +548,7 @@ void benchStreams(PlanOptions options)
 #if EACP_BENCH_PATHS
 // ------------------------------------------------------------------ BinKernel
 
-using Graphics::Point;
-using Graphics::Rect;
-
-// Apps/GPU/PathBench's paths, unchanged.
-Point onCircle(Point centre, float radius, float angle)
-{
-    return {centre.x + std::sin(angle) * radius,
-            centre.y - std::cos(angle) * radius};
-}
-
-GPUWidgets::Path knobIndicator(float size, float value)
-{
-    constexpr auto startAngle = -2.356194f;
-    constexpr auto sweepAngle = 4.712389f;
-
-    auto centre = Point {size * 0.5f, size * 0.5f};
-    auto outer = size * 0.5f - 1.f;
-    auto thickness = std::max(2.f, size * 0.12f);
-    auto inner = outer - thickness;
-    auto sweep = sweepAngle * value;
-    auto steps = std::max(8, (int) std::ceil(sweep * outer * 0.5f));
-
-    auto path = GPUWidgets::Path {};
-    path.moveTo(onCircle(centre, outer, startAngle));
-
-    for (auto i = 1; i <= steps; ++i)
-        path.lineTo(
-            onCircle(centre, outer, startAngle + sweep * (float) i / (float) steps));
-
-    for (auto i = steps; i >= 0; --i)
-        path.lineTo(
-            onCircle(centre, inner, startAngle + sweep * (float) i / (float) steps));
-
-    path.close();
-
-    auto pointerWidth = std::max(1.5f, size * 0.045f);
-    auto angle = startAngle + sweep;
-    auto tip = onCircle(centre, outer - thickness * 0.5f, angle);
-    auto across =
-        Point {std::cos(angle) * pointerWidth, std::sin(angle) * pointerWidth};
-
-    path.moveTo({centre.x - across.x, centre.y - across.y});
-    path.lineTo({tip.x - across.x, tip.y - across.y});
-    path.lineTo({tip.x + across.x, tip.y + across.y});
-    path.lineTo({centre.x + across.x, centre.y + across.y});
-    path.close();
-
-    return path;
-}
-
-GPUWidgets::Path qualityPanel(const Rect& panel)
-{
-    auto rounded =
-        Rect {panel.w * 0.08f, panel.h * 0.05f, panel.w * 0.84f, panel.h * 0.30f};
-    auto size = std::min(panel.w * 0.72f, panel.h * 0.48f);
-    auto ellipse = Rect {(panel.w - size) * 0.5f, panel.h * 0.44f, size, size};
-
-    auto path = GPUWidgets::Path {};
-    path.addRoundedRect(rounded, rounded.h * 0.34f);
-    path.addEllipse(ellipse);
-    return path;
-}
-
-GPUWidgets::Path automationCurve(float width, float height, int lobes)
-{
-    auto path = GPUWidgets::Path {};
-    path.moveTo({0.f, height * 0.5f});
-
-    auto span = width / (float) lobes;
-
-    for (auto i = 0; i < lobes; ++i)
-    {
-        auto x = span * (float) i;
-        auto rising = (i % 2) == 0;
-        auto to = rising ? height * 0.08f : height * 0.92f;
-        auto from = rising ? height * 0.92f : height * 0.08f;
-
-        path.cubicTo(x + span * 0.35f, from, x + span * 0.65f, to, x + span, to);
-    }
-
-    path.lineTo({width, height});
-    path.lineTo({0.f, height});
-    path.close();
-
-    return path;
-}
-
-GPUWidgets::Path denseArtwork(float extent, int rings, int sides)
-{
-    auto path = GPUWidgets::Path {};
-    auto centre = Point {extent * 0.5f, extent * 0.5f};
-
-    for (auto ring = 0; ring < rings; ++ring)
-    {
-        auto radius = extent * 0.48f * (float) (ring + 1) / (float) rings;
-
-        path.moveTo(onCircle(centre, radius, 0.f));
-
-        for (auto i = 1; i < sides; ++i)
-        {
-            constexpr auto tau = 6.2831853f;
-            auto angle = tau * (float) i / (float) sides;
-            auto wobble = 1.f + 0.06f * std::sin(angle * 7.f + (float) ring);
-            path.lineTo(onCircle(centre, radius * wobble, angle));
-        }
-
-        path.close();
-    }
-
-    return path;
-}
-
-GPUWidgets::Path fullWindowEllipse(float width, float height)
-{
-    auto path = GPUWidgets::Path {};
-    path.addEllipse({0.f, 0.f, width, height});
-    return path;
-}
+using namespace GPUWidgets::BenchmarkPaths;
 
 struct Case
 {

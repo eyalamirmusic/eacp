@@ -30,7 +30,7 @@ add_executable(CpuComputeBench CpuComputeBench.cpp)
 target_link_libraries(CpuComputeBench PRIVATE eacp-cpu-compute)
 
 if (TARGET eacp-gpuwidgets)
-    target_link_libraries(CpuComputeBench PRIVATE eacp-gpuwidgets)
+    target_link_libraries(CpuComputeBench PRIVATE eacp-gpuwidgets-benchmark-paths)
     target_compile_definitions(CpuComputeBench PRIVATE EACP_BENCH_PATHS=1)
 endif ()
 
