@@ -77,6 +77,7 @@ target_sources(eacp-gpu PRIVATE
         Frame/IndirectDrawPlan.cpp
         Frame/OcclusionQueries.cpp
         Frame/RenderPass.cpp
+        Frame/RenderPassRegions.cpp
         Pipeline/RenderPipeline.cpp
         Shader/PrecompiledShaders.cpp
         Shader/ShaderLibrary.cpp
