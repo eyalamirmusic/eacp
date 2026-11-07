@@ -35,6 +35,7 @@ set(core_test_sources
         MemoryMappedFileTests.cpp
         PlatformTests.cpp
         PluginObjectTests.cpp
+        ProcessConcurrentPipesTests.cpp
         ProcessInheritStdioTests.cpp
         ProcessTokeniseTests.cpp
         RangeTests.cpp
