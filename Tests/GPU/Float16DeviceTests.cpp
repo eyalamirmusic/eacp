@@ -651,6 +651,7 @@ auto tBuiltins = test("Float16Device/everyBuiltinAgreesToAFewUlps") = []
         .input(kernel.c, c)
         .output(kernel.output,
                 filled(threadCount * BuiltinKernel::records * 3, halfSentinel))
+        .cpuOnlyWhen(isWarpOnArm64())
         .run(threadCount, verify);
 };
 
@@ -683,6 +684,7 @@ float determinantOf(const Array<float, 16>& matrix, int order)
 // no rounding touches.
 template <int Columns, int Rows>
 void checkShape(
+    bool cpuOnly = false,
     const std::source_location& location = std::source_location::current())
 {
     using Kernel = MatrixKernel<Columns, Rows>;
@@ -789,6 +791,7 @@ void checkShape(
         .output(kernel.output,
                 filled(threadCount * Kernel::outputStride, halfSentinel))
         .agreeing()
+        .cpuOnlyWhen(cpuOnly)
         .run(threadCount, verify, location);
 }
 
@@ -810,7 +813,7 @@ auto tShapes4 = test("Float16Device/halfMatricesWithFourColumnsAgreeExactly") = 
 {
     checkShape<4, 2>();
     checkShape<4, 3>();
-    checkShape<4, 4>();
+    checkShape<4, 4>(isWarpOnArm64());
 };
 
 auto tBuffers = test("Float16Device/halfBuffersShareWordsBetweenThreads") = []

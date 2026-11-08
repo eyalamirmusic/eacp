@@ -936,7 +936,9 @@ How each backend holds it:
   match for a `float2x2` overload as for a `float4` one). `eacpHalfBits` makes
   the f16 bits by integer arithmetic, round to nearest even with an overflow an
   infinity, because D3D's `f32tof16` rounds toward zero and clamps an overflow
-  to 65504 (D3D11.3 functional spec 3.2.2). The values are WGSL's;
+  to 65504 (D3D11.3 functional spec 3.2.2); its three choices are bool-to-uint
+  masks rather than `?:`, since DXC's HLSL 2021 refuses a ternary on a vector
+  condition and FXC has no `select`. The values are WGSL's;
   the cost is a float's plus two conversions, so on D3D f16 saves memory, not
   time. `supportsShaderFloat16()` is always true there.
 
@@ -1662,6 +1664,18 @@ Under WARP every case passes but three: `Intrinsics/computesTheHyperbolics`,
 `Hcos` operations, and WARP's are wrong well past any tolerance — `tanh(6)`
 comes back 1.0157, `cosh(6)` 5.6 short. FXC has no such instructions and expands
 them through `exp`, which is why the FXC suite passes.
+
+On an ARM64 machine WARP itself is the limit, not DXC: the suite's three
+largest kernels - `TypesDevice/matricesWithFourColumnsAgreeWithTheReference`'s
+4x4 kernel, `Float16Device/everyBuiltinAgreesToAFewUlps` and the 4x4 half
+kernel of `Float16Device/halfMatricesWithFourColumnsAgreeExactly` -
+access-violate (0xc0000005, a write near address zero from a PC in no loaded
+module, WARP's JIT-compiled shader code) from FXC's DXBC and DXC's DXIL alike,
+while every smaller kernel runs there, the same DXBC runs on x64 WARP, and a
+hardware adapter runs the 4x4 kernel. Those three keep their CPU halves on
+ARM64 WARP and skip the GPU one (`isWarpOnArm64()` in `Tests/GPU/Common.h`,
+`CrossCheck::cpuOnlyWhen`); `EACP_TEST_WARP_ARM64=1` runs them anyway, which is
+how to see whether a newer WARP still crashes.
 
 ## Pipeline state
 

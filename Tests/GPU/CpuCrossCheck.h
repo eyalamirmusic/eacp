@@ -460,6 +460,14 @@ public:
         return *this;
     }
 
+    // Leaves the GPU half out, for a kernel a known driver cannot run (WARP's
+    // ARM64 JIT crashes on the suite's largest, Common.h); the CPU half runs.
+    CrossCheck& cpuOnlyWhen(bool condition)
+    {
+        cpuOnly = condition;
+        return *this;
+    }
+
     CrossCheck& output(Uniform<OutputBuffer>& member, int elements, float fill = 0.f)
     {
         return output(member, filled(elements, fill));
@@ -677,7 +685,7 @@ private:
     {
         auto& device = Device::shared();
 
-        if (!device.isValid() || !kernel.fitsShaderFloat16(device))
+        if (cpuOnly || !device.isValid() || !kernel.fitsShaderFloat16(device))
             return;
 
         auto buffers = Vector<Buffer> {};
@@ -722,6 +730,7 @@ private:
     Vector<HostArray> cpuResult;
     std::optional<float> agreement;
     OverrideValues overrides;
+    bool cpuOnly = false;
 };
 
 // A kernel run on the CPU by hand, for the cases whose bindings a CrossCheck

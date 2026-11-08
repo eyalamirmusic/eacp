@@ -196,7 +196,7 @@ constexpr auto vertexStageStatements = Array<StatementKind, 11> {
     StatementKind::Call,
 };
 
-bool isVertexStageStatement(StatementKind kind)
+[[maybe_unused]] bool isVertexStageStatement(StatementKind kind)
 {
     return vertexStageStatements.contains(kind);
 }

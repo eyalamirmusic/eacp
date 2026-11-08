@@ -95,11 +95,12 @@ constexpr auto smallHlsl = std::string_view {R"golden(uint eacpHalfBits(float x)
     uint bits = asuint(x);
     uint sign = bits & 0x80000000u;
     uint magnitude = bits ^ sign;
-    uint special = magnitude > 0x7f800000u ? (uint) 0x7e00u : (uint) 0x7c00u;
+    uint special = 0x7c00u + 0x200u * (uint) (magnitude > 0x7f800000u);
     uint subnormal = asuint(asfloat(magnitude) + 0.5) - 0x3f000000u;
     uint normal = (magnitude + 0xc8000fffu + ((magnitude >> 13u) & 1u)) >> 13u;
-    uint finite = magnitude < 0x38800000u ? subnormal : normal;
-    return (magnitude >= 0x47800000u ? special : finite) | (sign >> 16u);
+    uint finite = normal + (subnormal - normal) * (uint) (magnitude < 0x38800000u);
+    uint result = finite + (special - finite) * (uint) (magnitude >= 0x47800000u);
+    return result | (sign >> 16u);
 }
 
 float eacpRoundHalf(float x)

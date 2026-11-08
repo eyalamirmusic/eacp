@@ -1352,7 +1352,10 @@ bool doesGraphRoundToHalfAt(const ShaderGraph& graph, ValueType type)
 
 // D3D's f32tof16 rounds toward zero and clamps a finite overflow to 65504
 // (D3D11.3 functional spec 3.2.2), so the bits are made here instead: nearest
-// even, an overflow an infinity, as WGSL, MSL's half and the CPU round.
+// even, an overflow an infinity, as WGSL, MSL's half and the CPU round. The
+// three choices are masks rather than ?: because DXC's HLSL 2021 refuses a
+// ternary on a vector condition and FXC has no select() to write instead; a
+// bool cast to uint is 0 or 1 in both.
 std::string getHalfBitsOverload(ValueType type)
 {
     auto width = componentCount(type);
@@ -1364,12 +1367,15 @@ std::string getHalfBitsOverload(ValueType type)
         "    {0} bits = asuint(x);\n"
         "    {0} sign = bits & 0x80000000u;\n"
         "    {0} magnitude = bits ^ sign;\n"
-        "    {0} special = magnitude > 0x7f800000u ? ({0}) 0x7e00u : ({0}) 0x7c00u;\n"
+        "    {0} special = 0x7c00u + 0x200u * ({0}) (magnitude > 0x7f800000u);\n"
         "    {0} subnormal = asuint(asfloat(magnitude) + 0.5) - 0x3f000000u;\n"
         "    {0} normal = (magnitude + 0xc8000fffu + ((magnitude >> 13u) & 1u)) "
         ">> 13u;\n"
-        "    {0} finite = magnitude < 0x38800000u ? subnormal : normal;\n"
-        "    return (magnitude >= 0x47800000u ? special : finite) | (sign >> 16u);\n"
+        "    {0} finite = normal + (subnormal - normal) * ({0}) (magnitude < "
+        "0x38800000u);\n"
+        "    {0} result = finite + (special - finite) * ({0}) (magnitude >= "
+        "0x47800000u);\n"
+        "    return result | (sign >> 16u);\n"
         "}}\n\n",
         bits,
         hlslTypeName(type));

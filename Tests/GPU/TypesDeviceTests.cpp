@@ -329,7 +329,7 @@ Vector<float> expectedShape(const Vector<float>& values)
 }
 
 template <int Columns, int Rows>
-void checkShape()
+void checkShape(bool cpuOnly = false)
 {
     using Kernel = ShapeKernel<Columns, Rows>;
     auto kernel = Kernel {};
@@ -347,6 +347,7 @@ void checkShape()
         .input(kernel.values, values)
         .output(kernel.output, threadCount * Kernel::outputStride, sentinel)
         .agreeing()
+        .cpuOnlyWhen(cpuOnly)
         .run(threadCount, verify);
 }
 
@@ -752,7 +753,7 @@ auto tShapes4 = test("TypesDevice/matricesWithFourColumnsAgreeWithTheReference")
 {
     checkShape<4, 2>();
     checkShape<4, 3>();
-    checkShape<4, 4>();
+    checkShape<4, 4>(isWarpOnArm64());
 };
 
 auto tSort = test("TypesDevice/eachLaneSortsItsOwnPrivateArray") = []

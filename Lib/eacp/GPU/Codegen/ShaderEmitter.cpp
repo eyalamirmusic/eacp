@@ -166,9 +166,9 @@ bool doesReachForeignBuiltIn(const ShaderGraph& graph,
 
 // Whether every built-in the stage's roots reach is one that stage is handed.
 // A Varying read is the boundary: what feeds it is the vertex stage's.
-bool readsOnlyItsOwnBuiltIns(const ShaderGraph& graph,
-                             const Vector<int>& roots,
-                             ShaderStage stage)
+[[maybe_unused]] bool readsOnlyItsOwnBuiltIns(const ShaderGraph& graph,
+                                              const Vector<int>& roots,
+                                              ShaderStage stage)
 {
     auto seen = VisitSet {graph.nodeCount()};
 

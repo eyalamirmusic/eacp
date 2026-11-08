@@ -35,20 +35,20 @@ bool isNarrowerThanOneSimdGroup(const ShaderGraph& graph)
     return graph.threadGroupShape().threadCount() <= simdGroupWidth;
 }
 
-bool hasValidSimdGroupShape(const ShaderGraph& graph)
+[[maybe_unused]] bool hasValidSimdGroupShape(const ShaderGraph& graph)
 {
     return !graph.usesSimdGroups() || isWholeNumberOfSimdGroups(graph);
 }
 
 // A group narrower than one SIMD group is its own SIMD group; only a partial
 // trailing one makes a fold undefined.
-bool hasValidSimdReductionShape(const ShaderGraph& graph)
+[[maybe_unused]] bool hasValidSimdReductionShape(const ShaderGraph& graph)
 {
     return !graph.usesSimdReduction() || isNarrowerThanOneSimdGroup(graph)
            || isWholeNumberOfSimdGroups(graph);
 }
 
-bool takesNoDerivedLevel(const ShaderGraph& graph)
+[[maybe_unused]] bool takesNoDerivedLevel(const ShaderGraph& graph)
 {
     for (auto node = 0; node < graph.nodeCount(); ++node)
     {
@@ -62,7 +62,7 @@ bool takesNoDerivedLevel(const ShaderGraph& graph)
     return true;
 }
 
-bool readsOnlyKernelBuiltIns(const ShaderGraph& graph)
+[[maybe_unused]] bool readsOnlyKernelBuiltIns(const ShaderGraph& graph)
 {
     for (auto node = 0; node < graph.nodeCount(); ++node)
     {
