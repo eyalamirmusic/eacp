@@ -1,8 +1,14 @@
 #include "ShaderExpressionPrinter.h"
 
+#include "ShaderFunctionEmission.h"
 #include "ShaderGroupSpelling.h"
+#include "ShaderOverrideEmission.h"
+#include "ShaderStructEmission.h"
+#include "UniformLayout.h"
 
 #include <eacp/Core/Utils/Format.h>
+
+#include <climits>
 
 namespace eacp::GPU::ShaderEmission
 {
@@ -58,7 +64,10 @@ std::string ExprPrinter::printReference(int node) const
 
 ValueType ExprPrinter::getBroadcastType(const Expr& call) const
 {
-    if (backend != Backend::Vulkan || !isGenTypeCall(call.text))
+    auto widens = (backend == Backend::Vulkan && isGenTypeCall(call.text))
+                  || (backend == Backend::Metal && isMetalGenTypeCall(call.text));
+
+    if (!widens)
         return ValueType::Float;
 
     auto widest = ValueType::Float;
@@ -196,7 +205,7 @@ std::string ExprPrinter::printArguments(const Expr& expr, ValueType wide) const
 
 std::string ExprPrinter::print(int node) const
 {
-    static constexpr auto printers = Array<ExpressionPrintEntry, 26> {
+    static constexpr auto printers = Array<ExpressionPrintEntry, 31> {
         {ExprKind::Input, &ExprPrinter::printInput},
         {ExprKind::Varying, &ExprPrinter::printVarying},
         {ExprKind::Uniform, &ExprPrinter::printUniform},
@@ -223,15 +232,29 @@ std::string ExprPrinter::print(int node) const
         {ExprKind::SharedRead, &ExprPrinter::printSharedRead},
         {ExprKind::SimdGroupIndex, &ExprPrinter::printSimdGroupIndex},
         {ExprKind::BuiltIn, &ExprPrinter::printBuiltInNode},
+        {ExprKind::TextureFunction, &ExprPrinter::printTextureFunction},
+        {ExprKind::TextureQuery, &ExprPrinter::printTextureQuery},
+        {ExprKind::MatrixColumn, &ExprPrinter::printMatrixColumn},
+        {ExprKind::Override, &ExprPrinter::printOverride},
+        {ExprKind::FunctionCall, &ExprPrinter::printFunctionCall},
     };
 
     const auto& expr = graph.expr(node);
 
     for (const auto& entry: printers)
         if (entry.kind == expr.kind)
-            return (this->*entry.print)(expr);
+            return printRoundedToHalf(expr, (this->*entry.print)(expr));
 
     return {};
+}
+
+std::string ExprPrinter::printRoundedToHalf(const Expr& expr,
+                                            const std::string& text) const
+{
+    if (backend != Backend::DirectX || !isRoundedToHalf(expr))
+        return text;
+
+    return Strings::format("{}({})", getRoundHalfFunction(expr.type), text);
 }
 
 std::string ExprPrinter::printInput(const Expr& expr) const
@@ -249,9 +272,21 @@ std::string ExprPrinter::printVarying(const Expr& expr) const
     return getVaryingName(backend, expr.index);
 }
 
+// A two-row matrix is held as float4 columns on Metal (UniformLayout.h).
 std::string ExprPrinter::printUniform(const Expr& expr) const
 {
-    return printNumberedName("uniforms.u", expr.index);
+    auto name = printNumberedName("uniforms.u", expr.index);
+
+    if (backend != Backend::Metal || !isMetalWidenedUniform(expr.type))
+        return name;
+
+    auto columns = std::string {};
+
+    for (auto column = 0; column < matrixColumns(expr.type); ++column)
+        columns +=
+            Strings::format("{}{}[{}].xy", column > 0 ? ", " : "", name, column);
+
+    return Strings::format("{}({})", typeName(expr.type), columns);
 }
 
 // A uint above INT_MAX is held in Expr::index as a negative.
@@ -263,26 +298,79 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
         return Strings::format("{}u", bits);
     }
 
+    // -2147483648 is the negation of a literal no int holds, which GLSL refuses.
+    if (expr.type == ValueType::Int && expr.index == INT_MIN)
+        return "(-2147483647 - 1)";
+
     if (expr.type == ValueType::Int)
         return Strings::format("{}", expr.index);
 
     if (expr.type == ValueType::Bool)
         return expr.index != 0 ? "true" : "false";
 
+    if (expr.type == ValueType::Half)
+        return formatShaderFloatLiteral(expr.value)
+               + std::string(getHalfLiteralSuffix(backend));
+
     return formatShaderFloatLiteral(expr.value);
 }
 
-// HLSL fills a matrix from rows, so transpose() restores the column-major value.
+// HLSL fills a matrix from rows, so the columns are taken as the rows of the
+// transposed shape - MSL's spelling, rows first in HLSL - and transpose()
+// restores the column-major value.
 std::string ExprPrinter::printConstruct(const Expr& expr) const
 {
-    auto text = Strings::format("{}({})",
-                                getDialectTypeName(backend, expr.type),
-                                printArguments(expr, ValueType::Float));
+    if (expr.type == ValueType::Struct)
+        return printStructValue(expr);
 
-    if (backend == Backend::DirectX && isMatrix(expr.type))
+    auto transposes = backend == Backend::DirectX && isMatrix(expr.type);
+    auto name = transposes ? std::string_view {typeName(floatEquivalent(expr.type))}
+                           : getDialectTypeName(backend, expr.type);
+    auto text =
+        Strings::format("{}({})", name, printArguments(expr, ValueType::Float));
+
+    if (transposes)
         return Strings::format("transpose({})", text);
 
     return text;
+}
+
+std::string ExprPrinter::printOverride(const Expr& expr) const
+{
+    return getOverrideName(graph, expr.index);
+}
+
+// MSL passes on the module-scope resources the function reaches.
+std::string ExprPrinter::printFunctionCall(const Expr& expr) const
+{
+    auto arguments = Vector<std::string> {};
+
+    for (auto argument: expr.args)
+        arguments.add(printReference(argument));
+
+    if (backend == Backend::Metal)
+        for (const auto& name: getMetalFunctionArguments(graph, expr.index))
+            arguments.add(name);
+
+    auto text = std::string {};
+
+    for (auto which = 0; which < arguments.size(); ++which)
+        text += (which > 0 ? ", " : "") + arguments[which];
+
+    return Strings::format("{}({})", getFunctionName(graph, expr.index), text);
+}
+
+// HLSL holds the matrix itself, whose subscript is a row; a column of it is a
+// row of its transpose.
+std::string ExprPrinter::printMatrixColumn(const Expr& expr) const
+{
+    auto matrix = printReference(expr.args[0]);
+    auto index = printReference(expr.args[1]);
+
+    if (backend == Backend::DirectX)
+        return Strings::format("transpose({})[{}]", matrix, index);
+
+    return Strings::format("({})[{}]", matrix, index);
 }
 
 std::string ExprPrinter::printSwizzle(const Expr& expr) const
@@ -355,9 +443,19 @@ std::string ExprPrinter::printSelect(const Expr& expr) const
                            printReference(expr.args[2]));
 }
 
+// An element of a private array carries its (already clamped) index.
 std::string ExprPrinter::printVarRead(const Expr& expr) const
 {
-    return printNumberedName("v", expr.index);
+    auto variable =
+        expr.args.empty()
+            ? printNumberedName("v", expr.index)
+            : printSubscript("v", expr.index, printReference(expr.args[0]));
+
+    if (expr.member < 0)
+        return variable;
+
+    return printFieldRead(
+        graph, backend, graph.variableStructType(expr.index), expr.member, variable);
 }
 
 std::string ExprPrinter::printMul(const Expr& expr) const
@@ -450,9 +548,69 @@ std::string ExprPrinter::printThreadId(const Expr& expr) const
     return getIndexReference("gid", graph.dispatchRank(), expr.index);
 }
 
+// HLSL holds an f16 buffer as words: element i is half i % 2 of word i / 2.
+std::string ExprPrinter::printBufferElementRead(int slot,
+                                                const std::string& index) const
+{
+    if (backend == Backend::DirectX
+        && graph.storageElementType(slot) == ValueType::Half)
+        return Strings::format(
+            "f16tof32(buffer{0}[({1}) >> 1u] >> ((({1}) & 1u) << 4u))", slot, index);
+
+    return printSubscript("buffer", slot, index);
+}
+
+std::string ExprPrinter::printStructBufferRead(const Expr& expr) const
+{
+    auto index = printReference(expr.args[0]);
+
+    if (backend == Backend::DirectX)
+        return printHlslStructLoad(graph, expr.index, index, expr.member);
+
+    return printFieldRead(graph,
+                          backend,
+                          graph.storageStructType(expr.index),
+                          expr.member,
+                          printSubscript("buffer", expr.index, index));
+}
+
+std::string ExprPrinter::printStructValue(const Expr& expr) const
+{
+    auto members = std::string {};
+
+    for (auto which = 0; which < expr.args.size(); ++which)
+        members += Strings::format(
+            "{}{}", which > 0 ? ", " : "", printReference(expr.args[which]));
+
+    return printStructConstruct(graph, backend, expr.structType, members);
+}
+
+std::string ExprPrinter::printTypeName(int node) const
+{
+    const auto& expr = graph.expr(node);
+
+    if (expr.type == ValueType::Struct)
+        return getStructName(graph, expr.structType);
+
+    return std::string(getDialectTypeName(backend, expr.type));
+}
+
+std::string ExprPrinter::printVariableTypeName(int slot) const
+{
+    auto structId = graph.variableStructType(slot);
+
+    if (structId >= 0)
+        return getStructName(graph, structId);
+
+    return std::string(getDialectTypeName(backend, graph.variables()[slot]));
+}
+
 std::string ExprPrinter::printBufferRead(const Expr& expr) const
 {
-    return printSubscript("buffer", expr.index, printReference(expr.args[0]));
+    if (expr.member >= 0)
+        return printStructBufferRead(expr);
+
+    return printBufferElementRead(expr.index, printReference(expr.args[0]));
 }
 
 std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
@@ -475,12 +633,10 @@ std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
         if (component > 0)
             elements += ", ";
 
-        elements += Strings::format("{}[{}", name, base);
+        auto element =
+            component > 0 ? Strings::format("{} + {}u", base, component) : base;
 
-        if (component > 0)
-            elements += Strings::format(" + {}u", component);
-
-        elements += "]";
+        elements += printBufferElementRead(expr.index, element);
     }
 
     return Strings::format("{}({})", type, elements);
@@ -523,7 +679,13 @@ std::string ExprPrinter::printGridExtent(const Expr& expr) const
 
 std::string ExprPrinter::printSharedRead(const Expr& expr) const
 {
-    return printSubscript("s", expr.index, printReference(expr.args[0]));
+    auto element = printSubscript("s", expr.index, printReference(expr.args[0]));
+
+    if (backend == Backend::Metal && graph.sharedArrays()[expr.index].atomic)
+        return Strings::format("atomic_load_explicit(&{}, memory_order_relaxed)",
+                               element);
+
+    return element;
 }
 
 std::string ExprPrinter::printSimdGroupIndex(const Expr&) const
@@ -541,24 +703,88 @@ std::string ExprPrinter::printBuiltInNode(const Expr& expr) const
 }
 
 // HLSL's SV_Position gives clip w where the others give 1 / w.
-std::string ExprPrinter::printBuiltIn(ShaderBuiltIn which) const
+std::string ExprPrinter::printFragmentCoordinate() const
 {
-    if (which == ShaderBuiltIn::FragmentCoordinate)
-    {
-        if (backend == Backend::Vulkan)
-            return "gl_FragCoord";
+    if (backend == Backend::Vulkan)
+        return "gl_FragCoord";
 
-        if (backend == Backend::DirectX)
-            return "float4(input.position.xyz, 1.0 / input.position.w)";
+    if (backend == Backend::DirectX)
+        return "float4(input.position.xyz, 1.0 / input.position.w)";
 
-        return "input.position";
-    }
+    return "input.position";
+}
 
-    auto vertexId = which == ShaderBuiltIn::VertexId;
+// Metal declares it with gid's width, every kernel input having to agree.
+std::string ExprPrinter::printMetalGroupCount() const
+{
+    const auto rank = graph.dispatchRank();
+
+    if (rank == DispatchRank::OneD)
+        return "uint3(groupCount, 1u, 1u)";
+
+    return rank == DispatchRank::TwoD ? "uint3(groupCount, 1u)" : "groupCount";
+}
+
+// D3D has no SV_ for it below SM 6, so there it is the extent the dispatch
+// supplied over the group, rounded up: what every direct dispatch encodes.
+std::string ExprPrinter::printGroupCount() const
+{
+    if (backend == Backend::Metal)
+        return printMetalGroupCount();
 
     if (backend == Backend::Vulkan)
-        return vertexId ? "uint(gl_VertexIndex)" : "uint(gl_InstanceIndex)";
+        return "gl_NumWorkGroups";
 
-    return vertexId ? "vertexId" : "instanceId";
+    const auto rank = graph.dispatchRank();
+    const auto group = graph.threadGroupShape();
+    const auto sizes = Array<int, 3> {group.x, group.y, group.z};
+    auto axes = Array<std::string, 3> {"1u", "1u", "1u"};
+
+    for (auto axis = 0; axis < getGridExtentCount(rank); ++axis)
+    {
+        auto extent = rank == DispatchRank::OneD
+                          ? std::string {"uniforms.count"}
+                          : Strings::format("uniforms.{}", getGridExtentName(axis));
+
+        axes[axis] = Strings::format("(({} - 1u) / {}u + 1u)", extent, sizes[axis]);
+    }
+
+    return Strings::format("uint3({}, {}, {})", axes[0], axes[1], axes[2]);
+}
+
+std::string ExprPrinter::printBuiltIn(ShaderBuiltIn which) const
+{
+    auto isGlsl = backend == Backend::Vulkan;
+    auto isMetal = backend == Backend::Metal;
+
+    switch (which)
+    {
+        case ShaderBuiltIn::FragmentCoordinate:
+            return printFragmentCoordinate();
+        case ShaderBuiltIn::VertexId:
+            return isGlsl ? "uint(gl_VertexIndex)" : "vertexId";
+        case ShaderBuiltIn::InstanceId:
+            return isGlsl ? "uint(gl_InstanceIndex)" : "instanceId";
+        case ShaderBuiltIn::FrontFacing:
+            return isGlsl ? "gl_FrontFacing" : "frontFacing";
+        case ShaderBuiltIn::SampleIndex:
+            return isGlsl ? "uint(gl_SampleID)" : "sampleIndex";
+        case ShaderBuiltIn::SampleMask:
+            return isGlsl ? "uint(gl_SampleMaskIn[0])" : "sampleMaskIn";
+        case ShaderBuiltIn::LocalIndex:
+            return isMetal ? "localIndex" : std::string(getGroupLaneName(backend));
+        case ShaderBuiltIn::GroupCount:
+            return printGroupCount();
+        case ShaderBuiltIn::SimdLaneIndex:
+            if (isMetal)
+                return "simdLane";
+
+            return Strings::format(
+                "({} % {}u)", getGroupLaneName(backend), simdGroupWidth);
+        case ShaderBuiltIn::SimdGroupSize:
+            return isMetal ? "simdSize" : Strings::format("{}u", simdGroupWidth);
+    }
+
+    return {};
 }
 } // namespace eacp::GPU::ShaderEmission

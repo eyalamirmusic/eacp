@@ -53,6 +53,21 @@ bool isSpirvModule(const ResEmbed::DataView& bytes)
     return first == magic;
 }
 
+ShaderStage shaderStageOf(Spirv::Stage stage)
+{
+    switch (stage)
+    {
+        case Spirv::Stage::Vertex:
+            return ShaderStage::Vertex;
+        case Spirv::Stage::Fragment:
+            return ShaderStage::Fragment;
+        case Spirv::Stage::Compute:
+            break;
+    }
+
+    return ShaderStage::Compute;
+}
+
 struct PrecompiledSpirvStage
 {
     Spirv::Stage stage;
@@ -63,17 +78,28 @@ struct PrecompiledSpirvStage
 
 struct ShaderLibrary::Native
 {
-    Native(Device& device, const ShaderSource& source)
+    Native(Device& device, const ShaderSource& source, CompilationInfo& messages)
     {
+        if (!device.isValid())
+        {
+            messages.add(CompilationMessageType::Error,
+                         "there is no Vulkan device to compile the library on");
+            return;
+        }
+
         // An empty source is a build something declined to make, and whatever
         // declined it has already said why - see ComputeProgram::prepare. There
-        // is nothing here to compile and nothing for glslang to report.
-        if (!device.isValid() || source.source.empty())
+        // is nothing here to compile and nothing for glslang to log.
+        if (source.source.empty())
+        {
+            messages.add(CompilationMessageType::Error,
+                         "the source is empty: what built it declined to");
             return;
+        }
 
         context = &getVulkanContext(device);
 
-        if (!loadPrecompiledOrNeedSource(source))
+        if (!loadPrecompiledOrNeedSource(source, messages))
             return;
 
         if (source.isCompute())
@@ -81,7 +107,8 @@ struct ShaderLibrary::Native
             compileStage(Spirv::Stage::Compute,
                          source.source,
                          program.compute,
-                         vulkanComputeTextureBinding(0));
+                         vulkanComputeTextureBinding(0),
+                         messages);
             return;
         }
 
@@ -89,13 +116,15 @@ struct ShaderLibrary::Native
         compileStage(Spirv::Stage::Vertex,
                      source.source,
                      program.vertex,
-                     vulkanTextureBinding(0));
+                     vulkanTextureBinding(0),
+                     messages);
 
         if (source.hasFragment())
             compileStage(Spirv::Stage::Fragment,
                          source.source,
                          program.fragment,
-                         vulkanTextureBinding(0));
+                         vulkanTextureBinding(0),
+                         messages);
     }
 
     // Deferred, a pipeline holding no reference to the module it was built from.
@@ -141,7 +170,8 @@ struct ShaderLibrary::Native
     // given, when all of them are there, and says whether the source still has
     // to be compiled: not once they have loaded, and not under the require
     // flag, which leaves the library invalid instead.
-    bool loadPrecompiledOrNeedSource(const ShaderSource& source)
+    bool loadPrecompiledOrNeedSource(const ShaderSource& source,
+                                     CompilationInfo& messages)
     {
         const auto key = Precompiled::keyFor(source);
         const auto target = getVulkanShared().getSpirvTarget();
@@ -156,11 +186,11 @@ struct ShaderLibrary::Native
             const auto bytes = Precompiled::find(name);
 
             if (!bytes)
-                return Precompiled::fallBackAfterMiss(name);
+                return Precompiled::fallBackAfterMiss(name, messages);
 
             if (!isSpirvModule(bytes))
                 return Precompiled::fallBackAfterLoadFailure(
-                    name, "it is not a SPIR-V module");
+                    name, "it is not a SPIR-V module", messages);
 
             modules.add(spirvWordsFrom(bytes));
         }
@@ -177,7 +207,8 @@ struct ShaderLibrary::Native
 
             return Precompiled::fallBackAfterLoadFailure(
                 Precompiled::spirvResourceName(key, target, stage.stage),
-                "vkCreateShaderModule refused it");
+                "vkCreateShaderModule refused it",
+                messages);
         }
 
         precompiled = true;
@@ -187,7 +218,8 @@ struct ShaderLibrary::Native
     void compileStage(Spirv::Stage stage,
                       const std::string& source,
                       VkShaderModule& module,
-                      int textureBindingBase)
+                      int textureBindingBase,
+                      CompilationInfo& messages)
     {
         const auto result =
             Spirv::compileGlsl(stage, source, getVulkanShared().getSpirvTarget());
@@ -195,8 +227,23 @@ struct ShaderLibrary::Native
         if (!result.log.empty())
             LOG(result.log);
 
-        if (result.succeeded())
-            installStage(result.words, module, textureBindingBase);
+        const auto shaderStage = shaderStageOf(stage);
+        messages.append(
+            parseGlslangLog({result.log, shaderStage, !result.succeeded()}));
+
+        if (!result.succeeded())
+        {
+            if (!messages.hasErrors())
+                messages.add(CompilationMessageType::Error,
+                             "glslang compiled no SPIR-V and said nothing",
+                             shaderStage);
+            return;
+        }
+
+        if (!installStage(result.words, module, textureBindingBase))
+            messages.add(CompilationMessageType::Error,
+                         "vkCreateShaderModule refused the SPIR-V glslang compiled",
+                         shaderStage);
     }
 
     bool installStage(const Vector<std::uint32_t>& words,
@@ -224,8 +271,19 @@ ShaderLibrary::ShaderLibrary(Device& device, const ShaderSource& source)
     , fragmentEntryName(source.fragmentEntry)
     , computeEntryName(source.computeEntry)
     , groupShape(source.threadGroup)
-    , impl(device, source)
+    , pipelineConstants(source.hasPipelineConstants)
+    , impl(device, source, compilation)
 {
+}
+
+void* ShaderLibrary::nativeLibrary(const PipelineConstants&) const
+{
+    return nativeLibrary();
+}
+
+CompilationInfo ShaderLibrary::compilationInfo(const PipelineConstants&) const
+{
+    return compilation;
 }
 
 bool ShaderLibrary::isValid() const

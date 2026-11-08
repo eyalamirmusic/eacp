@@ -3,6 +3,7 @@
 #include "../Frame/ComputePass.h"
 #include "ShaderBindings.h"
 #include "ShaderDeclarations.h"
+#include "ShaderFunctionEmission.h"
 #include "ShaderGroupSpelling.h"
 #include "ShaderHelpers.h"
 #include "ShaderStageEmitter.h"
@@ -34,17 +35,46 @@ bool isNarrowerThanOneSimdGroup(const ShaderGraph& graph)
     return graph.threadGroupShape().threadCount() <= simdGroupWidth;
 }
 
-bool hasValidSimdGroupShape(const ShaderGraph& graph)
+[[maybe_unused]] bool hasValidSimdGroupShape(const ShaderGraph& graph)
 {
     return !graph.usesSimdGroups() || isWholeNumberOfSimdGroups(graph);
 }
 
 // A group narrower than one SIMD group is its own SIMD group; only a partial
 // trailing one makes a fold undefined.
-bool hasValidSimdReductionShape(const ShaderGraph& graph)
+[[maybe_unused]] bool hasValidSimdReductionShape(const ShaderGraph& graph)
 {
     return !graph.usesSimdReduction() || isNarrowerThanOneSimdGroup(graph)
            || isWholeNumberOfSimdGroups(graph);
+}
+
+[[maybe_unused]] bool takesNoDerivedLevel(const ShaderGraph& graph)
+{
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::TextureFunction
+            && usesImplicitDerivatives(textureFunctionNamed(expr.text)))
+            return false;
+    }
+
+    return true;
+}
+
+[[maybe_unused]] bool readsOnlyKernelBuiltIns(const ShaderGraph& graph)
+{
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::BuiltIn
+            && stageOf(static_cast<ShaderBuiltIn>(expr.index))
+                   != ShaderStage::Compute)
+            return false;
+    }
+
+    return true;
 }
 
 void assertKernelShapeIsValid(const ShaderGraph& graph)
@@ -60,6 +90,17 @@ void assertKernelShapeIsValid(const ShaderGraph& graph)
               "dispatched in a threadgroup that is a whole number of SIMD "
               "groups - a multiple of ComputeProgram::simdWidth threads - or "
               "in one narrower than a single SIMD group.");
+
+    assert(readsOnlyKernelBuiltIns(graph)
+           && "eacp: a kernel read a render stage's built-in - "
+              "fragmentCoordinate, vertexId, frontFacing and the like belong "
+              "to a ShaderProgram, and a kernel has none of them.");
+
+    assert(takesNoDerivedLevel(graph)
+           && "eacp: a kernel used sample, sampleBias or sampleCompare on a "
+              "kind from TextureFunctions.h. They take the level from the "
+              "fragment's derivatives, which a kernel has none of - use "
+              "sampleLevel, sampleGrad or sampleCompareLevel.");
 
     assert(graph.storageBuffers().size() <= ComputePass::portableBufferSlots
            && "eacp: a kernel may bind ComputePass::portableBufferSlots storage "
@@ -96,6 +137,15 @@ std::string printKernelUniformBlock(const ShaderGraph& graph, Backend backend)
         backend, uniformTypes, uniformNames, vulkanComputeUniformBinding);
 }
 
+// HLSL and GLSL act atomically on plain integers; Metal needs its atomic types.
+std::string_view getSharedElementType(const SharedArray& shared, Backend backend)
+{
+    if (shared.atomic && backend == Backend::Metal)
+        return shared.elementType == ValueType::Int ? "atomic_int" : "atomic_uint";
+
+    return getDialectTypeName(backend, shared.elementType);
+}
+
 std::string printSharedArrays(const ShaderGraph& graph,
                               Backend backend,
                               std::string_view qualifier)
@@ -108,7 +158,7 @@ std::string printSharedArrays(const ShaderGraph& graph,
 
         source += Strings::format("{} {} s{}[{}];\n",
                                   qualifier,
-                                  getDialectTypeName(backend, shared.elementType),
+                                  getSharedElementType(shared, backend),
                                   i,
                                   shared.elements);
     }
@@ -180,11 +230,10 @@ std::string printMetalBufferParameters(const ShaderGraph& graph)
     auto source = std::string {};
 
     for (auto i = 0; i < buffers.size(); ++i)
-        source += Strings::format(
-            "{} buffer{} [[buffer({})]],\n    ",
-            getMetalBufferType(buffers[i], graph.storageElementType(i)),
-            i,
-            i);
+        source += Strings::format("{} buffer{} [[buffer({})]],\n    ",
+                                  getMetalSlotBufferType(graph, buffers[i], i),
+                                  i,
+                                  i);
 
     return source;
 }
@@ -195,23 +244,40 @@ std::string printMetalTextureParameters(const ShaderGraph& graph)
 
     for (auto i = 0; i < graph.textureCount(); ++i)
     {
-        if (graph.textureAccess(i) == TextureAccess::Write)
+        if (graph.textureAccess(i) == TextureAccess::Sampler)
         {
-            source += Strings::format(
-                "texture2d<float, access::write> texture{} [[texture({})]],\n    ",
-                i,
-                i);
+            source +=
+                Strings::format("sampler sampler{} [[sampler({})]],\n    ", i, i);
             continue;
         }
 
-        source += Strings::format("{} texture{} [[texture({})]],\n    sampler "
-                                  "sampler{} [[sampler({})]],\n    ",
-                                  getMetalTextureType(graph.textureKind(i)),
-                                  i,
-                                  i,
+        source += Strings::format("{} texture{} [[texture({})]],\n    ",
+                                  getMetalTextureParameterType(graph, i),
                                   i,
                                   i);
+
+        if (graph.textureAccess(i) == TextureAccess::Sample)
+            source +=
+                Strings::format("sampler sampler{} [[sampler({})]],\n    ", i, i);
     }
+
+    return source;
+}
+
+std::string printMetalBuiltInParameters(const ShaderGraph& graph)
+{
+    auto source = std::string {};
+
+    if (graph.usesBuiltIn(ShaderBuiltIn::LocalIndex))
+        source += ",\n    uint localIndex [[thread_index_in_threadgroup]]";
+
+    if (graph.usesBuiltIn(ShaderBuiltIn::GroupCount))
+        source +=
+            Strings::format(",\n    {} groupCount [[threadgroups_per_grid]]",
+                            getIndexTypeName(Backend::Metal, graph.dispatchRank()));
+
+    if (graph.usesBuiltIn(ShaderBuiltIn::SimdGroupSize))
+        source += ",\n    uint simdSize [[threads_per_simdgroup]]";
 
     return source;
 }
@@ -229,12 +295,17 @@ std::string printMetalIndexParameters(const ShaderGraph& graph)
         source += Strings::format(",\n    {} tgid [[threadgroup_position_in_grid]]",
                                   indexType);
 
-    if (doesMetalCombinePartials(graph) || graph.usesSimdGroups())
-        source += ",\n    uint simdLane [[thread_index_in_simdgroup]],\n    "
-                  "uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
+    auto usesSimdVocabulary =
+        doesMetalCombinePartials(graph) || graph.usesSimdGroups();
+
+    if (usesSimdVocabulary || graph.usesBuiltIn(ShaderBuiltIn::SimdLaneIndex))
+        source += ",\n    uint simdLane [[thread_index_in_simdgroup]]";
+
+    if (usesSimdVocabulary)
+        source += ",\n    uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
                   "uint simdCount [[simdgroups_per_threadgroup]]";
 
-    return source;
+    return source + printMetalBuiltInParameters(graph);
 }
 
 std::string printMetalGroupMemory(const ShaderGraph& graph)
@@ -267,23 +338,14 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
     auto source = std::string {};
 
     for (auto i = 0; i < buffers.size(); ++i)
-        source += formatGlslBufferBlock(buffers[i],
-                                        graph.storageElementType(i),
-                                        i,
-                                        vulkanComputeBufferBinding(i));
+        source += formatGlslSlotBufferBlock(
+            graph, buffers[i], i, vulkanComputeBufferBinding(i));
 
     if (buffers.size() > 0)
         source += "\n";
 
     for (auto i = 0; i < graph.textureCount(); ++i)
-    {
-        auto binding = vulkanComputeTextureBinding(i);
-
-        if (graph.textureAccess(i) == TextureAccess::Write)
-            source += formatGlslWritableTexture(i, binding);
-        else
-            source += formatGlslSampledTexture(graph, i, binding);
-    }
+        source += formatGlslTexture(graph, i, vulkanComputeTextureBinding(i));
 
     if (graph.textureCount() > 0)
         source += "\n";
@@ -291,7 +353,8 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
     return source;
 }
 
-std::string printGlslKernelOpening(const ShaderGraph& graph)
+std::string printGlslKernelOpening(const ShaderGraph& graph,
+                                   const std::string& functions)
 {
     const auto group = graph.threadGroupShape();
 
@@ -302,6 +365,7 @@ std::string printGlslKernelOpening(const ShaderGraph& graph)
         group.x,
         group.y,
         group.z);
+    source += functions;
     source += "void main()\n{\n";
 
     return source
@@ -322,12 +386,11 @@ std::string printHlslKernelBuffers(const ShaderGraph& graph)
     {
         auto registerSpace = buffers[i] == BufferAccess::Read ? 't' : 'u';
 
-        source += Strings::format(
-            "{} buffer{} : register({}{});\n",
-            getHlslBufferType(buffers[i], graph.storageElementType(i)),
-            i,
-            registerSpace,
-            i);
+        source += Strings::format("{} buffer{} : register({}{});\n",
+                                  getHlslSlotBufferType(graph, buffers[i], i),
+                                  i,
+                                  registerSpace,
+                                  i);
     }
 
     if (buffers.size() > 0)
@@ -343,21 +406,14 @@ std::string printHlslKernelTextures(const ShaderGraph& graph)
 
     for (auto i = 0; i < graph.textureCount(); ++i)
     {
-        auto textureRegister = ComputePass::textureRegisterBase + i;
-
-        if (graph.textureAccess(i) == TextureAccess::Write)
-        {
-            source +=
-                Strings::format("RWTexture2D<float4> texture{} : register(u{});\n",
-                                i,
-                                textureRegister);
-            continue;
-        }
-
-        source += Strings::format("{} texture{} : register(t{});\n",
-                                  getHlslTextureType(graph.textureKind(i)),
-                                  i,
-                                  textureRegister);
+        if (graph.textureAccess(i) == TextureAccess::Sampler)
+            source += formatHlslSampler(graph, i);
+        else
+            source += Strings::format("{} texture{} : register({}{});\n",
+                                      getHlslTextureDeclarationType(graph, i),
+                                      i,
+                                      getHlslTextureRegisterSpace(graph, i),
+                                      ComputePass::textureRegisterBase + i);
     }
 
     source += formatHlslSamplerDeclarations(graph);
@@ -366,6 +422,13 @@ std::string printHlslKernelTextures(const ShaderGraph& graph)
         source += "\n";
 
     return source;
+}
+
+bool doesHlslReadGroupLane(const ShaderGraph& graph)
+{
+    return graph.usesGroupReduction() || graph.usesSimdGroups()
+           || graph.usesBuiltIn(ShaderBuiltIn::LocalIndex)
+           || graph.usesBuiltIn(ShaderBuiltIn::SimdLaneIndex);
 }
 
 std::string printHlslKernelSignature(const ShaderGraph& graph)
@@ -382,17 +445,19 @@ std::string printHlslKernelSignature(const ShaderGraph& graph)
     if (graph.usesGroupId())
         source += ", uint3 groupIndex : SV_GroupID";
 
-    if (graph.usesGroupReduction() || graph.usesSimdGroups())
+    if (doesHlslReadGroupLane(graph))
         source += ", uint groupLane : SV_GroupIndex";
 
     return source + ")\n{\n";
 }
 
-std::string printHlslKernelOpening(const ShaderGraph& graph)
+std::string printHlslKernelOpening(const ShaderGraph& graph,
+                                   const std::string& functions)
 {
     auto source = printHlslKernelBuffers(graph);
     source += printHlslKernelTextures(graph);
     source += printGroupMemoryGlobals(graph, Backend::DirectX, "groupshared");
+    source += functions;
     source += printHlslKernelSignature(graph);
 
     return source
@@ -404,15 +469,61 @@ std::string printHlslKernelOpening(const ShaderGraph& graph)
                 "groupIndex"});
 }
 
-std::string printKernelOpening(const ShaderGraph& graph, Backend backend)
+// The functions the kernel calls are defined after every global they may name
+// and ahead of the entry point.
+std::string printKernelOpening(const ShaderGraph& graph,
+                               Backend backend,
+                               const std::string& functions)
 {
     if (backend == Backend::Metal)
-        return printMetalKernelOpening(graph);
+        return functions + printMetalKernelOpening(graph);
 
     if (backend == Backend::Vulkan)
-        return printGlslKernelOpening(graph);
+        return printGlslKernelOpening(graph, functions);
 
-    return printHlslKernelOpening(graph);
+    return printHlslKernelOpening(graph, functions);
+}
+
+Vector<int> getKernelRoots(const ShaderGraph& graph)
+{
+    auto roots = Vector<int> {};
+    collectStatementExpressions(
+        graph, ShaderGraph::rootBlock, LoopConditions::Included, roots);
+    return roots;
+}
+
+// WGSL checks a function against the stage calling it: a kernel's take no
+// derivative.
+[[maybe_unused]] bool calledFunctionsTakeNoDerivedLevel(const ShaderGraph& graph,
+                                                        const Vector<int>& functions)
+{
+    auto roots = Vector<int> {};
+
+    for (auto function: functions)
+        collectStatementExpressions(
+            graph, graph.function(function).body, LoopConditions::Included, roots);
+
+    auto seen = VisitSet {graph.nodeCount()};
+    auto pending = roots;
+
+    while (!pending.empty())
+    {
+        auto node = pending.back();
+        pending.pop_back();
+
+        if (node < 0 || !seen.visit(node))
+            continue;
+
+        const auto& expr = graph.expr(node);
+
+        if (takesDerivedLevel(graph, expr))
+            return false;
+
+        for (auto argument: expr.args)
+            pending.add(argument);
+    }
+
+    return true;
 }
 
 // No early return in a kernel that barriers: threads returning ahead of a
@@ -432,10 +543,7 @@ std::string printKernelPrologue(const ShaderGraph& graph, Backend backend)
 
 std::string printKernelBody(const ShaderGraph& graph, Backend backend)
 {
-    auto stageRoots = Vector<int> {};
-    collectStatementExpressions(
-        graph, ShaderGraph::rootBlock, LoopConditions::Included, stageRoots);
-
+    auto stageRoots = getKernelRoots(graph);
     auto stage = StageEmitter {graph, backend};
 
     auto source = stage.declareArrays(stageRoots, kernelIndent);
@@ -448,9 +556,21 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     assertKernelShapeIsValid(graph);
 
+    assert(!graph.hasStatementOf(StatementKind::Discard)
+           && "eacp: discard belongs to the fragment stage; a kernel ends an "
+              "invocation with returnEarly.");
+
+    const auto functions = findCalledFunctions(graph, getKernelRoots(graph));
+
+    assert(calledFunctionsTakeNoDerivedLevel(graph, functions)
+           && "eacp: a kernel called a function that takes the fragment's "
+              "derivatives - dfdx, dfdy, fwidth, or a sample with no level. A "
+              "kernel has none of them.");
+
     auto source = getSourcePreamble(graph, backend);
     source += printKernelUniformBlock(graph, backend);
-    source += printKernelOpening(graph, backend);
+    source += printKernelOpening(
+        graph, backend, printFunctionDefinitions(graph, backend, functions));
     source += printKernelPrologue(graph, backend);
     source += printKernelBody(graph, backend);
     source += "}\n";

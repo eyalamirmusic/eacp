@@ -170,13 +170,22 @@ public:
 
     winrt::com_ptr<ID3DBlob> compile(const std::string& source,
                                      const std::string& entry,
-                                     std::string_view profile) const
+                                     std::string_view profile,
+                                     ShaderStage stage,
+                                     const Vector<ShaderDefine>& defines,
+                                     CompilationInfo& messages) const
     {
         auto arguments = std::vector<std::wstring> {
             L"-E", Strings::widen(entry), L"-T", Strings::widen(profile), L"-Ges"};
 
         for (const auto& argument: extraArguments)
             arguments.push_back(Strings::widen(argument));
+
+        for (const auto& define: defines)
+        {
+            arguments.push_back(L"-D");
+            arguments.push_back(Strings::widen(define.name + "=" + define.value));
+        }
 
         auto argumentPointers = std::vector<LPCWSTR>(arguments.size());
         std::transform(arguments.begin(),
@@ -198,7 +207,9 @@ public:
 
         if (FAILED(hr))
         {
-            LOG("DXC: ", dxcFailure("IDxcCompiler3::Compile", hr));
+            const auto failure = dxcFailure("IDxcCompiler3::Compile", hr);
+            LOG("DXC: ", failure);
+            messages.add(CompilationMessageType::Error, failure, stage);
             return nullptr;
         }
 
@@ -211,21 +222,34 @@ public:
 
         winrt::com_ptr<IDxcBlob> object;
 
-        if (FAILED(status)
+        const auto failed =
+            FAILED(status)
             || FAILED(output->GetOutput(
                 DXC_OUT_OBJECT, __uuidof(IDxcBlob), object.put_void(), nullptr))
-            || object == nullptr || object->GetBufferSize() == 0)
+            || object == nullptr || object->GetBufferSize() == 0;
+
+        const auto log = dxcText(errors.get());
+        messages.append(parseDxcLog({log, stage, failed}));
+
+        if (failed)
         {
-            LOG("DXC: ", entry, " (", profile, "): ", dxcText(errors.get()));
+            LOG("DXC: ", entry, " (", profile, "): ", log);
+
+            if (!messages.hasErrors())
+                messages.add(
+                    CompilationMessageType::Error, "DXC compiled nothing", stage);
+
             return nullptr;
         }
 
         if (!dxcIsSigned(object->GetBufferPointer(), object->GetBufferSize()))
         {
-            LOG("DXC: ",
-                entry,
-                " compiled to unsigned DXIL, which D3D12 refuses; the release "
-                "needs the dxil.dll it shipped beside dxcompiler.dll");
+            const auto unsignedOutput =
+                std::string {"compiled to unsigned DXIL, which D3D12 refuses; the "
+                             "release needs the dxil.dll it shipped beside "
+                             "dxcompiler.dll"};
+            LOG("DXC: ", entry, " ", unsignedOutput);
+            messages.add(CompilationMessageType::Error, unsignedOutput, stage);
             return nullptr;
         }
 
@@ -476,9 +500,12 @@ std::shared_ptr<const Detail::Compiler> Detail::compilerFor(ID3D12Device* device
 winrt::com_ptr<ID3DBlob> Detail::compile(const Compiler& compiler,
                                          const std::string& source,
                                          const std::string& entry,
-                                         std::string_view profile)
+                                         std::string_view profile,
+                                         ShaderStage stage,
+                                         const Vector<ShaderDefine>& defines,
+                                         CompilationInfo& messages)
 {
-    auto blob = compiler.compile(source, entry, profile);
+    auto blob = compiler.compile(source, entry, profile, stage, defines, messages);
 
     if (blob != nullptr)
         ++dxcRegistry().compiledStages;
