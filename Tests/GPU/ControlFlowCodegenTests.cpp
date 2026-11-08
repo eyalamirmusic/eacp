@@ -160,6 +160,40 @@ auto tSwitchLabels =
     expectGlslCompiles(sources.glsl, true);
 };
 
+// FXC compiles a switch of one single-label clause and no default as if the
+// clause always ran, so HLSL alone gives every switch a default.
+auto tHlslDefault = test("ControlFlowCodegen/hlslGivesEverySwitchADefault") = []
+{
+    auto builder = ShaderBuilder {};
+    auto output = builder.uintOutputBuffer();
+    auto id = builder.threadId();
+
+    auto leave = [&] { builder.returnEarly(); };
+    builder.switchOn(id % 4u, caseOf(2, leave));
+    builder.write(output, id, 4u);
+
+    auto sources = Sources {builder.graph()};
+
+    check(contains(sources.hlsl,
+                   "        case 2u:\n"
+                   "        {\n"
+                   "            return;\n"
+                   "        }\n"
+                   "        default:\n"
+                   "        {\n"
+                   "            break;\n"
+                   "        }\n"
+                   "    }\n"),
+          sources.hlsl);
+    check(!contains(sources.metal, "default"), sources.metal);
+    check(!contains(sources.glsl, "default"), sources.glsl);
+
+    auto withDefault = Stages {emitHlsl(ModeShader {}.builder.graph())}.fragment;
+    check(occurrences(withDefault, "default:") == 1, withDefault);
+
+    expectGlslCompiles(sources.glsl, true);
+};
+
 namespace
 {
 // A counter walked to eight whose step a switch picks: a multiple of three

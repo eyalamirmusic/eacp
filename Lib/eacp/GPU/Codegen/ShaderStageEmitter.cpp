@@ -22,15 +22,11 @@ std::string printBufferElement(int slot, const std::string& index)
     return Strings::format("buffer{}[{}]", slot, index);
 }
 
-// Whether HLSL stores a struct field of this type with one Store of its words,
-// printing the value once: not a struct, a matrix or an f16 vector, which are
-// stored a column or a half at a time.
+// Whether HLSL stores a struct field of this type with one Store, printing the
+// value once: a scalar. Everything else is stored a component at a time.
 bool isStoredInOneWrite(ValueType type)
 {
-    if (type == ValueType::Struct || isMatrix(type))
-        return false;
-
-    return !isHalf(type) || componentCount(type) == 1;
+    return type != ValueType::Struct && !isMatrix(type) && componentCount(type) == 1;
 }
 
 struct AtomicSpelling
@@ -135,6 +131,17 @@ bool endsInJump(const ShaderGraph& graph, int block)
     auto last = graph.statement(statements.back()).kind;
     return last == StatementKind::Return || last == StatementKind::Break
            || last == StatementKind::Continue;
+}
+
+// FXC compiles a switch whose one clause has one label and no default as if
+// that clause always ran, so every HLSL switch is given a default.
+bool hasDefaultClause(const ShaderGraph& graph, int block)
+{
+    for (auto index: graph.block(block).statements)
+        if (graph.caseLabels(graph.statement(index).slot).isDefault)
+            return true;
+
+    return false;
 }
 
 // -2147483648 is the negation of a literal no int holds, which GLSL refuses.
@@ -521,6 +528,12 @@ std::string StageEmitter::emitSwitch(const Statement& statement,
         source += printClause(getGraph().statement(index), type, clauseIndent);
 
     jumpTargets.pop_back();
+
+    if (printer.backend == Backend::DirectX
+        && !hasDefaultClause(getGraph(), statement.body))
+        source += clauseIndent + "default:\n" + clauseIndent + "{\n" + clauseIndent
+                  + std::string(nestedIndent) + "break;\n" + clauseIndent + "}\n";
+
     source += scope.indent + "}\n";
 
     if (flag >= 0)

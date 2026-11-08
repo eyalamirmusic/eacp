@@ -267,9 +267,12 @@ void computeMain(uint3 threadId : SV_DispatchThreadID)
         return;
     float2 t0 = asfloat(buffer0.Load2((gid) * 32u + 16u));
     Particle t1 = eacpMakeParticle((asfloat(buffer0.Load3((gid) * 32u)) + float3(t0, 0.0)), (asfloat(buffer0.Load((gid) * 32u + 12u)) * 0.5), t0, (buffer0.Load((gid) * 32u + 24u) | 1u));
-    buffer1.Store3((gid) * 32u, asuint(t1.position));
+    buffer1.Store((gid) * 32u, asuint((t1.position).x));
+    buffer1.Store((gid) * 32u + 4u, asuint((t1.position).y));
+    buffer1.Store((gid) * 32u + 8u, asuint((t1.position).z));
     buffer1.Store((gid) * 32u + 12u, asuint(t1.mass));
-    buffer1.Store2((gid) * 32u + 16u, asuint(t1.velocity));
+    buffer1.Store((gid) * 32u + 16u, asuint((t1.velocity).x));
+    buffer1.Store((gid) * 32u + 20u, asuint((t1.velocity).y));
     buffer1.Store((gid) * 32u + 24u, asuint(t1.flags));
     buffer1.Store((gid) * 32u + 12u, asuint((asfloat(buffer1.Load((gid) * 32u + 12u)) + 1.0)));
 }
@@ -483,14 +486,15 @@ auto tDialects = test("StructCodegen/eachDialectLaysTheStructOutItsOwnWay") = []
               "transpose(float2x3(asfloat(buffer0.Load3((gid) * 112u + 64u)), "
               "asfloat(buffer0.Load3((gid) * 112u + 80u))))",
               "asint(buffer0.Load3((gid) * 112u + 96u))",
-              "buffer1.Store3((gid) * 112u + 64u, asuint(transpose(t4.m)[0]));",
+              "buffer1.Store((gid) * 112u + 64u, asuint(transpose(t4.m)[0].x));",
+              "buffer1.Store((gid) * 112u + 88u, asuint(transpose(t4.m)[1].z));",
               "buffer1.InterlockedAnd((gid) * 112u + 44u, ~(0xffffu << 16u));",
               "buffer1.InterlockedOr((gid) * 112u + 44u, "
               "f32tof16(transpose(t4.hm)[0].y) << 16u);",
-              "buffer1.Store2((t5) * 112u + 8u, asuint(t6.xy));",
+              "buffer1.Store((t5) * 112u + 12u, asuint((t6.xy).y));",
               "buffer2.InterlockedAnd(((gid) * 2u) & ~3u, ~(0xffffu << ((((gid) * "
               "2u) & 2u) << 3u)));"});
-    checkNone(sources.hlsl, {"StructuredBuffer", "uchar"});
+    checkNone(sources.hlsl, {"StructuredBuffer", "uchar", ".Store2", ".Store3"});
 
     checkAll(sources.glsl,
              {"#extension GL_EXT_shader_explicit_arithmetic_types_float16 : "

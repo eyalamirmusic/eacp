@@ -697,7 +697,9 @@ prints them in that type (`4000000000u`, `(-2147483647 - 1)`), which GLSL
 insists on. WGSL's semantics: the matching clause runs, the default when no
 label matches - and nothing when there is no default, where WGSL requires one -
 and no clause falls through: each is printed braced and ended by `break;`.
-`case 1, default:` is just `defaultCase`.
+`case 1, default:` is just `defaultCase`. HLSL alone gives a switch with no
+default an empty `default: { break; }`, because FXC compiles a switch whose
+one clause has one label and no default as if that clause always ran.
 
 A `breakLoop` or `continueLoop` inside a clause leaves or continues the
 enclosing *loop*, as its name says. In WGSL `break` inside a switch ends the
@@ -1025,9 +1027,11 @@ layout and is a value only. How each dialect meets the layout:
   zeroes.
 - **HLSL**: the struct is a plain value type and the buffer is a
   `[RW]ByteAddressBuffer` loaded and stored at the computed offsets - `Load3`
-  then `asfloat`, a matrix column by column, an f16 out of its word, and an f16
-  written as `InterlockedAnd` then `InterlockedOr` on the word, as
-  `HalfOutputBuffer` does. D3D's `StructuredBuffer<T>` was the alternative and
+  then `asfloat`, a matrix column by column, an f16 out of its word - and
+  stored one `Store` per word, an f16 as `InterlockedAnd` then `InterlockedOr`
+  on its word, as `HalfOutputBuffer` does. Not `Store2`/`Store3`: FXC drops
+  some of the words of a wider store when a later store in the thread lands
+  on one of them. D3D's `StructuredBuffer<T>` was the alternative and
   cannot hold the layout: it packs a three-vector to 12 bytes but aligns
   nothing past 4, so a vector after a scalar moves, a matrix's columns pack
   together, and shader model 5 has no 16-bit member at all.

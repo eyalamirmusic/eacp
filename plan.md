@@ -23,7 +23,8 @@ inlining at plan time), and stage 13's structured compile messages
 (`ShaderReflection`, the dead `ShaderSource::bindings` removed). Every stage of
 the suggested order is done. What each done stage
 left behind is listed under it and in its section; "Verification" at the end
-says what has and has not been run.
+says what has and has not been run, and "Windows ARM64 handoff" after it is
+the one open Windows item and how to work it on a Windows ARM64 machine.
 
 ## 1. Stage built-ins
 
@@ -552,8 +553,9 @@ and Vulkan (specialization constants); on D3D12 a compile per value set with
    buffer a `[RW]ByteAddressBuffer` at the offsets: `asfloat/asint(LoadN)`,
    matrices column by column through `transpose(floatCxR(...))`, f16 out of
    its word (`f16tof32(Load(word) >> 16)`, the word and shift computed at run
-   time only where the stride is not a multiple of 4), stores `StoreN(asuint)`
-   per leaf (a matrix per column of its transpose) and f16 as `InterlockedAnd`
+   time only where the stride is not a multiple of 4), stores one
+   `Store(asuint)` per word (FXC drops words of a `Store2`/`Store3` that a
+   later store overlaps) and f16 as `InterlockedAnd`
    then `InterlockedOr` on the word; a value or index the store prints more
    than once is named first. Why not `StructuredBuffer<T>`: D3D packs it with
    4-byte alignment only (a vector after a scalar moves, matrix columns pack
@@ -1101,8 +1103,9 @@ and Vulkan (specialization constants); on D3D12 a compile per value set with
   `EACP_VK_VALIDATION=1` with no validation message (the layer checked live by
   the known `SharedMemory/` VUID). Not run: the Xvfb step, the full Linux
   `ci-build`, any HLSL, any D3D12, FXC/DXC output.
-- Windows: never built. No FXC or DXC on the Mac, so no emitted HLSL has
-  been compiled and the D3D12 C++ is uncompiled; every "by documentation"
+- Windows, before PR #220's CI runs below: never built. No FXC or DXC on
+  the Mac, so no emitted HLSL had been compiled and the D3D12 C++ was
+  uncompiled; every "by documentation"
   note above stands until the Windows lanes (FXC, and the D3D12 suites on
   WARP) check it. That includes the f16 HLSL (`eacpRoundHalf`, the
   `InterlockedAnd`/`InterlockedOr` half stores) and `Device-Windows.cpp`'s
@@ -1158,3 +1161,195 @@ and Vulkan (specialization constants); on D3D12 a compile per value set with
     0xc0000409 and print nothing; `TypesDevice` passes on x64.
     `FileWatcher/writesInsideTheSettleWindowCoalesce` also failed there, in
     code this work does not touch.
+- Second Windows CI run (run 42496791278, commit da94a890). Every lane but the
+  four Windows ones passed; those failed alike, MSVC and clang-cl, x64 and
+  ARM64. Each cause was then reproduced off CI: Microsoft's own FXC
+  (`d3dcompiler_47.dll` 10.1) under Wine, and a Windows 11 ARM64 VM building
+  `GPUTests` with MSVC and running it on WARP.
+  - The switch-return cases (four `ControlFlowDevice/`, `FunctionDevice/
+    returnsAndCallsInConditionsAgree`) were not about `return`: FXC compiles a
+    switch whose one clause has one label and no default as if that clause
+    always ran - `switch (x) { case 2u: { y = 9u; break; } }` disassembles to
+    an unconditional store, and a jump flag set in the clause is taken
+    unconditionally the same way. Two labels or a default compile right. HLSL
+    now gives every switch without one an empty `default: { break; }`
+    (`ControlFlowCodegen/hlslGivesEverySwitchADefault`).
+  - The `StructDevice/` store cases are FXC too: a whole element stored with
+    `Store3`/`Store2` and a field stored again after it disassembles to
+    `store_raw`s that leave out the velocity and flags words. Each struct word
+    is now its own `Store`, which FXC merges back into correct `store_raw`s.
+  - `TypesDevice` and `Float16Device` on ARM64 printed nothing because a piped
+    stdout is fully buffered and the crash never flushes it; `GPUTests`' main
+    now unbuffers stdout on Windows and reports `abort`, `std::terminate` and
+    CRT invalid-parameter exits. In the VM the crashing cases are
+    `TypesDevice/matricesWithFourColumnsAgreeWithTheReference` (the 4x4
+    kernel), `Float16Device/everyBuiltinAgreesToAFewUlps` and
+    `Float16Device/halfMatricesWithFourColumnsAgreeExactly`: a write to an
+    address near zero from WARP's JIT-compiled shader code (in no module),
+    while the same HLSL compiles cleanly under ARM64 FXC and the same kernels
+    pass on the CPU executor. No construct is to blame: the 4x4 kernel with
+    any one of its six parts removed passes. Open: WARP on ARM64 fails on the
+    largest kernels in the suite; the VM reports 0xc0000005, the runners
+    0xc0000409.
+  - In the VM, with these changes, every compute case of `StructDevice/`,
+    `ControlFlowDevice/` and `FunctionDevice/` passes on WARP; the render
+    cases could not run there (no composition device in the session the VM
+    tools run in).
+
+## Windows ARM64 handoff
+
+For a session at a physical Windows ARM64 machine, with nothing from the Mac
+to hand. "Verification" above has the full account; this is the state, the
+open item, and the steps.
+
+Where the Windows lanes stand (CI runs on PR #220; x64 runs 365 ctest
+entries, ARM64 333, the WebView ones being off there):
+- f16 rounding - fixed in da94a890. D3D's `f32tof16` truncates and clamps
+  overflow to 65504; `eacpRoundHalf` now goes through `eacpHalfBits`, round to
+  nearest even in integer arithmetic, checked against `_Float16` for all 2^32
+  inputs. Run 2: `Float16Device` passes on both x64 lanes (12.8 s).
+- X3067, `eacpRoundHalf` ambiguous between `float4` and `float2x2` - fixed in
+  da94a890 with per-shape names (`eacpRoundHalf2x4`, ...). Run 2: no FXC
+  error on any lane.
+- MSVC test build, C2248 in `AtomicOpsTests.cpp` - fixed in da94a890. Run 2:
+  both MSVC lanes build and run their tests.
+- A single-clause `switch` with no default - fixed in this commit, every HLSL
+  switch without one gets `default: { break; }`. Evidence: FXC 10.1 under Wine
+  disassembles `switch (x) { case 2u: { y = 9u; break; } }` to an
+  unconditional store. Run 2 failed the four switch-return
+  `ControlFlowDevice/` cases and `FunctionDevice/returnsAndCallsInConditionsAgree`
+  on all four lanes; with the fix they pass on WARP in the ARM64 VM.
+- Dropped struct stores - fixed in this commit, one `Store` per word.
+  Evidence: FXC's `store_raw`s after a `Store3`/`Store2` and an overlapping
+  field store leave out the velocity and flags words. Run 2 failed three
+  `StructDevice/` cases on all four lanes; with the fix every compute case of
+  `StructDevice/` passes on WARP in the VM.
+- Every other `GPUTests` group passed on all four lanes in run 2, on WARP,
+  render cases included: `InterpolationDevice`, `VertexStatementDevice`,
+  `OverrideDevice` and `CompilationInfoDevice` (so FXC's messages parse as
+  written; DXC's are still untested against real output) whole, and the
+  render cases of the three failing groups.
+
+Open: WARP on ARM64 crashes in exactly three cases, MSVC and clang-cl alike -
+`TypesDevice/matricesWithFourColumnsAgreeWithTheReference`,
+`Float16Device/everyBuiltinAgreesToAFewUlps` and
+`Float16Device/halfMatricesWithFourColumnsAgreeExactly`. CI reports
+0xc0000409, the VM 0xc0000005: a write to 0x2054-0x23c4, near zero, from a PC
+in no loaded module, which is WARP's JIT-compiled shader code. ARM64 FXC
+compiles every one of those shaders cleanly and the same kernels pass on the
+CPU executor (`CpuComputeTests`, and the CPU halves of the cases). The 4x4
+kernel was bisected into its six parts: each part alone and every
+five-of-six combination passes; only the whole crashes. Hypotheses, most
+likely first:
+1. WARP's ARM64 JIT fails on large kernels. These are the suite's largest by
+   FXC's instruction-slot count: the 4x4 kernel about 469 slots plus an
+   8-entry indexable temp, the f16 builtins about 1573, the f16 four-column
+   kernels 890-1145. The same DXBC runs on x64 WARP.
+2. A size-dependent spill or indexable-temp allocation in that JIT whose
+   failure is not checked (the near-zero write is a null base plus an
+   offset) - the same thing seen from the inside.
+3. Our D3D12 C++ on ARM64 - least likely: every smaller kernel takes the same
+   buffer, root-signature and dispatch paths, and the PC is not in our code.
+
+The cases are not skipped yet. The decision waiting on this machine is
+between skipping them on WARP ARM64 alone and splitting the kernels; a pass
+on the real GPU (check (a) below) argues for the skip.
+
+Setup:
+- Visual Studio 2022 or its Build Tools, with "Desktop development with C++",
+  the MSVC ARM64 build tools, "C++ Clang tools for Windows" (clang-cl) and
+  "C++ CMake tools for Windows" (CMake and Ninja on the Native Tools path),
+  plus Git. No Node: CI's ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`.
+  Configure needs network access (CPM fetches the dependencies).
+- From "ARM64 Native Tools Command Prompt for VS 2022" (`cmd`):
+
+```bat
+git clone https://github.com/eyalamirmusic/eacp.git
+cd eacp
+git checkout edsl-wgsl-gaps
+
+cmake -G Ninja -B build-msvc -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
+      -DEACP_UNITY_BUILD=OFF -DEACP_BUILD_WEBVIEW=OFF ^
+      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+cmake --build build-msvc --target GPUTests GPUCodegenTests CpuComputeTests
+
+cmake -G Ninja -B build-clang -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
+      -DEACP_UNITY_BUILD=OFF -DEACP_BUILD_WEBVIEW=OFF ^
+      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF ^
+      -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+cmake --build build-clang --target GPUTests GPUCodegenTests CpuComputeTests
+```
+
+  CI's exact configuration adds `-DEACP_CI_BUILD=ON` (unity builds) and
+  `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded`; use it in a separate
+  build directory if a result differs from CI. A Debug build also turns on
+  the D3D12 debug layer where the "Graphics Tools" optional feature is
+  installed.
+- Running, from the build directory. Cases are named `Group/case`; ctest
+  entries are whole groups (`NANO_TEST_GROUP_BY PREFIX`):
+
+```bat
+Tests\GPU\GPUCodegenTests.exe
+Tests\CpuCompute\CpuComputeTests.exe
+
+set EACP_D3D12_WARP=1
+Tests\GPU\GPUTests.exe --test TypesDevice/matricesWithFourColumnsAgreeWithTheReference
+Tests\GPU\GPUTests.exe --test-group Float16Device
+echo %ERRORLEVEL%
+set EACP_D3D12_WARP=
+
+Tests\GPU\GPUTests.exe --test-group TypesDevice
+ctest --test-dir . -R "^(TypesDevice|Float16Device)$" --output-on-failure
+```
+
+  `EACP_D3D12_WARP=1` takes WARP; unset (`set EACP_D3D12_WARP=`), the
+  hardware adapter. `--list-tests` lists every case. `%ERRORLEVEL%` is
+  -1073740791 for 0xc0000409 and -1073741819 for 0xc0000005. Both build
+  directories, since CI crashed the same under both compilers.
+
+Checklist:
+- (a) The three crashing cases on the real GPU, each with `--test`, then the
+  `TypesDevice` and `Float16Device` groups whole. A pass means WARP-only.
+- (b) The same three on WARP, to reproduce the crash on hardware rather than
+  in the VM. Note which exit code this machine gives.
+- (c) Never run on ARM64, because the crash ended their group on CI and the
+  VM has no composition device: the `TypesDevice` cases after the 4x4 one
+  (`eachLaneSortsItsOwnPrivateArray`, `aHistogramClampsItsBinsIntoTheArray`,
+  `anIndexPastEitherEndReachesTheEndElement`,
+  `intBuffersReadAndWriteSignedRecords`, `everyMatrixShapeCrossesAsAUniform`
+  and the render ones `aFragmentPicksItsShadeOutOfAPrivateArray`,
+  `aVertexPlacesTheQuadOutOfAPrivateArray`, `aFragmentReadsUniformMatrices`)
+  and the `Float16Device` cases after `everyBuiltinAgreesToAFewUlps`
+  (`halfBuffersShareWordsBetweenThreads`, `aRunningSumRoundsAtEveryStep`,
+  the render case `aFragmentComputesInHalves`). Run each with `--test` on
+  WARP and on the GPU. Never run on any hardware D3D12 driver, since CI is
+  WARP only: every render case - all six `InterpolationDevice/` (the
+  per-sample and centroid ones need 4x MSAA and sample-rate shading),
+  `StructDevice/aFragmentReadsABufferOfStructs`,
+  `FunctionDevice/bothRenderStagesCallOneFunction` and
+  `aVertexStageCallAndAFragmentDiscard`, `ControlFlowDevice/`'s
+  `discardedColumnsAreNotWritten`, `aDiscardedFragmentWritesNoDepth`,
+  `anEarlyFragmentReturnWritesItsChosenColour`, `aVertexSwitchPlacesTheQuad`
+  and `anEarlyVertexReturnSkipsWhatFollows`, all five
+  `VertexStatementDevice/`, `OverrideDevice/aRenderProgramTakesItsValuesInBothStages`,
+  `CompilationInfoDevice/aBrokenStageIsNamed` - and with them the rest of
+  `GPUTests`. On the GPU, run the whole of `GPUTests` with no variable set.
+- (d) Optionally, all of `GPUTests` under DXC: `EACP_D3D12_DXC=1` (fetches the
+  DXC release on first use; add `EACP_TEST_DXC=1` for `DxcTests`' download
+  cases). On WARP expect the three known `Intrinsics/` hyperbolic failures
+  (GPU README, "Compiling with DXC at run time"); whether the three crashes
+  follow DXIL too separates FXC's DXBC from WARP's JIT.
+- (e) On a crash, keep: the last `PASS` line (stdout is unbuffered on Windows
+  now, so the crashing case is the next one registered), any `GPUTests: ...`
+  line on stderr (`abort()`, `std::terminate()`, an invalid CRT parameter;
+  0xc0000409 is a fail-fast and may print none), the exit code, the
+  "Application Error" event in Event Viewer (faulting module, offset), and a
+  dump - `procdump -ma -e -x . Tests\GPU\GPUTests.exe --test <case>`, or under
+  WinDbg `!analyze -v`, `r`, `k` and `lm` to confirm the PC is outside every
+  module.
+
+FXC can be run without Windows: Microsoft's `d3dcompiler_47.dll` loads under
+CrossOver's Wine on the Mac; compile the emitted HLSL with `D3DCompile` at
+`cs_5_0` (or `vs_5_0`/`ps_5_0`), flags `0x800` (`D3DCOMPILE_ENABLE_STRICTNESS`,
+optimization level 1 by default), as `ShaderLibrary-Windows.cpp` does, and
+`D3DDisassemble` the blob. That is how both miscompiles above were found.

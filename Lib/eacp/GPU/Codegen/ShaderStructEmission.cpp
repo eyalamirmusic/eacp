@@ -239,6 +239,20 @@ std::string printHlslHalfStore(const HlslStructElement& element,
                            value);
 }
 
+std::string printHlslWordStore(const HlslStructElement& element,
+                               int offset,
+                               const std::string& value,
+                               const std::string& indent)
+{
+    return Strings::format("{}{}.Store({}, asuint({}));\n",
+                           indent,
+                           element.buffer,
+                           printHlslStructAddress(element, offset),
+                           value);
+}
+
+// A word at a time: FXC drops some of the words a Store2 or Store3 wrote when a
+// later store in the thread lands on one of them.
 std::string printHlslValueStore(const HlslStructElement& element,
                                 int offset,
                                 ValueType type,
@@ -247,40 +261,14 @@ std::string printHlslValueStore(const HlslStructElement& element,
 {
     auto source = std::string {};
 
-    if (isHalf(type))
+    for (auto component = 0; component < componentCount(type); ++component)
     {
-        for (auto component = 0; component < componentCount(type); ++component)
-            source +=
-                printHlslHalfStore(element,
-                                   offset + storageComponentOffset(type, component),
-                                   printHlslComponent(type, value, component),
-                                   indent);
+        auto at = offset + storageComponentOffset(type, component);
+        auto part = printHlslComponent(type, value, component);
 
-        return source;
+        source += isHalf(type) ? printHlslHalfStore(element, at, part, indent)
+                               : printHlslWordStore(element, at, part, indent);
     }
-
-    if (!isMatrix(type))
-    {
-        auto width = componentCount(type);
-        return Strings::format("{}{}.Store{}({}, asuint({}));\n",
-                               indent,
-                               element.buffer,
-                               width > 1 ? Strings::format("{}", width)
-                                         : std::string {},
-                               printHlslStructAddress(element, offset),
-                               value);
-    }
-
-    for (auto column = 0; column < matrixColumns(type); ++column)
-        source += Strings::format(
-            "{}{}.Store{}({}, asuint(transpose({})[{}]));\n",
-            indent,
-            element.buffer,
-            matrixRows(type),
-            printHlslStructAddress(element,
-                                   offset + column * storageColumnStride(type)),
-            value,
-            column);
 
     return source;
 }
