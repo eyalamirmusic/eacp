@@ -11,6 +11,11 @@ if (APPLE)
     add_subdirectory(ObjC)
 endif ()
 
+# Configure-time checks of the Apple setup; they need Xcode, not a target.
+if (CMAKE_HOST_APPLE)
+    add_subdirectory(AppleSetup)
+endif ()
+
 add_subdirectory(Network)
 
 add_subdirectory(Spirv)
