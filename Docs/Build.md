@@ -335,6 +335,16 @@ floor. `CMake/AppleSetup.cmake` claims `CMAKE_OSX_DEPLOYMENT_TARGET` only
 when nothing has filled it, so `-DCMAKE_OSX_DEPLOYMENT_TARGET=...` on the
 command line wins on both.
 
+iOS signing works the same way. `eacp_default_setup()` signs with
+`EACP_APPLE_DEVELOPMENT_TEAM` (a cache variable, eacp's own team by default,
+empty for none) and the `iPhone Developer` identity, but only where the project
+leaves `CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM` and
+`CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY` unset. The defaults are applied at
+the end of the top-level directory, so a project's own team wins however it
+sets it: on the command line, or as a normal variable or a cache entry, before
+or after eacp's setup runs, and an empty team included.
+`Tests/AppleSetup` checks each of those against the generated Xcode project.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables
