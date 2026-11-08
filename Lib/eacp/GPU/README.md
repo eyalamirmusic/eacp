@@ -929,7 +929,12 @@ How each backend holds it:
   `min16float` a precision hint with no defined rounding — so an f16 is held in
   `float` (`Half2x3` is a `float3x2`, the matrix convention above) and every
   arithmetic result of the family is wrapped in `eacpRoundHalf`, `f16tof32(
-  f32tof16(x))`, one overload per type that needs it. The values are WGSL's;
+  eacpHalfBits(x))`, one overload per type that needs it (a matrix's named for
+  its shape, `eacpRoundHalf2x4`, since FXC finds a `float4` argument as good a
+  match for a `float2x2` overload as for a `float4` one). `eacpHalfBits` makes
+  the f16 bits by integer arithmetic, round to nearest even with an overflow an
+  infinity, because D3D's `f32tof16` rounds toward zero and clamps an overflow
+  to 65504 (D3D11.3 functional spec 3.2.2). The values are WGSL's;
   the cost is a float's plus two conversions, so on D3D f16 saves memory, not
   time. `supportsShaderFloat16()` is always true there.
 

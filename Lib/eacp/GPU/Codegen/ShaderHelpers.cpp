@@ -1350,11 +1350,37 @@ bool doesGraphRoundToHalfAt(const ShaderGraph& graph, ValueType type)
     return false;
 }
 
+// D3D's f32tof16 rounds toward zero and clamps a finite overflow to 65504
+// (D3D11.3 functional spec 3.2.2), so the bits are made here instead: nearest
+// even, an overflow an infinity, as WGSL, MSL's half and the CPU round.
+std::string getHalfBitsOverload(ValueType type)
+{
+    auto width = componentCount(type);
+    auto bits = width == 1 ? std::string {"uint"} : Strings::format("uint{}", width);
+
+    return Strings::format(
+        "{0} eacpHalfBits({1} x)\n"
+        "{{\n"
+        "    {0} bits = asuint(x);\n"
+        "    {0} sign = bits & 0x80000000u;\n"
+        "    {0} magnitude = bits ^ sign;\n"
+        "    {0} special = magnitude > 0x7f800000u ? ({0}) 0x7e00u : ({0}) 0x7c00u;\n"
+        "    {0} subnormal = asuint(asfloat(magnitude) + 0.5) - 0x3f000000u;\n"
+        "    {0} normal = (magnitude + 0xc8000fffu + ((magnitude >> 13u) & 1u)) "
+        ">> 13u;\n"
+        "    {0} finite = magnitude < 0x38800000u ? subnormal : normal;\n"
+        "    return (magnitude >= 0x47800000u ? special : finite) | (sign >> 16u);\n"
+        "}}\n\n",
+        bits,
+        hlslTypeName(type));
+}
+
 std::string getRoundHalfVectorOverload(ValueType type)
 {
-    return Strings::format("{0} eacpRoundHalf({0} x)\n{{\n    return "
-                           "f16tof32(f32tof16(x));\n}}\n\n",
-                           hlslTypeName(type));
+    return getHalfBitsOverload(type)
+           + Strings::format("{0} eacpRoundHalf({0} x)\n{{\n    return "
+                             "f16tof32(eacpHalfBits(x));\n}}\n\n",
+                             hlslTypeName(type));
 }
 
 // HLSL holds a CxR matrix as R rows of C, each a vector f32tof16 takes.
@@ -1365,10 +1391,10 @@ std::string getRoundHalfMatrixOverload(ValueType type)
     for (auto row = 0; row < matrixRows(type); ++row)
         rows += Strings::format("{}eacpRoundHalf(x[{}])", row > 0 ? ", " : "", row);
 
-    return Strings::format(
-        "{0} eacpRoundHalf({0} x)\n{{\n    return {0}({1});\n}}\n\n",
-        hlslTypeName(type),
-        rows);
+    return Strings::format("{0} {1}({0} x)\n{{\n    return {0}({2});\n}}\n\n",
+                           hlslTypeName(type),
+                           getRoundHalfFunction(type),
+                           rows);
 }
 
 // The rounding HLSL wraps every f16 result in (isRoundedToHalf), one overload

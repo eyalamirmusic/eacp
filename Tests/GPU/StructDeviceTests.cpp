@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <source_location>
 #include <string>
 
 // WGSL's structs on a device, every kernel cross-checked against the CPU
@@ -166,6 +167,72 @@ struct MoveKernel final : ComputeProgram
                         p.mass * 0.5f,
                         p.velocity.yx(),
                         p.flags | 1u});
+        write(output, id, &Particle::mass, output[id].mass + 1.f);
+    }
+
+    Uniform<StructInputBuffer<Particle>> input;
+    Uniform<StructOutputBuffer<Particle>> output;
+    EACP_SHADER(input, output)
+};
+
+// MoveKernel taken apart: its whole-element store alone, the store followed by
+// a field overwritten from the input, and a copy followed by the field read
+// back from the output and stored again, so a backend that fails MoveKernel
+// shows which half it gets wrong.
+struct StoreOnlyKernel final : ComputeProgram
+{
+    StoreOnlyKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto p = input[id];
+
+        write(output,
+              id,
+              Particle {p.position + float3(p.velocity, 1.f),
+                        p.mass * 0.5f,
+                        p.velocity.yx(),
+                        p.flags | 1u});
+    }
+
+    Uniform<StructInputBuffer<Particle>> input;
+    Uniform<StructOutputBuffer<Particle>> output;
+    EACP_SHADER(input, output)
+};
+
+struct OverwriteFieldKernel final : ComputeProgram
+{
+    OverwriteFieldKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto p = input[id];
+
+        write(output,
+              id,
+              Particle {p.position + float3(p.velocity, 1.f),
+                        p.mass * 0.5f,
+                        p.velocity.yx(),
+                        p.flags | 1u});
+        write(output, id, &Particle::mass, input[id].mass + 1.f);
+    }
+
+    Uniform<StructInputBuffer<Particle>> input;
+    Uniform<StructOutputBuffer<Particle>> output;
+    EACP_SHADER(input, output)
+};
+
+struct RestoreFieldKernel final : ComputeProgram
+{
+    RestoreFieldKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+
+        write(output, id, input[id]);
         write(output, id, &Particle::mass, output[id].mass + 1.f);
     }
 
@@ -449,41 +516,129 @@ FloatPixels drawAndRead(const std::function<void(RenderPass&)>& draw)
     check(view.renderToImage(1.f).isValid());
     return pixels;
 }
-} // namespace
 
-auto tMove = test("StructDevice/aBufferOfStructsIsReadAndWrittenAtItsLayout") = []
+struct HostParticle
 {
-    auto kernel = MoveKernel {};
+    float position[3] {};
+    float mass = 0.f;
+    float velocity[2] {};
+    std::uint32_t flags = 0u;
+};
+
+HostParticle movedParticle(int i, float massAdded)
+{
+    auto f = (float) i;
+    return {{f + 0.5f, f * 0.5f - f, -f + 1.f},
+            (1.f + f * 0.25f) * 0.5f + massAdded,
+            {-f, 0.5f},
+            (std::uint32_t) i * 2u | 1u};
+}
+
+bool isSameParticle(const HostParticle& a, const HostParticle& b)
+{
+    return a.position[0] == b.position[0] && a.position[1] == b.position[1]
+           && a.position[2] == b.position[2] && a.mass == b.mass
+           && a.velocity[0] == b.velocity[0] && a.velocity[1] == b.velocity[1]
+           && a.flags == b.flags;
+}
+
+std::string describeParticle(const HostParticle& p)
+{
+    return "(" + std::to_string(p.position[0]) + ", " + std::to_string(p.position[1])
+           + ", " + std::to_string(p.position[2]) + ") mass "
+           + std::to_string(p.mass) + " velocity (" + std::to_string(p.velocity[0])
+           + ", " + std::to_string(p.velocity[1]) + ") flags "
+           + std::to_string(p.flags);
+}
+
+// Every element against the particle it should hold, the first wrong one
+// spelled out so a failing backend's log says what it wrote.
+template <typename Kernel>
+void checkParticles(
+    const std::function<HostParticle(int)>& expectedAt,
+    const std::source_location& location = std::source_location::current())
+{
+    auto kernel = Kernel {};
     auto input = particles(threadCount);
     auto output = StructBufferData<Particle> {threadCount};
 
     auto verify = [&](const Readback& readback)
     {
-        auto moved = readback.structs(kernel.output);
-        auto agreeing = 0;
+        auto written = readback.structs(kernel.output);
+        auto wrong = 0;
+        auto firstWrong = std::string {};
 
         for (auto i = 0; i < threadCount; ++i)
         {
-            auto f = (float) i;
-            auto position = moved.get<&Particle::position>(i);
-            auto velocity = moved.get<&Particle::velocity>(i);
+            auto position = written.template get<&Particle::position>(i);
+            auto velocity = written.template get<&Particle::velocity>(i);
+            auto got = HostParticle {{position[0], position[1], position[2]},
+                                     written.template get<&Particle::mass>(i),
+                                     {velocity[0], velocity[1]},
+                                     written.template get<&Particle::flags>(i)};
+            auto expected = expectedAt(i);
 
-            if (position[0] == f + 0.5f && position[1] == f * 0.5f - f
-                && position[2] == -f + 1.f
-                && moved.get<&Particle::mass>(i) == (1.f + f * 0.25f) * 0.5f + 1.f
-                && velocity[0] == -f && velocity[1] == 0.5f
-                && moved.get<&Particle::flags>(i) == ((std::uint32_t) i * 2u | 1u))
-                ++agreeing;
+            if (isSameParticle(got, expected))
+                continue;
+
+            if (wrong++ == 0)
+                firstWrong = "element " + std::to_string(i) + ": "
+                             + describeParticle(got) + ", expected "
+                             + describeParticle(expected);
         }
 
-        check(agreeing == threadCount, readback.name());
+        check(wrong == 0,
+              std::string(readback.name()) + ": " + std::to_string(wrong) + " of "
+                  + std::to_string(threadCount) + " elements wrong; " + firstWrong,
+              location);
     };
 
     CrossCheck {kernel}
         .input(kernel.input, input)
         .output(kernel.output, output)
         .agreeing()
-        .run(threadCount, verify);
+        .run(threadCount, verify, location);
+}
+} // namespace
+
+auto tMove = test("StructDevice/aBufferOfStructsIsReadAndWrittenAtItsLayout") = []
+{
+    auto expected = [](int i) { return movedParticle(i, 1.f); };
+    checkParticles<MoveKernel>(expected);
+};
+
+auto tStoreOnly = test("StructDevice/aWholeElementStoreAloneLandsAtItsLayout") = []
+{
+    auto expected = [](int i) { return movedParticle(i, 0.f); };
+    checkParticles<StoreOnlyKernel>(expected);
+};
+
+auto tOverwrite =
+    test("StructDevice/aFieldOverwrittenFromTheInputAfterAWholeStoreLands") = []
+{
+    auto expected = [](int i)
+    {
+        auto moved = movedParticle(i, 0.f);
+        moved.mass = 1.f + (float) i * 0.25f + 1.f;
+        return moved;
+    };
+
+    checkParticles<OverwriteFieldKernel>(expected);
+};
+
+auto tRestore =
+    test("StructDevice/aFieldReadBackAfterACopyIsStoredAgainInTheSameThread") = []
+{
+    auto expected = [](int i)
+    {
+        auto f = (float) i;
+        return HostParticle {{f, f * 0.5f, -f},
+                             1.f + f * 0.25f + 1.f,
+                             {0.5f, -f},
+                             (std::uint32_t) i * 2u};
+    };
+
+    checkParticles<RestoreFieldKernel>(expected);
 };
 
 auto tAllTypes = test("StructDevice/everyValueTypeCrossesAtItsOffset") = []

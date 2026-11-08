@@ -289,7 +289,7 @@ struct Bool4 : detail::Swizzles<detail::Bools, 4>
 //
 // Every operation's result is rounded to f16: Metal and GLSL compute in half
 // natively, HLSL - whose FXC SM5 has no 16-bit type - computes in float and
-// rounds each result through f32tof16/f16tof32, and the CPU executor does what
+// rounds each result to the nearest half, and the CPU executor does what
 // HLSL does. Gated on Device::supportsShaderFloat16(); a program using one on
 // a device without it is refused. A Half crosses neither the uniform block nor
 // a varying, and is no vertex attribute; HalfInputBuffer and HalfOutputBuffer

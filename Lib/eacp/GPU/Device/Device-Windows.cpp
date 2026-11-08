@@ -328,8 +328,8 @@ bool Device::supportsComputeReadWrite(TextureFormat format) const
            && (formatSupport2(format) & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) != 0;
 }
 
-// The emitted HLSL holds f16 in float and rounds with f32tof16, which every
-// shader model eacp compiles for has.
+// The emitted HLSL holds f16 in float and rounds it with integer arithmetic and
+// f16tof32, which every shader model eacp compiles for has.
 bool Device::supportsShaderFloat16() const
 {
     return isValid();

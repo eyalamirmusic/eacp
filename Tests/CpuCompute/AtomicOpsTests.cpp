@@ -539,6 +539,57 @@ void expectPermutation(Vector<std::uint32_t> values, std::uint32_t first)
 
     check(inOrder == values.size());
 }
+
+struct SharedHistogramKernel final : ComputeKernel
+{
+    SharedHistogramKernel()
+        : ComputeKernel({groupWidth})
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto lane = localId();
+        auto bins = sharedAtomic<UInt>(4);
+        auto extremes = sharedAtomic<Int>(2);
+
+        auto clear = [&]
+        {
+            for (auto bin = 0u; bin < 4u; ++bin)
+                write(bins, bin, 0u);
+
+            write(extremes, 0u, INT_MAX);
+            write(extremes, 1u, INT_MIN);
+        };
+
+        ifThen(lane == 0u, clear);
+        barrier();
+
+        auto value = toInt(values[id]);
+        atomicAdd(bins, values[id] & 3u, 1u);
+        atomicMin(extremes, 0u, value);
+        atomicMax(extremes, 1u, value);
+        barrier();
+
+        auto base = groupId() * 6u;
+        auto publish = [&]
+        {
+            for (auto bin = 0u; bin < 4u; ++bin)
+                write(totals, base + bin, bins.load(bin));
+
+            write(totals, base + 4u, toUInt(extremes.load(0u)));
+            write(totals, base + 5u, toUInt(extremes.load(1u)));
+        };
+
+        ifThen(lane == 0u, publish);
+    }
+
+    Uniform<UIntInputBuffer> values;
+    Uniform<UIntOutputBuffer> totals;
+    EACP_SHADER(values, totals)
+};
 } // namespace
 
 auto tBufferOps = test("AtomicOps/everyOperationOnABufferYieldsTheOldValue") = []
@@ -726,59 +777,8 @@ auto tCompareExchange =
 
 auto tSharedHistogram = test("AtomicOps/sharedCountersSumTheGroupAfterABarrier") = []
 {
-    struct HistogramKernel final : ComputeKernel
-    {
-        HistogramKernel()
-            : ComputeKernel({groupWidth})
-        {
-            compile();
-        }
-
-        void define() override
-        {
-            auto id = threadId();
-            auto lane = localId();
-            auto bins = sharedAtomic<UInt>(4);
-            auto extremes = sharedAtomic<Int>(2);
-
-            auto clear = [&]
-            {
-                for (auto bin = 0u; bin < 4u; ++bin)
-                    write(bins, bin, 0u);
-
-                write(extremes, 0u, INT_MAX);
-                write(extremes, 1u, INT_MIN);
-            };
-
-            ifThen(lane == 0u, clear);
-            barrier();
-
-            auto value = toInt(values[id]);
-            atomicAdd(bins, values[id] & 3u, 1u);
-            atomicMin(extremes, 0u, value);
-            atomicMax(extremes, 1u, value);
-            barrier();
-
-            auto base = groupId() * 6u;
-            auto publish = [&]
-            {
-                for (auto bin = 0u; bin < 4u; ++bin)
-                    write(totals, base + bin, bins.load(bin));
-
-                write(totals, base + 4u, toUInt(extremes.load(0u)));
-                write(totals, base + 5u, toUInt(extremes.load(1u)));
-            };
-
-            ifThen(lane == 0u, publish);
-        }
-
-        Uniform<UIntInputBuffer> values;
-        Uniform<UIntOutputBuffer> totals;
-        EACP_SHADER(values, totals)
-    };
-
     constexpr auto groups = 3;
-    auto kernel = HistogramKernel {};
+    auto kernel = SharedHistogramKernel {};
     auto executor = Executor {kernel};
     check(executor.isValid(), executor.reason());
 

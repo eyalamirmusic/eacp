@@ -1125,3 +1125,36 @@ and Vulkan (specialization constants); on D3D12 a compile per value set with
   `CompilationInfo&`); `parseFxcLog`/`parseDxcLog` are tested only against
   sample text written from the documented formats, and the HLSL lines and
   columns `CompilationInfoDevice/` expects are FXC's documented ones.
+- First Windows CI run (PR #220, commit 8afa1127). Android, iOS, macOS and the
+  three Linux lanes passed. Both MSVC lanes failed to compile
+  `Tests/CpuCompute/AtomicOpsTests.cpp`: C2248 on `threadId`/`localId`/
+  `sharedAtomic`/`groupId` from a kernel class declared inside a test lambda
+  (now `SharedHistogramKernel` at namespace scope), so their tests never ran.
+  Both clang-cl lanes ran the D3D12 suites on WARP. The HLSL and D3D12 C++ of
+  every stage compiled under FXC but for one shader, and the failures were:
+  - `Float16Device/` (three exact cases) and `OverrideDevice/
+    aHalfOverrideReachesTheDevice`: D3D's `f32tof16` rounds toward zero and
+    clamps a finite overflow to 65504, so `f16tof32(f32tof16(x))` was not
+    WGSL's rounding. Every exact f16 case with an inexact result failed; every
+    exact-input one and the tolerance-based one passed. `eacpRoundHalf` now
+    goes through `eacpHalfBits`, round to nearest even with an overflow an
+    infinity in integer arithmetic (checked against `_Float16` for all 2^32
+    inputs). The f16 stores keep `f32tof16`, whose inputs are always exact
+    halves. `quantizeToF16`'s HLSL still truncates.
+  - `Float16Device/halfMatricesWithFourColumnsAgreeExactly`: FXC X3067,
+    `eacpRoundHalf` ambiguous between the `float4` and `float2x2` overloads.
+    The matrix overloads are now named per shape (`eacpRoundHalf2x4`).
+  - Open: `ControlFlowDevice/aReturnSkipsTheLaterWritesOfItsLanes` and
+    `FunctionDevice/returnsAndCallsInConditionsAgree`, whose HLSL is correct by
+    inspection. Both have a `return` inside a loop and a switch clause that is
+    only a `return`; five `ControlFlowDevice/` cases now take those shapes one
+    at a time (a return in a loop, alone in a clause, in a clause in a loop,
+    and a function returning from a loop and from a switch in a loop).
+  - Open: `StructDevice/aBufferOfStructsIsReadAndWrittenAtItsLayout`; three
+    `StructDevice/` cases now split it (the whole store alone, a field
+    overwritten from the input after it, a field read back after a copy and
+    stored again).
+  - Open, Windows ARM64 only: `TypesDevice` and `Float16Device` exit with
+    0xc0000409 and print nothing; `TypesDevice` passes on x64.
+    `FileWatcher/writesInsideTheSettleWindowCoalesce` also failed there, in
+    code this work does not touch.

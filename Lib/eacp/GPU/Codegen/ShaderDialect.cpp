@@ -131,6 +131,15 @@ bool isRoundedToHalf(const Expr& expr)
            && !halfExactCalls.contains(std::string_view {expr.text});
 }
 
+std::string getRoundHalfFunction(ValueType type)
+{
+    if (!isMatrix(type))
+        return "eacpRoundHalf";
+
+    return Strings::format(
+        "eacpRoundHalf{}x{}", matrixRows(type), matrixColumns(type));
+}
+
 std::string getCallName(Backend backend, const std::string& name)
 {
     if (auto renamed = findDialectRename(backend, name); !renamed.empty())

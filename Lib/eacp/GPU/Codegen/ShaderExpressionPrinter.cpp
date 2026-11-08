@@ -254,7 +254,7 @@ std::string ExprPrinter::printRoundedToHalf(const Expr& expr,
     if (backend != Backend::DirectX || !isRoundedToHalf(expr))
         return text;
 
-    return Strings::format("eacpRoundHalf({})", text);
+    return Strings::format("{}({})", getRoundHalfFunction(expr.type), text);
 }
 
 std::string ExprPrinter::printInput(const Expr& expr) const

@@ -308,8 +308,8 @@ public:
     // storageBuffer16BitAccess (VK_KHR_shader_float16_int8 and
     // VK_KHR_16bit_storage below 1.2), both enabled at device creation where
     // offered. D3D12 always answers yes: FXC's SM5 has no 16-bit type, so the
-    // emitted HLSL holds each f16 in a float and rounds every result through
-    // f32tof16/f16tof32 - WGSL's values at a float's cost, not a half's. An
+    // emitted HLSL holds each f16 in a float and rounds every result to the
+    // nearest half - WGSL's values at a float's cost, not a half's. An
     // invalid Device answers no. ComputeProgram::prepare and
     // ShaderProgram::prepare refuse a program using f16 where this is false.
     bool supportsShaderFloat16() const;

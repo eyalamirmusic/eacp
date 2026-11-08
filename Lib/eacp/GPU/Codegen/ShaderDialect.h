@@ -145,10 +145,15 @@ inline std::string getVaryingName(Backend backend, int index)
 
 // Whether HLSL rounds a node's value to f16 where it is computed: HLSL holds a
 // Half in float, so every arithmetic result of the f16 family - an operator, a
-// product, a built-in, a conversion into it - goes through f32tof16 and back,
+// product, a built-in, a conversion into it - goes to f16 bits and back,
 // which is what makes it the value Metal's half and GLSL's float16_t hold. A
 // built-in whose result is already a half of its arguments is left alone.
 bool isRoundedToHalf(const Expr& expr);
+
+// FXC converts a float4 to a float2x2 as readily as it passes it as a float4,
+// so a matrix overload sharing the vectors' name makes their calls ambiguous:
+// each matrix rounds under a name of its own, eacpRoundHalf2x4 for a float2x4.
+std::string getRoundHalfFunction(ValueType type);
 
 std::string getCallName(Backend backend, const std::string& name);
 bool isGenTypeCall(const std::string& name);

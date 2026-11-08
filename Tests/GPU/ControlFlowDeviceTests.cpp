@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <source_location>
+#include <string>
 
 // The control flow of WGSL on a device. Kernels with a switch every lane takes
 // differently, early returns, a continuing block with break-if, and switches
@@ -516,6 +518,237 @@ void prepare(Program& program, bool depth)
     program.setVertices(fullQuad);
     program.prepare(describeFloatPipeline(depth));
 }
+
+// One shape of early return per kernel, each writing `before` ahead of it and
+// `after` behind it, so a compiler that gets one shape wrong is named by the
+// case that fails.
+struct ReturnInLoopKernel final : ComputeProgram
+{
+    ReturnInLoopKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto counter = var(0u);
+        auto leave = [&] { returnEarly(); };
+        auto step = [&]
+        {
+            counter += 1u;
+            ifThen(counter.get() == id % 5u + 1u && id % 2u == 1u, leave);
+        };
+
+        write(before, id, 1u);
+        loop(counter.get() < 10u, step);
+        write(after, id, counter.get());
+    }
+
+    Uniform<UIntOutputBuffer> before;
+    Uniform<UIntOutputBuffer> after;
+    EACP_SHADER(before, after)
+};
+
+struct ReturnInSwitchKernel final : ComputeProgram
+{
+    ReturnInSwitchKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto leave = [&] { returnEarly(); };
+
+        write(before, id, 1u);
+        switchOn(id % 4u, caseOf(2, leave));
+        write(after, id, 4u);
+    }
+
+    Uniform<UIntOutputBuffer> before;
+    Uniform<UIntOutputBuffer> after;
+    EACP_SHADER(before, after)
+};
+
+struct ReturnInSwitchInLoopKernel final : ComputeProgram
+{
+    ReturnInSwitchInLoopKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto counter = var(0u);
+        auto leave = [&] { returnEarly(); };
+        auto step = [&]
+        {
+            counter += 1u;
+            switchOn(counter.get() + id % 5u, caseOf(12, leave));
+        };
+
+        write(before, id, 1u);
+        loop(counter.get() < 10u, step);
+        write(after, id, counter.get());
+    }
+
+    Uniform<UIntOutputBuffer> before;
+    Uniform<UIntOutputBuffer> after;
+    EACP_SHADER(before, after)
+};
+
+struct FunctionReturnInLoopKernel final : ComputeProgram
+{
+    FunctionReturnInLoopKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+
+        auto firstRootAbove =
+            function<UInt(UInt)>("firstRootAbove",
+                                 [&](UInt limit)
+                                 {
+                                     auto at = var(0u);
+                                     auto found = [&] { returnEarly(at.get()); };
+                                     auto step = [&]
+                                     {
+                                         ifThen(at.get() * at.get() > limit, found);
+                                         at += 1u;
+                                     };
+
+                                     loop(at.get() < 12u, step);
+                                     return unsignedInteger(999u);
+                                 });
+
+        write(before, id, 1u);
+        write(after, id, firstRootAbove(id % 150u));
+    }
+
+    Uniform<UIntOutputBuffer> before;
+    Uniform<UIntOutputBuffer> after;
+    EACP_SHADER(before, after)
+};
+
+struct FunctionReturnInSwitchInLoopKernel final : ComputeProgram
+{
+    FunctionReturnInSwitchInLoopKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+
+        auto reachesNine = function<UInt(UInt)>(
+            "reachesNine",
+            [&](UInt start)
+            {
+                auto at = var(start);
+                auto nine = [&] { returnEarly(unsignedInteger(500u)); };
+                auto step = [&]
+                {
+                    switchOn(at.get(), caseOf(9, nine));
+                    at += 1u;
+                };
+
+                loop(at.get() < 12u, step);
+                return unsignedInteger(999u);
+            });
+
+        write(before, id, 1u);
+        write(after, id, reachesNine(id % 12u));
+    }
+
+    Uniform<UIntOutputBuffer> before;
+    Uniform<UIntOutputBuffer> after;
+    EACP_SHADER(before, after)
+};
+
+std::uint32_t firstRootAbove(std::uint32_t limit)
+{
+    for (auto at = 0u; at < 12u; ++at)
+        if (at * at > limit)
+            return at;
+
+    return 999u;
+}
+
+// Every lane's before and after against what it should hold, the first wrong
+// lane spelled out so a failing backend's log says what it wrote.
+template <typename Kernel, typename Expected>
+void checkReturnShape(
+    const std::source_location& location = std::source_location::current())
+{
+    auto kernel = Kernel {};
+    auto expectedAfter = Expected {};
+
+    auto verify = [&](const Readback& readback)
+    {
+        const auto& before = readback.uints(kernel.before);
+        const auto& after = readback.uints(kernel.after);
+        auto wrong = 0;
+        auto firstWrong = std::string {};
+
+        for (auto id = 0u; id < (unsigned) threadCount; ++id)
+        {
+            auto at = (int) id;
+            auto expected = expectedAfter(id);
+
+            if (before[at] == 1u && after[at] == expected)
+                continue;
+
+            if (wrong++ == 0)
+                firstWrong = "lane " + std::to_string(id) + ": before "
+                             + std::to_string(before[at]) + ", after "
+                             + std::to_string(after[at]) + ", expected after "
+                             + std::to_string(expected);
+        }
+
+        check(wrong == 0,
+              std::string(readback.name()) + ": " + std::to_string(wrong) + " of "
+                  + std::to_string(threadCount) + " lanes wrong; " + firstWrong,
+              location);
+    };
+
+    CrossCheck {kernel}
+        .output(kernel.before, threadCount, sentinel)
+        .output(kernel.after, threadCount, sentinel)
+        .agreeing()
+        .run(threadCount, verify, location);
+}
+
+struct AfterReturnInLoop
+{
+    std::uint32_t operator()(std::uint32_t id) const
+    {
+        return id % 2u == 1u ? sentinel : 10u;
+    }
+};
+
+struct AfterReturnInSwitch
+{
+    std::uint32_t operator()(std::uint32_t id) const
+    {
+        return id % 4u == 2u ? sentinel : 4u;
+    }
+};
+
+struct AfterReturnInSwitchInLoop
+{
+    std::uint32_t operator()(std::uint32_t id) const
+    {
+        return id % 5u >= 2u ? sentinel : 10u;
+    }
+};
+
+struct AfterFunctionReturnInLoop
+{
+    std::uint32_t operator()(std::uint32_t id) const
+    {
+        return firstRootAbove(id % 150u);
+    }
+};
+
+struct AfterFunctionReturnInSwitchInLoop
+{
+    std::uint32_t operator()(std::uint32_t id) const
+    {
+        return id % 12u <= 9u ? 500u : 999u;
+    }
+};
 } // namespace
 
 auto tSwitch = test("ControlFlowDevice/eachLaneTakesItsOwnClause") = []
@@ -578,6 +811,29 @@ auto tEarlyReturn =
         .output(kernel.fourth, threadCount, sentinel)
         .agreeing()
         .run(threadCount, verify);
+};
+
+auto tReturnInLoop =
+    test("ControlFlowDevice/aReturnInALoopAloneSkipsWhatFollows") = []
+{ checkReturnShape<ReturnInLoopKernel, AfterReturnInLoop>(); };
+
+auto tReturnInSwitch =
+    test("ControlFlowDevice/aReturnAloneInASwitchClauseSkipsWhatFollows") = []
+{ checkReturnShape<ReturnInSwitchKernel, AfterReturnInSwitch>(); };
+
+auto tReturnInSwitchInLoop =
+    test("ControlFlowDevice/aReturnInASwitchClauseInALoopSkipsWhatFollows") = []
+{ checkReturnShape<ReturnInSwitchInLoopKernel, AfterReturnInSwitchInLoop>(); };
+
+auto tFunctionReturnInLoop =
+    test("ControlFlowDevice/aFunctionReturningFromALoopAnswersItsCaller") = []
+{ checkReturnShape<FunctionReturnInLoopKernel, AfterFunctionReturnInLoop>(); };
+
+auto tFunctionReturnInSwitchInLoop = test(
+    "ControlFlowDevice/aFunctionReturningFromASwitchInALoopAnswersItsCaller") = []
+{
+    checkReturnShape<FunctionReturnInSwitchInLoopKernel,
+                     AfterFunctionReturnInSwitchInLoop>();
 };
 
 auto tBreakIf = test("ControlFlowDevice/breakIfEndsEachLaneAfterItsContinuing") = []

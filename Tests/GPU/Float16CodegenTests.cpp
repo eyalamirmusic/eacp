@@ -90,9 +90,21 @@ kernel void computeMain(device const half* buffer0 [[buffer(0)]],
 }
 )golden"};
 
-constexpr auto smallHlsl = std::string_view {R"golden(float eacpRoundHalf(float x)
+constexpr auto smallHlsl = std::string_view {R"golden(uint eacpHalfBits(float x)
 {
-    return f16tof32(f32tof16(x));
+    uint bits = asuint(x);
+    uint sign = bits & 0x80000000u;
+    uint magnitude = bits ^ sign;
+    uint special = magnitude > 0x7f800000u ? (uint) 0x7e00u : (uint) 0x7c00u;
+    uint subnormal = asuint(asfloat(magnitude) + 0.5) - 0x3f000000u;
+    uint normal = (magnitude + 0xc8000fffu + ((magnitude >> 13u) & 1u)) >> 13u;
+    uint finite = magnitude < 0x38800000u ? subnormal : normal;
+    return (magnitude >= 0x47800000u ? special : finite) | (sign >> 16u);
+}
+
+float eacpRoundHalf(float x)
+{
+    return f16tof32(eacpHalfBits(x));
 }
 
 struct Uniforms
@@ -558,7 +570,8 @@ void checkShape(
           location);
     check(contains(sources.hlsl, "eacpRoundHalf(mul("), sources.hlsl, location);
     check(contains(sources.hlsl,
-                   Strings::format("{0} eacpRoundHalf({0} x)", hlslName)),
+                   Strings::format(
+                       "{0} eacpRoundHalf{1}x{2}({0} x)", hlslName, Rows, Columns)),
           sources.hlsl,
           location);
     check(contains(sources.hlsl,
