@@ -140,6 +140,11 @@ public:
 
     ComputePipeline makeComputePipeline(const ShaderLibrary& library);
 
+    // The kernel specialised with its pipeline-overridable constants
+    // (PipelineConstants.h).
+    ComputePipeline makeComputePipeline(const ShaderLibrary& library,
+                                        const PipelineConstants& constants);
+
     CommandBuffer makeCommandBuffer();
 
     bool isValid() const;
@@ -296,6 +301,26 @@ public:
     // qualifier needs. Reading through setInputTexture needs none of this:
     // any format a texture has is readable there.
     bool supportsComputeReadWrite(TextureFormat format) const;
+
+    // Whether a shader may compute in f16 - WGSL's `enable f16`, the EDSL's
+    // Half, its vectors and matrices, and HalfInputBuffer/HalfOutputBuffer.
+    // Every Metal device has half. Vulkan needs shaderFloat16 and
+    // storageBuffer16BitAccess (VK_KHR_shader_float16_int8 and
+    // VK_KHR_16bit_storage below 1.2), both enabled at device creation where
+    // offered. D3D12 always answers yes: FXC's SM5 has no 16-bit type, so the
+    // emitted HLSL holds each f16 in a float and rounds every result through
+    // f32tof16/f16tof32 - WGSL's values at a float's cost, not a half's. An
+    // invalid Device answers no. ComputeProgram::prepare and
+    // ShaderProgram::prepare refuse a program using f16 where this is false.
+    bool supportsShaderFloat16() const;
+
+    // Whether a fragment stage may run once per sample - WGSL's sample_index
+    // and @interpolate(..., sample), the EDSL's sampleIndex() and
+    // InterpolationSampling::Sample. Every Metal and D3D12 device has it;
+    // Vulkan needs sampleRateShading, enabled at device creation where
+    // offered. An invalid Device answers no. ShaderProgram::prepare refuses a
+    // program asking for it where this is false.
+    bool supportsSampleRateShading() const;
 
     // Whether Frame::generateMipmaps (and CommandBuffer's) can fill a
     // texture of this format's chain on the GPU. Never a block-compressed or

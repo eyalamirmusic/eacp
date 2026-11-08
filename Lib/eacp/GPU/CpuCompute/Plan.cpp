@@ -17,6 +17,7 @@ constexpr int planLaneAlignment = 16;
 constexpr std::int64_t planMaxLanes = std::int64_t {1} << 20;
 constexpr std::size_t planMaxWords = INT32_MAX;
 
+// Both float families: an f16 lane is held as the float it rounds to.
 bool isFloatFamily(ValueType type)
 {
     switch (type)
@@ -25,6 +26,10 @@ bool isFloatFamily(ValueType type)
         case ValueType::Float2:
         case ValueType::Float3:
         case ValueType::Float4:
+        case ValueType::Half:
+        case ValueType::Half2:
+        case ValueType::Half3:
+        case ValueType::Half4:
             return true;
         default:
             return isMatrix(type);
@@ -98,6 +103,10 @@ const char* planKindName(ExprKind kind)
             return "TextureQuery";
         case ExprKind::MatrixColumn:
             return "MatrixColumn";
+        case ExprKind::Override:
+            return "Override";
+        case ExprKind::FunctionCall:
+            return "FunctionCall";
     }
 
     return "unknown";
@@ -151,6 +160,8 @@ const char* planStatementName(StatementKind kind)
             return "Return";
         case StatementKind::Discard:
             return "Discard";
+        case StatementKind::Call:
+            return "Call";
     }
 
     return "unknown";
@@ -421,7 +432,7 @@ constexpr PackedHelperName planPackedHelperNames[] = {
 
 bool isConversionName(std::string_view name)
 {
-    for (auto raw = 0; raw <= static_cast<int>(ValueType::Bool4); ++raw)
+    for (auto raw = 0; raw <= static_cast<int>(lastValueType); ++raw)
     {
         auto type = static_cast<ValueType>(raw);
 
@@ -471,6 +482,7 @@ PlanLevel planLeafLevel(const Expr& expr)
     switch (expr.kind)
     {
         case ExprKind::Constant:
+        case ExprKind::Override:
         case ExprKind::Uniform:
         case ExprKind::GridExtent:
             return PlanLevel::Dispatch;
@@ -515,7 +527,7 @@ public:
 
     void build()
     {
-        if (!checkGraph())
+        if (!checkGraph() || !resolveOverrideWords())
             return;
 
         plan.nodes.resize(graph.nodeCount());
@@ -534,8 +546,13 @@ public:
             return;
 
         for (auto id = 0; id < graph.nodeCount() && !failed(); ++id)
-            if (plan.nodes[id].used)
-                decodeNode(id);
+        {
+            if (!plan.nodes[id].used)
+                continue;
+
+            decodeNode(id);
+            markHalfRounding(id);
+        }
 
         if (failed())
             return;
@@ -554,6 +571,39 @@ private:
     };
 
     bool failed() const { return !plan.failure.empty(); }
+
+    static Word overrideWord(const PipelineConstant& value)
+    {
+        switch (value.type)
+        {
+            case PipelineConstantType::Bool:
+                return Lanes::maskOf(value.asBool());
+            case PipelineConstantType::Float:
+            case PipelineConstantType::Half:
+                return Lanes::toWord(value.asFloat());
+            case PipelineConstantType::Int:
+            case PipelineConstantType::UInt:
+                break;
+        }
+
+        return static_cast<Word>(value.bits);
+    }
+
+    bool resolveOverrideWords()
+    {
+        const auto resolved = resolveOverrides(graph, options.overrides);
+
+        if (!resolved.isValid())
+        {
+            fail(resolved.error);
+            return false;
+        }
+
+        for (const auto& value: resolved.values)
+            overrideWords.add(overrideWord(value));
+
+        return true;
+    }
 
     void fail(std::string reason)
     {
@@ -604,6 +654,7 @@ private:
             plan.slotAccess[static_cast<std::size_t>(slot)] = slots[slot];
             plan.slotElement[static_cast<std::size_t>(slot)] =
                 graph.storageElementType(slot);
+            recordStructSlot(slot);
         }
 
         plan.shape = graph.threadGroupShape();
@@ -638,6 +689,45 @@ private:
         plan.laneCount = static_cast<int>(lanes);
         plan.boundsGuard = !graph.usesBarrier();
         return packUniforms();
+    }
+
+    void recordStructSlot(int slot)
+    {
+        auto structId = graph.storageStructType(slot);
+
+        if (structId < 0)
+            return;
+
+        const auto& type = graph.structType(structId);
+        auto at = static_cast<std::size_t>(slot);
+        plan.slotStructStride[at] = type.size;
+        plan.slotStructComponents[at].begin = plan.structComponentList.size();
+
+        for (const auto& component: type.components)
+            plan.structComponentList.add(component);
+
+        plan.slotStructComponents[at].end = plan.structComponentList.size();
+    }
+
+    // How many words a value takes in a lane: its components, a struct's
+    // every field's laid end to end.
+    int flatComponents(ValueType type, int structId) const
+    {
+        if (type == ValueType::Struct)
+            return structId >= 0 ? graph.structType(structId).components.size() : 0;
+
+        return componentCount(type);
+    }
+
+    int nodeComponents(const Expr& expr) const
+    {
+        return flatComponents(expr.type, expr.structType);
+    }
+
+    int variableComponents(int slot) const
+    {
+        return flatComponents(graph.variables()[slot],
+                              graph.variableStructType(slot));
     }
 
     bool packUniforms()
@@ -749,6 +839,8 @@ private:
                     if (statement.index >= 0)
                         step.type = graph.expr(statement.index).type;
 
+                    step.component = fieldComponent(
+                        graph.variableStructType(statement.slot), statement.member);
                     schedule.roots[0] = statement.value;
                     schedule.roots[1] = statement.index;
                     pinned = -1;
@@ -899,9 +991,40 @@ private:
                     fail("statement Discard: a kernel has no fragment to discard");
                     return result;
 
-                case StatementKind::Store:
-                    if (!checkStore(statement, 1))
+                case StatementKind::Call:
+                {
+                    if (statement.body < 0)
+                    {
+                        fail("statement Call that was not inlined");
                         return result;
+                    }
+
+                    auto enclosingContinuing = continuingLoopDepth;
+                    auto enclosingCases = casesBlock;
+                    continuingLoopDepth = -1;
+                    casesBlock = -1;
+                    auto body = buildBlock(statement.body, 0, depth + 1);
+                    continuingLoopDepth = enclosingContinuing;
+                    casesBlock = enclosingCases;
+                    step.body = body.id;
+                    pinned = -1;
+                    break;
+                }
+
+                case StatementKind::Store:
+                    if (isStructSlot(statement.slot))
+                    {
+                        if (!checkStructStore(statement))
+                            return result;
+
+                        step.component =
+                            fieldComponent(graph.storageStructType(statement.slot),
+                                           statement.member);
+                    }
+                    else if (!checkStore(statement, 1))
+                    {
+                        return result;
+                    }
 
                     schedule.roots[0] = statement.index;
                     schedule.roots[1] = statement.value;
@@ -1058,8 +1181,37 @@ private:
         return false;
     }
 
+    // A struct field's first flat component; the whole struct's, 0.
+    int fieldComponent(int structId, int field) const
+    {
+        if (structId < 0 || field < 0)
+            return 0;
+
+        return graph.structType(structId).fields[field].firstComponent;
+    }
+
+    bool isField(int structId, int field) const
+    {
+        return structId >= 0 && field >= -1
+               && field < graph.structType(structId).fields.size();
+    }
+
     bool checkVariableValue(const Statement& statement)
     {
+        auto structId = graph.variableStructType(statement.slot);
+
+        if (structId >= 0 || statement.member >= 0)
+        {
+            if (isField(structId, statement.member)
+                && graph.fitsField(structId, statement.member, statement.value))
+                return true;
+
+            fail(std::string("statement ") + planStatementName(statement.kind)
+                 + " gives struct variable " + std::to_string(statement.slot)
+                 + " a value that is not of its field's type");
+            return false;
+        }
+
         auto variableType = graph.variables()[statement.slot];
         auto valueType = graph.expr(statement.value).type;
 
@@ -1235,6 +1387,47 @@ private:
         return false;
     }
 
+    bool isStructSlot(int slot) const
+    {
+        return slot >= 0 && slot < plan.slotCount
+               && graph.storageStructType(slot) >= 0;
+    }
+
+    bool checkStructStore(const Statement& statement)
+    {
+        if (!checkSlot(statement.slot) || !checkNode(statement.index)
+            || !checkNode(statement.value))
+            return false;
+
+        auto structId = graph.storageStructType(statement.slot);
+
+        if (plan.slotAccess[static_cast<std::size_t>(statement.slot)]
+            != BufferAccess::Write)
+        {
+            fail("a Store writes struct slot " + std::to_string(statement.slot)
+                 + ", which is read-only");
+            return false;
+        }
+
+        if (!isField(structId, statement.member)
+            || !graph.fitsField(structId, statement.member, statement.value))
+        {
+            fail("a Store gives struct slot " + std::to_string(statement.slot)
+                 + " a value that is not of its field's type");
+            return false;
+        }
+
+        auto index = graph.expr(statement.index).type;
+
+        if (componentCount(index) != 1 || !isIntegerFamily(index))
+        {
+            fail("a Store has an index that is not a scalar integer");
+            return false;
+        }
+
+        return true;
+    }
+
     bool checkStore(const Statement& statement, int width)
     {
         if (!checkSlot(statement.slot) || !checkNode(statement.index)
@@ -1270,7 +1463,8 @@ private:
 
         auto element = plan.slotElement[slot];
 
-        if (isFloatFamily(valueType) != isFloatFamily(element))
+        if (isFloatFamily(valueType) != isFloatFamily(element)
+            || isHalf(valueType) != isHalf(element))
         {
             fail(std::string("a ") + planStatementName(statement.kind)
                  + " stores a value of type " + typeName(valueType)
@@ -1621,7 +1815,7 @@ private:
 
     int argumentComponents(const Expr& expr, int which) const
     {
-        return componentCount(argumentType(expr, which));
+        return nodeComponents(graph.expr(expr.args[which]));
     }
 
     void rejectNode(int id, const std::string& why)
@@ -1672,11 +1866,30 @@ private:
             plan.arguments.add(argument);
     }
 
+    // An f16 node is computed in float and rounded to the nearest half where
+    // it lands, which for + - * / and sqrt is the correctly rounded half (a
+    // float holds every such result of two halves to more than twice a half's
+    // precision) and for the rest is HLSL's own rounding. A leaf - a literal,
+    // a read of storage or of a variable - already holds a half.
+    void markHalfRounding(int id)
+    {
+        auto& node = plan.nodes[id];
+        node.roundsToHalf = isHalf(graph.expr(id).type) && node.op != Op::Leaf;
+    }
+
     void decodeNode(int id)
     {
         const auto& expr = graph.expr(id);
         auto& node = plan.nodes[id];
-        node.components = static_cast<std::uint8_t>(componentCount(expr.type));
+        auto components = nodeComponents(expr);
+
+        if (components > std::numeric_limits<std::uint8_t>::max())
+        {
+            rejectNode(id, "a struct of more than 255 components");
+            return;
+        }
+
+        node.components = static_cast<std::uint8_t>(components);
         setArguments(node, expr);
 
         switch (expr.kind)
@@ -1702,6 +1915,12 @@ private:
             case ExprKind::TextureFunction:
             case ExprKind::TextureQuery:
                 rejectNode(id, "textures are not supported by the CPU executor");
+                return;
+
+            case ExprKind::FunctionCall:
+                rejectNode(id,
+                           "a call in a constant array's element: the CPU "
+                           "executor inlines calls in front of a statement");
                 return;
 
             case ExprKind::AtomicLoad:
@@ -1744,6 +1963,10 @@ private:
 
             case ExprKind::Constant:
                 plan.constantNodes.add({id, constantWord(expr)});
+                return;
+
+            case ExprKind::Override:
+                plan.constantNodes.add({id, overrideWords[expr.index]});
                 return;
 
             case ExprKind::GridExtent:
@@ -1816,6 +2039,12 @@ private:
                 if (!requireArguments(id, 1) || !checkSlot(expr.index))
                     return;
 
+                if (expr.member >= 0 || isStructSlot(expr.index))
+                {
+                    decodeStructRead(id, node, expr);
+                    return;
+                }
+
                 if (isMatrix(expr.type) || isBoolean(expr.type))
                 {
                     rejectNode(id, "reads a type no buffer holds");
@@ -1877,6 +2106,26 @@ private:
         node.immediate = expr.index;
     }
 
+    void decodeStructRead(int id, Plan::Node& node, const Expr& expr)
+    {
+        auto structId = graph.storageStructType(expr.index);
+
+        if (expr.kind != ExprKind::BufferRead || structId < 0 || expr.member < 0
+            || !isField(structId, expr.member)
+            || graph.structType(structId).fields[expr.member].type != expr.type)
+        {
+            rejectNode(id, "reads a struct buffer other than a field at a time");
+            return;
+        }
+
+        if (!requireScalarIndex(id, expr))
+            return;
+
+        node.op = Op::StructRead;
+        node.immediate = expr.index;
+        node.component = fieldComponent(structId, expr.member);
+    }
+
     void decodeSharedRead(int id, Plan::Node& node, const Expr& expr)
     {
         if (!requireArguments(id, 1) || !requireScalarIndex(id, expr))
@@ -1903,6 +2152,7 @@ private:
         switch (expr.type)
         {
             case ValueType::Float:
+            case ValueType::Half:
                 return Lanes::toWord(expr.value);
             case ValueType::Bool:
                 return Lanes::maskOf(expr.index != 0);
@@ -1927,6 +2177,20 @@ private:
         }
 
         auto isArray = graph.variableArraySize(expr.index) > 0;
+        auto structId = graph.variableStructType(expr.index);
+
+        if (structId >= 0 || expr.member >= 0)
+        {
+            if (!isField(structId, expr.member) || expr.member < 0
+                || graph.structType(structId).fields[expr.member].type != expr.type)
+            {
+                rejectNode(id,
+                           "reads a struct variable other than a field at a time");
+                return;
+            }
+
+            node.component = fieldComponent(structId, expr.member);
+        }
 
         if (!isArray && expr.args.empty())
             return;
@@ -2219,7 +2483,9 @@ private:
         }
         else if (isMatrix(left) && isMatrix(right)
                  && matrixColumns(left) == matrixRows(right)
-                 && expr.type == matrixOf(matrixColumns(right), matrixRows(left)))
+                 && expr.type
+                        == matrixOf(
+                            matrixColumns(right), matrixRows(left), isHalf(left)))
         {
             node.op = Op::MatMat;
             node.order = shape(matrixColumns(left));
@@ -2613,6 +2879,8 @@ private:
         {
             case ExprKind::Constant:
                 return constantForm(constantWord(expr));
+            case ExprKind::Override:
+                return constantForm(overrideWords[expr.index]);
             case ExprKind::Uniform:
             case ExprKind::GridExtent:
                 return laneInvariant();
@@ -2876,7 +3144,7 @@ private:
         {
             auto size = graph.variableArraySize(slot);
             auto variable = Plan::Variable {};
-            variable.components = componentCount(graph.variables()[slot]);
+            variable.components = variableComponents(slot);
             variable.elements = size > 0 ? size : 1;
             variable.isArray = size > 0;
             variable.storage = allocate(variable.components * variable.elements);
@@ -2889,7 +3157,9 @@ private:
 
             if (plan.nodes[id].used && expr.kind == ExprKind::VarRead
                 && !ownsScratch(expr))
-                plan.nodes[id].scratch = plan.variableLayouts[expr.index].storage;
+                plan.nodes[id].scratch = plan.variableLayouts[expr.index].storage
+                                         + static_cast<std::uint32_t>(
+                                             plan.nodes[id].component * plan.stride);
         }
 
         for (auto& layout: plan.arrayLayouts)
@@ -3066,7 +3336,7 @@ private:
                          byLastUse.end(),
                          [this](int a, int b) { return lastUses[a] < lastUses[b]; });
 
-        auto freeSlots = std::array<Vector<std::uint32_t>, 17> {};
+        auto freeSlots = std::array<Vector<std::uint32_t>, 256> {};
         auto released = 0;
 
         for (auto id: byDefinition)
@@ -3225,6 +3495,7 @@ private:
         {
             case Op::BufferRead:
             case Op::BufferVectorRead:
+            case Op::StructRead:
                 if (plan.access(node.immediate) != BufferAccess::Read)
                     return PlanLevel::Lane;
 
@@ -3441,6 +3712,9 @@ private:
     Vector<int> lastUses;
     Vector<int> lastDefinitions;
 
+    // Each override's value, by id, as the word a constant of its type holds.
+    Vector<Word> overrideWords;
+
     // The loop depth of the continuing block being built, or -1 outside one,
     // and the clause list of the switch being built, or -1.
     int continuingLoopDepth = -1;
@@ -3459,6 +3733,14 @@ std::uint64_t nextPlanSerial()
 } // namespace
 
 Plan::Plan(const ShaderGraph& graph, Options options)
+{
+    if (graph.functionCount() > 0)
+        build(graph.withFunctionsInlined(), options);
+    else
+        build(graph, options);
+}
+
+void Plan::build(const ShaderGraph& graph, const Options& options)
 {
     auto groupLimit = std::numeric_limits<int>::max();
 
@@ -3496,6 +3778,23 @@ bool Plan::referencesSlot(int slot) const
 {
     return slot >= 0 && slot < slotCount
            && slotReferenced[static_cast<std::size_t>(slot)];
+}
+
+int Plan::structStride(int slot) const
+{
+    return slot >= 0 && slot < slotCount
+               ? slotStructStride[static_cast<std::size_t>(slot)]
+               : 0;
+}
+
+std::span<const StructComponent> Plan::structComponents(int slot) const
+{
+    if (structStride(slot) == 0)
+        return {};
+
+    const auto& range = slotStructComponents[static_cast<std::size_t>(slot)];
+    return {structComponentList.data() + range.begin,
+            static_cast<std::size_t>(range.end - range.begin)};
 }
 
 ValueType Plan::uniformType(int slot) const

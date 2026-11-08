@@ -30,6 +30,10 @@ public:
     std::string declareArrays(const Vector<int>& roots, std::string_view indent);
     std::string emitBlock(int block, std::string_view indentToUse);
 
+    // A variable declared outside every block this emits: a function's
+    // parameter, which its signature declares.
+    void markInScope(int slot) { variablesInScope[slot] = 1; }
+
     Vector<int> locals; // node id -> local index, -1 = inline
     ExprPrinter printer;
     int localCount = 0;
@@ -98,10 +102,17 @@ private:
     std::string
         printJumpsOutOfSwitch(int flag, int jumps, const std::string& indent) const;
     std::string emitReturn(const Statement& statement, StatementScope& scope);
+    std::string emitValueReturn(const Statement& statement, StatementScope& scope);
+    std::string emitCall(const Statement& statement, StatementScope& scope);
     bool returnReadsOnlyVariablesInScope();
     bool readsOnlyVariablesInScope(int node);
     std::string emitDiscard(const Statement& statement, StatementScope& scope);
     std::string emitStore(const Statement& statement, StatementScope& scope);
+    std::string emitStructStore(const Statement& statement, StatementScope& scope);
+    std::string printHlslHalfStore(int slot,
+                                   const std::string& index,
+                                   const std::string& value,
+                                   const StatementScope& scope) const;
     std::string emitVectorStore(const Statement& statement, StatementScope& scope);
     std::string emitAtomic(const Statement& statement, StatementScope& scope);
     std::string emitSharedStore(const Statement& statement, StatementScope& scope);

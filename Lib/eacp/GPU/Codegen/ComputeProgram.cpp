@@ -45,6 +45,20 @@ Uniform<IntOutputBuffer>&
     return *this;
 }
 
+Uniform<HalfInputBuffer>&
+    Uniform<HalfInputBuffer>::operator=(const Buffer& newBuffer)
+{
+    value = BufferRange::of(newBuffer);
+    return *this;
+}
+
+Uniform<HalfOutputBuffer>&
+    Uniform<HalfOutputBuffer>::operator=(const Buffer& newBuffer)
+{
+    value = BufferRange::of(newBuffer);
+    return *this;
+}
+
 Uniform<AtomicBuffer>& Uniform<AtomicBuffer>::operator=(const Buffer& newBuffer)
 {
     value = BufferRange::of(newBuffer);
@@ -105,6 +119,14 @@ public:
                            IntOutputBuffer& handle,
                            const BufferRange& range) override;
 
+    void onHalfInputBuffer(const char*,
+                           HalfInputBuffer& handle,
+                           const BufferRange& range) override;
+
+    void onHalfOutputBuffer(const char*,
+                            HalfOutputBuffer& handle,
+                            const BufferRange& range) override;
+
     // An atomic buffer binds exactly as an output does - a Metal device buffer,
     // a D3D UAV - since what makes it atomic is the type the kernel declares it
     // through and not how the pass hands it over.
@@ -115,6 +137,12 @@ public:
     void onIntAtomicBuffer(const char*,
                            IntAtomicBuffer& handle,
                            const BufferRange& range) override;
+
+    void onStructBuffer(const char*,
+                        BufferAccess access,
+                        detail::StructBufferHandle& handle,
+                        int (*)(ShaderGraph&),
+                        const BufferRange& range) override;
 
     void onTexture(const char*,
                    Texture2D& handle,
@@ -235,6 +263,22 @@ void ComputeBindVisitor::onIntOutputBuffer(const char*,
         pass.setOutputBuffer(range, handle.slot);
 }
 
+void ComputeBindVisitor::onHalfInputBuffer(const char*,
+                                           HalfInputBuffer& handle,
+                                           const BufferRange& range)
+{
+    if (range.isValid())
+        pass.setInputBuffer(range, handle.slot);
+}
+
+void ComputeBindVisitor::onHalfOutputBuffer(const char*,
+                                            HalfOutputBuffer& handle,
+                                            const BufferRange& range)
+{
+    if (range.isValid())
+        pass.setOutputBuffer(range, handle.slot);
+}
+
 void ComputeBindVisitor::onAtomicBuffer(const char*,
                                         AtomicBuffer& handle,
                                         const BufferRange& range)
@@ -248,6 +292,21 @@ void ComputeBindVisitor::onIntAtomicBuffer(const char*,
                                            const BufferRange& range)
 {
     if (range.isValid())
+        pass.setOutputBuffer(range, handle.slot);
+}
+
+void ComputeBindVisitor::onStructBuffer(const char*,
+                                        BufferAccess access,
+                                        detail::StructBufferHandle& handle,
+                                        int (*)(ShaderGraph&),
+                                        const BufferRange& range)
+{
+    if (!range.isValid())
+        return;
+
+    if (access == BufferAccess::Read)
+        pass.setInputBuffer(range, handle.slot);
+    else
         pass.setOutputBuffer(range, handle.slot);
 }
 
@@ -389,8 +448,73 @@ ComputeProgram::ComputeProgram(ThreadGroupShape shape)
 
 void ComputeProgram::prepare(Device& device)
 {
+    prepare(device, OverrideValues {});
+}
+
+void ComputeProgram::prepare()
+{
+    prepare(Device::shared());
+}
+
+void ComputeProgram::prepare(const OverrideValues& overrides)
+{
+    prepare(Device::shared(), overrides);
+}
+
+void ComputeProgram::prepare(Device& device, const OverrideValues& overrides)
+{
     reportThreadgroupMemoryOverBudget(device);
 
+    specializations.clear();
+    currentPipeline = nullptr;
+    preparedDevice = &device;
+    refused = !fitsDevice(device);
+
+    if (refused)
+    {
+        buildRefusedPipeline(device);
+        return;
+    }
+
+    shaderLibrary.emplace(device, source());
+    specialize(overrides);
+}
+
+bool ComputeProgram::specialize(const OverrideValues& overrides)
+{
+    if (preparedDevice == nullptr || refused)
+        return false;
+
+    const auto resolved = resolveOverrides(graph(), overrides);
+
+    if (!resolved.isValid())
+    {
+        LOG("eacp: this kernel refuses its override values (",
+            resolved.error,
+            "), so no pipeline was built for them.");
+        useRefusedPipeline(*preparedDevice);
+        return false;
+    }
+
+    for (const auto& specialization: specializations)
+    {
+        if (specialization->constants == resolved.specialized)
+        {
+            currentPipeline = &specialization->pipeline;
+            return isValid();
+        }
+    }
+
+    auto& built = specializations.createNew(
+        *preparedDevice, *shaderLibrary, resolved.specialized);
+    currentPipeline = &built.pipeline;
+
+    reportSimdWidthMismatch();
+    return isValid();
+}
+
+bool ComputeProgram::fitsDevice(Device& device) const
+{
     // Refused here rather than handed to the backend. A packed fragment
     // this device has no instruction for is a kernel built against the
     // wrong answer to a question it was supposed to ask first, and what
@@ -398,8 +522,7 @@ void ComputeProgram::prepare(Device& device)
     if (!fitsPackedSimdMatrix(device))
     {
         reportUnsupportedPackedSimdMatrix(device);
-        buildRefusedPipeline(device);
-        return;
+        return false;
     }
 
     // Refused for the same reason: a store or a read-modify-write in a format
@@ -408,19 +531,18 @@ void ComputeProgram::prepare(Device& device)
     if (!fitsStorageTextures(device))
     {
         reportUnsupportedStorageTexture(device);
-        buildRefusedPipeline(device);
-        return;
+        return false;
     }
 
-    shaderLibrary.emplace(device, source());
-    pipelineState.emplace(device, *shaderLibrary);
+    // And for an f16 value on a device whose shaders have none: GLSL's
+    // float16_t is a type the driver either enabled or did not.
+    if (!fitsShaderFloat16(device))
+    {
+        reportUnsupportedShaderFloat16();
+        return false;
+    }
 
-    reportSimdWidthMismatch();
-}
-
-void ComputeProgram::prepare()
-{
-    prepare(Device::shared());
+    return true;
 }
 
 bool ComputeProgram::fitsThreadgroupMemory(const Device& device) const
@@ -447,14 +569,20 @@ bool ComputeProgram::fitsStorageTextures(const Device& device) const
     return findRefusedStorageTexture(device, graph()) < 0;
 }
 
+bool ComputeProgram::fitsShaderFloat16(const Device& device) const
+{
+    return !device.isValid() || !graph().usesHalf()
+           || device.supportsShaderFloat16();
+}
+
 const ComputePipeline& ComputeProgram::pipeline() const
 {
-    return *pipelineState;
+    return *currentPipeline;
 }
 
 bool ComputeProgram::isValid() const
 {
-    return pipelineState.has_value() && pipelineState->isValid();
+    return currentPipeline != nullptr && currentPipeline->isValid();
 }
 
 bool ComputeProgram::isPrecompiled() const
@@ -473,7 +601,7 @@ void ComputeProgram::reportSimdWidthMismatch() const
     if (!graph().usesSimdReduction() && !graph().usesSimdGroups())
         return;
 
-    auto width = pipelineState->threadExecutionWidth();
+    auto width = currentPipeline->threadExecutionWidth();
 
     if (width <= 0 || width == ComputeProgram::simdWidth)
         return;
@@ -490,7 +618,14 @@ void ComputeProgram::reportSimdWidthMismatch() const
 void ComputeProgram::buildRefusedPipeline(Device& device)
 {
     shaderLibrary.emplace(device, ShaderSource {});
-    pipelineState.emplace(device, *shaderLibrary);
+    useRefusedPipeline(device);
+}
+
+void ComputeProgram::useRefusedPipeline(Device& device)
+{
+    refusedLibrary.emplace(device, ShaderSource {});
+    refusedPipeline.emplace(device, *refusedLibrary);
+    currentPipeline = &*refusedPipeline;
 }
 
 void ComputeProgram::reportUnsupportedPackedSimdMatrix(const Device& device) const
@@ -530,6 +665,14 @@ void ComputeProgram::reportUnsupportedStorageTexture(const Device& device) const
         "before choosing the format, and where it answers no pick one it "
         "takes - R32Float, R32Uint and R32Sint read and write through one "
         "bind on every device eacp runs on.");
+}
+
+void ComputeProgram::reportUnsupportedShaderFloat16() const
+{
+    LOG("eacp: this kernel computes in f16 (Half, a half matrix or a "
+        "HalfInputBuffer/HalfOutputBuffer) and Device::supportsShaderFloat16 "
+        "answers no, so no pipeline was built for it. Ask that query first, "
+        "and where it answers no build the Float kernel instead.");
 }
 
 void ComputeProgram::reportThreadgroupMemoryOverBudget(const Device& device) const

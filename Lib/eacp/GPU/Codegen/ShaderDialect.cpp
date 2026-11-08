@@ -92,7 +92,12 @@ std::string_view findRename(std::span<const BuiltinRename> exact,
 std::string_view findDialectRename(Backend backend, const std::string& name)
 {
     if (backend == Backend::DirectX)
+    {
+        if (const auto* spelling = hlslTypeNameFor(name); spelling != nullptr)
+            return spelling;
+
         return findRename(hlslRenames, hlslPrefixRenames, name);
+    }
 
     if (backend == Backend::Metal)
         return findExactRename(metalRenames, name);
@@ -101,6 +106,29 @@ std::string_view findDialectRename(Backend backend, const std::string& name)
         return spelling;
 
     return findRename(glslRenames, glslPrefixRenames, name);
+}
+
+constexpr auto halfExactCalls = Array<std::string_view, 10> {"abs",
+                                                             "min",
+                                                             "max",
+                                                             "clamp",
+                                                             "floor",
+                                                             "ceil",
+                                                             "trunc",
+                                                             "round",
+                                                             "sign",
+                                                             "transpose"};
+
+bool isRoundedToHalf(const Expr& expr)
+{
+    if (!isHalf(expr.type))
+        return false;
+
+    if (expr.kind == ExprKind::Binary || expr.kind == ExprKind::Mul)
+        return true;
+
+    return expr.kind == ExprKind::Call
+           && !halfExactCalls.contains(std::string_view {expr.text});
 }
 
 std::string getCallName(Backend backend, const std::string& name)
@@ -166,11 +194,16 @@ std::string_view getMetalPackedVectorType(ValueType type)
         Array<std::string_view, 3> {"packed_uint2", "packed_uint3", "packed_uint4"};
     constexpr auto ints =
         Array<std::string_view, 3> {"packed_int2", "packed_int3", "packed_int4"};
+    constexpr auto halves =
+        Array<std::string_view, 3> {"packed_half2", "packed_half3", "packed_half4"};
 
     auto width = std::clamp(componentCount(type), 2, 4) - 2;
 
     if (isSignedInteger(type))
         return ints[width];
+
+    if (isHalf(type))
+        return halves[width];
 
     return isUnsignedInteger(type) ? uints[width] : floats[width];
 }

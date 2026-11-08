@@ -3,9 +3,11 @@
 nano_add_executable(CpuComputeTests
         SOURCES AtomicOpsTests.cpp BatchTests.cpp ControlFlowTests.cpp
                 CountingHeap.cpp DispatchGroupsTests.cpp
-                ExecutorTests.cpp GroupTests.cpp HelperTests.cpp
-                KernelBuiltInTests.cpp KernelTests.cpp SimdMatrixTests.cpp
-                TypesTests.cpp WgslBuiltinTests.cpp
+                ExecutorTests.cpp Float16Tests.cpp FunctionTests.cpp GroupTests.cpp
+                HelperTests.cpp
+                KernelBuiltInTests.cpp KernelTests.cpp OverrideTests.cpp
+                SimdMatrixTests.cpp StructTests.cpp TypesTests.cpp
+                WgslBuiltinTests.cpp
         TARGETS eacp-cpu-compute)
 
 # The replaced operator new stays out of every unity batch, where GCC would inline

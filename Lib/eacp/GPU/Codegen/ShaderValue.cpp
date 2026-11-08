@@ -69,6 +69,9 @@ template struct Swizzles<Ints, 4>;
 template struct Swizzles<Bools, 2>;
 template struct Swizzles<Bools, 3>;
 template struct Swizzles<Bools, 4>;
+template struct Swizzles<Halves, 2>;
+template struct Swizzles<Halves, 3>;
+template struct Swizzles<Halves, 4>;
 } // namespace detail
 
 Float4 sample(const Texture2D& texture, const Float2& coordinates)
@@ -342,9 +345,17 @@ T readBufferVectorLoad(
     return result;
 }
 
+int literalNodeBeside(const ValueHandle& value, float literal)
+{
+    if (isHalf(value.graph->expr(value.node).type))
+        return value.graph->addHalfConstant(literal);
+
+    return value.graph->addConstant(literal);
+}
+
 ValueHandle constantOn(const ValueHandle& value, float literal)
 {
-    return {value.graph, value.graph->addConstant(literal)};
+    return {value.graph, literalNodeBeside(value, literal)};
 }
 
 ValueHandle uintConstantOn(const ValueHandle& value, unsigned literal)
@@ -366,9 +377,166 @@ void anchorAt(const ValueHandle*&, float) {}
 
 int argumentNode(const ValueHandle& anchor, float literal)
 {
-    return anchor.graph->addConstant(literal);
+    return literalNodeBeside(anchor, literal);
 }
 } // namespace detail
+
+Half HalfInputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Half>(graph, slot, index);
+}
+
+Half HalfInputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Half2 HalfInputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Half2>(
+        graph, slot, index, ValueType::Half2, 2);
+}
+
+Half3 HalfInputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Half3>(
+        graph, slot, index, ValueType::Half3, 3);
+}
+
+Half4 HalfInputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Half4>(
+        graph, slot, index, ValueType::Half4, 4);
+}
+
+Half2 HalfInputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Half3 HalfInputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Half4 HalfInputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+Half HalfOutputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Half>(graph, slot, index);
+}
+
+Half HalfOutputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Half2 HalfOutputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVector<Half2>(graph, slot, index, ValueType::Half2, 2);
+}
+
+Half3 HalfOutputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVector<Half3>(graph, slot, index, ValueType::Half3, 3);
+}
+
+Half4 HalfOutputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVector<Half4>(graph, slot, index, ValueType::Half4, 4);
+}
+
+Half2 HalfOutputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Half3 HalfOutputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Half4 HalfOutputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+UInt HalfOutputBuffer::index(unsigned value) const
+{
+    return detail::bufferIndex(graph, value);
+}
+
+Half toHalf(const UInt& value)
+{
+    return detail::convertTo<Half>(value);
+}
+
+Half toHalf(const Int& value)
+{
+    return detail::convertTo<Half>(value);
+}
+
+Half toHalf(const Bool& value)
+{
+    return detail::convertTo<Half>(value);
+}
+
+Half2x2 half2x2(const Half2& c0, const Half2& c1)
+{
+    return detail::construct<Half2x2>(
+        *c0.graph, ValueType::Half2x2, {c0.node, c1.node});
+}
+
+Half3x3 half3x3(const Half3& c0, const Half3& c1, const Half3& c2)
+{
+    return detail::construct<Half3x3>(
+        *c0.graph, ValueType::Half3x3, {c0.node, c1.node, c2.node});
+}
+
+Half4x4 half4x4(const Half4& c0, const Half4& c1, const Half4& c2, const Half4& c3)
+{
+    return detail::construct<Half4x4>(
+        *c0.graph, ValueType::Half4x4, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Half2x3 half2x3(const Half3& c0, const Half3& c1)
+{
+    return detail::construct<Half2x3>(
+        *c0.graph, ValueType::Half2x3, {c0.node, c1.node});
+}
+
+Half2x4 half2x4(const Half4& c0, const Half4& c1)
+{
+    return detail::construct<Half2x4>(
+        *c0.graph, ValueType::Half2x4, {c0.node, c1.node});
+}
+
+Half3x2 half3x2(const Half2& c0, const Half2& c1, const Half2& c2)
+{
+    return detail::construct<Half3x2>(
+        *c0.graph, ValueType::Half3x2, {c0.node, c1.node, c2.node});
+}
+
+Half3x4 half3x4(const Half4& c0, const Half4& c1, const Half4& c2)
+{
+    return detail::construct<Half3x4>(
+        *c0.graph, ValueType::Half3x4, {c0.node, c1.node, c2.node});
+}
+
+Half4x2 half4x2(const Half2& c0, const Half2& c1, const Half2& c2, const Half2& c3)
+{
+    return detail::construct<Half4x2>(
+        *c0.graph, ValueType::Half4x2, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Half4x3 half4x3(const Half3& c0, const Half3& c1, const Half3& c2, const Half3& c3)
+{
+    return detail::construct<Half4x3>(
+        *c0.graph, ValueType::Half4x3, {c0.node, c1.node, c2.node, c3.node});
+}
 
 Float InputBuffer::operator[](const UInt& index) const
 {
@@ -1547,6 +1715,15 @@ EACP_DEFINE_MATRIX_SCALE(Float3x2)
 EACP_DEFINE_MATRIX_SCALE(Float3x4)
 EACP_DEFINE_MATRIX_SCALE(Float4x2)
 EACP_DEFINE_MATRIX_SCALE(Float4x3)
+EACP_DEFINE_MATRIX_SCALE(Half2x2)
+EACP_DEFINE_MATRIX_SCALE(Half3x3)
+EACP_DEFINE_MATRIX_SCALE(Half4x4)
+EACP_DEFINE_MATRIX_SCALE(Half2x3)
+EACP_DEFINE_MATRIX_SCALE(Half2x4)
+EACP_DEFINE_MATRIX_SCALE(Half3x2)
+EACP_DEFINE_MATRIX_SCALE(Half3x4)
+EACP_DEFINE_MATRIX_SCALE(Half4x2)
+EACP_DEFINE_MATRIX_SCALE(Half4x3)
 
 #undef EACP_DEFINE_MATRIX_SCALE
 } // namespace eacp::GPU

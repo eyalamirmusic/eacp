@@ -7,7 +7,8 @@ namespace eacp::GPU::ShaderEmission
 namespace
 {
 // Leaf reads and swizzles stay inline: naming them saves nothing.
-constexpr auto kindsWorthALocal = Array<ExprKind, 17> {ExprKind::Construct,
+constexpr auto kindsWorthALocal = Array<ExprKind, 18> {ExprKind::FunctionCall,
+                                                       ExprKind::Construct,
                                                        ExprKind::Call,
                                                        ExprKind::Unary,
                                                        ExprKind::Binary,
@@ -117,6 +118,29 @@ bool isLocalWanted(ExprKind kind)
     return kindsWorthALocal.contains(kind);
 }
 
+bool isDerivativeCall(const Expr& expr)
+{
+    return expr.text == "dfdx" || expr.text == "dfdy" || expr.text == "fwidth";
+}
+
+// A plain sample's level is derived unless it was given one; a layered or a
+// comparison one has no level form at all.
+bool takesDerivedLevel(const ShaderGraph& graph, const Expr& expr)
+{
+    switch (expr.kind)
+    {
+        case ExprKind::TextureFunction:
+            return usesImplicitDerivatives(textureFunctionNamed(expr.text));
+        case ExprKind::Sample:
+            return expr.text == "compare" || isLayered(graph.textureKind(expr.index))
+                   || expr.args.size() < 2;
+        case ExprKind::Call:
+            return isDerivativeCall(expr);
+        default:
+            return false;
+    }
+}
+
 void countUses(const ShaderGraph& graph,
                int node,
                Vector<int>& uses,
@@ -193,6 +217,9 @@ void collectWrites(const ShaderGraph& graph,
     if (variableWritingStatements.contains(statement.kind))
         written[statement.slot] = 1;
 
+    if (statement.kind == StatementKind::Call && statement.slot >= 0)
+        written[statement.slot] = 1;
+
     if (statement.exchanged >= 0)
         written[statement.exchanged] = 1;
 
@@ -226,8 +253,21 @@ void collectBufferWrites(const ShaderGraph& graph,
     if (doesWriteBufferSlotField(statement))
         written[statement.bufferSlot] = 1;
 
+    if (statement.kind == StatementKind::Call && statement.value >= 0)
+        collectCalledBufferWrites(graph, graph.expr(statement.value).index, written);
+
     for (auto body: getNestedBodies(statement))
         collectBlockBufferWrites(graph, body, written);
+}
+
+// What a function writes is what a call of it writes, its callees' included -
+// which its own statements reach, since a function writing storage is called
+// as a statement.
+void collectCalledBufferWrites(const ShaderGraph& graph,
+                               int function,
+                               Vector<char>& written)
+{
+    collectBlockBufferWrites(graph, graph.function(function).body, written);
 }
 
 bool StalenessQuery::doesReadWrittenVariable(const Expr& expr) const

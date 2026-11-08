@@ -51,9 +51,9 @@ void assignElement(const Context& context,
             isSigned ? std::clamp(Lanes::toSigned(index), 0, last)
                      : static_cast<int>(std::min(index, static_cast<Word>(last)));
 
-        for (auto component = 0; component < variable.components; ++component)
+        for (auto component = 0; component < value.components; ++component)
         {
-            auto row = element * variable.components + component;
+            auto row = element * variable.components + step.component + component;
             context.lanes(variable.storage)[row * stride + lane] =
                 context.lanes(value, component)[lane];
         }
@@ -80,12 +80,12 @@ void assignVariable(const Context& context,
     }
 
     for (auto element = 0; element < variable.elements; ++element)
-        for (auto component = 0; component < variable.components; ++component)
+        for (auto component = 0; component < value.components; ++component)
             blendRow(context,
                      variable.storage
-                         + static_cast<std::uint32_t>(
-                             (element * variable.components + component)
-                             * context.stride),
+                         + static_cast<std::uint32_t>((element * variable.components
+                                                       + step.component + component)
+                                                      * context.stride),
                      context.lanes(value, component),
                      frame.mask);
 }
@@ -226,6 +226,32 @@ void storeAtomically(const Context& context,
     forEachActiveLane(frame.mask, context.plan.batchLanes(), store);
 }
 
+// A struct field, or the element whole, a component at a time from the flat
+// value every lane evaluated before any of them stores.
+void storeStructFields(const Context& context,
+                       const Plan::Step& step,
+                       const MaskFrame& frame,
+                       const SlotView& view)
+{
+    const auto* indices = context.lanes(context.plan.node(step.index));
+    const auto& value = context.plan.node(step.value);
+
+    auto store = [&](int lane)
+    {
+        auto element = indices[lane];
+
+        if (element >= view.count)
+            return;
+
+        for (auto component = 0; component < value.components; ++component)
+            view.storeStruct(element,
+                             step.component + component,
+                             context.lanes(value, component)[lane]);
+    };
+
+    forEachActiveLane(frame.mask, context.plan.batchLanes(), store);
+}
+
 void storeElements(const Context& context,
                    const Plan::Step& step,
                    const MaskFrame& frame,
@@ -238,13 +264,19 @@ void storeElements(const Context& context,
     if (view.count == 0)
         return;
 
+    if (view.structStride > 0)
+    {
+        storeStructFields(context, step, frame, view);
+        return;
+    }
+
     if (width == 1 && context.plan.access(step.slot) == BufferAccess::Atomic)
     {
         storeAtomically(context, step, frame, view);
         return;
     }
 
-    if (step.ramp)
+    if (step.ramp && !view.half)
     {
         storeRamp(context, step, frame, width, step.rampScale);
         return;
@@ -253,7 +285,8 @@ void storeElements(const Context& context,
     const auto* indices = context.lanes(context.plan.node(step.index));
     const auto& value = context.plan.node(step.value);
 
-    if (width == 1 && isContiguousRow(indices, context.plan.batchLanes()))
+    if (width == 1 && !view.half
+        && isContiguousRow(indices, context.plan.batchLanes()))
     {
         storeRamp(context, step, frame, width, 1u);
         return;
@@ -663,6 +696,23 @@ void runSwitch(const Context& context,
     }
 }
 
+// An inlined function's body, under the caller's lanes. Its frame has no
+// parent and no loop around it, so a return in the body ends those lanes for
+// the body alone and the caller carries on with every lane it had. The step
+// evaluates nothing of its own, but values its body shares with later steps
+// are hoisted to it.
+void runCall(const Context& context,
+             const Plan::Step& step,
+             const MaskFrame& frame,
+             int depth)
+{
+    evaluateStep(context, step);
+
+    auto body = MaskFrame {statementFrame(context, depth, 0), nullptr};
+    Lanes::copy(body.mask, frame.mask, context.stride);
+    runBlock(context, step.body, body, depth + 1, nullptr);
+}
+
 void runLoop(const Context& context,
              const Plan::Step& step,
              MaskFrame& frame,
@@ -759,6 +809,10 @@ void runBlock(const Context& context,
             case StatementKind::Return:
                 returnLanes(frame, loop, context.stride);
                 return;
+
+            case StatementKind::Call:
+                runCall(context, step, frame, depth);
+                break;
 
             case StatementKind::Store:
                 storeElements(context, step, frame, 1);

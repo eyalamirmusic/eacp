@@ -4,6 +4,7 @@
 #include "ShaderBindings.h"
 #include "ShaderComputeEmitter.h"
 #include "ShaderDeclarations.h"
+#include "ShaderFunctionEmission.h"
 #include "ShaderHelpers.h"
 #include "ShaderStageEmitter.h"
 
@@ -32,6 +33,7 @@ struct StageVarying
     ValueType type = ValueType::Float;
     int sourceNode = -1;
     int attribute = -1;
+    Interpolation interpolation;
 };
 
 Vector<int> getVertexStageRoots(const ShaderGraph& graph)
@@ -45,7 +47,8 @@ Vector<int> getVertexStageRoots(const ShaderGraph& graph)
     return roots;
 }
 
-// The vertex outputs and every expression the vertex stage's statements read.
+// The vertex outputs and every expression the vertex stage's statements read,
+// the functions it calls included.
 Vector<int> getVertexStatementRoots(const ShaderGraph& graph)
 {
     auto roots = getVertexStageRoots(graph);
@@ -54,6 +57,7 @@ Vector<int> getVertexStatementRoots(const ShaderGraph& graph)
         collectStatementExpressions(
             graph, graph.vertexBlock(), LoopConditions::Included, roots);
 
+    appendFunctionBodyRoots(graph, roots);
     return roots;
 }
 
@@ -76,6 +80,7 @@ Vector<int> getFragmentStageRoots(const ShaderGraph& graph)
 
     collectStatementExpressions(
         graph, ShaderGraph::rootBlock, LoopConditions::Included, roots);
+    appendFunctionBodyRoots(graph, roots);
     return roots;
 }
 
@@ -264,29 +269,6 @@ Vector<int> collectReachedNodes(const ShaderGraph& graph, const Vector<int>& roo
     return reached;
 }
 
-bool isDerivativeCall(const Expr& expr)
-{
-    return expr.text == "dfdx" || expr.text == "dfdy" || expr.text == "fwidth";
-}
-
-// A plain sample's level is derived unless it was given one; a layered or a
-// comparison one has no level form at all.
-bool takesDerivedLevel(const ShaderGraph& graph, const Expr& expr)
-{
-    switch (expr.kind)
-    {
-        case ExprKind::TextureFunction:
-            return usesImplicitDerivatives(textureFunctionNamed(expr.text));
-        case ExprKind::Sample:
-            return expr.text == "compare" || isLayered(graph.textureKind(expr.index))
-                   || expr.args.size() < 2;
-        case ExprKind::Call:
-            return isDerivativeCall(expr);
-        default:
-            return false;
-    }
-}
-
 bool readsTextureSlot(ExprKind kind)
 {
     return kind == ExprKind::Sample || kind == ExprKind::Fetch
@@ -301,7 +283,7 @@ bool readsOnlyVariablesOf(const ShaderGraph& graph,
     {
         const auto& expr = graph.expr(node);
 
-        if (expr.kind == ExprKind::VarRead
+        if (expr.kind == ExprKind::VarRead && graph.variableFunction(expr.index) < 0
             && graph.isVertexVariable(expr.index) != vertexStage)
             return false;
     }
@@ -343,10 +325,14 @@ Vector<StageVarying> getStageVaryings(const ShaderGraph& graph,
     auto slots = Vector<StageVarying> {};
 
     for (const auto& varying: graph.varyings())
-        slots.add(StageVarying {varying.type, varying.sourceNode, -1});
+        slots.add(StageVarying {
+            varying.type, varying.sourceNode, -1, varying.interpolation});
 
     for (auto attribute: promoted.carried)
-        slots.add(StageVarying {graph.inputs()[attribute], -1, attribute});
+    {
+        auto type = graph.inputs()[attribute];
+        slots.add(StageVarying {type, -1, attribute, defaultInterpolation(type)});
+    }
 
     return slots;
 }
@@ -372,11 +358,11 @@ std::string formatBufferParameters(const ShaderGraph& graph,
 
     for (auto i = 0; i < used.size(); ++i)
         if (used[i] != 0)
-            source += Strings::format(
-                ",\n    {} buffer{} [[buffer({})]]",
-                getMetalBufferType(BufferAccess::Read, graph.storageElementType(i)),
-                i,
-                RenderPass::bufferBase + i);
+            source +=
+                Strings::format(",\n    {} buffer{} [[buffer({})]]",
+                                getMetalSlotBufferType(graph, BufferAccess::Read, i),
+                                i,
+                                RenderPass::bufferBase + i);
 
     return source;
 }
@@ -439,6 +425,9 @@ public:
         if (backend == Backend::DirectX)
             source += printHlslBindings();
 
+        if (!isGlsl())
+            source += printFunctions(getBothStagesRoots());
+
         source += printVertexOpening();
         source += printVertexBody();
         source += printFragmentOpening();
@@ -450,6 +439,23 @@ private:
     bool isGlsl() const { return backend == Backend::Vulkan; }
 
     bool hasUniforms() const { return !graph.uniforms().empty(); }
+
+    Vector<int> getBothStagesRoots() const
+    {
+        auto roots = vertexStatementRoots;
+
+        for (auto root: fragmentStatementRoots)
+            roots.add(root);
+
+        return roots;
+    }
+
+    // The functions the roots call, defined ahead of the stage that calls them.
+    std::string printFunctions(const Vector<int>& roots) const
+    {
+        return printFunctionDefinitions(
+            graph, backend, findCalledFunctions(graph, roots));
+    }
 
     bool declaresNoWritableTexture() const
     {
@@ -477,13 +483,14 @@ private:
 
         for (auto i = 0; i < varyings.size(); ++i)
         {
-            auto type = varyings[i].type;
+            const auto& varying = varyings[i];
 
-            source += Strings::format("    {}{} v{}{};\n",
-                                      getFlatQualifier(backend, type),
-                                      getDialectTypeName(backend, type),
-                                      i,
-                                      getVaryingSemantic(backend, i, type));
+            source += Strings::format(
+                "    {}{} v{}{};\n",
+                getInterpolationQualifier(backend, varying.interpolation),
+                getDialectTypeName(backend, varying.type),
+                i,
+                getVaryingSemantic(backend, i, varying.interpolation));
         }
 
         source += "};\n\n";
@@ -580,10 +587,8 @@ private:
             source += "\n";
 
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
-            source += formatGlslBufferBlock(BufferAccess::Read,
-                                            graph.storageElementType(i),
-                                            i,
-                                            vulkanBufferBinding(i));
+            source += formatGlslSlotBufferBlock(
+                graph, BufferAccess::Read, i, vulkanBufferBinding(i));
 
         if (graph.storageBuffers().size() > 0)
             source += "\n";
@@ -613,11 +618,11 @@ private:
             source += "\n";
 
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
-            source += Strings::format(
-                "{} buffer{} : register(t{});\n",
-                getHlslBufferType(BufferAccess::Read, graph.storageElementType(i)),
-                i,
-                RenderPass::bufferRegisterBase + i);
+            source +=
+                Strings::format("{} buffer{} : register(t{});\n",
+                                getHlslSlotBufferType(graph, BufferAccess::Read, i),
+                                i,
+                                RenderPass::bufferRegisterBase + i);
 
         if (graph.storageBuffers().size() > 0)
             source += "\n";
@@ -631,14 +636,15 @@ private:
 
         for (auto i = 0; i < varyings.size(); ++i)
         {
-            auto type = varyings[i].type;
+            const auto& varying = varyings[i];
 
-            source += Strings::format("{}{}{} {} vary{};\n",
-                                      getLocationLayout(i),
-                                      getFlatQualifier(backend, type),
-                                      direction,
-                                      getDialectTypeName(backend, type),
-                                      i);
+            source += Strings::format(
+                "{}{}{} {} vary{};\n",
+                getLocationLayout(i),
+                getInterpolationQualifier(backend, varying.interpolation),
+                direction,
+                getDialectTypeName(backend, varying.type),
+                i);
         }
 
         return source;
@@ -705,7 +711,8 @@ private:
                                       i);
 
         source += printGlslVaryings("out");
-        return source + "\nvoid main()\n{\n";
+        return source + "\n" + printFunctions(vertexStatementRoots)
+               + "void main()\n{\n";
     }
 
     std::string printHlslVertexOpening() const
@@ -855,7 +862,8 @@ private:
         auto source = std::string {"#ifdef EACP_FRAGMENT\n"};
         source += printGlslVaryings("in");
         source += getLocationLayout(0) + "out vec4 fragColor;\n";
-        return source + "\nvoid main()\n{\n";
+        return source + "\n" + printFunctions(fragmentStatementRoots)
+               + "void main()\n{\n";
     }
 
     std::string printFragmentOpening() const
@@ -1016,7 +1024,7 @@ std::uint32_t vertexTextureSlots(const ShaderGraph& graph)
     auto slots = std::uint32_t {0u};
     const auto bitOf = [](int slot) { return std::uint32_t {1u} << slot; };
 
-    for (auto node: collectReachedNodes(graph, getVertexStatementRoots(graph)))
+    for (auto node: vertexStageNodes(graph))
     {
         const auto& expr = graph.expr(node);
 
@@ -1030,9 +1038,29 @@ std::uint32_t vertexTextureSlots(const ShaderGraph& graph)
     return slots;
 }
 
+Vector<int> vertexStageNodes(const ShaderGraph& graph)
+{
+    return collectReachedNodes(graph, getVertexStatementRoots(graph));
+}
+
+Vector<int> fragmentStageNodes(const ShaderGraph& graph)
+{
+    return collectReachedNodes(graph, getFragmentStageRoots(graph));
+}
+
+Vector<EmittedVarying> emittedVaryings(const ShaderGraph& graph)
+{
+    auto result = Vector<EmittedVarying> {};
+
+    for (const auto& varying: getStageVaryings(graph, findPromotedAttributes(graph)))
+        result.add({varying.type, varying.interpolation, varying.attribute});
+
+    return result;
+}
+
 bool vertexUsesImplicitDerivatives(const ShaderGraph& graph)
 {
-    for (auto node: collectReachedNodes(graph, getVertexStatementRoots(graph)))
+    for (auto node: vertexStageNodes(graph))
         if (takesDerivedLevel(graph, graph.expr(node)))
             return true;
 

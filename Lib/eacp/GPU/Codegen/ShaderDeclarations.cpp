@@ -1,5 +1,6 @@
 #include "ShaderDeclarations.h"
 
+#include "ShaderStructEmission.h"
 #include "UniformLayout.h"
 
 #include <eacp/Core/Utils/Format.h>
@@ -12,15 +13,18 @@ namespace eacp::GPU::ShaderEmission
 {
 namespace
 {
+// HLSL holds an f16 buffer as its words, two halves to each.
 struct BufferTypeSpelling
 {
     BufferAccess access;
     std::string_view metalFloat;
     std::string_view metalUInt;
     std::string_view metalInt;
+    std::string_view metalHalf;
     std::string_view hlslFloat;
     std::string_view hlslUInt;
     std::string_view hlslInt;
+    std::string_view hlslHalf;
 };
 
 constexpr auto bufferTypeSpellings = Array<BufferTypeSpelling, 3> {
@@ -28,23 +32,29 @@ constexpr auto bufferTypeSpellings = Array<BufferTypeSpelling, 3> {
      "device const float*",
      "device const uint*",
      "device const int*",
+     "device const half*",
      "StructuredBuffer<float>",
      "StructuredBuffer<uint>",
-     "StructuredBuffer<int>"},
+     "StructuredBuffer<int>",
+     "StructuredBuffer<uint>"},
     {BufferAccess::Write,
      "device float*",
      "device uint*",
      "device int*",
+     "device half*",
      "RWStructuredBuffer<float>",
      "RWStructuredBuffer<uint>",
-     "RWStructuredBuffer<int>"},
+     "RWStructuredBuffer<int>",
+     "RWStructuredBuffer<uint>"},
     {BufferAccess::Atomic,
      "device atomic_uint*",
      "device atomic_uint*",
      "device atomic_int*",
+     "device atomic_uint*",
      "RWStructuredBuffer<uint>",
      "RWStructuredBuffer<uint>",
-     "RWStructuredBuffer<int>"},
+     "RWStructuredBuffer<int>",
+     "RWStructuredBuffer<uint>"},
 };
 
 const BufferTypeSpelling& findBufferTypeSpelling(BufferAccess access)
@@ -255,6 +265,9 @@ std::string_view getGlslBufferElement(BufferAccess access, ValueType elementType
     if (access == BufferAccess::Atomic || elementType == ValueType::UInt)
         return "uint";
 
+    if (elementType == ValueType::Half)
+        return "float16_t";
+
     return "float";
 }
 
@@ -365,6 +378,9 @@ std::string_view getMetalBufferType(BufferAccess access, ValueType elementType)
     if (elementType == ValueType::Int)
         return spelling.metalInt;
 
+    if (elementType == ValueType::Half)
+        return spelling.metalHalf;
+
     return elementType == ValueType::UInt ? spelling.metalUInt : spelling.metalFloat;
 }
 
@@ -374,6 +390,9 @@ std::string_view getHlslBufferType(BufferAccess access, ValueType elementType)
 
     if (elementType == ValueType::Int)
         return spelling.hlslInt;
+
+    if (elementType == ValueType::Half)
+        return spelling.hlslHalf;
 
     return elementType == ValueType::UInt ? spelling.hlslUInt : spelling.hlslFloat;
 }
@@ -411,11 +430,13 @@ std::string formatUniformBlock(Backend backend,
     return source;
 }
 
+namespace
+{
 // No instance name, so the elements print as buffer<slot> as in the others.
-std::string formatGlslBufferBlock(BufferAccess access,
-                                  ValueType elementType,
-                                  int slot,
-                                  int binding)
+std::string formatGlslBufferBlockOf(BufferAccess access,
+                                    std::string_view element,
+                                    int slot,
+                                    int binding)
 {
     return Strings::format(
         "layout(std430, set = 0, binding = {}) {}buffer Buffer{}\n{{\n    {} "
@@ -423,8 +444,51 @@ std::string formatGlslBufferBlock(BufferAccess access,
         binding,
         getGlslBufferQualifier(access),
         slot,
-        getGlslBufferElement(access, elementType),
+        element,
         slot);
+}
+} // namespace
+
+std::string formatGlslBufferBlock(BufferAccess access,
+                                  ValueType elementType,
+                                  int slot,
+                                  int binding)
+{
+    return formatGlslBufferBlockOf(
+        access, getGlslBufferElement(access, elementType), slot, binding);
+}
+
+std::string
+    getMetalSlotBufferType(const ShaderGraph& graph, BufferAccess access, int slot)
+{
+    if (graph.storageStructType(slot) >= 0)
+        return getMetalStructBufferType(graph, access, slot);
+
+    return std::string(getMetalBufferType(access, graph.storageElementType(slot)));
+}
+
+std::string
+    getHlslSlotBufferType(const ShaderGraph& graph, BufferAccess access, int slot)
+{
+    if (graph.storageStructType(slot) >= 0)
+        return std::string(getHlslStructBufferType(access));
+
+    return std::string(getHlslBufferType(access, graph.storageElementType(slot)));
+}
+
+std::string formatGlslSlotBufferBlock(const ShaderGraph& graph,
+                                      BufferAccess access,
+                                      int slot,
+                                      int binding)
+{
+    auto structId = graph.storageStructType(slot);
+
+    if (structId >= 0)
+        return formatGlslBufferBlockOf(
+            access, getStructName(graph, structId), slot, binding);
+
+    return formatGlslBufferBlock(
+        access, graph.storageElementType(slot), slot, binding);
 }
 
 std::string_view getMetalTextureType(TextureKind kind)

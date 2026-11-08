@@ -292,6 +292,16 @@ bool isBaseStorageImageFormat(TextureFormat format)
 }
 } // namespace
 
+bool Device::supportsShaderFloat16() const
+{
+    return isValid() && getVulkanShared().supportsShaderFloat16();
+}
+
+bool Device::supportsSampleRateShading() const
+{
+    return isValid() && getVulkanShared().supportsSampleRateShading();
+}
+
 bool Device::supportsComputeReadWrite(TextureFormat format) const
 {
     if (!supportsComputeWrite(format))

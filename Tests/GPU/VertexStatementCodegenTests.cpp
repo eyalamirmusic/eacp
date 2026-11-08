@@ -222,9 +222,7 @@ auto tStatementFree =
     check(sources.metal == statementFreeMetal, sources.metal);
     check(sources.hlsl == statementFreeHlsl, sources.hlsl);
     check(sources.glsl == statementFreeGlsl, sources.glsl);
-    check(
-        buildShader(shader.builder.graph(), ShaderBackend::Metal).vertexTextureSlots
-        == 0u);
+    check(vertexTextureSlots(shader.builder.graph()) == 0u);
 
     expectGlslCompiles(shader.builder.graph());
 };
@@ -689,7 +687,7 @@ auto tArrayElements =
     check(!contains(metal.fragment, "uniforms"), metal.fragment);
     check(!contains(metal.vertex, "buffer0"), metal.vertex);
 
-    check(buildShader(graph, ShaderBackend::Metal).vertexReadsUniforms);
+    check(buildShader(graph, ShaderBackend::Metal).vertexReadsUniforms());
 
     expectGlslCompiles(graph);
 };

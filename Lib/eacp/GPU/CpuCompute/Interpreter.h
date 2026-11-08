@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Helpers.h"
 #include "Lanes.h"
 #include "Plan.h"
 
@@ -60,10 +61,16 @@ struct AtomicOutcome
     bool exchanged = false;
 };
 
+// A bound storage slot. An f16 one holds two-byte elements, loaded widened to
+// the float lane they are computed in and stored narrowed back - exactly, the
+// lane having been rounded to a half where it was computed.
 struct SlotView
 {
     Word load(Word element) const
     {
+        if (half)
+            return Lanes::toWord(widenHalf(loadHalfBits(element)));
+
         auto word = Word {};
         std::memcpy(&word, data + sizeof(Word) * element, sizeof(Word));
         return word;
@@ -71,7 +78,21 @@ struct SlotView
 
     void store(Word element, Word word) const
     {
+        if (half)
+        {
+            auto bits = narrowToHalf(Lanes::toFloat(word));
+            std::memcpy(data + sizeof(bits) * element, &bits, sizeof(bits));
+            return;
+        }
+
         std::memcpy(data + sizeof(Word) * element, &word, sizeof(Word));
+    }
+
+    std::uint16_t loadHalfBits(Word element) const
+    {
+        auto bits = std::uint16_t {};
+        std::memcpy(&bits, data + sizeof(bits) * element, sizeof(bits));
+        return bits;
     }
 
     // Only an Atomic slot takes these, and it is bound from a span of uint32_t
@@ -140,8 +161,47 @@ struct SlotView
         return reinterpret_cast<Word*>(data)[element];
     }
 
+    // A struct slot's flat component `which` of `element`, at the byte its
+    // layout gives it: an f16 widened and narrowed as a half slot's is.
+    Word loadStruct(Word element, int which) const
+    {
+        const auto& component = components[which];
+        const auto* at = data + std::size_t {element} * structStride
+                         + static_cast<std::size_t>(component.offset);
+
+        if (component.half)
+        {
+            auto bits = std::uint16_t {};
+            std::memcpy(&bits, at, sizeof(bits));
+            return Lanes::toWord(widenHalf(bits));
+        }
+
+        auto word = Word {};
+        std::memcpy(&word, at, sizeof(Word));
+        return word;
+    }
+
+    void storeStruct(Word element, int which, Word word) const
+    {
+        const auto& component = components[which];
+        auto* at = data + std::size_t {element} * structStride
+                   + static_cast<std::size_t>(component.offset);
+
+        if (component.half)
+        {
+            auto bits = narrowToHalf(Lanes::toFloat(word));
+            std::memcpy(at, &bits, sizeof(bits));
+            return;
+        }
+
+        std::memcpy(at, &word, sizeof(Word));
+    }
+
     std::byte* data = nullptr;
     std::uint32_t count = 0;
+    bool half = false;
+    std::size_t structStride = 0;
+    const StructComponent* components = nullptr;
 };
 
 struct Context

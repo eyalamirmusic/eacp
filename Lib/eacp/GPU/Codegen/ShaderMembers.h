@@ -8,6 +8,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Texture/Sampler.h"
+#include "MemberList.h"
 #include "ShaderBuilder.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
@@ -274,6 +275,10 @@ int memberOffset(M C::* member)
 template <typename T>
 struct Uniform : T
 {
+    static_assert(!isHalf(ValueTypeOf<T>::value),
+                  "eacp: an f16 cannot be a uniform. Send a Float and convert "
+                  "with toHalf() - see ShaderBuilder::uniform.");
+
     using Cpu = typename CpuValueOf<T>::type;
 
     Uniform& operator=(const Cpu& newValue)
@@ -560,6 +565,82 @@ struct Uniform<IntOutputBuffer> : IntOutputBuffer
     BufferRange value {};
 };
 
+// The f16 pair, bound the same way; their bytes are IEEE binary16s. On D3D the
+// range's offset and size are whole 4-byte words.
+template <>
+struct Uniform<HalfInputBuffer> : HalfInputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer);
+
+    constexpr Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
+template <>
+struct Uniform<HalfOutputBuffer> : HalfOutputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer);
+
+    constexpr Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
+// A buffer of a shader struct (ShaderStruct.h), bound the same way; its bytes
+// are laid out as StructLayout<T> says, which StructBufferData fills.
+template <ShaderStructLike T>
+struct Uniform<StructInputBuffer<T>> : StructInputBuffer<T>
+{
+    Uniform& operator=(const Buffer& newBuffer)
+    {
+        value = BufferRange::of(newBuffer);
+        return *this;
+    }
+
+    constexpr Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
+template <ShaderStructLike T>
+struct Uniform<StructOutputBuffer<T>> : StructOutputBuffer<T>
+{
+    Uniform& operator=(const Buffer& newBuffer)
+    {
+        value = BufferRange::of(newBuffer);
+        return *this;
+    }
+
+    constexpr Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
 // The atomic sibling, bound the same way an output is. The buffer's contents
 // are unsigned integers rather than floats, so the bytes handed to it want to
 // start as such - a buffer of zeroed uint32s, not of zeroed floats, though the
@@ -710,6 +791,10 @@ public:
 
     void operator()(const char* name, Uniform<IntOutputBuffer>& member);
 
+    void operator()(const char* name, Uniform<HalfInputBuffer>& member);
+
+    void operator()(const char* name, Uniform<HalfOutputBuffer>& member);
+
     void operator()(const char* name, Uniform<AtomicBuffer>& member);
 
     void operator()(const char* name, Uniform<IntAtomicBuffer>& member);
@@ -725,6 +810,26 @@ public:
                     Uniform<StorageTexture<Kind, Format, Access>>& member)
     {
         onStorageTexture(name, member.layout, member, member.value);
+    }
+
+    template <ShaderStructLike T>
+    void operator()(const char* name, Uniform<StructInputBuffer<T>>& member)
+    {
+        onStructBuffer(name,
+                       BufferAccess::Read,
+                       member,
+                       detail::declareStruct<T>,
+                       member.value);
+    }
+
+    template <ShaderStructLike T>
+    void operator()(const char* name, Uniform<StructOutputBuffer<T>>& member)
+    {
+        onStructBuffer(name,
+                       BufferAccess::Write,
+                       member,
+                       detail::declareStruct<T>,
+                       member.value);
     }
 
 protected:
@@ -767,9 +872,20 @@ protected:
     virtual void onIntInputBuffer(const char*, IntInputBuffer&, const BufferRange&);
     virtual void
         onIntOutputBuffer(const char*, IntOutputBuffer&, const BufferRange&);
+    virtual void
+        onHalfInputBuffer(const char*, HalfInputBuffer&, const BufferRange&);
+    virtual void
+        onHalfOutputBuffer(const char*, HalfOutputBuffer&, const BufferRange&);
     virtual void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&);
     virtual void
         onIntAtomicBuffer(const char*, IntAtomicBuffer&, const BufferRange&);
+
+    // A struct buffer of either access; `declare` adds its struct to a graph.
+    virtual void onStructBuffer(const char*,
+                                BufferAccess access,
+                                detail::StructBufferHandle&,
+                                int (*declare)(ShaderGraph&),
+                                const BufferRange&);
     virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*);
     virtual void onStorageTexture(const char*,
                                   const StorageTextureLayout&,
@@ -849,6 +965,14 @@ public:
                            IntOutputBuffer& handle,
                            const BufferRange&) override;
 
+    void onHalfInputBuffer(const char*,
+                           HalfInputBuffer& handle,
+                           const BufferRange&) override;
+
+    void onHalfOutputBuffer(const char*,
+                            HalfOutputBuffer& handle,
+                            const BufferRange&) override;
+
     void onAtomicBuffer(const char*,
                         AtomicBuffer& handle,
                         const BufferRange&) override;
@@ -856,6 +980,12 @@ public:
     void onIntAtomicBuffer(const char*,
                            IntAtomicBuffer& handle,
                            const BufferRange&) override;
+
+    void onStructBuffer(const char*,
+                        BufferAccess access,
+                        detail::StructBufferHandle& handle,
+                        int (*declare)(ShaderGraph&),
+                        const BufferRange&) override;
 
     void onWritableTexture(const char*,
                            WritableTexture2D& handle,
@@ -900,28 +1030,8 @@ private:
 };
 } // namespace eacp::GPU
 
-// Member-list reflection in the Miro idiom: list the declared uniform members once
-// and a reflect body is generated that hands each to the visitor by name. Mirrors
-// Miro's MIRO_FOR_EACH macro engine, kept GPU-local so the module needs no
-// serialization dependency.
-#define EACP_GPU_PARENS ()
-
-#define EACP_GPU_EXPAND(...)                                                        \
-    EACP_GPU_EXPAND3(EACP_GPU_EXPAND3(EACP_GPU_EXPAND3(__VA_ARGS__)))
-#define EACP_GPU_EXPAND3(...)                                                       \
-    EACP_GPU_EXPAND2(EACP_GPU_EXPAND2(EACP_GPU_EXPAND2(__VA_ARGS__)))
-#define EACP_GPU_EXPAND2(...)                                                       \
-    EACP_GPU_EXPAND1(EACP_GPU_EXPAND1(EACP_GPU_EXPAND1(__VA_ARGS__)))
-#define EACP_GPU_EXPAND1(...) __VA_ARGS__
-
-#define EACP_GPU_VISIT_FIELD(visitor, field) visitor(#field, field);
-#define EACP_GPU_FIELDS_HELPER(visitor, a, ...)                                     \
-    EACP_GPU_VISIT_FIELD(visitor, a)                                                \
-    __VA_OPT__(EACP_GPU_FIELDS_AGAIN EACP_GPU_PARENS(visitor, __VA_ARGS__))
-#define EACP_GPU_FIELDS_AGAIN() EACP_GPU_FIELDS_HELPER
-#define EACP_GPU_FIELDS(visitor, ...)                                               \
-    __VA_OPT__(EACP_GPU_EXPAND(EACP_GPU_FIELDS_HELPER(visitor, __VA_ARGS__)))
-
+// Member-list reflection (MemberList.h): list the declared uniform members once
+// and a reflect body is generated that hands each to the visitor by name.
 #define EACP_SHADER(...)                                                            \
     void reflectMembers(eacp::GPU::ShaderVisitor& visitor) override                 \
     {                                                                               \

@@ -39,7 +39,11 @@ constexpr std::string_view targetName(Target target)
     return {};
 }
 
-// The log is empty on a clean compile.
+// The log is empty on a clean compile, and holds glslang's warnings beside a
+// successful one as well as its errors beside a failure. Its diagnostics carry
+// a column as well
+// as a line - `ERROR: 0:12:5: 'name' : text` - for parseGlslangLog
+// (Shader/CompilationInfo.h).
 struct CompileResult
 {
     bool succeeded() const;

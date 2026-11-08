@@ -1,5 +1,8 @@
 #include "ShaderHelpers.h"
 
+#include "ShaderOverrideEmission.h"
+#include "ShaderStructEmission.h"
+
 namespace eacp::GPU::ShaderEmission
 {
 namespace
@@ -1311,6 +1314,101 @@ std::string getBitHelperDefinitions(const ShaderGraph& graph, Backend backend)
     return definitions;
 }
 
+// Metal's asinh helper over half, for an f16 argument: Metal converts no
+// vector implicitly, so the float overloads above do not take one.
+std::string getMetalHalfAsinhDefinitions(const ShaderGraph& graph, Backend backend)
+{
+    if (backend != Backend::Metal)
+        return {};
+
+    auto definitions = std::string {};
+
+    for (auto width = 1; width <= 4; ++width)
+    {
+        auto type = halfVectorOf(width);
+
+        if (doesGraphCallHelperAt(graph, "asinh", type))
+            definitions += Strings::format(
+                "{0} eacpAsinh({0} x)\n{{\n    return copysign(asinh(abs(x)), "
+                "x);\n}}\n\n",
+                typeName(type));
+    }
+
+    return definitions;
+}
+
+bool doesGraphRoundToHalfAt(const ShaderGraph& graph, ValueType type)
+{
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        const auto& expr = graph.expr(node);
+
+        if (expr.type == type && isRoundedToHalf(expr))
+            return true;
+    }
+
+    return false;
+}
+
+std::string getRoundHalfVectorOverload(ValueType type)
+{
+    return Strings::format("{0} eacpRoundHalf({0} x)\n{{\n    return "
+                           "f16tof32(f32tof16(x));\n}}\n\n",
+                           hlslTypeName(type));
+}
+
+// HLSL holds a CxR matrix as R rows of C, each a vector f32tof16 takes.
+std::string getRoundHalfMatrixOverload(ValueType type)
+{
+    auto rows = std::string {};
+
+    for (auto row = 0; row < matrixRows(type); ++row)
+        rows += Strings::format("{}eacpRoundHalf(x[{}])", row > 0 ? ", " : "", row);
+
+    return Strings::format(
+        "{0} eacpRoundHalf({0} x)\n{{\n    return {0}({1});\n}}\n\n",
+        hlslTypeName(type),
+        rows);
+}
+
+// The rounding HLSL wraps every f16 result in (isRoundedToHalf), one overload
+// per type that is rounded somewhere; a matrix's leans on its rows'.
+std::string getRoundHalfDefinitions(const ShaderGraph& graph, Backend backend)
+{
+    if (backend != Backend::DirectX)
+        return {};
+
+    auto vectors = Array<bool, 5> {};
+    auto matrices = std::string {};
+
+    for (auto raw = static_cast<int>(ValueType::Half);
+         raw <= static_cast<int>(lastValueType);
+         ++raw)
+    {
+        auto type = static_cast<ValueType>(raw);
+
+        if (!doesGraphRoundToHalfAt(graph, type))
+            continue;
+
+        if (!isMatrix(type))
+        {
+            vectors[componentCount(type)] = true;
+            continue;
+        }
+
+        vectors[matrixColumns(type)] = true;
+        matrices += getRoundHalfMatrixOverload(type);
+    }
+
+    auto definitions = std::string {};
+
+    for (auto width = 1; width <= 4; ++width)
+        if (vectors[width])
+            definitions += getRoundHalfVectorOverload(halfVectorOf(width));
+
+    return definitions + matrices;
+}
+
 std::string getHelperDefinitions(const ShaderGraph& graph, Backend backend)
 {
     auto definitions = std::string {};
@@ -1323,28 +1421,42 @@ std::string getHelperDefinitions(const ShaderGraph& graph, Backend backend)
         definitions += getHelperDefinition(helper, backend);
     }
 
-    return definitions + getBitHelperDefinitions(graph, backend);
+    return getRoundHalfDefinitions(graph, backend) + definitions
+           + getMetalHalfAsinhDefinitions(graph, backend)
+           + getBitHelperDefinitions(graph, backend);
 }
 
-std::string_view getDialectHeader(Backend backend)
+// GLSL's f16 is an extension, and its 16-bit buffers another; both are named
+// only where the shader uses them, so every other source is unchanged.
+std::string getDialectHeader(const ShaderGraph& graph, Backend backend)
 {
     switch (backend)
     {
         case Backend::Metal:
             return "#include <metal_stdlib>\nusing namespace metal;\n\n";
         case Backend::Vulkan:
-            return "#version 450\n\n";
-        case Backend::DirectX:
             break;
+        case Backend::DirectX:
+            return {};
     }
 
-    return {};
+    auto header = std::string {"#version 450\n"};
+
+    if (graph.usesHalf())
+        header +=
+            "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n";
+
+    if (graph.usesHalfStorage())
+        header += "#extension GL_EXT_shader_16bit_storage : require\n";
+
+    return header + "\n";
 }
 } // namespace
 
 std::string getSourcePreamble(const ShaderGraph& graph, Backend backend)
 {
-    return std::string(getDialectHeader(backend))
+    return getDialectHeader(graph, backend) + getOverrideDeclarations(graph, backend)
+           + getStructDeclarations(graph, backend)
            + getHelperDefinitions(graph, backend)
            + getTextureQueryHelpers(graph, backend);
 }

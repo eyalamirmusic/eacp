@@ -3,42 +3,38 @@
 #include "../Pipeline/VertexLayout.h"
 #include "../Shader/ShaderSource.h"
 #include "ShaderGraph.h"
-
-#include <cstdint>
+#include "ShaderReflection.h"
 
 namespace eacp::GPU
 {
 // The output of the EDSL: the native source for the current backend (ready for
-// Device::makeShaderLibrary) plus the vertex layout derived from the very same
-// input declarations. This is the "factory that returns a ShaderSource" the GPU
-// layer was designed around, so call sites consume it with no downstream changes.
+// Device::makeShaderLibrary), the vertex layout derived from the very same
+// input declarations, and the reflection of the graph both were emitted from.
+// This is the "factory that returns a ShaderSource" the GPU layer was designed
+// around, so call sites consume it with no downstream changes.
 struct GeneratedShader
 {
-    ShaderSource source;
-    VertexLayout vertexLayout;
-
     // The grid shape a kernel's body asked for, carried so the dispatch cannot
     // disagree with the entry point that was emitted for it. Meaningless for a
     // render shader.
-    DispatchRank dispatchRank = DispatchRank::OneD;
+    DispatchRank dispatchRank() const;
 
-    // Which stage's expressions read a uniform, taken from the emitter's own
-    // predicates so a bind cannot disagree with the signature that was emitted
-    // for it. RenderPass::draw(program) binds the block to the stage that reads
-    // it and skips the one that does not - an unused bind is what the
-    // validation layer reports for every such pass. Both false for a kernel,
-    // which takes its uniforms as a ComputePass bind instead.
-    bool vertexReadsUniforms = false;
-    bool fragmentReadsUniforms = false;
+    // Which render stage reads the uniform block, from the emitter's own
+    // predicates (ShaderEmitter.h), so a bind cannot disagree with the
+    // signature that was emitted for it. RenderPass::draw(program) binds the
+    // block to the stage that reads it and skips the one that does not - an
+    // unused bind is what the validation layer reports for every such pass.
+    // Both false for a kernel, which takes its uniforms as a ComputePass bind.
+    bool vertexReadsUniforms() const;
+    bool fragmentReadsUniforms() const;
 
-    // One bit per texture slot, sampler slots included, that the vertex stage
-    // reads: the slots ShaderProgram::bindTextures binds to the vertex stage
-    // as well as to the fragment one. Zero for a kernel.
-    std::uint32_t vertexTextureSlots = 0u;
+    // Whether the vertex stage reads texture or sampler `slot`: the slots
+    // ShaderProgram::bindTextures binds to the vertex stage as well as to the
+    // fragment one. False for a kernel.
+    bool vertexReadsTexture(int slot) const;
 
-    constexpr bool vertexReadsTexture(int slot) const
-    {
-        return slot >= 0 && slot < 32 && ((vertexTextureSlots >> slot) & 1u) != 0u;
-    }
+    ShaderSource source;
+    VertexLayout vertexLayout;
+    ShaderReflection reflection;
 };
 } // namespace eacp::GPU

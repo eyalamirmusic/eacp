@@ -4,9 +4,15 @@ nano_add_executable(GPUCodegenTests
         SOURCES
             AtomicCodegenTests.cpp
             AtomicOpsCodegenTests.cpp
+            CompilationInfoTests.cpp
             ComputeKernelCodegenTests.cpp
             ControlFlowCodegenTests.cpp
+            Float16CodegenTests.cpp
+            FunctionCodegenTests.cpp
             GroupReductionCodegenTests.cpp
+            InterpolationCodegenTests.cpp
+            OverrideCodegenTests.cpp
+            ReflectionCodegenTests.cpp
             SamplerBindingCodegenTests.cpp
             ShaderCodegenTests.cpp
             ShaderCompilerTests.cpp
@@ -14,6 +20,7 @@ nano_add_executable(GPUCodegenTests
             SimdMatrixCodegenTests.cpp
             StageBuiltInCodegenTests.cpp
             StorageTextureCodegenTests.cpp
+            StructCodegenTests.cpp
             TextureFunctionCodegenTests.cpp
             TypesCodegenTests.cpp
             VertexStatementCodegenTests.cpp
@@ -30,6 +37,14 @@ function(eacp_enable_glsl_compile_checks target)
 endfunction()
 
 eacp_enable_glsl_compile_checks(GPUCodegenTests)
+
+if (MSVC)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(GPUCodegenTests PRIVATE /clang:-ffp-contract=off)
+    endif ()
+else ()
+    target_compile_options(GPUCodegenTests PRIVATE -ffp-contract=off)
+endif ()
 
 if (NOT EACP_HAS_GPU)
     return ()
@@ -50,6 +65,7 @@ set(gpu_test_sources
         BufferRangeTests.cpp
         CommandBufferTimingTests.cpp
         CommandBufferWaitTests.cpp
+        CompilationInfoDeviceTests.cpp
         CompressedTextureTests.cpp
         CopyTests.cpp
         ComputeBufferRangeTests.cpp
@@ -67,6 +83,7 @@ set(gpu_test_sources
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp
         ExternalGeometryTests.cpp
+        Float16DeviceTests.cpp
         FormatTargetTests.cpp
         TextureFormatTests.cpp
         DrawableCopyTests.cpp
@@ -75,6 +92,7 @@ set(gpu_test_sources
         FrameRedirectTests.cpp
         FrameTimingTests.cpp
         FragmentBuiltInTests.cpp
+        FunctionDeviceTests.cpp
         GPUSmokeTests.cpp
         GPUSnapshotTests.cpp
         GroupReductionTests.cpp
@@ -83,6 +101,7 @@ set(gpu_test_sources
         IndirectDrawTests.cpp
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
+        InterpolationDeviceTests.cpp
         IntrinsicTests.cpp
         KernelBuiltInDeviceTests.cpp
         KernelImageTests.cpp
@@ -93,6 +112,7 @@ set(gpu_test_sources
         MipGenerationTests.cpp
         MultiTargetTests.cpp
         OcclusionQueryTests.cpp
+        OverrideDeviceTests.cpp
         PackedBFloat16Tests.cpp
         PackedHalfTests.cpp
         PackedQuantizedTests.cpp
@@ -120,6 +140,7 @@ set(gpu_test_sources
         StorePlacementTests.cpp
         StreamedRangeDrawTests.cpp
         StreamingBufferTests.cpp
+        StructDeviceTests.cpp
         SubresourceTargetTests.cpp
         SuppliedMipChainTests.cpp
         TextureCreationTests.cpp

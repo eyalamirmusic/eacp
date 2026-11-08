@@ -18,6 +18,16 @@ std::string formatGlslBufferBlock(BufferAccess access,
                                   int slot,
                                   int binding);
 
+// The same three for slot `slot` of the graph, a buffer of structs included.
+std::string
+    getMetalSlotBufferType(const ShaderGraph& graph, BufferAccess access, int slot);
+std::string
+    getHlslSlotBufferType(const ShaderGraph& graph, BufferAccess access, int slot);
+std::string formatGlslSlotBufferBlock(const ShaderGraph& graph,
+                                      BufferAccess access,
+                                      int slot,
+                                      int binding);
+
 std::string_view getMetalTextureType(TextureKind kind);
 std::string_view getHlslTextureType(TextureKind kind);
 // Any slot's declaration, sampled or storage (StorageTextures.h).

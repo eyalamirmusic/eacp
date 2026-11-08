@@ -452,7 +452,7 @@ void evaluateVariableElementRead(const Context& context, const Plan::Node& node)
         {
             auto element =
                 clampedLaneIndex(indices[lane], isSigned, variable.elements);
-            auto row = element * variable.components + component;
+            auto row = element * variable.components + node.component + component;
             out[lane] = storage[row * stride + lane];
         }
     }
@@ -539,7 +539,7 @@ void evaluateBufferRead(const Context& context, const Plan::Node& node)
     const auto& view = context.slots[static_cast<std::size_t>(node.immediate)];
     const auto* indices = context.operand(node, 0, 0);
     auto lanes = context.plan.batchLanes();
-    auto isRamp = node.ramp || isContiguousRow(indices, lanes);
+    auto isRamp = !view.half && (node.ramp || isContiguousRow(indices, lanes));
     auto scale = node.ramp ? node.rampScale : 1u;
     auto rampLanes = isRamp ? lanes : 0;
     auto padding = context.stride - rampLanes;
@@ -553,6 +553,27 @@ void evaluateBufferRead(const Context& context, const Plan::Node& node)
             readRamp(out, indices[0] + offset, scale, view, rampLanes);
 
         readElements(out + rampLanes, indices + rampLanes, offset, view, padding);
+    }
+}
+
+// A field of each lane's element, a component at a time; an element past the
+// binding reads zero, as a buffer's does.
+void evaluateStructRead(const Context& context, const Plan::Node& node)
+{
+    const auto& view = context.slots[static_cast<std::size_t>(node.immediate)];
+    const auto* indices = context.operand(node, 0, 0);
+    auto stride = context.stride;
+
+    for (auto component = 0; component < node.components; ++component)
+    {
+        auto* out = context.lanes(node, component);
+        auto which = node.component + component;
+
+        for (auto lane = 0; lane < stride; ++lane)
+        {
+            auto element = indices[lane];
+            out[lane] = element < view.count ? view.loadStruct(element, which) : 0u;
+        }
     }
 }
 
@@ -776,6 +797,10 @@ void evaluateNode(const Context& context, const Plan::Node& node)
             evaluateBufferRead(context, node);
             return;
 
+        case Op::StructRead:
+            evaluateStructRead(context, node);
+            return;
+
         case Op::ArrayRead:
             evaluateArrayRead(context, node);
             return;
@@ -793,6 +818,17 @@ void evaluateNode(const Context& context, const Plan::Node& node)
             return;
     }
 }
+
+void roundToHalf(const Context& context, const Plan::Node& node)
+{
+    auto toNearestHalf = [](float value) { return quantizeToF16(value); };
+
+    for (auto component = 0; component < node.components; ++component)
+    {
+        auto* lanes = context.lanes(node, component);
+        mapFloats(lanes, lanes, context.stride, toNearestHalf);
+    }
+}
 } // namespace
 
 void evaluateRange(const Context& context, int begin, int end)
@@ -800,6 +836,12 @@ void evaluateRange(const Context& context, int begin, int end)
     const auto& schedule = context.plan.schedule();
 
     for (auto position = begin; position < end; ++position)
-        evaluateNode(context, context.plan.node(schedule[position]));
+    {
+        const auto& node = context.plan.node(schedule[position]);
+        evaluateNode(context, node);
+
+        if (node.roundsToHalf)
+            roundToHalf(context, node);
+    }
 }
 } // namespace eacp::GPU::CpuCompute

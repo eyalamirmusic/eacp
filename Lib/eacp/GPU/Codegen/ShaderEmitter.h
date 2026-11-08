@@ -2,12 +2,12 @@
 
 #include "../Common.h"
 
+#include "ShaderGraph.h"
+
 #include <cstdint>
 
 namespace eacp::GPU
 {
-class ShaderGraph;
-
 // Emit native shader source for a graph. All three dialects are produced by one
 // shared walker, so they stay in lockstep by construction. Pure string
 // generation with no platform APIs, so all three can be produced and tested on
@@ -33,6 +33,27 @@ bool fragmentReadsUniforms(const ShaderGraph& graph);
 // ones the Metal vertex function declares, and so the ones a bind has to reach
 // the vertex stage with.
 std::uint32_t vertexTextureSlots(const ShaderGraph& graph);
+
+// Every node a render stage evaluates: its outputs, the expressions of its
+// statements and of every function it calls, and the elements of the constant
+// arrays it subscripts, stopping at a varying read, past which the value is
+// the vertex stage's. What the questions above are answered from, and what
+// reflection finds a stage's resources in.
+Vector<int> vertexStageNodes(const ShaderGraph& graph);
+Vector<int> fragmentStageNodes(const ShaderGraph& graph);
+
+// One varying the emitted render stages pass, at its place in location order:
+// the declared ones first, then each vertex input the fragment stage reads
+// directly, carried at its type's default interpolation - `attribute` is that
+// input, -1 for a declared varying.
+struct EmittedVarying
+{
+    ValueType type = ValueType::Float;
+    Interpolation interpolation;
+    int attribute = -1;
+};
+
+Vector<EmittedVarying> emittedVaryings(const ShaderGraph& graph);
 
 // Whether the vertex stage reaches anything that takes its level from the
 // fragment's derivatives: sample with no level, sampleBias, sampleCompare, a

@@ -18,6 +18,20 @@ void copyMatrixColumns(ValueType type, const void* data, std::byte* block)
                     columns + column * columnBytes,
                     columnBytes);
 }
+
+template <typename Handle>
+void nameBuiltTexture(const char* name, const Handle& handle)
+{
+    if (handle.graph != nullptr && name != nullptr)
+        handle.graph->nameTexture(handle.slot, name);
+}
+
+template <typename Handle>
+void nameBuiltBuffer(const char* name, const Handle& handle)
+{
+    if (handle.graph != nullptr && name != nullptr)
+        handle.graph->nameStorageBuffer(handle.slot, name);
+}
 } // namespace
 
 ShaderVisitor::~ShaderVisitor() = default;
@@ -101,6 +115,16 @@ void ShaderVisitor::operator()(const char* name, Uniform<IntInputBuffer>& member
 void ShaderVisitor::operator()(const char* name, Uniform<IntOutputBuffer>& member)
 {
     onIntOutputBuffer(name, member, member.value);
+}
+
+void ShaderVisitor::operator()(const char* name, Uniform<HalfInputBuffer>& member)
+{
+    onHalfInputBuffer(name, member, member.value);
+}
+
+void ShaderVisitor::operator()(const char* name, Uniform<HalfOutputBuffer>& member)
+{
+    onHalfOutputBuffer(name, member, member.value);
 }
 
 void ShaderVisitor::operator()(const char* name, Uniform<AtomicBuffer>& member)
@@ -200,11 +224,31 @@ void ShaderVisitor::onIntOutputBuffer(const char*,
 {
 }
 
+void ShaderVisitor::onHalfInputBuffer(const char*,
+                                      HalfInputBuffer&,
+                                      const BufferRange&)
+{
+}
+
+void ShaderVisitor::onHalfOutputBuffer(const char*,
+                                       HalfOutputBuffer&,
+                                       const BufferRange&)
+{
+}
+
 void ShaderVisitor::onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) {}
 
 void ShaderVisitor::onIntAtomicBuffer(const char*,
                                       IntAtomicBuffer&,
                                       const BufferRange&)
+{
+}
+
+void ShaderVisitor::onStructBuffer(const char*,
+                                   BufferAccess,
+                                   detail::StructBufferHandle&,
+                                   int (*)(ShaderGraph&),
+                                   const BufferRange&)
 {
 }
 
@@ -233,140 +277,186 @@ ShaderBuildVisitor::ShaderBuildVisitor(ShaderBuilder& builderToUse)
 {
 }
 
-void ShaderBuildVisitor::onUniform(const char*,
+void ShaderBuildVisitor::onUniform(const char* name,
                                    ValueType type,
                                    detail::ValueHandle& handle,
                                    const void*)
 {
     handle = builder.addUniform(type);
+
+    if (handle.graph != nullptr && name != nullptr)
+        handle.graph->nameUniform(handle.graph->expr(handle.node).index, name);
 }
 
-void ShaderBuildVisitor::onTexture(const char*,
+void ShaderBuildVisitor::onTexture(const char* name,
                                    Texture2D& handle,
                                    const Texture*,
                                    TextureSampling sampling)
 {
     handle = builder.texture(sampling);
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onCubeTexture(const char*,
+void ShaderBuildVisitor::onCubeTexture(const char* name,
                                        TextureCube& handle,
                                        const Texture*,
                                        TextureSampling sampling)
 {
     handle = builder.cubeTexture(sampling);
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onDepthTexture(const char*,
+void ShaderBuildVisitor::onDepthTexture(const char* name,
                                         TextureDepth2D& handle,
                                         const Texture*,
                                         TextureSampling sampling)
 {
     handle = builder.depthTexture(sampling);
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onArrayTexture(const char*,
+void ShaderBuildVisitor::onArrayTexture(const char* name,
                                         Texture2DArray& handle,
                                         const Texture*,
                                         TextureSampling sampling)
 {
     handle = builder.textureArray(sampling);
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onDepthArrayTexture(const char*,
+void ShaderBuildVisitor::onDepthArrayTexture(const char* name,
                                              TextureDepth2DArray& handle,
                                              const Texture*,
                                              TextureSampling sampling)
 {
     handle = builder.depthTextureArray(sampling);
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onTextureOfKind(const char*,
+void ShaderBuildVisitor::onTextureOfKind(const char* name,
                                          TextureKind kind,
                                          detail::TextureHandle& handle,
                                          const Texture*,
                                          TextureSampling sampling)
 {
     handle = builder.textureOfKind(kind, sampling);
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onInputBuffer(const char*,
+void ShaderBuildVisitor::onInputBuffer(const char* name,
                                        InputBuffer& handle,
                                        const BufferRange&)
 {
     handle = builder.inputBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onOutputBuffer(const char*,
+void ShaderBuildVisitor::onOutputBuffer(const char* name,
                                         OutputBuffer& handle,
                                         const BufferRange&)
 {
     handle = builder.outputBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onUIntInputBuffer(const char*,
+void ShaderBuildVisitor::onUIntInputBuffer(const char* name,
                                            UIntInputBuffer& handle,
                                            const BufferRange&)
 {
     handle = builder.uintInputBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onUIntOutputBuffer(const char*,
+void ShaderBuildVisitor::onUIntOutputBuffer(const char* name,
                                             UIntOutputBuffer& handle,
                                             const BufferRange&)
 {
     handle = builder.uintOutputBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onIntInputBuffer(const char*,
+void ShaderBuildVisitor::onIntInputBuffer(const char* name,
                                           IntInputBuffer& handle,
                                           const BufferRange&)
 {
     handle = builder.intInputBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onIntOutputBuffer(const char*,
+void ShaderBuildVisitor::onIntOutputBuffer(const char* name,
                                            IntOutputBuffer& handle,
                                            const BufferRange&)
 {
     handle = builder.intOutputBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onAtomicBuffer(const char*,
+void ShaderBuildVisitor::onHalfInputBuffer(const char* name,
+                                           HalfInputBuffer& handle,
+                                           const BufferRange&)
+{
+    handle = builder.halfInputBuffer();
+    nameBuiltBuffer(name, handle);
+}
+
+void ShaderBuildVisitor::onHalfOutputBuffer(const char* name,
+                                            HalfOutputBuffer& handle,
+                                            const BufferRange&)
+{
+    handle = builder.halfOutputBuffer();
+    nameBuiltBuffer(name, handle);
+}
+
+void ShaderBuildVisitor::onAtomicBuffer(const char* name,
                                         AtomicBuffer& handle,
                                         const BufferRange&)
 {
     handle = builder.atomicBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onIntAtomicBuffer(const char*,
+void ShaderBuildVisitor::onIntAtomicBuffer(const char* name,
                                            IntAtomicBuffer& handle,
                                            const BufferRange&)
 {
     handle = builder.intAtomicBuffer();
+    nameBuiltBuffer(name, handle);
 }
 
-void ShaderBuildVisitor::onWritableTexture(const char*,
+void ShaderBuildVisitor::onStructBuffer(const char* name,
+                                        BufferAccess access,
+                                        detail::StructBufferHandle& handle,
+                                        int (*declare)(ShaderGraph&),
+                                        const BufferRange&)
+{
+    handle = builder.structBuffer(access, declare);
+    nameBuiltBuffer(name, handle);
+}
+
+void ShaderBuildVisitor::onWritableTexture(const char* name,
                                            WritableTexture2D& handle,
                                            const Texture*)
 {
     handle = builder.writableTexture();
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onStorageTexture(const char*,
+void ShaderBuildVisitor::onStorageTexture(const char* name,
                                           const StorageTextureLayout& layout,
                                           detail::TextureHandle& handle,
                                           const Texture*)
 {
     handle = builder.storageTextureOf(layout);
+    nameBuiltTexture(name, handle);
 }
 
-void ShaderBuildVisitor::onSampler(const char*,
+void ShaderBuildVisitor::onSampler(const char* name,
                                    detail::SamplerHandle& handle,
                                    bool comparison,
                                    const Sampler&)
 {
     handle = builder.samplerOf(comparison);
+    nameBuiltTexture(name, handle);
 }
 
 ShaderUploadVisitor::ShaderUploadVisitor(Vector<std::byte>& bytesToFill)

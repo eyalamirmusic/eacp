@@ -1,6 +1,9 @@
 #include "ShaderExpressionPrinter.h"
 
+#include "ShaderFunctionEmission.h"
 #include "ShaderGroupSpelling.h"
+#include "ShaderOverrideEmission.h"
+#include "ShaderStructEmission.h"
 #include "UniformLayout.h"
 
 #include <eacp/Core/Utils/Format.h>
@@ -202,7 +205,7 @@ std::string ExprPrinter::printArguments(const Expr& expr, ValueType wide) const
 
 std::string ExprPrinter::print(int node) const
 {
-    static constexpr auto printers = Array<ExpressionPrintEntry, 29> {
+    static constexpr auto printers = Array<ExpressionPrintEntry, 31> {
         {ExprKind::Input, &ExprPrinter::printInput},
         {ExprKind::Varying, &ExprPrinter::printVarying},
         {ExprKind::Uniform, &ExprPrinter::printUniform},
@@ -232,15 +235,26 @@ std::string ExprPrinter::print(int node) const
         {ExprKind::TextureFunction, &ExprPrinter::printTextureFunction},
         {ExprKind::TextureQuery, &ExprPrinter::printTextureQuery},
         {ExprKind::MatrixColumn, &ExprPrinter::printMatrixColumn},
+        {ExprKind::Override, &ExprPrinter::printOverride},
+        {ExprKind::FunctionCall, &ExprPrinter::printFunctionCall},
     };
 
     const auto& expr = graph.expr(node);
 
     for (const auto& entry: printers)
         if (entry.kind == expr.kind)
-            return (this->*entry.print)(expr);
+            return printRoundedToHalf(expr, (this->*entry.print)(expr));
 
     return {};
+}
+
+std::string ExprPrinter::printRoundedToHalf(const Expr& expr,
+                                            const std::string& text) const
+{
+    if (backend != Backend::DirectX || !isRoundedToHalf(expr))
+        return text;
+
+    return Strings::format("eacpRoundHalf({})", text);
 }
 
 std::string ExprPrinter::printInput(const Expr& expr) const
@@ -294,6 +308,10 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
     if (expr.type == ValueType::Bool)
         return expr.index != 0 ? "true" : "false";
 
+    if (expr.type == ValueType::Half)
+        return formatShaderFloatLiteral(expr.value)
+               + std::string(getHalfLiteralSuffix(backend));
+
     return formatShaderFloatLiteral(expr.value);
 }
 
@@ -302,8 +320,11 @@ std::string ExprPrinter::printConstant(const Expr& expr) const
 // restores the column-major value.
 std::string ExprPrinter::printConstruct(const Expr& expr) const
 {
+    if (expr.type == ValueType::Struct)
+        return printStructValue(expr);
+
     auto transposes = backend == Backend::DirectX && isMatrix(expr.type);
-    auto name = transposes ? std::string_view {typeName(expr.type)}
+    auto name = transposes ? std::string_view {typeName(floatEquivalent(expr.type))}
                            : getDialectTypeName(backend, expr.type);
     auto text =
         Strings::format("{}({})", name, printArguments(expr, ValueType::Float));
@@ -312,6 +333,31 @@ std::string ExprPrinter::printConstruct(const Expr& expr) const
         return Strings::format("transpose({})", text);
 
     return text;
+}
+
+std::string ExprPrinter::printOverride(const Expr& expr) const
+{
+    return getOverrideName(graph, expr.index);
+}
+
+// MSL passes on the module-scope resources the function reaches.
+std::string ExprPrinter::printFunctionCall(const Expr& expr) const
+{
+    auto arguments = Vector<std::string> {};
+
+    for (auto argument: expr.args)
+        arguments.add(printReference(argument));
+
+    if (backend == Backend::Metal)
+        for (const auto& name: getMetalFunctionArguments(graph, expr.index))
+            arguments.add(name);
+
+    auto text = std::string {};
+
+    for (auto which = 0; which < arguments.size(); ++which)
+        text += (which > 0 ? ", " : "") + arguments[which];
+
+    return Strings::format("{}({})", getFunctionName(graph, expr.index), text);
 }
 
 // HLSL holds the matrix itself, whose subscript is a row; a column of it is a
@@ -400,10 +446,16 @@ std::string ExprPrinter::printSelect(const Expr& expr) const
 // An element of a private array carries its (already clamped) index.
 std::string ExprPrinter::printVarRead(const Expr& expr) const
 {
-    if (expr.args.empty())
-        return printNumberedName("v", expr.index);
+    auto variable =
+        expr.args.empty()
+            ? printNumberedName("v", expr.index)
+            : printSubscript("v", expr.index, printReference(expr.args[0]));
 
-    return printSubscript("v", expr.index, printReference(expr.args[0]));
+    if (expr.member < 0)
+        return variable;
+
+    return printFieldRead(
+        graph, backend, graph.variableStructType(expr.index), expr.member, variable);
 }
 
 std::string ExprPrinter::printMul(const Expr& expr) const
@@ -496,9 +548,69 @@ std::string ExprPrinter::printThreadId(const Expr& expr) const
     return getIndexReference("gid", graph.dispatchRank(), expr.index);
 }
 
+// HLSL holds an f16 buffer as words: element i is half i % 2 of word i / 2.
+std::string ExprPrinter::printBufferElementRead(int slot,
+                                                const std::string& index) const
+{
+    if (backend == Backend::DirectX
+        && graph.storageElementType(slot) == ValueType::Half)
+        return Strings::format(
+            "f16tof32(buffer{0}[({1}) >> 1u] >> ((({1}) & 1u) << 4u))", slot, index);
+
+    return printSubscript("buffer", slot, index);
+}
+
+std::string ExprPrinter::printStructBufferRead(const Expr& expr) const
+{
+    auto index = printReference(expr.args[0]);
+
+    if (backend == Backend::DirectX)
+        return printHlslStructLoad(graph, expr.index, index, expr.member);
+
+    return printFieldRead(graph,
+                          backend,
+                          graph.storageStructType(expr.index),
+                          expr.member,
+                          printSubscript("buffer", expr.index, index));
+}
+
+std::string ExprPrinter::printStructValue(const Expr& expr) const
+{
+    auto members = std::string {};
+
+    for (auto which = 0; which < expr.args.size(); ++which)
+        members += Strings::format(
+            "{}{}", which > 0 ? ", " : "", printReference(expr.args[which]));
+
+    return printStructConstruct(graph, backend, expr.structType, members);
+}
+
+std::string ExprPrinter::printTypeName(int node) const
+{
+    const auto& expr = graph.expr(node);
+
+    if (expr.type == ValueType::Struct)
+        return getStructName(graph, expr.structType);
+
+    return std::string(getDialectTypeName(backend, expr.type));
+}
+
+std::string ExprPrinter::printVariableTypeName(int slot) const
+{
+    auto structId = graph.variableStructType(slot);
+
+    if (structId >= 0)
+        return getStructName(graph, structId);
+
+    return std::string(getDialectTypeName(backend, graph.variables()[slot]));
+}
+
 std::string ExprPrinter::printBufferRead(const Expr& expr) const
 {
-    return printSubscript("buffer", expr.index, printReference(expr.args[0]));
+    if (expr.member >= 0)
+        return printStructBufferRead(expr);
+
+    return printBufferElementRead(expr.index, printReference(expr.args[0]));
 }
 
 std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
@@ -521,12 +633,10 @@ std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
         if (component > 0)
             elements += ", ";
 
-        elements += Strings::format("{}[{}", name, base);
+        auto element =
+            component > 0 ? Strings::format("{} + {}u", base, component) : base;
 
-        if (component > 0)
-            elements += Strings::format(" + {}u", component);
-
-        elements += "]";
+        elements += printBufferElementRead(expr.index, element);
     }
 
     return Strings::format("{}({})", type, elements);

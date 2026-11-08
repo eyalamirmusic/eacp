@@ -3,6 +3,7 @@
 #include "../Frame/ComputePass.h"
 #include "ShaderBindings.h"
 #include "ShaderDeclarations.h"
+#include "ShaderFunctionEmission.h"
 #include "ShaderGroupSpelling.h"
 #include "ShaderHelpers.h"
 #include "ShaderStageEmitter.h"
@@ -229,11 +230,10 @@ std::string printMetalBufferParameters(const ShaderGraph& graph)
     auto source = std::string {};
 
     for (auto i = 0; i < buffers.size(); ++i)
-        source += Strings::format(
-            "{} buffer{} [[buffer({})]],\n    ",
-            getMetalBufferType(buffers[i], graph.storageElementType(i)),
-            i,
-            i);
+        source += Strings::format("{} buffer{} [[buffer({})]],\n    ",
+                                  getMetalSlotBufferType(graph, buffers[i], i),
+                                  i,
+                                  i);
 
     return source;
 }
@@ -338,10 +338,8 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
     auto source = std::string {};
 
     for (auto i = 0; i < buffers.size(); ++i)
-        source += formatGlslBufferBlock(buffers[i],
-                                        graph.storageElementType(i),
-                                        i,
-                                        vulkanComputeBufferBinding(i));
+        source += formatGlslSlotBufferBlock(
+            graph, buffers[i], i, vulkanComputeBufferBinding(i));
 
     if (buffers.size() > 0)
         source += "\n";
@@ -355,7 +353,8 @@ std::string printGlslKernelBindings(const ShaderGraph& graph)
     return source;
 }
 
-std::string printGlslKernelOpening(const ShaderGraph& graph)
+std::string printGlslKernelOpening(const ShaderGraph& graph,
+                                   const std::string& functions)
 {
     const auto group = graph.threadGroupShape();
 
@@ -366,6 +365,7 @@ std::string printGlslKernelOpening(const ShaderGraph& graph)
         group.x,
         group.y,
         group.z);
+    source += functions;
     source += "void main()\n{\n";
 
     return source
@@ -386,12 +386,11 @@ std::string printHlslKernelBuffers(const ShaderGraph& graph)
     {
         auto registerSpace = buffers[i] == BufferAccess::Read ? 't' : 'u';
 
-        source += Strings::format(
-            "{} buffer{} : register({}{});\n",
-            getHlslBufferType(buffers[i], graph.storageElementType(i)),
-            i,
-            registerSpace,
-            i);
+        source += Strings::format("{} buffer{} : register({}{});\n",
+                                  getHlslSlotBufferType(graph, buffers[i], i),
+                                  i,
+                                  registerSpace,
+                                  i);
     }
 
     if (buffers.size() > 0)
@@ -452,11 +451,13 @@ std::string printHlslKernelSignature(const ShaderGraph& graph)
     return source + ")\n{\n";
 }
 
-std::string printHlslKernelOpening(const ShaderGraph& graph)
+std::string printHlslKernelOpening(const ShaderGraph& graph,
+                                   const std::string& functions)
 {
     auto source = printHlslKernelBuffers(graph);
     source += printHlslKernelTextures(graph);
     source += printGroupMemoryGlobals(graph, Backend::DirectX, "groupshared");
+    source += functions;
     source += printHlslKernelSignature(graph);
 
     return source
@@ -468,15 +469,61 @@ std::string printHlslKernelOpening(const ShaderGraph& graph)
                 "groupIndex"});
 }
 
-std::string printKernelOpening(const ShaderGraph& graph, Backend backend)
+// The functions the kernel calls are defined after every global they may name
+// and ahead of the entry point.
+std::string printKernelOpening(const ShaderGraph& graph,
+                               Backend backend,
+                               const std::string& functions)
 {
     if (backend == Backend::Metal)
-        return printMetalKernelOpening(graph);
+        return functions + printMetalKernelOpening(graph);
 
     if (backend == Backend::Vulkan)
-        return printGlslKernelOpening(graph);
+        return printGlslKernelOpening(graph, functions);
 
-    return printHlslKernelOpening(graph);
+    return printHlslKernelOpening(graph, functions);
+}
+
+Vector<int> getKernelRoots(const ShaderGraph& graph)
+{
+    auto roots = Vector<int> {};
+    collectStatementExpressions(
+        graph, ShaderGraph::rootBlock, LoopConditions::Included, roots);
+    return roots;
+}
+
+// WGSL checks a function against the stage calling it: a kernel's take no
+// derivative.
+[[maybe_unused]] bool calledFunctionsTakeNoDerivedLevel(const ShaderGraph& graph,
+                                                        const Vector<int>& functions)
+{
+    auto roots = Vector<int> {};
+
+    for (auto function: functions)
+        collectStatementExpressions(
+            graph, graph.function(function).body, LoopConditions::Included, roots);
+
+    auto seen = VisitSet {graph.nodeCount()};
+    auto pending = roots;
+
+    while (!pending.empty())
+    {
+        auto node = pending.back();
+        pending.pop_back();
+
+        if (node < 0 || !seen.visit(node))
+            continue;
+
+        const auto& expr = graph.expr(node);
+
+        if (takesDerivedLevel(graph, expr))
+            return false;
+
+        for (auto argument: expr.args)
+            pending.add(argument);
+    }
+
+    return true;
 }
 
 // No early return in a kernel that barriers: threads returning ahead of a
@@ -496,10 +543,7 @@ std::string printKernelPrologue(const ShaderGraph& graph, Backend backend)
 
 std::string printKernelBody(const ShaderGraph& graph, Backend backend)
 {
-    auto stageRoots = Vector<int> {};
-    collectStatementExpressions(
-        graph, ShaderGraph::rootBlock, LoopConditions::Included, stageRoots);
-
+    auto stageRoots = getKernelRoots(graph);
     auto stage = StageEmitter {graph, backend};
 
     auto source = stage.declareArrays(stageRoots, kernelIndent);
@@ -516,9 +560,17 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
            && "eacp: discard belongs to the fragment stage; a kernel ends an "
               "invocation with returnEarly.");
 
+    const auto functions = findCalledFunctions(graph, getKernelRoots(graph));
+
+    assert(calledFunctionsTakeNoDerivedLevel(graph, functions)
+           && "eacp: a kernel called a function that takes the fragment's "
+              "derivatives - dfdx, dfdy, fwidth, or a sample with no level. A "
+              "kernel has none of them.");
+
     auto source = getSourcePreamble(graph, backend);
     source += printKernelUniformBlock(graph, backend);
-    source += printKernelOpening(graph, backend);
+    source += printKernelOpening(
+        graph, backend, printFunctionDefinitions(graph, backend, functions));
     source += printKernelPrologue(graph, backend);
     source += printKernelBody(graph, backend);
     source += "}\n";

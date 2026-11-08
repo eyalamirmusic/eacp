@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace eacp::GPU
 {
@@ -20,7 +21,8 @@ enum class ExprKind
     Varying, // fragment-stage read of a varying; index = varying slot
     Uniform, // per-frame constant; index = field slot in the uniform block
     Constant, // scalar float literal; value
-    Construct, // floatN(args...); args = child nodes
+    Construct, // floatN(args...); args = child nodes. Of type Struct, a struct
+    // value built from its members in order (structType says which)
     Swizzle, // child.<components>; args[0] = child
     Call, // builtin call text(args...); e.g. sin/cos. The emitter translates
     // the canonical (MSL) name where HLSL spells it differently.
@@ -86,9 +88,15 @@ enum class ExprKind
     TextureQuery, // textureDimensions, textureNumLevels or textureNumLayers;
     // index = texture slot, text = "size", "levels" or "layers", args = {the
     // level} where a size names one.
-    MatrixColumn // one column of a float matrix; args = {matrix, an Int index
+    MatrixColumn, // one column of a float matrix; args = {matrix, an Int index
     // already clamped to the columns}. MSL and GLSL subscript the matrix; HLSL,
     // whose subscript is a row, subscripts its transpose.
+    Override, // a pipeline-overridable constant, WGSL's override; index = its
+    // id (ShaderGraph::overrideConstant). A scalar the pipeline supplies.
+    FunctionCall // a call of a function the shader declares (ShaderGraph::
+    // beginFunction); index = the function, args = the arguments in order, a
+    // struct one being its Construct. A value read where it is printed when the
+    // function may be; otherwise the value of a Call statement, which names it.
 };
 
 // The values a stage is handed rather than computes. The first six belong to a
@@ -153,6 +161,81 @@ constexpr ValueType builtInType(ShaderBuiltIn which)
     }
 
     return ValueType::UInt;
+}
+
+// WGSL's @interpolate(type, sampling) on a varying. Perspective-correct at the
+// pixel centre is what a varying gets unasked; Linear drops the perspective
+// divide, Flat takes one vertex's value. Centroid moves the point inside the
+// primitive where it covers only part of a pixel, and Sample runs the fragment
+// stage once per sample, each at its own position. A Flat varying takes First
+// or Either and nothing else: the value is the first vertex's of each primitive
+// on every backend, so Either is printed as First is.
+enum class InterpolationType : std::uint8_t
+{
+    Perspective,
+    Linear,
+    Flat
+};
+
+enum class InterpolationSampling : std::uint8_t
+{
+    Center,
+    Centroid,
+    Sample,
+    First,
+    Either
+};
+
+struct Interpolation
+{
+    InterpolationType type = InterpolationType::Perspective;
+    InterpolationSampling sampling = InterpolationSampling::Center;
+
+    static constexpr Interpolation
+        perspective(InterpolationSampling sampling = InterpolationSampling::Center)
+    {
+        return {InterpolationType::Perspective, sampling};
+    }
+
+    static constexpr Interpolation
+        linear(InterpolationSampling sampling = InterpolationSampling::Center)
+    {
+        return {InterpolationType::Linear, sampling};
+    }
+
+    static constexpr Interpolation
+        flat(InterpolationSampling sampling = InterpolationSampling::First)
+    {
+        return {InterpolationType::Flat, sampling};
+    }
+
+    constexpr bool operator==(const Interpolation& other) const = default;
+};
+
+constexpr bool isFlatSampling(InterpolationSampling sampling)
+{
+    return sampling == InterpolationSampling::First
+           || sampling == InterpolationSampling::Either;
+}
+
+// What WGSL accepts: flat with first or either, the other two with center,
+// centroid or sample, and an integer varying only flat.
+constexpr bool isValidInterpolation(ValueType type, Interpolation interpolation)
+{
+    const auto isFlat = interpolation.type == InterpolationType::Flat;
+
+    if (isFlat != isFlatSampling(interpolation.sampling))
+        return false;
+
+    return isFlat || !(isSignedInteger(type) || isUnsignedInteger(type));
+}
+
+constexpr Interpolation defaultInterpolation(ValueType type)
+{
+    if (isSignedInteger(type) || isUnsignedInteger(type))
+        return Interpolation::flat();
+
+    return Interpolation::perspective();
 }
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
@@ -504,7 +587,7 @@ enum class StatementKind
     SimdMatrixStore, // that patch written back. The same fields, the other way.
     SimdMatrixMultiplyAdd, // slot = slot + left * right, all three fragments.
     // slot = the accumulator, left / right = the operands.
-    Atomic // vN = atomic<op>(memory[index], value), declaring vN. slot = the
+    Atomic, // vN = atomic<op>(memory[index], value), declaring vN. slot = the
     // variable the value *before* the operation lands in, atomic = which
     // operation, memory / bufferSlot / index = which element (a storage buffer
     // or a threadgroup array), value = the operand. A CompareExchange also
@@ -517,6 +600,11 @@ enum class StatementKind
     // all of them can print, and it is the shape a caller wants anyway - the
     // old value is a slot reserved for this thread, which is what the whole
     // operation is usually for.
+    Call // vN = function(args...), declaring vN, or function(args...) alone:
+    // value = the FunctionCall node, slot = the variable its result lands in,
+    // -1 where it has none. In the graph withFunctionsInlined makes for the CPU
+    // executor it is the call's body instead: body = the block, run as a
+    // function's - a Return in it leaves that block alone - and value -1.
 };
 
 // One statement. Which fields carry meaning depends on the kind above; the
@@ -555,6 +643,8 @@ struct Statement
     // the slot in it
     SimdMatrixElement element = SimdMatrixElement::Float; // SimdMatrixLoad:
     // what the patch's elements are in memory, and so what the fragment is
+    int member = -1; // Assign to a struct variable, Store to a struct buffer:
+    // the field written (ShaderGraph::structType), -1 for the whole value
 };
 
 // What a block is the body of, for the statements only some may hold: a jump
@@ -628,6 +718,97 @@ struct Expr
     Vector<int> args; // child node ids
     int sampler = -1; // TextureFunction: the sampler slot it samples through,
     // -1 for the texture's own baked sampling
+    int structType = -1; // a Construct of type Struct: which struct it builds
+    int member = -1; // a BufferRead of a struct buffer, a VarRead of a struct
+    // variable: the field read, always one that is not itself a struct
+};
+
+// One member of a struct a shader declares (ShaderStruct.h): its name, its
+// type - ValueType::Struct and which struct for a nested one - and its offset
+// in WGSL's storage layout.
+struct StructMember
+{
+    std::string name;
+    ValueType type = ValueType::Float;
+    int structType = -1;
+    int offset = 0;
+};
+
+// A member at any depth, in the order a walk meets them that takes a nested
+// struct before its own members, addressed from the outermost struct: its
+// path ("inner.x"), its offset from the element's start, the run of the
+// struct's flat components it holds, and which struct declares the member.
+// A nested struct's fields follow it, so its run covers theirs.
+struct StructField
+{
+    std::string path;
+    ValueType type = ValueType::Float;
+    int structType = -1;
+    int offset = 0;
+    int firstComponent = 0;
+    int componentCount = 0;
+    int owner = -1;
+};
+
+// One scalar of a struct laid out flat, every field's components in field
+// order: its byte offset in an element and whether it is an f16.
+struct StructComponent
+{
+    int offset = 0;
+    bool half = false;
+};
+
+// A struct type: what its members are, and WGSL's storage size and alignment
+// of it. hostShareable is false where a Bool is in it at any depth: such a
+// struct is a value and never the element of a buffer. fields and components
+// are the graph's to fill when the struct is added.
+struct StructType
+{
+    std::string name;
+    Vector<StructMember> members;
+    int size = 0;
+    int alignment = 1;
+    bool hostShareable = true;
+    Vector<StructField> fields;
+    Vector<StructComponent> components;
+};
+
+// A constant the pipeline supplies, WGSL's override: a Bool, Int, UInt, Float
+// or Half scalar named in the shader, with or without a default. Its id is its
+// place in declaration order, which is what each backend keys it by.
+// defaultBits holds the default as PipelineConstant::bits does.
+struct OverrideDeclaration
+{
+    std::string name;
+    ValueType type = ValueType::Float;
+    bool hasDefault = false;
+    std::uint32_t defaultBits = 0;
+    int node = -1;
+};
+
+// A function the shader declares, WGSL's fn (ShaderFunction.h): its name, its
+// parameters - variables of its own, which the call's arguments initialise and
+// nothing assigns - its result, none where returnsValue is false, and the
+// root block its body was recorded into, which ends in the Return of the
+// result. What the body does, the functions it calls counted in:
+// writesStorage for a buffer or texture store or an atomic, readsMutableStorage
+// for a read of a buffer or texture a kernel may write, discards for a
+// discard. isPure where it reads nothing that can change but its own
+// variables, which makes a call of it as pure as its arguments.
+struct FunctionDeclaration
+{
+    std::string name;
+    Vector<int> parameters;
+    ValueType returnType = ValueType::Bool;
+    int returnStruct = -1;
+    bool returnsValue = false;
+    int body = -1;
+    Vector<int> callees;
+    bool writesStorage = false;
+    bool readsMutableStorage = false;
+    bool discards = false;
+    bool isPure = false;
+    bool isComplete = false;
 };
 
 // Backend-agnostic shader IR: an expression-node store plus the shader's I/O
@@ -649,6 +830,7 @@ public:
     {
         ValueType type = ValueType::Float;
         int sourceNode = -1; // vertex-stage expression feeding this varying
+        Interpolation interpolation;
     };
 
     // One kernel output write: buffer[index] = value. Recording any store
@@ -689,8 +871,23 @@ public:
     int addInstanceInput(ValueType type);
     int addInstanceInput(ValueType type, int bufferIndex);
     int addVarying(ValueType type, int sourceNode);
+    int addVarying(ValueType type, int sourceNode, Interpolation interpolation);
     int addUniform(ValueType type);
+
+    // The names a struct-authored program's members give its uniforms, buffers,
+    // textures and samplers (EACP_SHADER), kept for reflection alone: nothing
+    // emitted reads them, and a slot no member named has an empty one.
+    void nameUniform(int slot, const std::string& name);
+    void nameStorageBuffer(int slot, const std::string& name);
+    void nameTexture(int slot, const std::string& name);
+    const std::string& uniformName(int slot) const;
+    const std::string& storageBufferName(int slot) const;
+    const std::string& textureName(int slot) const;
     int addConstant(float value);
+
+    // An f16 literal, held already rounded to the nearest half (ties to even,
+    // past 65504 an infinity), so every backend and the CPU read one value.
+    int addHalfConstant(float value);
     int addUIntConstant(unsigned value);
     int addIntConstant(int value);
     int addBoolConstant(bool value);
@@ -739,11 +936,71 @@ public:
     // The elements of variable `slot`: 0 for a plain variable.
     int variableArraySize(int slot) const;
 
+    // WGSL's structs (ShaderStruct.h). addStruct declares a struct type, its
+    // nested structs already added, and fills its fields and components; a
+    // second struct of a name already declared is that struct, and has to
+    // match it. A struct value is a Construct of its members in order - a
+    // nested struct's a Construct of its own - and reaches a variable, a
+    // private array's element or a buffer's whole; a member is read as a
+    // field, which a VarRead or a BufferRead names, and written as one by an
+    // Assign or a Store naming it.
+    int addStruct(const StructType& type);
+    const StructType& structType(int id) const;
+    int structCount() const;
+    int addStructConstruct(int structType, const Vector<int>& members);
+
+    // The struct's zero value, WGSL's: every member's zero.
+    int addStructZero(int structType);
+
+    int addStructVariable(int structType, int initialValue);
+    int addStructArrayVariable(int structType, int size, int fill);
+
+    // Which struct variable `slot` holds, -1 when it holds no struct.
+    int variableStructType(int slot) const;
+
+    // WGSL's override: a scalar constant the pipeline supplies, declared once
+    // by name and read as one node. A second declaration of a name already
+    // declared is that constant, and has to agree with it in type and
+    // default. The name has to be an identifier.
+    int addOverride(const std::string& name, ValueType type);
+    int addOverride(const std::string& name,
+                    ValueType type,
+                    std::uint32_t defaultBits);
+    constexpr const Vector<OverrideDeclaration>& overrides() const
+    {
+        return overrideList;
+    }
+
+    // The id of the override of that name, -1 when there is none.
+    int findOverride(std::string_view name) const;
+
+    // A field of a struct variable, or of an element of a private array of
+    // them; and an assignment to a field, a nested struct's included. The
+    // element's index is one clampVariableIndex already clamped, so one index
+    // serves every field of the element.
+    int clampVariableIndex(int slot, int index);
+    int addVarMemberRead(int slot, int field);
+    int addVarElementMemberRead(int slot, int index, int field);
+    void assignMember(int slot, int field, int value);
+    void assignElementMember(int slot, int index, int field, int value);
+
+    // A storage buffer whose elements are a host-shareable struct, a field of
+    // element `index` and a store to one - `field` -1 storing the element
+    // whole. Only a Write slot is stored to.
+    int addStructBuffer(BufferAccess access, int structType);
+    int storageStructType(int slot) const;
+    int addBufferMemberRead(int slot, int index, int field);
+    void addMemberStore(int slot, int index, int field, int value);
+
+    // What a field holds, as a node assigned or stored into it must: its
+    // ValueType, and which struct where that is ValueType::Struct.
+    bool fitsField(int structType, int field, int value) const;
+
     // The zero of any value type, WGSL's zero value: a literal for a scalar, a
     // construct of them for a vector, of zero columns for a matrix.
     int addZero(ValueType type);
 
-    // Column `index` of a float matrix (an Int, clamped here like an array's).
+    // Column `index` of a matrix (an Int, clamped here like an array's).
     int addMatrixColumn(int matrix, int index);
 
     int pushBlock(BlockRole role = BlockRole::Plain);
@@ -782,6 +1039,62 @@ public:
     // opened inside a block.
     void beginVertexStage();
     void endVertexStage();
+
+    // WGSL's user functions (ShaderFunction.h). beginFunction opens the root
+    // block a function's body is recorded into, in place of every block open,
+    // and returns the function's id; addParameter makes a parameter, a
+    // variable of the function; endFunction closes the body - adding the
+    // Return of `result` where the function has one - checks what it reaches
+    // and puts back what was open. A body reads its parameters, its own
+    // variables and what has module scope - literals, overrides, uniforms,
+    // buffers, textures and samplers - and nothing a stage is handed: no
+    // built-in, vertex input, varying, thread index, shared memory or constant
+    // array, which are passed to it as arguments instead. No function is
+    // declared inside another, and one calls only functions completed before
+    // it, so none recurses. The name is an identifier no other function has.
+    int beginFunction(const std::string& name,
+                      ValueType returnType,
+                      int returnStruct,
+                      bool returnsValue);
+    int addParameter(ValueType type, int structType = -1);
+    void endFunction(int result);
+
+    // A call of `function`. Where the function may be read as a value - it
+    // returns one that is not a struct, and neither writes nor reads storage a
+    // kernel may write, nor discards - it is a FunctionCall node, evaluated
+    // wherever it is read. Otherwise it is a Call statement in the block open,
+    // its result landing in a variable it declares: node is a read of that
+    // variable, a struct's being read a field at a time.
+    struct FunctionResult
+    {
+        int node = -1;
+        int variable = -1;
+    };
+
+    FunctionResult addFunctionCall(int function, const Vector<int>& arguments);
+
+    // A function's return of `value`, which a function with a result returns
+    // from anywhere in its body; returnEarly() there is a void function's.
+    void addReturn(int value);
+
+    const FunctionDeclaration& function(int id) const;
+    int functionCount() const;
+    constexpr int recordingFunctionId() const { return recordingFunction; }
+
+    // Whether function `id` is called as a statement rather than read.
+    bool isCalledAsStatement(int id) const;
+
+    // Which function variable `slot` belongs to, -1 where it is a stage's.
+    int variableFunction(int slot) const;
+
+    // This graph with every call replaced by the body it calls, which is what
+    // the CPU executor plans: a Call statement with the body copied into it,
+    // its parameters declared from the arguments, a Return in it assigning the
+    // result. A call read as a value is made, in front of each statement
+    // reading it, into such a statement and a read of its result; a loop whose
+    // condition reads one tests it at the top of its body. Nothing else
+    // changes, so a graph with no function is returned as it is.
+    ShaderGraph withFunctionsInlined() const;
 
     // Registers a 2D texture slot (always a float-returning texture2d, so only
     // the slot index and how it is sampled are stored), and a sample of it at a
@@ -1177,15 +1490,39 @@ public:
     // Whether a statement of this kind was recorded anywhere.
     bool hasStatementOf(StatementKind kind) const;
 
+    // Whether any value, variable or storage buffer is of the f16 family -
+    // what decides the GLSL extensions and the device's f16 query.
+    bool usesHalf() const;
+
+    // Whether a storage buffer holds f16 elements.
+    bool usesHalfStorage() const;
+
+    // Whether the fragment stage runs once per sample: it reads sampleIndex()
+    // or a varying is Sample-interpolated. What the device's
+    // supportsSampleRateShading query is asked about.
+    bool usesSampleRateShading() const;
+
     // Whether a node's value is the same wherever in the body it is read: no
     // mutable state under it, save storage the kernel only reads.
     bool isPure(int node) const;
 
 private:
+    friend class FunctionInliner;
+
     static constexpr std::uint32_t builtInBit(ShaderBuiltIn which)
     {
         return 1u << static_cast<std::uint32_t>(which);
     }
+
+    void checkFunctionBody(FunctionDeclaration& declaration, int id) const;
+    void checkFunctionBlock(FunctionDeclaration& declaration,
+                            int id,
+                            int block,
+                            Vector<char>& seen) const;
+    void checkFunctionNode(FunctionDeclaration& declaration,
+                           int id,
+                           int node,
+                           Vector<char>& seen) const;
 
     int add(Expr node);
     int addStatement(Statement newStatement);
@@ -1203,6 +1540,17 @@ private:
     // the fragment is made of.
     int declareSimdMatrix(SimdMatrixElement element);
     int addIndexNode(ExprKind kind, DispatchRank forRank, int component);
+
+    int declareOverride(const OverrideDeclaration& declaration);
+    bool matchesDeclaredStruct(const StructType& declared,
+                               const StructType& type) const;
+    void addStructFields(StructType& target,
+                         const StructType& source,
+                         int sourceId,
+                         const std::string& prefix,
+                         int baseOffset) const;
+    bool structHoldsHalf(int structId) const;
+    ValueType memberLeafType(int structId, int field) const;
 
     bool purityOf(const Expr& node) const;
     bool readsImmutableStorage(const Expr& node) const;
@@ -1238,6 +1586,9 @@ private:
     Vector<int> inputSlots; // parallel to inputTypes; the buffer slot
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
+    Vector<std::string> uniformNames;
+    Vector<std::string> storageNames;
+    Vector<std::string> textureNames;
     Vector<BufferAccess> storageSlots;
     Vector<ValueType> storageElements; // parallel to storageSlots
     Vector<Store> storeList;
@@ -1266,6 +1617,15 @@ private:
     Vector<ValueType> variableTypes;
     Vector<char> vertexVariables; // parallel to variableTypes
     Vector<int> variableSizes; // parallel to variableTypes; 0 = not an array
+    Vector<int> variableStructs; // parallel to variableTypes; -1 = no struct
+    Vector<int> storageStructs; // parallel to storageSlots; -1 = no struct
+    Vector<StructType> structTypes;
+    Vector<OverrideDeclaration> overrideList;
+    Vector<FunctionDeclaration> functionList;
+    Vector<int> variableFunctions; // parallel to variableTypes; -1 = a stage's
+    int recordingFunction = -1;
+    Vector<int> blocksOpenOutsideFunction;
+    bool vertexStageOutsideFunction = false;
     Vector<Statement> statementList;
     Vector<Block> blocks; // blocks[rootBlock] is the shader's body
     Vector<CaseLabels> caseLabelList; // one entry per Case statement

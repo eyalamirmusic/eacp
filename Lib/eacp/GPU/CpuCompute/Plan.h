@@ -2,12 +2,14 @@
 
 #include "Lanes.h"
 
+#include <eacp/GPU/Codegen/OverrideValues.h>
 #include <eacp/GPU/Codegen/ShaderGraph.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 
 // A compute graph decoded once; immutable, and holds no pointer to the graph.
@@ -52,6 +54,7 @@ enum class Op : std::uint8_t
     VariableElementRead,
     BufferRead,
     BufferVectorRead,
+    StructRead,
     ArrayRead,
     SharedRead,
     AtomicLoad,
@@ -177,6 +180,12 @@ enum class MathFunction : std::uint8_t
 // batch whose workspace would pass maxBatchBytes is halved until it fits or
 // is one group, since every per-lane row - array constants included - grows
 // with it.
+//
+// overrides are the values of the kernel's pipeline-overridable constants, as
+// a GPU pipeline takes them (OverrideValues.h): resolved once, here, into
+// constants of the plan, so a dispatch reads them as it reads a literal. A set
+// the kernel refuses - an unknown name, a value of the wrong type, an override
+// with no default and no value - leaves the plan invalid, naming the override.
 struct PlanOptions
 {
     static constexpr int defaultBatchLanes = 1024;
@@ -184,6 +193,7 @@ struct PlanOptions
 
     int targetBatchLanes = defaultBatchLanes;
     std::size_t maxBatchBytes = defaultBatchBytes;
+    OverrideValues overrides;
 };
 
 class Plan
@@ -219,6 +229,14 @@ public:
 
         // An unsigned / or % whose scalar divisor is the same on every lane.
         bool invariantDivisor = false;
+
+        // An f16 result: computed in float, then rounded to the nearest half.
+        bool roundsToHalf = false;
+
+        // A field of a struct - a StructRead of a buffer's element, or a read
+        // of a struct variable or of an element of a private array of them:
+        // the first of the struct's flat components it reads.
+        int component = 0;
     };
 
     struct Step
@@ -260,6 +278,11 @@ public:
         // (lane, component) pairs the same element.
         bool ramp = false;
         Word rampScale = 0;
+
+        // An Assign to a struct variable's field, a Store to a struct
+        // buffer's: the first flat component written; the value's components
+        // follow it.
+        int component = 0;
     };
 
     struct BlockRange
@@ -340,6 +363,12 @@ public:
     BufferAccess access(int slot) const;
     ValueType element(int slot) const;
     bool referencesSlot(int slot) const;
+
+    // A struct slot's element stride in bytes, 0 for any other slot, and the
+    // struct's flat components: component c of element e is at byte e *
+    // stride + structComponents(slot)[c].offset.
+    int structStride(int slot) const;
+    std::span<const StructComponent> structComponents(int slot) const;
 
     int uniformCount() const;
     ValueType uniformType(int slot) const;
@@ -444,6 +473,7 @@ private:
 
     Plan() = default;
 
+    void build(const ShaderGraph& graph, const Options& options);
     bool fitsBatchBudget(const Options& options) const;
 
     std::string failure;
@@ -459,6 +489,9 @@ private:
     std::array<BufferAccess, maxSlots> slotAccess {};
     std::array<ValueType, maxSlots> slotElement {};
     std::array<bool, maxSlots> slotReferenced {};
+    std::array<int, maxSlots> slotStructStride {};
+    std::array<Range, maxSlots> slotStructComponents {};
+    Vector<StructComponent> structComponentList;
     Vector<ValueType> uniformTypes;
     Vector<int> uniformOffsets;
     int uniformWordCount = 0;

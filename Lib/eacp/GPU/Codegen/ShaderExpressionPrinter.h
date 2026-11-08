@@ -14,6 +14,14 @@ struct ExprPrinter
     // the layer beside it (Metal) or inside it (HLSL, GLSL).
     std::string printStorageAddress(int slot, int coordinates, int layer) const;
 
+    // One element of storage slot `slot` at an already printed index.
+    std::string printBufferElementRead(int slot, const std::string& index) const;
+
+    // What a local naming node `node`, and variable `slot`, is declared as: a
+    // struct's name where it holds one.
+    std::string printTypeName(int node) const;
+    std::string printVariableTypeName(int slot) const;
+
     const ShaderGraph& graph;
     Backend backend;
     const Vector<int>& locals; // node id -> local index, -1 = inline
@@ -21,6 +29,7 @@ struct ExprPrinter
 
 private:
     int findCarryingVarying(int slot) const;
+    std::string printRoundedToHalf(const Expr& expr, const std::string& text) const;
     ValueType getBroadcastType(const Expr& call) const;
     std::string printWidened(int node, ValueType wide) const;
     bool isGlslShift(const std::string& op) const;
@@ -55,6 +64,8 @@ private:
     std::string printSelect(const Expr& expr) const;
     std::string printMul(const Expr& expr) const;
     std::string printMatrixColumn(const Expr& expr) const;
+    std::string printOverride(const Expr& expr) const;
+    std::string printFunctionCall(const Expr& expr) const;
     std::string printSample(const Expr& expr) const;
     std::string printPlainSample(const Expr& expr,
                                  const std::string& name,
@@ -71,6 +82,8 @@ private:
     std::string printTextureQuery(const Expr& expr) const;
     std::string printStorageQuery(const Expr& expr) const;
     std::string printBufferRead(const Expr& expr) const;
+    std::string printStructBufferRead(const Expr& expr) const;
+    std::string printStructValue(const Expr& expr) const;
     std::string printBufferVectorRead(const Expr& expr) const;
     std::string printAtomicLoad(const Expr& expr) const;
     std::string printArrayRead(const Expr& expr) const;

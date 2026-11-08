@@ -17,7 +17,8 @@ using Extents = std::array<Word, 3>;
 bool executorSlotMatches(const Plan& plan, const Bindings::Slot& slot, int index)
 {
     return slot.bound && slot.element == plan.element(index)
-           && slot.access == plan.access(index);
+           && slot.access == plan.access(index)
+           && slot.structStride == plan.structStride(index);
 }
 
 void executorSplatUniforms(const Plan& plan,
@@ -493,7 +494,12 @@ bool Executor::dispatchGroups(const PreparedDispatch& prepared,
     for (auto index = 0; index < executionPlan.storageSlotCount(); ++index)
     {
         const auto& slot = prepared.slots[static_cast<std::size_t>(index)];
-        context.slots[static_cast<std::size_t>(index)] = {slot.data, slot.count};
+        context.slots[static_cast<std::size_t>(index)] = {
+            slot.data,
+            slot.count,
+            executionPlan.element(index) == ValueType::Half,
+            static_cast<std::size_t>(executionPlan.structStride(index)),
+            executionPlan.structComponents(index).data()};
     }
 
     executorSplatUniforms(executionPlan, prepared.uniforms.data(), workspace);

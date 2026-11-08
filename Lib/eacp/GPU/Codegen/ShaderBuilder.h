@@ -2,8 +2,11 @@
 
 #include "../Shader/ShaderSource.h"
 #include "GeneratedShader.h"
+#include "OverrideValues.h"
 #include "Samplers.h"
+#include "ShaderFunction.h"
 #include "ShaderGraph.h"
+#include "ShaderStruct.h"
 #include "ShaderValue.h"
 #include "StorageTextures.h"
 #include "TextureFunctions.h"
@@ -22,7 +25,66 @@ namespace detail
 // -Linux.cpp, mirroring the rest of the GPU module, so build() needs no
 // preprocessor branch.
 ShaderBackend nativeShaderBackend();
+
+// The C++ type an override of handle type T takes its default and its value
+// in, and its encoding as a pipeline constant.
+template <typename T>
+struct OverrideDefault;
+
+template <>
+struct OverrideDefault<Float>
+{
+    using type = float;
+    static PipelineConstant encode(float value)
+    {
+        return PipelineConstant::ofFloat(0, value);
+    }
+};
+
+template <>
+struct OverrideDefault<Half>
+{
+    using type = float;
+    static PipelineConstant encode(float value)
+    {
+        return PipelineConstant::ofHalf(0, value);
+    }
+};
+
+template <>
+struct OverrideDefault<Int>
+{
+    using type = int;
+    static PipelineConstant encode(int value)
+    {
+        return PipelineConstant::ofInt(0, value);
+    }
+};
+
+template <>
+struct OverrideDefault<UInt>
+{
+    using type = unsigned;
+    static PipelineConstant encode(unsigned value)
+    {
+        return PipelineConstant::ofUInt(0, value);
+    }
+};
+
+template <>
+struct OverrideDefault<Bool>
+{
+    using type = bool;
+    static PipelineConstant encode(bool value)
+    {
+        return PipelineConstant::ofBool(0, value);
+    }
+};
 } // namespace detail
+
+// The handle types an override can be: the five scalars WGSL allows.
+template <typename T>
+concept OverridableHandle = requires { typename detail::OverrideDefault<T>::type; };
 
 // What ShaderBuilder::build() returns for a graph, in the dialect `backend`
 // compiles rather than the platform's own: build() is this with
@@ -69,6 +131,10 @@ public:
     template <typename T>
     T vertexInput()
     {
+        static_assert(!isHalf(ValueTypeOf<T>::value),
+                      "eacp: a vertex attribute is no f16 - declare it Float and "
+                      "convert with toHalf().");
+
         auto value = T {};
         value.graph = &graphData;
         value.node = graphData.addInput(ValueTypeOf<T>::value);
@@ -88,6 +154,10 @@ public:
     template <typename T>
     T instanceInput()
     {
+        static_assert(!isHalf(ValueTypeOf<T>::value),
+                      "eacp: a vertex attribute is no f16 - declare it Float and "
+                      "convert with toHalf().");
+
         auto value = T {};
         value.graph = &graphData;
         value.node = graphData.addInstanceInput(ValueTypeOf<T>::value);
@@ -97,23 +167,46 @@ public:
     template <typename T>
     T instanceInput(int bufferIndex)
     {
+        static_assert(!isHalf(ValueTypeOf<T>::value),
+                      "eacp: a vertex attribute is no f16 - declare it Float and "
+                      "convert with toHalf().");
+
         auto value = T {};
         value.graph = &graphData;
         value.node = graphData.addInstanceInput(ValueTypeOf<T>::value, bufferIndex);
         return value;
     }
 
+    // Perspective-correct at the pixel centre, or flat for an Int or UInt, as
+    // WGSL has it unasked.
     template <typename T>
     T varying(const T& vertexValue)
+    {
+        return varying(vertexValue, defaultInterpolation(ValueTypeOf<T>::value));
+    }
+
+    // WGSL's @interpolate: varying(uv, Interpolation::linear()),
+    // varying(normal, Interpolation::perspective(InterpolationSampling::
+    // Centroid)), varying(id, Interpolation::flat()). An Int or UInt varying
+    // takes only flat (asserted). Sample runs the fragment stage per sample,
+    // which on Vulkan needs Device::supportsSampleRateShading.
+    template <typename T>
+    T varying(const T& vertexValue, const Interpolation& interpolation)
     {
         static_assert(!isBoolean(ValueTypeOf<T>::value),
                       "Bool cannot be a varying: GLSL allows no boolean stage "
                       "input or output. Carry an Int and test it, or compare in "
                       "the fragment stage.");
 
+        static_assert(!isHalf(ValueTypeOf<T>::value),
+                      "eacp: a varying is no f16 - a 16-bit stage input or output "
+                      "needs Vulkan's storageInputOutput16, which most devices "
+                      "lack. Carry a Float and convert with toHalf().");
+
         auto value = T {};
         value.graph = &graphData;
-        value.node = graphData.addVarying(ValueTypeOf<T>::value, vertexValue.node);
+        value.node = graphData.addVarying(
+            ValueTypeOf<T>::value, vertexValue.node, interpolation);
         return value;
     }
 
@@ -130,6 +223,12 @@ public:
         static_assert(!isBoolean(ValueTypeOf<T>::value),
                       "Bool cannot be a uniform: MSL packs it into one byte and "
                       "an HLSL cbuffer into four. Send a Float and compare it.");
+
+        static_assert(!isHalf(ValueTypeOf<T>::value),
+                      "eacp: an f16 cannot be a uniform: the block packs at four "
+                      "bytes a component, HLSL holds no 16-bit constant below SM "
+                      "6.2 and std140 needs uniformAndStorageBuffer16BitAccess. "
+                      "Send a Float and convert with toHalf().");
 
         auto value = T {};
         value.graph = &graphData;
@@ -507,6 +606,82 @@ public:
 
     IntOutputBuffer intOutputBuffer();
 
+    // The f16 pair, WGSL's array<f16>: two-byte elements read and written as
+    // Half (see HalfInputBuffer for how each backend holds them).
+    HalfInputBuffer halfInputBuffer();
+
+    HalfOutputBuffer halfOutputBuffer();
+
+    // A buffer of a shader struct (ShaderStruct.h), WGSL's array<T>: the
+    // read-only one readable from every stage, the read-write one a kernel's.
+    // Declares T in the shader on first use.
+    template <ShaderStructLike T>
+    StructInputBuffer<T> structInputBuffer()
+    {
+        auto buffer = StructInputBuffer<T> {};
+        static_cast<detail::StructBufferHandle&>(buffer) =
+            structBuffer(BufferAccess::Read, detail::declareStruct<T>);
+        return buffer;
+    }
+
+    template <ShaderStructLike T>
+    StructOutputBuffer<T> structOutputBuffer()
+    {
+        auto buffer = StructOutputBuffer<T> {};
+        static_cast<detail::StructBufferHandle&>(buffer) =
+            structBuffer(BufferAccess::Write, detail::declareStruct<T>);
+        return buffer;
+    }
+
+    // A struct buffer whose struct `declare` adds to the graph: what the
+    // member build walk adopts, where only a pointer to the declaring function
+    // crosses from the typed member.
+    detail::StructBufferHandle structBuffer(BufferAccess access,
+                                            int (*declare)(ShaderGraph&));
+
+    // A struct's zero value, every member zero.
+    template <ShaderStructLike T>
+    T structZero()
+    {
+        return detail::structZero<T>(graphData);
+    }
+
+    // Element `index` of a struct buffer written whole - every field takes
+    // the value it had before any of them was stored - or one member of it,
+    // a nested struct member whole.
+    template <ShaderStructLike T>
+    void
+        write(const StructOutputBuffer<T>& buffer, const UInt& index, const T& value)
+    {
+        graphData.addMemberStore(
+            buffer.slot,
+            index.node,
+            -1,
+            detail::structValueNode(
+                graphData, graphData.storageStructType(buffer.slot), value));
+    }
+
+    template <ShaderStructLike T>
+    void write(const StructOutputBuffer<T>& buffer, unsigned index, const T& value)
+    {
+        write(buffer, buffer.index(index), value);
+    }
+
+    template <ShaderStructLike T, typename M>
+    void write(const StructOutputBuffer<T>& buffer,
+               const UInt& index,
+               M T::* member,
+               const M& value)
+    {
+        auto structId = graphData.storageStructType(buffer.slot);
+        auto field = detail::structFieldOf(member);
+        graphData.addMemberStore(
+            buffer.slot,
+            index.node,
+            field,
+            detail::structMemberNode<T>(graphData, structId, field, value));
+    }
+
     // A buffer of unsigned integers threads share. It takes a slot from the same
     // counter the others do, and binds exactly as an output does - what differs
     // is the element type, and that only the emitted declaration knows.
@@ -804,6 +979,24 @@ public:
 
     void write4(const IntOutputBuffer& buffer, const UInt& index, const Int4& value);
 
+    // The f16 output's element and record writes: the index counts halves, or
+    // records of two, three or four, which HalfInputBuffer::read2/3/4 reads
+    // back at the same index. A literal is rounded to the nearest half.
+    void write(const HalfOutputBuffer& buffer, const UInt& index, const Half& value);
+
+    void write(const HalfOutputBuffer& buffer, const UInt& index, float value);
+
+    void write(const HalfOutputBuffer& buffer, unsigned index, const Half& value);
+
+    void
+        write(const HalfOutputBuffer& buffer, const UInt& index, const Half2& value);
+
+    void
+        write(const HalfOutputBuffer& buffer, const UInt& index, const Half3& value);
+
+    void
+        write(const HalfOutputBuffer& buffer, const UInt& index, const Half4& value);
+
     // One element of an atomic buffer, set outright rather than added to. It
     // completes the trio - add, load, store - and it is what a kernel computing
     // a *dispatch size* needs: the threadgroup count an indirect dispatch reads
@@ -891,6 +1084,9 @@ public:
     // A scalar literal usable in expressions (e.g. an ambient term).
     Float constant(float value);
 
+    // Its f16 sibling, WGSL's 0.5h: the value rounded to the nearest half.
+    Half halfConstant(float value);
+
     // Its boolean sibling, for a flag a shader sets and later tests. Spelled
     // apart from constant() rather than overloaded on it: an integer literal
     // converts to both float and bool, so one name would make constant(1)
@@ -904,6 +1100,38 @@ public:
     // And its unsigned one, for the index or the mask a kernel starts from -
     // and for the handle a wholly literal uint2/3/4 needs to anchor its graph.
     UInt unsignedInteger(unsigned value);
+
+    // WGSL's override: a Bool, Int, UInt, Float or Half constant whose value
+    // the pipeline supplies (OverrideValues.h), read anywhere a value is, in
+    // every stage. With a default the pipeline may leave it out; without one
+    // it has to give it. The name is an identifier and keys the value; the id
+    // each backend specialises by is the order of declaration. Declaring a
+    // name again returns the same constant.
+    //
+    // Not a workgroup size and not an array length: a kernel's group shape and
+    // a private array's size are C++ constants of the graph, fixed before any
+    // pipeline exists.
+    template <OverridableHandle T>
+    T overrideConstant(const std::string& name)
+    {
+        auto result = T {};
+        result.graph = &graphData;
+        result.node = graphData.addOverride(name, ValueTypeOf<T>::value);
+        return result;
+    }
+
+    template <OverridableHandle T>
+    T overrideConstant(const std::string& name,
+                       typename detail::OverrideDefault<T>::type defaultValue)
+    {
+        auto result = T {};
+        result.graph = &graphData;
+        result.node = graphData.addOverride(
+            name,
+            ValueTypeOf<T>::value,
+            detail::OverrideDefault<T>::encode(defaultValue).bits);
+        return result;
+    }
 
     // A constant array, its size taken from the pack. Every element is an
     // ordinary value - a literal vector, or something built from a uniform -
@@ -968,9 +1196,31 @@ public:
     template <typename T, int Size>
     PrivateArray<T, Size> privateArray()
     {
-        auto type = ValueTypeOf<T>::value;
+        if constexpr (ShaderStructLike<T>)
+        {
+            auto structId = detail::declareStruct<T>(graphData);
+            return {graphData,
+                    structId,
+                    graphData.addStructArrayVariable(
+                        structId, Size, graphData.addStructZero(structId))};
+        }
+        else
+        {
+            auto type = ValueTypeOf<T>::value;
+            return {graphData,
+                    graphData.addArrayVariable(type, Size, graphData.addZero(type))};
+        }
+    }
+
+    // A struct variable (see Var<T> in ShaderStruct.h), initialised from a
+    // value of the struct.
+    template <ShaderStructLike T>
+    Var<T> var(const T& initialValue)
+    {
+        auto structId = detail::declareStruct<T>(graphData);
         return {graphData,
-                graphData.addArrayVariable(type, Size, graphData.addZero(type))};
+                structId,
+                detail::structValueNode(graphData, structId, initialValue)};
     }
 
     template <typename T, typename... Rest>
@@ -1099,6 +1349,24 @@ public:
     // evaluate at this point, so a var those outputs read is the value
     // returned.
     void returnEarly();
+
+    // A function's return of its result, from anywhere in its body (see
+    // ShaderFunction.h). returnEarly() is a void function's.
+    template <ShaderFunctionValue T>
+    void returnEarly(const T& value)
+    {
+        graphData.addReturn(detail::functionValueNode(graphData, value));
+    }
+
+    // WGSL's fn, Signature its result and parameters: Float(Float, Float2).
+    // `body` runs once, here, with a handle per parameter, and returns the
+    // result; the function is emitted once per source and called through the
+    // handle returned. See ShaderFunction.h.
+    template <typename Signature, typename Body>
+    ShaderFunction<Signature> function(const std::string& name, Body&& body)
+    {
+        return detail::FunctionDefinition<Signature>::define(graphData, name, body);
+    }
 
     // The fragment writes nothing - neither colour nor depth. A statement, so
     // any number of them sit wherever the fragment's statements do; the

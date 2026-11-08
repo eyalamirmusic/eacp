@@ -63,7 +63,12 @@ const void* ComputeKernel::packedUniforms(int width, int height, int depth)
 
 DispatchRank ComputeKernel::dispatchRank() const
 {
-    return generated.dispatchRank;
+    return generated.dispatchRank();
+}
+
+const ShaderReflection& ComputeKernel::reflection() const
+{
+    return generated.reflection;
 }
 
 ThreadGroupShape ComputeKernel::groupShape() const
@@ -117,6 +122,11 @@ UInt3 ComputeKernel::threadId3()
 Float ComputeKernel::constant(float value)
 {
     return builder.constant(value);
+}
+
+Half ComputeKernel::halfConstant(float value)
+{
+    return builder.halfConstant(value);
 }
 
 UInt ComputeKernel::unsignedInteger(unsigned value)
@@ -650,6 +660,48 @@ void ComputeKernel::write4(const IntOutputBuffer& buffer,
                            const Int4& value)
 {
     builder.write4(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          float value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          unsigned index,
+                          const Half& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half2& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half3& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half4& value)
+{
+    builder.write(buffer, index, value);
 }
 
 void ComputeKernel::write(const WritableTexture2D& texture,

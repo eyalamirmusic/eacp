@@ -2,6 +2,7 @@
 
 #include "ShaderDeclarations.h"
 #include "ShaderGroupSpelling.h"
+#include "ShaderStructEmission.h"
 
 #include <eacp/Core/Utils/Format.h>
 
@@ -19,6 +20,17 @@ constexpr auto nestedIndent = std::string_view {"    "};
 std::string printBufferElement(int slot, const std::string& index)
 {
     return Strings::format("buffer{}[{}]", slot, index);
+}
+
+// Whether HLSL stores a struct field of this type with one Store of its words,
+// printing the value once: not a struct, a matrix or an f16 vector, which are
+// stored a column or a half at a time.
+bool isStoredInOneWrite(ValueType type)
+{
+    if (type == ValueType::Struct || isMatrix(type))
+        return false;
+
+    return !isHalf(type) || componentCount(type) == 1;
 }
 
 struct AtomicSpelling
@@ -222,8 +234,15 @@ std::string StageEmitter::emitBlock(int block, std::string_view indentToUse)
         source += emitStatement(getGraph().statement(index), indent, uses, open);
 
     for (auto index: getGraph().block(block).statements)
-        if (getGraph().statement(index).kind == StatementKind::Declare)
-            variablesInScope[getGraph().statement(index).slot] = 0;
+    {
+        const auto& statement = getGraph().statement(index);
+        auto declares =
+            statement.kind == StatementKind::Declare
+            || (statement.kind == StatementKind::Call && statement.slot >= 0);
+
+        if (declares)
+            variablesInScope[statement.slot] = 0;
+    }
 
     retireLocals(open);
     return source;
@@ -232,7 +251,7 @@ std::string StageEmitter::emitBlock(int block, std::string_view indentToUse)
 StageEmitter::StatementEmitFunction
     StageEmitter::findStatementEmitter(StatementKind kind)
 {
-    static constexpr auto emitters = Array<StatementEmitEntry, 20> {
+    static constexpr auto emitters = Array<StatementEmitEntry, 21> {
         {StatementKind::Declare, &StageEmitter::emitVariableWrite},
         {StatementKind::Assign, &StageEmitter::emitVariableWrite},
         {StatementKind::If, &StageEmitter::emitIf},
@@ -254,6 +273,7 @@ StageEmitter::StatementEmitFunction
         {StatementKind::SimdMatrixMultiplyAdd,
          &StageEmitter::emitSimdMatrixMultiplyAdd},
         {StatementKind::TextureStore, &StageEmitter::emitTextureStore},
+        {StatementKind::Call, &StageEmitter::emitCall},
     };
 
     for (const auto& entry: emitters)
@@ -358,18 +378,23 @@ std::string StageEmitter::emitArrayWrite(const Statement& statement,
     if (statement.kind == StatementKind::Assign)
     {
         auto source = defineLocalsInScope({statement.index, statement.value}, scope);
-        source += Strings::format("{}v{}[{}] = {};\n",
-                                  scope.indent,
-                                  slot,
-                                  printer.printReference(statement.index),
-                                  printer.printReference(statement.value));
+        auto element = Strings::format(
+            "v{}[{}]", slot, printer.printReference(statement.index));
+        source +=
+            Strings::format("{}{} = {};\n",
+                            scope.indent,
+                            printFieldTarget(getGraph(),
+                                             getGraph().variableStructType(slot),
+                                             statement.member,
+                                             element),
+                            printer.printReference(statement.value));
         return source;
     }
 
     variablesInScope[slot] = 1;
 
     auto size = getGraph().variableArraySize(slot);
-    auto type = getDialectTypeName(printer.backend, getGraph().variables()[slot]);
+    auto type = printer.printVariableTypeName(slot);
     auto source = defineLocalsInScope({statement.value}, scope);
     source += Strings::format("{}{} v{}[{}];\n", scope.indent, type, slot, size);
     source += Strings::format("{}for (int fill{} = 0; fill{} < {}; ++fill{})\n",
@@ -398,18 +423,19 @@ std::string StageEmitter::emitVariableWrite(const Statement& statement,
     if (statement.kind == StatementKind::Declare)
     {
         variablesInScope[statement.slot] = 1;
-        type = Strings::format(
-            "{} ",
-            getDialectTypeName(printer.backend,
-                               getGraph().variables()[statement.slot]));
+        type = printer.printVariableTypeName(statement.slot) + " ";
     }
 
     auto source = defineLocalsInScope({statement.value}, scope);
-    source += Strings::format("{}{}v{} = {};\n",
-                              scope.indent,
-                              type,
-                              statement.slot,
-                              printer.printReference(statement.value));
+    source += Strings::format(
+        "{}{}{} = {};\n",
+        scope.indent,
+        type,
+        printFieldTarget(getGraph(),
+                         getGraph().variableStructType(statement.slot),
+                         statement.member,
+                         Strings::format("v{}", statement.slot)),
+        printer.printReference(statement.value));
     return source;
 }
 
@@ -546,8 +572,12 @@ std::string StageEmitter::printJumpsOutOfSwitch(int flag,
 
 // The outputs are evaluated where the return stands, their shared values named
 // in the block the return is in.
-std::string StageEmitter::emitReturn(const Statement&, StatementScope& scope)
+std::string StageEmitter::emitReturn(const Statement& statement,
+                                     StatementScope& scope)
 {
+    if (statement.value >= 0)
+        return emitValueReturn(statement, scope);
+
     assert(returnReadsOnlyVariablesInScope()
            && "eacp: returnEarly evaluates the outputs where it stands, so a var "
               "they read is declared before it, in a block around it.");
@@ -555,6 +585,36 @@ std::string StageEmitter::emitReturn(const Statement&, StatementScope& scope)
     auto source = defineLocals(
         returnRoots, scope.indent, countUsesOver(returnRoots), scope.open);
     return source + printReturn(*this, scope.indent);
+}
+
+// A function's return of its result.
+std::string StageEmitter::emitValueReturn(const Statement& statement,
+                                          StatementScope& scope)
+{
+    auto source = defineLocalsInScope({statement.value}, scope);
+    return source
+           + Strings::format("{}return {};\n",
+                             scope.indent,
+                             printer.printReference(statement.value));
+}
+
+// A call made where it is written: its result declared, or the call alone.
+std::string StageEmitter::emitCall(const Statement& statement, StatementScope& scope)
+{
+    auto source = defineLocalsInScope({statement.value}, scope);
+    auto call = printer.printReference(statement.value);
+
+    if (statement.slot < 0)
+        return source + Strings::format("{}{};\n", scope.indent, call);
+
+    variablesInScope[statement.slot] = 1;
+
+    return source
+           + Strings::format("{}{} v{} = {};\n",
+                             scope.indent,
+                             printer.printVariableTypeName(statement.slot),
+                             statement.slot,
+                             call);
 }
 
 bool StageEmitter::returnReadsOnlyVariablesInScope()
@@ -590,9 +650,50 @@ std::string StageEmitter::emitDiscard(const Statement&, StatementScope& scope)
     return scope.indent + (isMetal() ? "discard_fragment();\n" : "discard;\n");
 }
 
+// MSL and GLSL assign a field, or the element whole, in one statement. HLSL
+// stores a value word by word, so a value or an index it prints more than
+// once is named first, and every store reads what the element held before.
+std::string StageEmitter::emitStructStore(const Statement& statement,
+                                          StatementScope& scope)
+{
+    auto source = defineLocalsInScope({statement.index, statement.value}, scope);
+    auto structId = getGraph().storageStructType(statement.slot);
+
+    if (printer.backend == Backend::DirectX)
+    {
+        source +=
+            holdOperand(statement.index, statement.slot, scope.indent, scope.open);
+
+        if (!isStoredInOneWrite(getGraph().expr(statement.value).type))
+            source += holdOperand(
+                statement.value, statement.slot, scope.indent, scope.open);
+
+        return source
+               + printHlslStructStore(getGraph(),
+                                      statement.slot,
+                                      printer.printReference(statement.index),
+                                      statement.member,
+                                      printer.printReference(statement.value),
+                                      scope.indent);
+    }
+
+    auto element =
+        printBufferElement(statement.slot, printer.printReference(statement.index));
+
+    return source
+           + Strings::format(
+               "{}{} = {};\n",
+               scope.indent,
+               printFieldTarget(getGraph(), structId, statement.member, element),
+               printer.printReference(statement.value));
+}
+
 std::string StageEmitter::emitStore(const Statement& statement,
                                     StatementScope& scope)
 {
+    if (getGraph().storageStructType(statement.slot) >= 0)
+        return emitStructStore(statement, scope);
+
     auto source = defineLocalsInScope({statement.index, statement.value}, scope);
     source += holdTheRecord(statement, scope.indent, scope.open);
 
@@ -601,8 +702,14 @@ std::string StageEmitter::emitStore(const Statement& statement,
     auto stored = printer.printReference(statement.value);
     auto atomic =
         getGraph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
+    auto halfWords =
+        printer.backend == Backend::DirectX
+        && getGraph().storageElementType(statement.slot) == ValueType::Half;
 
-    if (atomic && printer.backend == Backend::Metal)
+    if (halfWords)
+        source += printHlslHalfStore(
+            statement.slot, printer.printReference(statement.index), stored, scope);
+    else if (atomic && printer.backend == Backend::Metal)
         source += Strings::format(
             "{}atomic_store_explicit(&{}, {}, memory_order_relaxed);\n",
             scope.indent,
@@ -612,6 +719,25 @@ std::string StageEmitter::emitStore(const Statement& statement,
         source += Strings::format("{}{} = {};\n", scope.indent, element, stored);
 
     return source;
+}
+
+// One half of an HLSL f16 buffer's word: clear this element's sixteen bits,
+// then set them, each an atomic operation on the word, so a thread writing the
+// word's other half at the same time loses nothing.
+std::string StageEmitter::printHlslHalfStore(int slot,
+                                             const std::string& index,
+                                             const std::string& value,
+                                             const StatementScope& scope) const
+{
+    auto word = Strings::format("buffer{}[({}) >> 1u]", slot, index);
+    auto shift = Strings::format("((({}) & 1u) << 4u)", index);
+
+    return Strings::format("{0}InterlockedAnd({1}, ~(0xffffu << {2}));\n"
+                           "{0}InterlockedOr({1}, f32tof16({3}) << {2});\n",
+                           scope.indent,
+                           word,
+                           shift,
+                           value);
 }
 
 // Both operands are named first, so write4(out, i, f(out.read4(i))) reads
@@ -963,12 +1089,11 @@ std::string
     locals[node] = localCount++;
     open.add(node);
 
-    return Strings::format(
-        "{}{} t{} = {};\n",
-        indent,
-        getDialectTypeName(printer.backend, getGraph().expr(node).type),
-        locals[node],
-        printer.print(node));
+    return Strings::format("{}{} t{} = {};\n",
+                           indent,
+                           printer.printTypeName(node),
+                           locals[node],
+                           printer.print(node));
 }
 
 bool StageEmitter::isRecordStillUnnamed(const Statement& statement) const

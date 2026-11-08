@@ -256,6 +256,10 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   transposed shape and transposed as the square ones are, and a column is a
   row of its `transpose()`. There is no `inverse`, and that is the languages
   rather than this: GLSL has one, MSL and HLSL do not
+- `Half`, `Half2/3/4` and `Half2x2` … `Half4x3` — WGSL's `f16`, a float family
+  of its own (see "f16" below): the same operators, swizzles, matrix products
+  and built-ins, never mixed with `Float` in one operation, crossed with
+  `toHalf` / `toFloat`
 - `Int` and `Int2/3/4` — signed, with `%`, the bitwise set, the shifts, the
   comparisons, and the explicit crossings `toInt` / `toFloat`
 - `Bool` and `Bool2/3/4` — what a comparison yields, collapsed by `any()` /
@@ -822,7 +826,9 @@ declared only by a shader that reads them:
 so counter-clockwise in clip space is front by default on every backend.
 Reading `sampleIndex()` runs the fragment stage once per sample rather than
 once per pixel; Vulkan needs the device's `sampleRateShading` feature for it,
-which eacp enables wherever the device has it. `sampleMask()` is the coverage
+which eacp enables wherever the device has it and
+`Device::supportsSampleRateShading()` reports, and `ShaderProgram::prepare`
+refuses such a program where it is absent. `sampleMask()` is the coverage
 of *this* primitive: along the edge two triangles share, each is handed only
 the samples on its own side.
 
@@ -881,6 +887,420 @@ struct Hit
 };
 ```
 
+### f16
+
+`Half` is WGSL's `f16` — `enable f16;` — with its vectors and every matrix
+shape, gated on `Device::supportsShaderFloat16()`: a `ComputeProgram` or
+`ShaderProgram` whose graph holds one is refused by `prepare()` on a device that
+answers no, as a storage texture the device takes no store of is. The family
+never mixes with `Float`: `half + float` is a compile error, as in WGSL, and
+`toHalf` / `toFloat` cross (from and to `Int`, `UInt` and `Bool` too, rounding
+to the nearest half on the way in, truncating towards zero on the way out to
+an integer). A float literal beside a `Half` is an f16 literal, rounded to the
+nearest half where it is recorded; `halfConstant(x)` is one on its own. The
+built-ins are WGSL's f16 set — every float one but the derivatives,
+`quantizeToF16` and the packs, which WGSL keeps f32, and eacp's own `erf`,
+`erfc`, `saturatingTanh` and `log10`, which are written in float. `var`,
+`privateArray`, constant arrays and `select` take them as they take a `Float`.
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    auto x = weights.read4(i);                       // Half4, one load
+    write(output, i, dot(x, x) * 0.5f + bias[i]);    // f16 maths, f16 store
+}
+
+Uniform<HalfInputBuffer> weights;
+Uniform<HalfInputBuffer> bias;
+Uniform<HalfOutputBuffer> output;
+```
+
+How each backend holds it:
+
+- **Metal**: `half`, `half3`, `half2x3`; `0.5h`. Native.
+- **GLSL**: `float16_t`, `f16vec3`, `f16mat2x3`; `0.5hf`, under
+  `GL_EXT_shader_explicit_arithmetic_types_float16`, and an f16 buffer under
+  `GL_EXT_shader_16bit_storage` — both named only by a shader that uses them, so
+  every other source is byte-identical. Vulkan enables `shaderFloat16` and
+  `storageBuffer16BitAccess` where the device has them (the core 1.2/1.1
+  features, or `VK_KHR_shader_float16_int8` below the core floor).
+- **HLSL**: FXC's SM5 has no 16-bit type — `half` is a synonym for `float` and
+  `min16float` a precision hint with no defined rounding — so an f16 is held in
+  `float` (`Half2x3` is a `float3x2`, the matrix convention above) and every
+  arithmetic result of the family is wrapped in `eacpRoundHalf`, `f16tof32(
+  f32tof16(x))`, one overload per type that needs it. The values are WGSL's;
+  the cost is a float's plus two conversions, so on D3D f16 saves memory, not
+  time. `supportsShaderFloat16()` is always true there.
+
+Every result is rounded to f16 where it is computed. For `+`, `-`, `*`, `/` and
+`sqrt` computing in float and rounding is the correctly rounded half (a float
+holds the exact result of two halves to more than twice a half's precision);
+for the rest, and for a product or a dot product, the GPUs differ from each
+other by an ulp or so as they do in f32. The CPU executor computes in float
+and rounds at every node, as HLSL does.
+
+`HalfInputBuffer` / `HalfOutputBuffer` are WGSL's `array<f16>`: two-byte
+elements read as `Half` (`read2/3/4` in records, as the float buffers do) and
+written by `write(output, i, value)` with a `Half` or a `Half2/3/4` record.
+Metal and GLSL declare the 16-bit array itself; HLSL declares its words
+(`StructuredBuffer<uint>`), reads element `i` as half `i % 2` of word `i / 2`
+through `f16tof32`, and writes one as `InterlockedAnd` then `InterlockedOr` on
+the word, so the thread writing the other half of the same word loses nothing.
+A binding's offset and size are therefore whole words on D3D. Bound on the CPU
+from `std::uint16_t` spans of IEEE binary16 bits.
+
+What `Half` does not do: cross the uniform block (`ShaderBuilder::uniform` and
+`Uniform<Half>` static_assert — the block packs at four bytes a component and
+std140 would need `uniformAndStorageBuffer16BitAccess`), cross a varying or be
+a vertex attribute (a 16-bit stage input needs `storageInputOutput16`, which
+most Vulkan devices lack), or live in threadgroup memory (`shared<Half>`
+static_asserts). Send a `Float` and convert. Group reductions and the SIMD
+matrix stay f32.
+
+### Structs
+
+A C++ struct of value handles - scalars, vectors and matrices of every family,
+`Bool` included, and other such structs - is a WGSL struct once its members
+are listed with `EACP_SHADER_STRUCT` (`Codegen/ShaderStruct.h`). It stays the
+aggregate it was, built with braces; what the macro adds is the shader's view
+of it, emitted as a named type the first time a shader needs one and declared
+once, a nested struct ahead of the one holding it:
+
+```cpp
+struct Particle
+{
+    Float3 position;
+    Float mass;
+    Float2 velocity;
+    UInt flags;
+
+    EACP_SHADER_STRUCT(Particle, position, mass, velocity, flags)
+};
+
+void define() override
+{
+    auto i = threadId();
+    auto p = input[i];                               // each field read where used
+    write(output, i, Particle {p.position + float3(p.velocity, 0.f),
+                              p.mass, p.velocity, p.flags | 1u});
+    write(output, i, &Particle::mass, output[i].mass + 1.f);
+
+    auto held = var(p);                              // Particle v0 = ...
+    held.set(&Particle::flags, p.flags & 3u);        // v0.flags = ...;
+    auto list = privateArray<Particle, 4>();         // zeroed; list[j], set(j, ...)
+}
+
+Uniform<StructInputBuffer<Particle>> input;          // readable in every stage
+Uniform<StructOutputBuffer<Particle>> output;        // a kernel's
+```
+
+A read of an element is a read of each field, so only the fields used are
+loaded; a whole write takes every field's value before any lands; a member
+write takes a top-level member, a nested struct one whole. A read of an
+output is what the thread stored there by the statement that reads it, as
+`OutputBuffer`'s is. `structZero<T>()` is WGSL's zero value. Struct varyings
+and uniforms are not offered - pass the members.
+
+In a buffer a struct has WGSL's storage layout, spelled out at compile time by
+`StructLayout<T>` (`offsetOf<&T::member>()`, `size`, `alignment`, `stride`):
+each member at the next offset its alignment allows, a three-vector aligned
+to 16 bytes (8 for f16) and 12 (6) long, a matrix its columns at the column
+vector's alignment, the struct aligned to its widest member and sized to a
+multiple of that - `Particle` is 32 bytes, `mass` at 12, `velocity` at 16.
+`StructBufferData<T>` is the host's side: `set<&T::member>(i, value)` and
+`get`, a nested member by both pointers. A struct holding a `Bool` has no
+layout and is a value only. How each dialect meets the layout:
+
+- **GLSL**: the struct as it is, in an `std430` block, whose rules are WGSL's.
+- **MSL**: laid out by hand - a three-vector is its `packed_` type, so a
+  scalar after it sits at 12, and a `uchar eacpPadN[k]` fills every gap and
+  the tail - so `device const T*` strides at the layout's size. A packed field
+  is read back through its vector type; a whole write stores the padding as
+  zeroes.
+- **HLSL**: the struct is a plain value type and the buffer is a
+  `[RW]ByteAddressBuffer` loaded and stored at the computed offsets - `Load3`
+  then `asfloat`, a matrix column by column, an f16 out of its word, and an f16
+  written as `InterlockedAnd` then `InterlockedOr` on the word, as
+  `HalfOutputBuffer` does. D3D's `StructuredBuffer<T>` was the alternative and
+  cannot hold the layout: it packs a three-vector to 12 bytes but aligns
+  nothing past 4, so a vector after a scalar moves, a matrix's columns pack
+  together, and shader model 5 has no 16-bit member at all.
+
+MSL and HLSL build a struct value through `eacpMake<Name>(members)`, one per
+struct, neither having a constructor for one; GLSL has its own. The CPU
+executor reads and writes the same offsets from the same layout, binding a
+struct buffer from its bytes or from host records of the stride's size.
+
+### Interpolation
+
+`varying(value, interpolation)` is WGSL's `@interpolate(type, sampling)`;
+`varying(value)` is what WGSL gives a varying unasked, perspective-correct at
+the pixel centre, or flat for an `Int` or `UInt`:
+
+```cpp
+auto uv = varying(position, Interpolation::linear());
+auto normal = varying(n, Interpolation::perspective(InterpolationSampling::Centroid));
+auto material = varying(id, Interpolation::flat());
+auto tint = varying(colour, Interpolation::flat(InterpolationSampling::Either));
+```
+
+| `Interpolation` | MSL | HLSL | GLSL |
+| --- | --- | --- | --- |
+| `perspective()` | nothing | nothing | nothing |
+| `perspective(Centroid)` | `[[centroid_perspective]]` | `centroid` | `centroid` |
+| `perspective(Sample)` | `[[sample_perspective]]` | `sample` | `sample` |
+| `linear()` | `[[center_no_perspective]]` | `noperspective` | `noperspective` |
+| `linear(Centroid)` | `[[centroid_no_perspective]]` | `noperspective centroid` | `noperspective centroid` |
+| `linear(Sample)` | `[[sample_no_perspective]]` | `noperspective sample` | `noperspective sample` |
+| `flat()`, `flat(Either)` | `[[flat]]` | `nointerpolation` | `flat` |
+
+Asking for `perspective()` prints exactly what leaving it unasked does, since
+it is every dialect's default. GLSL puts the qualifier on both sides of the
+interface; Metal and HLSL on the one `VertexOut` both stages share. The pairs
+WGSL refuses - a flat varying at `Center`, `Centroid` or `Sample`, the other two
+at `First` or `Either`, an integer varying that is not flat - are asserted
+(`isValidInterpolation`). An attribute the fragment reads directly, which the
+emitter carries across as a varying of its own, takes the default for its
+type. `Bool` and every f16 type stay refused as varyings (below, and "f16").
+
+A flat varying takes its value from the primitive's first vertex on every
+backend - Vulkan's default provoking vertex (eacp never enables
+`VK_EXT_provoking_vertex`), D3D's leading vertex, and Metal's: vertex `3i` of
+a triangle list's triangle `i`, vertex `i` of a strip's, odd triangles
+included though they are wound the other way round. That is WGSL's
+`first`, and `Either`, which lets an implementation take either end, is printed
+as `First` and so is first as well. `Tests/GPU/InterpolationDeviceTests.cpp`
+draws a list and a strip and checks it on Metal and Vulkan; the D3D rule is by
+documentation.
+
+`Centroid` moves the point a pixel the primitive only partly covers is
+evaluated at to inside the primitive, so a varying never extrapolates past its
+vertices' values at an edge under multisampling; on a pixel covered whole it is
+the centre. `Sample` evaluates the varying at each covered sample and runs the
+fragment stage once per sample, as reading `sampleIndex()` does; Vulkan needs
+the device's `sampleRateShading` feature for that, so
+`Device::supportsSampleRateShading()` answers (always yes on Metal and D3D12),
+and `ShaderProgram::prepare` refuses a program that reads `sampleIndex()` or
+has a `Sample` varying where it answers no (`fitsSampleRateShading`), logging
+why. Without multisampling, `Centroid` and `Sample` are the centre.
+
+### Overrides
+
+`overrideConstant<T>(name, default)` is WGSL's `override`: a `Bool`, `Int`,
+`UInt`, `Float` or `Half` constant the pipeline supplies, so one compiled
+library serves every value without the C++ constructor-argument rebuild:
+
+```cpp
+void define() override
+{
+    auto gain = overrideConstant<Float>("gain", 1.f);   // a default
+    auto taps = overrideConstant<UInt>("taps");          // none: always given
+    ...
+}
+
+kernel.prepare(OverrideValues {}.set("taps", 4u));          // gain stays 1
+kernel.specialize(OverrideValues {}.set("taps", 8u).set("gain", 0.5f));
+shader.prepare(descriptor, OverrideValues {}.set("tint", 0.25f));
+```
+
+The handle is read anywhere a value is, in every stage and kernel; a name
+declared again is the same constant (and asserts if its type or default
+differ), and its id - what each backend keys it by - is the order of
+declaration. `OverrideValues` (`Codegen/OverrideValues.h`) is keyed by name and
+checked against each declaration by `resolveOverrides`: a `float` sets a
+`Float` or a `Half` (rounded to the nearest half; finite, and inside f16's
+range), an `int` an `Int`, an `unsigned` a `UInt`, a `bool` a `Bool`, and an
+`int` or `unsigned` either integer type where the value is the same in both. An
+unknown name, a value of another type and an override with no default given
+none are refused, naming it: `prepare`/`specialize` log and leave a pipeline
+that is not valid, the CPU plan is invalid with the reason.
+
+| | MSL | GLSL | HLSL |
+| --- | --- | --- | --- |
+| declared | `constant T eacpOverrideN [[function_constant(N)]]` and `override_name = is_function_constant_defined(...) ? ... : default` | `layout(constant_id = N) const T override_name = default;` | `#ifndef EACP_OVERRIDE_N` / `#define EACP_OVERRIDE_N default` / `static const T override_name = EACP_OVERRIDE_N;` |
+| specialised by | `MTLFunctionConstantValues` on `newFunctionWithName:constantValues:` | `VkSpecializationInfo` on every stage's create info | compiling the source again with the macros defined |
+
+A `Half` is `half` on Metal, `float16_t` (with the f16 extension) on Vulkan -
+a 2-byte specialization constant - and the rounded value in a `float` on HLSL;
+a `Bool` is a `VkBool32`. With no default, GLSL and HLSL still need one in the
+text, so they hold the type's zero, which no pipeline reaches.
+
+**Which values a pipeline is given.** Only the ones that differ from their
+defaults (`ResolvedOverrides::specialized`, a `PipelineConstants` in id order),
+so the empty set is the library as compiled and a default given is the same
+set as one left out. That set is the key: `ComputeProgram` and `ShaderProgram`
+keep one pipeline per set since their last `prepare()`, `specialize(values)`
+makes the one for `values` current - the existing one, or one built now on the
+same library - and `prepare()` compiles the library afresh and forgets them all,
+which is what a restored device needs. Below the EDSL a hand-written source
+marks itself `ShaderSource::withPipelineConstants()` and its pipelines take
+`RenderPipelineDescriptor::constants` or the `ComputePipeline` constructor's
+`PipelineConstants`, keyed by id.
+
+**D3D12.** FXC has no specialisation, so a set of values is a compile: the
+library keeps its source and, on the first pipeline asking for a set, compiles
+it once more with that set's `EACP_OVERRIDE_<id>` macros (`D3D_SHADER_MACRO`,
+or `-D` under DXC) and keeps the variant for its life
+(`ShaderLibrary::nativeLibrary(constants)`). The cost is a full FXC compile of
+every stage per distinct set the first time it is asked for, on the thread that
+builds the pipeline, and the bytecode of each variant held beside the library;
+nothing per draw or dispatch. A hidden constant buffer would have cost nothing
+to build, but a root-signature slot, a bind per draw and a value the compiler
+cannot fold. A precompiled DXBC covers the defaults only - the empty set -
+and every other set compiles at run time even under
+`EACP_REQUIRE_PRECOMPILED_SHADERS=1`. None of the HLSL has been compiled yet.
+
+**Not offered.** WGSL also lets an override size a workgroup or a private
+array. Both are C++ constants of the graph here - the `ThreadGroupShape` a
+kernel is constructed with and `privateArray<T, N>()`'s `N` - fixed before any
+pipeline exists, so a different size is still a different kernel. WGSL's
+numeric `@id` is not offered either: the name is the key.
+
+The CPU executor takes the same values as `PlanOptions::overrides` and resolves
+them once into constants of the plan, so a dispatch reads one as it reads a
+literal and allocates nothing. `OverrideCodegen/` pins the spellings and the
+resolution, `Override/` in `CpuComputeTests` the executor, and
+`OverrideDevice/` runs a kernel and a render program with two value sets each,
+cross-checked against the CPU, the per-set pipelines, the refusals, an f16
+override and a precompiled library specialised at load.
+
+### Functions
+
+A C++ helper called from `define()` is inlined: each call records its body
+again, so one used N times is emitted N times. `function<Signature>(name, body)`
+is WGSL's `fn` (`Codegen/ShaderFunction.h`): the body is recorded once, with a
+handle per parameter, and the function is defined once per source and called
+by name.
+
+```cpp
+auto shade = function<Float(Float, Float2)>(
+    "shade",
+    [&](Float k, Float2 uv)
+    {
+        auto total = var(k);
+        auto early = [&] { returnEarly(total.get() * 2.f); };
+        ifThen(uv.x() > 0.5f, early);
+        return total.get() + uv.y();
+    });
+
+auto a = shade(x, uv);
+auto b = shade(a, uv * 2.f);
+```
+
+Parameters and results are scalars, vectors and matrices of every family, f16
+included, and shader structs, all by value; `void` returns nothing. A parameter
+is read, never assigned. `returnEarly(value)` returns from anywhere in the body
+- an `ifThen`, a loop, a switch clause - and `returnEarly()` leaves a void
+function. A function calls functions declared before it, so none recurses, and
+none is declared inside another's body.
+
+**What a body reaches.** Its parameters, its own `var()`s and private arrays,
+and what has module scope: literals, overrides, uniforms, buffers, textures and
+samplers. Nothing a stage is handed - a built-in, a vertex input or varying, a
+thread index, shared memory, a constant array - and no variable of the caller:
+those are arguments, as WGSL makes them (its built-ins are entry-point
+parameters too). It may store to buffers and textures, run buffer atomics and
+discard; barriers, group folds and SIMD-group matrices stay in `define()`.
+`endFunction` asserts all of it. WGSL checks a function against the stage that
+calls it, and so does the emitter, through every function a stage reaches: the
+vertex stage calls none that stores, runs an atomic, discards
+(`addFunctionCall` asserts) or takes derivatives (`vertexUsesImplicitDerivatives`
+now looks inside them), and a kernel none that discards or takes derivatives.
+
+**Expression or statement.** A function returning a scalar, vector or matrix
+that neither touches storage a kernel may write nor discards is called as an
+expression - a `FunctionCall` node, printed where it is read, named as a local
+when read twice, and pure where the function and its arguments are, so it may
+be called in the position or a varying of the vertex stage without
+`vertexStage()`, and a loop condition calling it calls it every pass. Every
+other call - void, a struct result, a store, an atomic, a read of an output
+buffer, a discard - is a `Call` statement made where it is written, its result
+declared as a variable (`T vN = fn_name(...)`); in a render program it belongs
+to the stage open there, so a vertex one is made inside `vertexStage()`.
+
+| | MSL | HLSL | GLSL |
+| --- | --- | --- | --- |
+| defined | `fn_<name>(T vN, ...)` before the entry points, then the uniforms, textures, samplers and buffers its body reaches, its callees' included, as parameters under the entry point's names | `fn_<name>(T vN, ...)` before the entry points; resources are globals | the same, inside each stage's `#ifdef` that calls it |
+| where | once per source, both render stages sharing one | once per source | once per stage source calling it |
+
+Callees are defined ahead of their callers, and a source no stage of which calls
+a function is the source it was, byte for byte. f16 is `half` / `float16_t` /
+`float` with `eacpRoundHalf` on HLSL, as everywhere. None of the HLSL has been
+compiled yet; the MSL and GLSL run on Metal and lavapipe.
+
+**The CPU executor** runs no call: `ShaderGraph::withFunctionsInlined()` copies
+each called body to where it is called - a `Call` step whose body declares the
+parameters from the arguments and assigns the result before each return - and
+the step runs that body in a mask frame with no parent, so a return ends its
+lanes for the body alone. A call read as a value is inlined in front of each
+statement reading it, into a variable of its own (two calls in one expression
+keep two values); a loop whose condition calls one tests it at the top of its
+body; a call inside a constant array's element is refused by name. Parameters
+are variables, so a body's values are re-evaluated per call and a ramp through
+one is not detected. All of it happens once, at plan time; a dispatch allocates
+nothing. `FunctionCodegen/` pins the spellings, `Function/` in
+`CpuComputeTests` the executor, and `FunctionDevice/` cross-checks kernels
+against it and draws a render program calling one function from both stages.
+
+### Reflection
+
+`program.reflection()` (a `ShaderProgram` or `ComputeKernel`/`ComputeProgram`),
+`GeneratedShader::reflection` or `reflectShader(graph)` is what an EDSL shader
+binds and passes, read from the graph its source was emitted from
+(`Codegen/ShaderReflection.h`):
+
+```cpp
+const auto& reflection = kernel.reflection();
+
+for (const auto& binding: reflection.bindings)
+    LOG(bindingKindName(binding.kind), " ", binding.name, " at ", binding.slot);
+
+auto* albedo = reflection.findBinding("albedo");   // by member name
+auto* block = reflection.findBinding(BindingKind::UniformBlock, 0);
+```
+
+- **Bindings**, the uniform block first, then the storage buffers in slot
+  order, then the texture slots: `BindingKind::UniformBlock`, `StorageBuffer`
+  (with its `BufferAccess` - Read, Write or Atomic - and element type: Float,
+  UInt, Int, Half or Struct, the struct's index in `structs`), `Texture` (its
+  `TextureKind` and baked `TextureSampling`), `StorageTexture` (kind, format and
+  access; a `WritableTexture2D` is a Write one of RGBA32Float), `Sampler` and
+  `ComparisonSampler`. Each has the `slot` a pass binds it at, the name of the
+  `EACP_SHADER` member that declared it (empty for a `ShaderBuilder`'s own), and
+  `stages`: the render stages whose code reaches it, or the compute stage for
+  every binding of a kernel, whose entry point declares them all.
+- **The uniform block's members**, at the offsets the upload walk writes and
+  the bytes each spans there, and `uniformBlockSize`; a kernel's block ends in
+  its grid extent (`count`, or `width`/`height`/`depth`), marked `gridExtent`.
+- **Vertex inputs** (location, type, step rate, buffer) and **varyings** in
+  location order with their `Interpolation` - a vertex input the fragment stage
+  reads directly is carried as one, `attribute` naming it.
+- **Overrides** (id, name, type, default as a `PipelineConstant`), **functions**
+  (parameters, result, the stages that call them - empty for one no stage calls,
+  which is not emitted - and whether a call is a statement, stores or discards),
+  **structs** (members at their WGSL storage offsets, size, alignment, whether
+  host-shareable), a kernel's **workgroup** (rank, `ThreadGroupShape`,
+  threadgroup memory), and whether the device is asked for f16 or sample-rate
+  shading.
+
+One source of truth: the emitter answers the same questions from the same
+graph, and `GeneratedShader::vertexReadsUniforms()`, `fragmentReadsUniforms()`
+and `vertexReadsTexture(slot)` - what a draw binds by - read the reflection.
+Names live on the graph (`ShaderGraph::nameUniform`/`nameStorageBuffer`/
+`nameTexture`, set by the member walk) and nothing emitted reads them.
+
+A hand-written `ShaderSource` has no reflection. It used to carry a
+`bindings` list of `ResourceBinding`s for an EDSL to fill, which nothing filled
+and no backend read; it is gone, since the graph says more than that list
+could and a list beside the source would be a second account to keep in step.
+Reflecting a native source would mean a SPIR-V, DXIL and Metal reflection
+library each; the Vulkan backend reads the descriptor types of the SPIR-V it is
+handed for its own layouts and keeps that to itself. `Reflection/` in
+`GPUCodegenTests` covers every kind across a kernel, a render program,
+functions, overrides, structs and f16; `Reflection/aShaderProgramNamesItsMembers`
+in `GPUTests` a program's member names.
+
 ### What it deliberately refuses
 
 `ShaderBuilder::uniform<T>()` static_asserts rather than leaving this to a
@@ -909,7 +1329,50 @@ Carry an `Int` across and test it, or carry the comparison's operands and
 compare in the fragment stage. An `Int` or `UInt` varying, signed or unsigned
 vectors included, crosses uninterpolated — the emitter writes `flat`,
 `nointerpolation` or `[[flat]]` for it on its own, since every dialect requires
-that of an integer.
+that of an integer, and asking for anything but `Interpolation::flat()` on one
+asserts (see "Interpolation").
+
+## Compile messages
+
+`ShaderLibrary::compilationInfo()` is WebGPU's `GPUCompilationInfo`
+(`Shader/CompilationInfo.h`): one `CompilationMessage` per diagnostic, with its
+type (`Error`, `Warning`, `Info`), its text, the 1-based line and column in the
+source the compiler was given (0 where it named none), FXC's marked `length`,
+and the `stage` whose compile said it where a backend compiles the stages apart.
+
+```cpp
+auto library = device.makeShaderLibrary(source);
+
+if (!library.isValid())
+    for (const auto& message: library.compilationInfo().messages)
+        LOG(message.describe());   // "error 7:16 (compute): use of undeclared ..."
+```
+
+An invalid library always holds an error: the compiler's, or one the library
+says of itself - no device, an empty source (a build that declined, which said
+why already), a precompiled binary required by `EACP_REQUIRE_PRECOMPILED_SHADERS`
+and missing, a module the driver refused. A valid one may hold warnings; a
+library loaded precompiled holds nothing. The compiler's text is still logged
+as before. `compilationInfo(constants)` is the compile behind one value set: on
+D3D, where a set is a compile of its own (see "Overrides"), that variant's
+messages, compiling it if no pipeline has yet; everywhere else the library's.
+
+| backend | compiler output | parsed by | stage |
+| --- | --- | --- | --- |
+| Metal | the `NSError` of `newLibraryWithSource:`, clang's `program_source:7:16: error: text` | `parseMetalLog` | none: one library for both stages |
+| Vulkan | glslang's info log, `ERROR: 0:7:49: 'name' : text` (`eacp-spirv` asks for the column) | `parseGlslangLog` | each stage compiled |
+| D3D12, FXC | the error blob, `file(7,21-35): error X3004: text`; the code stays in the text | `parseFxcLog` | each stage compiled |
+| D3D12, DXC | `DXC_OUT_ERRORS`, clang's format | `parseDxcLog` | each stage compiled |
+
+The parsers are portable and tested on every lane against captured output
+(`CompilationInfo/` in `GPUCodegenTests`); each drops what is printed between
+diagnostics - source excerpts, carets, glslang's error count - and a log none
+of whose lines parses is one message of the whole text, an error beside a
+failure and a warning beside a success. `CompilationInfoDevice/` in `GPUTests`
+breaks a kernel and a fragment stage on purpose on the current backend.
+**Metal drops the warnings of a library it builds** (checked on macOS 27: a
+`#warning` comes back only beside an error), so there a clean-but-warned
+source reports nothing. The FXC and DXC paths have not been compiled or run.
 
 ## Compiling shaders at build time
 
@@ -1087,6 +1550,12 @@ blobs in process through `PrecompiledTestBlobs.h`, one file per platform
 beside it (`xcrun metal`, FXC, glslang — the Metal cases self-skip on a Mac
 without the Metal Toolchain) and covers a hit that draws or dispatches, the
 fall back from a corrupt blob, and both refusals under the flag.
+
+A shader with overrides ("Overrides") precompiles as any other: the metallib
+and the SPIR-V hold the unspecialised functions, and each pipeline specialises
+them at load - `OverrideDevice/aPrecompiledKernelSpecialisesAtLoad` loads one
+under the require flag and runs it with two value sets. The DXBC is the
+source with its defaults, so on D3D12 only the default set is precompiled.
 
 ## Compiling with DXC at run time
 
@@ -3173,12 +3642,12 @@ idiomatic path.
 
 ### fp16 weights, kept packed
 
-There is no `Half` value type and there is not going to be one: the Windows
-backend compiles HLSL through FXC at `cs_5_0`, where `half` is a synonym for
-`float` and there is no 16-bit arithmetic at all, so the same declaration would
-mean two different things on two of the backends. What *is* portable, and what a
-model's weights actually want, is fp16 **storage** with fp32 arithmetic — half
-the buffer, half the bandwidth, and every value widened before it is used:
+`Half` and `HalfInputBuffer` (see "f16" above) compute in f16; on D3D that
+arithmetic is a float's plus a rounding per result, since FXC at `cs_5_0` has
+no 16-bit type. What a model's weights usually want instead is fp16
+**storage** with fp32 arithmetic — half the buffer, half the bandwidth, and
+every value widened before it is used — which is what these reads, on a float
+buffer, give on every backend at no extra cost:
 
 ```cpp
 void define() override
@@ -3485,8 +3954,12 @@ there — filled by typed
 handle: a `std::span<const float>` for an `InputBuffer`, `std::span<float>` for
 an `OutputBuffer`, `std::uint32_t` spans for `UIntInputBuffer`,
 `UIntOutputBuffer` and `AtomicBuffer`, a `std::span<const std::int32_t>` for an
-`IntInputBuffer`, and a `std::span<std::int32_t>` for an `IntOutputBuffer` or an
-`IntAtomicBuffer`. A `set` stores a pointer and a count and
+`IntInputBuffer`, a `std::span<std::int32_t>` for an `IntOutputBuffer` or an
+`IntAtomicBuffer`, `std::uint16_t` spans of binary16 bits for a
+`HalfInputBuffer` or `HalfOutputBuffer`, and for a `StructInputBuffer<T>` or
+`StructOutputBuffer<T>` a `std::byte` span laid out as `StructLayout<T>` says
+(`StructBufferData<T>::bytes()`) or a span of host records whose size is the
+stride. A `set` stores a pointer and a count and
 nothing else, so a callback rebinds every block for free; the memory stays the
 caller's and must outlive the dispatch. The handles `ShaderBuilder` hands back
 take the same overloads, so a bare graph binds the same way. The check is at

@@ -130,23 +130,49 @@ GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend)
 {
     auto source = shaderSourceFor(graph, backend);
 
+    if (!graph.overrides().empty())
+        source.withPipelineConstants();
+
     auto result = GeneratedShader {};
+    result.reflection = reflectShader(graph);
 
     if (graph.isCompute())
     {
         source.withCompute("computeMain").withThreadGroup(graph.threadGroupShape());
         result.source = std::move(source);
-        result.dispatchRank = graph.dispatchRank();
         return result;
     }
 
     source.withVertex("vertexMain").withFragment("fragmentMain");
     result.source = std::move(source);
     result.vertexLayout = buildVertexLayout(graph);
-    result.vertexReadsUniforms = vertexReadsUniforms(graph);
-    result.fragmentReadsUniforms = fragmentReadsUniforms(graph);
-    result.vertexTextureSlots = vertexTextureSlots(graph);
     return result;
+}
+
+DispatchRank GeneratedShader::dispatchRank() const
+{
+    return reflection.dispatchRank;
+}
+
+bool GeneratedShader::vertexReadsUniforms() const
+{
+    const auto* block = reflection.findBinding(BindingKind::UniformBlock, 0);
+    return block != nullptr && block->stages.vertex;
+}
+
+bool GeneratedShader::fragmentReadsUniforms() const
+{
+    const auto* block = reflection.findBinding(BindingKind::UniformBlock, 0);
+    return block != nullptr && block->stages.fragment;
+}
+
+bool GeneratedShader::vertexReadsTexture(int slot) const
+{
+    for (const auto& binding: reflection.bindings)
+        if (binding.isTextureSlot() && binding.slot == slot)
+            return binding.stages.vertex;
+
+    return false;
 }
 
 GeneratedShader ShaderBuilder::build() const
@@ -643,6 +669,24 @@ IntOutputBuffer ShaderBuilder::intOutputBuffer()
             graphData.addStorageBuffer(BufferAccess::Write, ValueType::Int)};
 }
 
+HalfInputBuffer ShaderBuilder::halfInputBuffer()
+{
+    return {&graphData,
+            graphData.addStorageBuffer(BufferAccess::Read, ValueType::Half)};
+}
+
+HalfOutputBuffer ShaderBuilder::halfOutputBuffer()
+{
+    return {&graphData,
+            graphData.addStorageBuffer(BufferAccess::Write, ValueType::Half)};
+}
+
+detail::StructBufferHandle ShaderBuilder::structBuffer(BufferAccess access,
+                                                       int (*declare)(ShaderGraph&))
+{
+    return {&graphData, graphData.addStructBuffer(access, declare(graphData))};
+}
+
 AtomicBuffer ShaderBuilder::atomicBuffer()
 {
     return {&graphData,
@@ -982,6 +1026,61 @@ void ShaderBuilder::write4(const IntOutputBuffer& buffer,
     graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
 }
 
+void ShaderBuilder::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half& value)
+{
+    graphData.addStore(buffer.slot, index.node, value.node);
+}
+
+void ShaderBuilder::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          float value)
+{
+    graphData.addStore(buffer.slot, index.node, graphData.addHalfConstant(value));
+}
+
+void ShaderBuilder::write(const HalfOutputBuffer& buffer,
+                          unsigned index,
+                          const Half& value)
+{
+    write(buffer, buffer.index(index), value);
+}
+
+void ShaderBuilder::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half2& value)
+{
+    auto base = index * 2u;
+    graphData.addRecordStore(buffer.slot,
+                             {base.node, (base + 1u).node},
+                             {value.x().node, value.y().node},
+                             value.node);
+}
+
+void ShaderBuilder::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half3& value)
+{
+    auto base = index * 3u;
+    graphData.addRecordStore(buffer.slot,
+                             {base.node, (base + 1u).node, (base + 2u).node},
+                             {value.x().node, value.y().node, value.z().node},
+                             value.node);
+}
+
+void ShaderBuilder::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half4& value)
+{
+    auto base = index * 4u;
+    graphData.addRecordStore(
+        buffer.slot,
+        {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
+        {value.x().node, value.y().node, value.z().node, value.w().node},
+        value.node);
+}
+
 void ShaderBuilder::write(const WritableTexture2D& texture,
                           const UInt& x,
                           const UInt& y,
@@ -1010,6 +1109,14 @@ Float ShaderBuilder::constant(float value)
     auto result = Float {};
     result.graph = &graphData;
     result.node = graphData.addConstant(value);
+    return result;
+}
+
+Half ShaderBuilder::halfConstant(float value)
+{
+    auto result = Half {};
+    result.graph = &graphData;
+    result.node = graphData.addHalfConstant(value);
     return result;
 }
 
