@@ -160,20 +160,32 @@ DWORD creationFlags(const ProcessOptions& options, const std::wstring& environme
     return flags;
 }
 
+struct ChildStdHandles
+{
+    HANDLE input = nullptr;
+    HANDLE output = nullptr;
+    HANDLE error = nullptr;
+};
+
+std::vector<HANDLE> getDistinctHandles(const ChildStdHandles& handles)
+{
+    auto distinct = std::vector<HANDLE> {};
+
+    for (auto handle: {handles.input, handles.output, handles.error})
+        if (handle != nullptr
+            && std::ranges::find(distinct, handle) == distinct.end())
+            distinct.push_back(handle);
+
+    return distinct;
+}
+
 // Passes exactly the child's std handles through PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
 // so a Process started concurrently on another thread never inherits them.
 bool createProcessWithStdHandles(const ProcessOptions& options,
-                                 HANDLE input,
-                                 HANDLE output,
-                                 HANDLE error,
+                                 const ChildStdHandles& handles,
                                  PROCESS_INFORMATION& info)
 {
-    auto inherited = std::vector<HANDLE> {};
-
-    for (auto handle: {input, output, error})
-        if (handle != nullptr
-            && std::ranges::find(inherited, handle) == inherited.end())
-            inherited.push_back(handle);
+    auto inherited = getDistinctHandles(handles);
 
     for (auto handle: inherited)
         SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
@@ -201,9 +213,9 @@ bool createProcessWithStdHandles(const ProcessOptions& options,
     STARTUPINFOEXW startup {};
     startup.StartupInfo.cb = sizeof startup;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    startup.StartupInfo.hStdInput = input;
-    startup.StartupInfo.hStdOutput = output;
-    startup.StartupInfo.hStdError = error;
+    startup.StartupInfo.hStdInput = handles.input;
+    startup.StartupInfo.hStdOutput = handles.output;
+    startup.StartupInfo.hStdError = handles.error;
     startup.lpAttributeList = attributeList;
 
     auto commandLine = commandLineFor(options);
@@ -362,7 +374,7 @@ private:
 
         PROCESS_INFORMATION info {};
         auto created = createProcessWithStdHandles(
-            options, inRead, outWrite, merge ? outWrite : errWrite, info);
+            options, {inRead, outWrite, merge ? outWrite : errWrite}, info);
 
         CloseHandle(inRead);
         CloseHandle(outWrite);
@@ -420,7 +432,7 @@ private:
 
         PROCESS_INFORMATION info {};
         auto created = createProcessWithStdHandles(
-            options, handles[0], handles[1], handles[2], info);
+            options, {handles[0], handles[1], handles[2]}, info);
 
         for (auto handle: handles)
             if (handle != nullptr)
