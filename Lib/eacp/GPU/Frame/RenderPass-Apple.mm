@@ -96,6 +96,16 @@ struct RenderPass::Native
     int targetWidth = 0;
     int targetHeight = 0;
 
+    Graphics::Rect getTargetRectangle() const
+    {
+        return makeTargetRectangle(targetWidth, targetHeight);
+    }
+
+    bool canSetTargetState() const
+    {
+        return encoder.get() != nil && !getTargetRectangle().isEmpty();
+    }
+
     // Metal takes the primitive type per draw call, so the pass remembers the
     // bound pipeline's topology.
     MTLPrimitiveType primitiveType = MTLPrimitiveTypeTriangle;
@@ -125,16 +135,15 @@ void RenderPass::setScissorRect(const Graphics::Rect& rect)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
-    const auto pixels =
-        calculateScissorPixels(rect, impl->targetWidth, impl->targetHeight);
+    const auto pixels = calculateScissorRectangle(rect, impl->getTargetRectangle());
 
-    const MTLScissorRect scissor {(NSUInteger) pixels.left,
-                                  (NSUInteger) pixels.top,
-                                  (NSUInteger) (pixels.right - pixels.left),
-                                  (NSUInteger) (pixels.bottom - pixels.top)};
+    const MTLScissorRect scissor {(NSUInteger) pixels.x,
+                                  (NSUInteger) pixels.y,
+                                  (NSUInteger) pixels.w,
+                                  (NSUInteger) pixels.h};
 
     [activeEncoder setScissorRect:scissor];
 }
@@ -143,7 +152,7 @@ void RenderPass::clearScissorRect()
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
     const MTLScissorRect scissor {
@@ -158,10 +167,10 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
-    if (!isViewportInsideTarget(rect, impl->targetWidth, impl->targetHeight))
+    if (!impl->getTargetRectangle().contains(rect) || rect.isEmpty())
         return;
 
     const MTLViewport viewport {rect.x, rect.y, rect.w, rect.h, nearDepth, farDepth};
@@ -173,7 +182,7 @@ void RenderPass::clearViewport()
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
     const MTLViewport viewport {

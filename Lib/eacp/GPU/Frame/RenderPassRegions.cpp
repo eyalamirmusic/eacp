@@ -1,47 +1,25 @@
 #include "RenderPassRegions.h"
 
 #include <algorithm>
-#include <cmath>
 
 namespace eacp::GPU
 {
-bool hasTargetArea(int targetWidth, int targetHeight)
+Graphics::Rect makeTargetRectangle(int targetWidth, int targetHeight)
 {
-    return targetWidth > 0 && targetHeight > 0;
+    return {
+        0.f, 0.f, static_cast<float>(targetWidth), static_cast<float>(targetHeight)};
 }
 
-ScissorPixels calculateScissorPixels(const Graphics::Rect& rect,
-                                     int targetWidth,
-                                     int targetHeight)
+// A region wholly past the right or bottom edge intersects to an empty rect that
+// still starts past it, which Metal's validation refuses; it is pulled onto the
+// edge.
+Geometry::Rectangle<int> calculateScissorRectangle(const Graphics::Rect& rect,
+                                                   const Graphics::Rect& target)
 {
-    const auto floorLeft = static_cast<int>(std::floor(rect.x));
-    const auto floorTop = static_cast<int>(std::floor(rect.y));
-    const auto ceilRight = static_cast<int>(std::ceil(rect.x + rect.w));
-    const auto ceilBottom = static_cast<int>(std::ceil(rect.y + rect.h));
-
-    auto pixels = ScissorPixels {};
-    pixels.left = std::clamp(floorLeft, 0, targetWidth);
-    pixels.top = std::clamp(floorTop, 0, targetHeight);
-    pixels.right = std::clamp(ceilRight, pixels.left, targetWidth);
-    pixels.bottom = std::clamp(ceilBottom, pixels.top, targetHeight);
-    return pixels;
-}
-
-// Written as refusals, so a NaN edge fails none of them and the viewport is kept,
-// as every backend kept it before this check was shared.
-bool isViewportInsideTarget(const Graphics::Rect& rect,
-                            int targetWidth,
-                            int targetHeight)
-{
-    if (rect.w <= 0.f || rect.h <= 0.f)
-        return false;
-
-    if (rect.x < 0.f || rect.y < 0.f)
-        return false;
-
-    const auto width = static_cast<float>(targetWidth);
-    const auto height = static_cast<float>(targetHeight);
-    return !(rect.x + rect.w > width || rect.y + rect.h > height);
+    const auto overlap = rect.intersection(target);
+    const auto pinnedX = std::min(overlap.x, target.right());
+    const auto pinnedY = std::min(overlap.y, target.bottom());
+    return overlap.withPosition(pinnedX, pinnedY).roundedOutwardTo<int>();
 }
 
 bool isOffsetInsideBuffer(std::int64_t offset, std::uint64_t bufferSize)

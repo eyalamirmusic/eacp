@@ -303,6 +303,16 @@ struct RenderPass::Native
     int targetWidth = 0;
     int targetHeight = 0;
 
+    Graphics::Rect getTargetRectangle() const
+    {
+        return makeTargetRectangle(targetWidth, targetHeight);
+    }
+
+    bool canSetTargetState() const
+    {
+        return encoder && !getTargetRectangle().isEmpty();
+    }
+
     VkDescriptorBufferInfo buffers[maxBufferSlots] = {};
     std::uint32_t boundBuffers = 0;
 
@@ -331,25 +341,23 @@ RenderPass::~RenderPass()
 
 void RenderPass::setScissorRect(const Graphics::Rect& rect)
 {
-    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
-    const auto pixels =
-        calculateScissorPixels(rect, impl->targetWidth, impl->targetHeight);
+    const auto pixels = calculateScissorRectangle(rect, impl->getTargetRectangle());
 
     // Framebuffer coordinates, y down: the negative viewport height flips clip
     // space and nothing else.
-    const VkRect2D scissor {
-        {pixels.left, pixels.top},
-        {static_cast<std::uint32_t>(pixels.right - pixels.left),
-         static_cast<std::uint32_t>(pixels.bottom - pixels.top)}};
+    const VkRect2D scissor {{pixels.x, pixels.y},
+                            {static_cast<std::uint32_t>(pixels.w),
+                             static_cast<std::uint32_t>(pixels.h)}};
 
     vkCmdSetScissor(impl->commandBuffer(), 0, 1, &scissor);
 }
 
 void RenderPass::clearScissorRect()
 {
-    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
     const VkRect2D scissor {{0, 0},
@@ -365,10 +373,10 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
                              float nearDepth,
                              float farDepth)
 {
-    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
-    if (!isViewportInsideTarget(rect, impl->targetWidth, impl->targetHeight))
+    if (!impl->getTargetRectangle().contains(rect) || rect.isEmpty())
         return;
 
     const VkViewport viewport {
@@ -379,7 +387,7 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
 
 void RenderPass::clearViewport()
 {
-    if (!impl->encoder || !hasTargetArea(impl->targetWidth, impl->targetHeight))
+    if (!impl->canSetTargetState())
         return;
 
     const VkViewport viewport {0.f,

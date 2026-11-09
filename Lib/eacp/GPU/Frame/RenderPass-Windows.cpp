@@ -362,9 +362,14 @@ struct RenderPass::Native
     // D3D12 debug layer, so draws are skipped when false.
     bool pipelineBound = false;
 
+    Graphics::Rect getTargetRectangle() const
+    {
+        return makeTargetRectangle(targetWidth, targetHeight);
+    }
+
     bool canSetTargetState() const
     {
-        return encoder && hasTargetArea(targetWidth, targetHeight);
+        return encoder && !getTargetRectangle().isEmpty();
     }
 
     bool canDraw() const { return encoder && pipelineBound; }
@@ -393,13 +398,12 @@ void RenderPass::setScissorRect(const Graphics::Rect& rect)
     if (!impl->canSetTargetState())
         return;
 
-    const auto pixels =
-        calculateScissorPixels(rect, impl->targetWidth, impl->targetHeight);
+    const auto pixels = calculateScissorRectangle(rect, impl->getTargetRectangle());
 
-    const D3D12_RECT scissor {static_cast<LONG>(pixels.left),
-                              static_cast<LONG>(pixels.top),
-                              static_cast<LONG>(pixels.right),
-                              static_cast<LONG>(pixels.bottom)};
+    const D3D12_RECT scissor {static_cast<LONG>(pixels.left()),
+                              static_cast<LONG>(pixels.top()),
+                              static_cast<LONG>(pixels.right()),
+                              static_cast<LONG>(pixels.bottom())};
 
     impl->list()->RSSetScissorRects(1, &scissor);
 }
@@ -424,7 +428,7 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
     if (!impl->canSetTargetState())
         return;
 
-    if (!isViewportInsideTarget(rect, impl->targetWidth, impl->targetHeight))
+    if (!impl->getTargetRectangle().contains(rect) || rect.isEmpty())
         return;
 
     D3D12_VIEWPORT viewport = {};
