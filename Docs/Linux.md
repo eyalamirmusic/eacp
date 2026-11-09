@@ -69,9 +69,11 @@ inside one `GPUView` through the coverage rasterizer and the glyph atlas.
 What Linux still does not have is the platform's own 2D tier. There is no
 `Graphics::Context` and no `Graphics::Font` — `Path` exists, but only as
 recorded geometry — so the retained `ShapeLayer`/`TextLayer` and the views over
-them, `TextInput`, the image codecs (an `Image` is a pixel container there, and
-loading a file yields an invalid one), menus and the tray are absent or honest
-stubs. `SVG` loses nothing to that: its one renderer on every platform is
+them, `TextInput`, menus and the tray are absent or honest stubs. The image
+codecs are there all the same: `Image/Image-Linux.cpp` decodes and encodes PNG
+and JPEG through stb_image and stb_image_write (`CMake/FindStb.cmake`, fetched
+by CPM), so `Image::decode`, `load`, `encode` and `save` behave as on the other
+platforms. `SVG` loses nothing to that: its one renderer on every platform is
 `SVGComponent`, and the recorded `Path` is what its path parser builds. Under `EACP_HEADLESS=1`, or with neither display server to
 reach, every window is built and never shown and every GPU test still runs on
 Mesa's lavapipe with no display server at all; the window and present tests run

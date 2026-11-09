@@ -15,6 +15,11 @@ struct Response
     void setRedirect(const std::string& url, int status = 302);
 
     std::string content;
+
+    // Server only: when set, the server sends this file as the body, read in
+    // slices as it goes out, and content is ignored.
+    std::string contentFilePath;
+
     std::string error;
     std::map<std::string, std::string> headers;
     int statusCode = 0;
@@ -103,6 +108,11 @@ struct Request
     std::string url;
     std::string type = "GET";
     std::string body;
+
+    // When set, the body is this file, read in slices as it is sent and never
+    // held whole, with its size as the Content-Length; body must be empty.
+    std::string bodyFilePath;
+
     std::map<std::string, std::string> headers;
 
     // Wall-clock limit for the whole request. Zero, the default, leaves each

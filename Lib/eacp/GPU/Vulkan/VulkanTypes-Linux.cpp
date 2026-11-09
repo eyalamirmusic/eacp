@@ -291,6 +291,13 @@ void VulkanTextureBindings::add(int slot, VkDescriptorType type)
     if (slot < 0 || slot >= maxTextureSlots)
         return;
 
+    // A separate image declared over a combined image sampler's binding - a
+    // texture sampled through a sampler binding as well - reads that
+    // descriptor's image half, so the combined type stands.
+    if (has(slot) && types[slot] == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+        && type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
+        return;
+
     declared |= 1u << slot;
     types[slot] = type;
 }

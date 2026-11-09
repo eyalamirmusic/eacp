@@ -95,7 +95,9 @@ take it without eacp, its tests live there, and
 behind `EACP_BUILD_SPIRV` and so on Linux only by default,
 `glslang`; a Linux build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
-one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
+one `eacp-vulkan` target, fetched on no other platform) and `stb`
+(`CMake/FindStb.cmake`, the header-only `eacp-stb` target behind the Linux
+image codec). Plus libcurl on Linux,
 which backs the HTTP client there, and — on Linux, where none of them are
 optional — three pkg-config groups: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor (`CMake/FindWayland.cmake`, one
@@ -357,6 +359,26 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_HOT_RELOAD=ON
 ```
 
+- `EACP_PRECOMPILE_SHADERS` (default `ON`): every app wired with
+  `eacp_add_precompiled_shaders(<app> SOURCES ...)`
+  (`CMake/PrecompiledShaders.cmake`) gets an `<app>-shaders` host tool built
+  from its sources, each listing shaders in a self-registering
+  `EACP_SHADER_SET() { visit<MyShader>(); }`, run at build time into
+  `<app>-PrecompiledShaders/` and embedded under `EacpShaders`, so its
+  `ShaderLibrary`s load blobs instead of compiling source. `OFF`, a
+  cross-compile (iOS, Android, for now) or a host with no compiler for any
+  backend leaves the app compiling at run time, with a `STATUS` line saying
+  so. The backend is the platform's own (`metal` on Apple, `dxbc` on Windows,
+  `spirv` on Linux) unless the call passes `BACKENDS`;
+  `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides every call, and
+  a requested backend the host cannot compile is dropped with a `STATUS` line.
+  Metal needs Xcode's Metal Toolchain component (`xcrun -sdk macosx metal
+  --version` must run; `xcodebuild -downloadComponent MetalToolchain`), probed
+  once per build directory into `EACP_METAL_TOOLCHAIN_FOUND`; SPIR-V needs
+  `eacp-spirv`. A successful run deletes the blobs its manifest no longer
+  lists. `Apps/GPU/RotatingTriangle` and `Apps/GPU/Compute` use it;
+  "Compiling shaders at build time" in `Lib/eacp/GPU/README.md` is the account.
+
 ### Local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against a
@@ -433,8 +455,10 @@ for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
 into `Core`'s `Clipboard` through the backend hook in
 `Core/App/Clipboard-Linux.h` so `eacp-core` links no Wayland; a copy needs
 keyboard focus on one of our windows), a compositor disconnect that fires
-`onLost` on every view surface and leaves the process headless, and stubs for
-image codecs, menus, tray and system appearance.
+`onLost` on every view surface and leaves the process headless, the PNG/JPEG
+codec (`Image/Image-Linux.cpp` over stb_image and stb_image_write, linked
+PRIVATE and kept out of the unity batches), and stubs for menus, tray and
+system appearance.
 
 The X11 half is its twin, on xcb with no Xlib symbol anywhere.
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
@@ -665,7 +689,7 @@ libfontconfig-dev fonts-dejavu-core fonts-dejavu-extra fonts-droid-fallback
 fonts-noto-color-emoji`.
 
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
-`TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
+`TextMetrics`, `TextInput` and the retained layer classes are
 left out of the Linux source list rather than stubbed, and with them
 `Apps/Graphics` and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
@@ -769,6 +793,29 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Core/ArgsTests.cpp`; `parse()` reads the stored command line, so a
   body needs no argc/argv), and `Console::print`/`printError`
   (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
+- Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
+  message, `AlertIcon`, buttons, default and cancel button; returns at once
+  from any thread, queues the alert (per eacp copy) so they come up one at a
+  time in call order, the next let in before the callback runs, and answers
+  the pressed button's index on the main thread exactly once. `NSAlert`'s
+  `runModal` on macOS (a quit that ends the modal is put to the root loop
+  again, and alerts queued behind it are not shown while it is pending,
+  through `Threads/EventLoop-macOS.h`), `TaskDialogIndirect` on Windows
+  (comctl32 v6 through shell32's manifest as an activation context,
+  `MessageBoxW` only when the function cannot be found; the thread's other
+  top-level windows are disabled while it is up), `UIAlertController` on iOS
+  (retried on later turns while nothing can present it). Nobody choosing — a
+  quit, a failed or dismissed dialog, an answer dropped unanswered (the last
+  copy of the answer going answers it), headless, Linux and Android (which
+  never show one), a standalone app with no loop running (answered at once on
+  the calling thread; `isEventLoopRunning` answers for the whole process) —
+  answers `Detail::unansweredButton`: the cancel button, else the default.
+  The platforms' id-to-button mappings are `Detail::` functions in
+  `Alert.cpp` so every lane tests them. `setAlertPresenter` replaces the
+  dialog (and the headless answer) at each alert's turn, which is how
+  `Tests/Core/AlertTests.cpp` and an app's own tests see and answer alerts;
+  replacing it answers the alert the old one held as unanswered.
+  `Apps/Graphics/AlertDemo` is the hand check of the native dialogs.
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations, backed by Core Graphics on
@@ -1153,32 +1200,6 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `FileWriter` and `Files::writeFile`, so UTF-8 paths take the same route as
   everything else. `Apps/Console/Zip` is the worked example.
 
-### Crash reporting (`Lib/eacp/CrashReporting`)
-
-The report types and `ReportDatabase` are `eacp-crash-report`, built on every
-platform so a Linux service reads the apps' reports with the same struct;
-`eacp-crash-reporting` (macOS and Windows; `eacp_enable_crash_reporting(<exe>)`
-in `CMake/CrashReporting.cmake` links it, `eacp-core` does not) relaunches the
-app's own executable as a handler process at `start()`; `main()` begins with
-`runHandlerIfRequested`. The app and handler share one fixed-size block
-(`SharedState.h`: metadata, attachments, the crash). On macOS the app captures
-in its signal handler (`backtrace()` on an alternate stack, the dyld image
-list) and the handler symbolises with `dladdr`; on Windows the handler writes a
-minidump and walks the stack with DbgHelp. Reports land in
-`pending/<id>/report.json` and reach the app's `CrashHandler`
-(`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
-itself and says on each button what the report will be; `CrashReportingTests`
-relaunches itself with `--crashing-process` to raise every fault on the main
-and a background thread, one case per cell of `Faults/Matrix.h`; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
-`Options::stackOverflowReporting` gives the starting thread (the default), every
-thread or none a stack to report an overflow from (an alternate signal stack on
-macOS, through `pthread_introspection_hook_install`; a `SetThreadStackGuarantee`
-reserve on Windows, from a TLS callback), macOS records
-throw sites through its own `__cxa_throw`. With the handler gone a crash goes
-unreported; `start()` then returns false and calls `handlerUnavailable`, and a
-`session.active` marker that a clean exit removes lets the next `start()` call
-`unreportedExit` for a run that ended with no report.
-
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 
 `UI::GPUComponent` is a `GPUView`'s `render(Frame&)`/`update(FrameTime)` as a
@@ -1223,6 +1244,26 @@ construction (`isValid()`/`reason()`), with `ComputePass`'s dispatch forms and
 allocates, locks, logs or makes a syscall. Semantics, the undefined-case table
 and the realtime contract: `Lib/eacp/GPU/README.md`, "Running a kernel on the
 CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
+
+### DXC at run time (`Lib/eacp/GPU/Shader/Dxc.h`)
+
+On D3D12, `GPU::Dxc::setOptions({.enabled = true, .locateLibrary = ...})` makes
+every run-time `ShaderLibrary` compile through `dxcompiler.dll` (SM 6.0 DXIL,
+`-O1` by default through `Options::arguments`) instead of FXC; the DLL is
+loaded by path through `Plugins::DynamicLibrary`, lazily on the first compile
+or by `Dxc::load()`, and nothing links it. An unloadable compiler or a device
+with no Shader Model 6.0 logs once and falls back to FXC (`Dxc::status()` says
+why); a shader DXC rejects leaves the library invalid, with no FXC retry.
+Precompiled blobs and the backend's internal shaders are untouched, and off
+Windows the options change nothing (`Dxc-Default.cpp`). The default locator is
+the separate `eacp-gpu-dxc` target (`GPU/Dxc/DxcResource.h`,
+`Dxc::enableFromOnlineResource()`), which fetches the official release through
+`OnlineResource` into `<cache root>/eacp/DXC` so `eacp-gpu` never links
+`eacp-network`; `Apps/GPU/Teapot` uses it. `Tests/GPU/DxcTests-Windows.cpp`
+needs `EACP_TEST_DXC=1` for its download cases, and `EACP_D3D12_DXC=1` runs all
+of `GPUTests` under DXC. "Compiling with DXC at run time" in
+`Lib/eacp/GPU/README.md` is the account, including the three WARP failures
+(DXIL `Htan`/`Hsin`/`Hcos`) and why `-O1`.
 
 ### ML (`Lib/eacp/ML`)
 

@@ -1453,8 +1453,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
         // The flag and the signature are two statements of one fact; assert
         // they agree before reading either.
-        check(generated.vertexReadsUniforms == vertexDeclares);
-        check(generated.fragmentReadsUniforms == fragmentDeclares);
+        check(generated.vertexReadsUniforms() == vertexDeclares);
+        check(generated.fragmentReadsUniforms() == fragmentDeclares);
     };
 
     // Read only by the position: the fragment stage is never bound.
@@ -1470,8 +1470,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
     auto vertexShader = vertexOnly.build();
     stagesOf(vertexOnly.graph(), vertexShader);
-    check(vertexShader.vertexReadsUniforms);
-    check(!vertexShader.fragmentReadsUniforms);
+    check(vertexShader.vertexReadsUniforms());
+    check(!vertexShader.fragmentReadsUniforms());
 
     // Read only by the colour: the vertex stage is never bound.
     auto fragmentOnly = ShaderBuilder {};
@@ -1482,8 +1482,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
     auto fragmentShader = fragmentOnly.build();
     stagesOf(fragmentOnly.graph(), fragmentShader);
-    check(!fragmentShader.vertexReadsUniforms);
-    check(fragmentShader.fragmentReadsUniforms);
+    check(!fragmentShader.vertexReadsUniforms());
+    check(fragmentShader.fragmentReadsUniforms());
 
     // Declared and read by neither stage: nothing is bound at all, though the
     // program still has a block to pack.
@@ -1499,8 +1499,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
     auto unreadShader = unread.build();
     stagesOf(unread.graph(), unreadShader);
-    check(!unreadShader.vertexReadsUniforms);
-    check(!unreadShader.fragmentReadsUniforms);
+    check(!unreadShader.vertexReadsUniforms());
+    check(!unreadShader.fragmentReadsUniforms());
 
     expectGlslCompiles(vertexOnly.graph());
     expectGlslCompiles(fragmentOnly.graph());
@@ -1529,8 +1529,8 @@ auto tCodegenUniformInStatementBinds =
     builder.fragment(float4(shade, shade, shade, 1.0f));
 
     auto generated = builder.build();
-    check(!generated.vertexReadsUniforms);
-    check(generated.fragmentReadsUniforms);
+    check(!generated.vertexReadsUniforms());
+    check(generated.fragmentReadsUniforms());
     check(contains(emitMetal(builder.graph()),
                    "fragmentMain(VertexOut input [[stage_in]],\n    "
                        + uniformDecl(RenderPass::uniformBase)));
@@ -1936,7 +1936,7 @@ auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
     builder.write(output, position.y * 16u + position.x, toFloat(position.x));
 
     auto shader = builder.build();
-    check(shader.dispatchRank == DispatchRank::TwoD);
+    check(shader.dispatchRank() == DispatchRank::TwoD);
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint2 gid [[thread_position_in_grid]]"));
@@ -2182,7 +2182,7 @@ auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
     builder.write(output, gid, toFloat(gid));
 
     auto shader = builder.build();
-    check(shader.dispatchRank == DispatchRank::OneD);
+    check(shader.dispatchRank() == DispatchRank::OneD);
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint gid [[thread_position_in_grid]]"));

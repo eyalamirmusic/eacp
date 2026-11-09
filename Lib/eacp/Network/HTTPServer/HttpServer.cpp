@@ -1,4 +1,5 @@
 #include "HttpServer.h"
+#include "HttpServerDispatcher.h"
 #include "ResponseBuilders.h"
 
 namespace eacp::HTTP
@@ -6,22 +7,17 @@ namespace eacp::HTTP
 
 namespace
 {
-std::string routeKey(const std::string& method, const std::string& path)
-{
-    return method + " " + path;
-}
-
-Response handleRouteMatch(const std::map<std::string, RequestHandler>& routes,
+Response handleRouteMatch(const RouteTable<RequestHandler>& routes,
                           const Request& req)
 {
     try
     {
-        auto match = routes.find(routeKey(req.type, req.pathWithoutQuery()));
+        auto match = routes.find(req.type, req.pathWithoutQuery());
 
-        if (match == routes.end())
+        if (!match)
             return makePlainTextResponse(404, "Not Found");
 
-        return match->second(req);
+        return (*match)(req);
     }
     catch (const Error& e)
     {
@@ -57,7 +53,14 @@ void Server::addRoute(const std::string& method,
                       const std::string& path,
                       RequestHandler handler)
 {
-    routes[routeKey(method, path)] = std::move(handler);
+    routes.add(method, path, std::move(handler));
+}
+
+void Server::addStreamingRoute(const std::string& method,
+                               const std::string& path,
+                               StreamingRequestHandler handler)
+{
+    streamingRoutes.add(method, path, std::move(handler));
 }
 
 void Server::get(const std::string& path, RequestHandler handler)
@@ -82,7 +85,15 @@ void Server::del(const std::string& path, RequestHandler handler)
 
 bool Server::listen(int port)
 {
-    return listen(port, buildRouteHandler());
+    return startListening(port, buildRouteHandler(), buildStreamingRouteFinder());
+}
+
+bool Server::listen(int port, RequestHandler handler)
+{
+    auto findsNoStreamingRoute = [](const Request&)
+    { return std::optional<StreamingRequestHandler>(); };
+
+    return startListening(port, std::move(handler), findsNoStreamingRoute);
 }
 
 RequestHandler Server::buildRouteHandler() const
@@ -91,6 +102,34 @@ RequestHandler Server::buildRouteHandler() const
 
     return [routesCopy](const Request& req) -> Response
     { return handleRouteMatch(routesCopy, req); };
+}
+
+
+StreamingRouteFinder Server::buildStreamingRouteFinder() const
+{
+    auto routesCopy = streamingRoutes;
+
+    return [routesCopy](const Request& req)
+    { return routesCopy.find(req.type, req.pathWithoutQuery()); };
+}
+
+Response serveStreamingRequest(const StreamingRequestHandler& handler,
+                               const Request& head,
+                               PeerStream peer)
+{
+    try
+    {
+        auto body = StreamingBodyDecoder(head, std::move(peer));
+        return handler(head, body);
+    }
+    catch (const Error& e)
+    {
+        return e.response;
+    }
+    catch (const std::exception& e)
+    {
+        return makePlainTextResponse(500, e.what());
+    }
 }
 
 } // namespace eacp::HTTP

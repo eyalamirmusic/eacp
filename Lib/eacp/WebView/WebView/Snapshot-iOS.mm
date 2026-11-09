@@ -43,8 +43,8 @@ void takeAppleSnapshot(WKWebView* webView, WebView::SnapshotCallback callback)
                                errorStr = "snapshot returned no image";
 
                            eacp::Threads::callAsync(
-                               [callback, bytes = std::move(bytes), errorStr]() mutable
-                               { callback(std::move(bytes), errorStr); });
+                               [callback, pngBytes = std::move(bytes), errorStr]() mutable
+                               { callback(std::move(pngBytes), errorStr); });
                          }];
 }
 } // namespace eacp::Graphics::detail

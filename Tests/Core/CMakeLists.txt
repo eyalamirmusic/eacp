@@ -1,4 +1,6 @@
 set(core_test_sources
+        # Never shows a dialog: every case installs a presenter or is headless.
+        AlertTests.cpp
         AllocationCount.cpp
         AppAffordanceTests.cpp
         AppTests.cpp
@@ -11,6 +13,7 @@ set(core_test_sources
         # Runs ConsoleHarness as a child: runConsole's exit codes and streams.
         ConsoleTests.cpp
         DynamicLibraryTests.cpp
+        EnvironmentTests.cpp
         EventLoopTests.cpp
         FileLocationsTests.cpp
         FilePathNamesTests.cpp
@@ -20,19 +23,23 @@ set(core_test_sources
         FileWriterTests.cpp
         FilesAppendTests.cpp
         FilesCopyMoveTests.cpp
+        FilesQueryTests.cpp
         # Only the paths refused before anything is launched, and the targets
         # computed for the launch; nothing here starts a file manager.
         FilesOpenTests.cpp
         FilesTests.cpp
         FilesWildcardTests.cpp
         FormatTests.cpp
+        HashTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
+        PlatformTests.cpp
         PluginObjectTests.cpp
         ProcessInheritStdioTests.cpp
         ProcessTokeniseTests.cpp
         RangeTests.cpp
         ReloadableLibraryTests.cpp
+        Sha256Tests.cpp
         SourceWatcherTests.cpp
         StringsTests.cpp
         TemporaryFileTests.cpp

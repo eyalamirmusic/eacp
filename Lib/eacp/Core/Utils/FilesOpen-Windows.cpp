@@ -6,7 +6,6 @@
 #include <shellapi.h>
 #include <shlobj.h>
 
-#include <algorithm>
 #include <string>
 
 namespace eacp::Detail
@@ -38,15 +37,6 @@ struct ScopedCom
     HRESULT result;
 };
 
-// FilePath keeps '/', which ShellExecuteW tolerates but the shell's item
-// parsing and explorer's /select switch do not.
-std::wstring nativePath(const FilePath& target)
-{
-    auto wide = target.wide();
-    std::replace(wide.begin(), wide.end(), L'/', L'\\');
-    return wide;
-}
-
 // ShellExecuteW answers an HINSTANCE that is really an error code, success
 // being anything above 32.
 bool shellExecute(const wchar_t* file, const wchar_t* parameters)
@@ -76,7 +66,7 @@ bool selectInExplorer(const std::wstring& path)
 bool openWithSystem(const FilePath& target)
 {
     auto com = ScopedCom {};
-    auto path = nativePath(target);
+    auto path = target.wide();
 
     return shellExecute(path.c_str(), nullptr);
 }
@@ -84,7 +74,7 @@ bool openWithSystem(const FilePath& target)
 bool revealInFileManager(const FilePath& target)
 {
     auto com = ScopedCom {};
-    auto path = nativePath(target);
+    auto path = target.wide();
 
     if (selectInExplorer(path))
         return true;

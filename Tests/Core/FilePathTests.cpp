@@ -166,3 +166,36 @@ auto tNativeStringPerPlatform =
         check(FilePath::fromNative("dir\\name").str() == "dir\\name");
     }
 };
+
+auto tWithSuffixAppendsToFileName =
+    test("FilePath/withSuffix appends to the file name") = []
+{
+    check(FilePath {"a/b.tar"}.withSuffix(".lock") == FilePath {"a/b.tar.lock"});
+    check(FilePath {"b"}.withSuffix("~") == FilePath {"b~"});
+};
+
+auto tLexicallyNormalResolvesDots =
+    test("FilePath/lexicallyNormal resolves dots and doubled separators") = []
+{
+    check(FilePath {"a/./b/../c//d"}.lexicallyNormal() == FilePath {"a/c/d"});
+    check(FilePath {"../a/b/.."}.lexicallyNormal() == FilePath {"../a/"});
+};
+
+auto tRelativeToWalksUpAndDown =
+    test("FilePath/relativeTo writes one path from another") = []
+{
+    check(FilePath {"/a/b/c"}.relativeTo("/a") == FilePath {"b/c"});
+    check(FilePath {"/a/d"}.relativeTo("/a/b") == FilePath {"../d"});
+    check(FilePath {"/a"}.relativeTo("/a") == FilePath {"."});
+    check(FilePath {"a"}.relativeTo("/b").empty());
+};
+
+auto tCurrentDirectoryIsAbsolute =
+    test("FilePath/currentDirectory is the working directory") = []
+{
+    auto current = FilePath::currentDirectory();
+
+    check(current.isAbsolute());
+    check(std::filesystem::equivalent(eacp::toStdPath(current),
+                                      std::filesystem::current_path()));
+};

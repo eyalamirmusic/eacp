@@ -53,11 +53,11 @@ public:
     void on(const std::string& event, std::function<void(const T&)> handler)
     {
         events[event] =
-            [handler = std::move(handler)](const Miro::Json::Value& payload)
+            [typedHandler = std::move(handler)](const Miro::Json::Value& payload)
         {
             try
             {
-                handler(Miro::createFromJSON<T>(payload));
+                typedHandler(Miro::createFromJSON<T>(payload));
             }
             catch (const std::exception&)
             {

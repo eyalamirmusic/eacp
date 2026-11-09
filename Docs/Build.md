@@ -22,7 +22,8 @@ own so other projects can take it without eacp; `CMake/FindESIMD.cmake`, the
 behind `EACP_BUILD_SPIRV` and so on Linux only by default, `glslang`. A Linux build
 adds `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator`
 (`CMake/FindVulkanBackend.cmake`, one `eacp-vulkan` target, fetched on no
-other platform), libcurl for the HTTP client, and three pkg-config groups
+other platform), `stb` for the PNG/JPEG codec (`CMake/FindStb.cmake`, headers
+only), libcurl for the HTTP client, and three pkg-config groups
 found against the machine's own libraries: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor
 (`CMake/FindWayland.cmake`); xcb with `xcb-xkb`, `xkbcommon-x11`,
@@ -144,6 +145,25 @@ its README.
   pass `ON`. iOS, Android and Windows are always static. A configure prints
   `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
   `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
+
+- `EACP_PRECOMPILE_SHADERS` (default `ON`) — compiles the shaders of every app
+  wired with `eacp_add_precompiled_shaders` (`CMake/PrecompiledShaders.cmake`)
+  at build time and embeds the blobs, which each `ShaderLibrary` loads instead
+  of compiling its source. `OFF` leaves those apps compiling at run time, as
+  does a cross-compile (iOS, Android) for now and a host that can compile none
+  of the requested backends. An app gets its platform's own backend — `metal`
+  on Apple, `dxbc` on Windows, `spirv` on Linux — unless its call names
+  `BACKENDS`, and `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides
+  every call, so `-DEACP_PRECOMPILE_SHADER_BACKENDS=spirv` with
+  `-DEACP_BUILD_SPIRV=ON` exercises the SPIR-V path on a Mac. A backend the
+  host cannot compile is dropped with a `STATUS` line: Metal needs Xcode's
+  Metal Toolchain component (`xcodebuild -downloadComponent MetalToolchain`),
+  probed once per build directory as the cached `EACP_METAL_TOOLCHAIN_FOUND`
+  (`-U` it after installing); DXBC needs a Windows host and SPIR-V
+  `eacp-spirv`. A configure prints `<app>: precompiled shaders (<backends>)`
+  or why there are none. The helper and the blob names are in
+  [Lib/eacp/GPU/README.md](../Lib/eacp/GPU/README.md), "Compiling shaders at
+  build time".
 
 - `EACP_VERBOSE_CONFIGURE` (default `OFF`) — prints the configure detail a
   clean configure leaves out: the FetchContent population of the
@@ -316,6 +336,16 @@ floor. `CMake/AppleSetup.cmake` claims `CMAKE_OSX_DEPLOYMENT_TARGET` only
 when nothing has filled it, so `-DCMAKE_OSX_DEPLOYMENT_TARGET=...` on the
 command line wins on both.
 
+iOS signing works the same way. `eacp_default_setup()` signs with
+`EACP_APPLE_DEVELOPMENT_TEAM` (a cache variable, eacp's own team by default,
+empty for none) and the `iPhone Developer` identity, but only where the project
+leaves `CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM` and
+`CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY` unset. The defaults are applied at
+the end of the top-level directory, so a project's own team wins however it
+sets it: on the command line, or as a normal variable or a cache entry, before
+or after eacp's setup runs, and an empty team included.
+`Tests/AppleSetup` checks each of those against the generated Xcode project.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables
@@ -336,7 +366,7 @@ and their tests build with it:
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |

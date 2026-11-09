@@ -119,10 +119,10 @@ if (EACP_HAS_GPU AND APPLE)
 endif ()
 
 include(TargetSetup)
-include(CrashReporting)
 include(EacpSchema)
 include(EacpPlugin)
 include(EacpPch)
+include(PrecompiledShaders)
 
 option(EACP_HIDDEN_VISIBILITY "Compile eacp with hidden symbol visibility" ON)
 

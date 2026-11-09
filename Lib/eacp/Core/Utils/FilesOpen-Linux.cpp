@@ -30,7 +30,7 @@ bool launchXdgOpen(const FilePath& target)
     if (opener.id() <= 0)
         return false;
 
-    std::thread([opener = std::move(opener)]() mutable { opener.wait(); }).detach();
+    std::thread([child = std::move(opener)]() mutable { child.wait(); }).detach();
 
     return true;
 }

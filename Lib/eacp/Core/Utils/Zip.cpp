@@ -7,6 +7,7 @@
 #include <miniz.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -672,11 +673,25 @@ bool Writer::writeTo(const FilePath& path)
     return true;
 }
 
-Bytes compress(Span<const std::uint8_t> bytes, Level level)
+namespace
+{
+constexpr auto zlibWindowBits = MZ_DEFAULT_WINDOW_BITS;
+constexpr auto rawDeflateWindowBits = -MZ_DEFAULT_WINDOW_BITS;
+constexpr auto deflateMemoryLevel = 9;
+
+Bytes deflateWithWindowBits(Span<const std::uint8_t> bytes,
+                            Level level,
+                            int windowBits)
 {
     auto deflater = mz_stream {};
 
-    if (mz_deflateInit(&deflater, toMinizLevel(level)) != MZ_OK)
+    if (mz_deflateInit2(&deflater,
+                        toMinizLevel(level),
+                        MZ_DEFLATED,
+                        windowBits,
+                        deflateMemoryLevel,
+                        MZ_DEFAULT_STRATEGY)
+        != MZ_OK)
         return {};
 
     auto scratch = Scratch(scratchSize);
@@ -711,6 +726,56 @@ Bytes compress(Span<const std::uint8_t> bytes, Level level)
     mz_deflateEnd(&deflater);
 
     return result;
+}
+
+// RFC 1952: magic, deflate, no flags, no mtime, no extra flags, unknown OS.
+constexpr auto gzipHeader = std::array<std::uint8_t, 10> {
+    0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
+constexpr auto bitsPerByte = std::size_t {8};
+constexpr auto lowByteMask = std::uint32_t {0xff};
+
+void appendLittleEndian(Bytes& out, Scratch& scratch, std::uint32_t value)
+{
+    auto littleEndian = std::array<std::uint8_t, sizeof(value)> {};
+
+    for (auto byte = std::size_t {0}; byte < littleEndian.size(); ++byte)
+    {
+        const auto shifted = value >> (byte * bitsPerByte);
+        littleEndian[byte] = static_cast<std::uint8_t>(shifted & lowByteMask);
+    }
+
+    appendVia(out, scratch, littleEndian.data(), littleEndian.size());
+}
+} // namespace
+
+Bytes compress(Span<const std::uint8_t> bytes, Level level)
+{
+    return deflateWithWindowBits(bytes, level, zlibWindowBits);
+}
+
+Bytes gzip(Span<const std::uint8_t> bytes, Level level)
+{
+    const auto deflated = deflateWithWindowBits(bytes, level, rawDeflateWindowBits);
+
+    if (deflated.empty())
+        return {};
+
+    const auto crc = mz_crc32(MZ_CRC32_INIT, bytes.data(), bytes.getSize());
+    const auto crc32 = static_cast<std::uint32_t>(crc);
+    const auto inputSizeModulo32Bits = static_cast<std::uint32_t>(bytes.getSize());
+
+    auto scratch = Scratch {};
+    auto out = Bytes {};
+    appendVia(out, scratch, gzipHeader.data(), gzipHeader.size());
+    appendVia(out, scratch, deflated.data(), deflated.getSize());
+    appendLittleEndian(out, scratch, crc32);
+    appendLittleEndian(out, scratch, inputSizeModulo32Bits);
+    return out;
+}
+
+Bytes gzip(std::string_view text, Level level)
+{
+    return gzip(asBytes(text), level);
 }
 
 Bytes compress(std::string_view text, Level level)

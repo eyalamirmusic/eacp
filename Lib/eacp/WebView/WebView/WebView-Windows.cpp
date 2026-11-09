@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include "WebView.h"
+#include "MessageOrigin.h"
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
 #include "FileDrag-Windows.h"
@@ -948,6 +949,20 @@ struct WebView::Native
                 .Get());
     }
 
+    // WebMessageReceived fires for the top-level document only, and Source is
+    // that document's URI. NavigateToString (loadHTML without a base URL) puts
+    // the page at about:blank.
+    bool isFromTrustedSender(ICoreWebView2WebMessageReceivedEventArgs* args)
+    {
+        CoTaskMemString sourceRaw;
+
+        if (FAILED(args->get_Source(&sourceRaw)))
+            return false;
+
+        auto source = sourceRaw.toString();
+        return originPolicy.admit(detail::originOf(source), source == "about:blank");
+    }
+
     void setupEventHandlers()
     {
         if (!webView)
@@ -1020,6 +1035,9 @@ struct WebView::Native
                 [this](ICoreWebView2*,
                        ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT
                 {
+                    if (!isFromTrustedSender(args))
+                        return S_OK;
+
                     CoTaskMemString messageRaw;
                     args->get_WebMessageAsJson(&messageRaw);
                     if (!messageRaw)
@@ -1544,6 +1562,7 @@ struct WebView::Native
 
     WebView& owner;
     WebView::Options options;
+    detail::MessageOriginPolicy originPolicy {options};
     HWND hostHwnd = nullptr;
     ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
@@ -1665,6 +1684,9 @@ void WebView::loadURL(const std::string& url)
 
 void WebView::loadHTML(const std::string& html, const std::string& baseURL)
 {
+    if (baseURL.empty())
+        impl->originPolicy.trustInlineDocument();
+
     impl->ensureInitialized();
     impl->queueOperation(
         [this, html, baseURL]()
@@ -1868,8 +1890,8 @@ void WebView::takeSnapshot(SnapshotCallback callback)
                         }
 
                         Threads::callAsync(
-                            [callback, bytes = std::move(bytes), error]() mutable
-                            { callback(std::move(bytes), error); });
+                            [callback, pngBytes = std::move(bytes), error]() mutable
+                            { callback(std::move(pngBytes), error); });
                         return S_OK;
                     })
                     .Get());

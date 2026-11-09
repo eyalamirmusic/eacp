@@ -23,6 +23,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `tryParseInt` / `tryParseFloat` / `parseIntOr` / `parseFloatOr` — fixed-type forms
 - In #177, pending: `toUpper`, `split(text, delimiter, maximumParts)`,
   `join(parts, separator)`, `parseHex(text)`
+- `toHex(bytes)` — lowercase hex, two digits a byte
 - Not here: `startsWith`/`endsWith`/`contains` — use `std::string_view`'s own
 
 ## Formatting — `Core/Utils/Format.h` (`eacp::Strings`)
@@ -37,19 +38,23 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `LOGF(pattern, args...)` — timestamped log line through `Strings::format`
 - `logMessage(text)` — log one already-built line
 - `setLogFile(path)` — also write the log to a file
+- `getLogFile()` — the path `setLogFile` stored, empty when none
 - `Console::print(line)` / `Console::printError(line)` — plain stdout/stderr line
 
 ## Files — `Core/Utils/Files.h` (`eacp::Files`)
 
 - `readFile(path)` — whole file as a string
 - `writeFile(path, bytes)` — replace a file with bytes (text overload in #177)
-- `writeFileAtomically(path, bytes)` — write to a sibling, then rename over
+- `writeFileAtomically(path, bytes | text)` — write to a sibling, then rename over
 - `appendFile(path, bytes | text)` — append to the end
 - `writeFileAt(path, offset, bytes)` — positional write, never truncates
 - `exists` / `isFile` / `isDirectory` — what is at a path
 - `createDirectories(dir)` — make a directory and its parents
 - `copyFile(from, to)` / `copyDirectory(from, to)` — copy, overwriting
 - `moveFile(from, to)` — rename, copy-and-remove across devices
+- `isSameFile(a, b)` — one file under two paths
+- `setExecutable(path)` — `chmod +x`; true on Windows
+- `readSymlink(path)` — a link's target as written
 - `removeFile(path)` — delete one file; `removeAll(path)` — delete a tree
 - `legalFileName(name)` — strip characters no filesystem allows
 - `nonexistentSibling(path)` / `nonexistentChild(dir, prefix, suffix)` — a free name
@@ -68,10 +73,12 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 
 - `operator/`, `parentDirectory`, `fileName`, `stem`, `extension` — path parts
 - `hasExtension(ext)` / `withExtension(ext)` / `sibling(name)` — derived paths
+- `withSuffix(suffix)` — `a/b.tar` to `a/b.tar.lock`
+- `lexicallyNormal()` / `relativeTo(base)` — path algebra on the text
 - `isAbsolute`, `str`, `c_str`, `nativeString`, `wide`, `fromWide`, `fromNative`
 - `read()` — the file's contents
 - `homeDirectory`, `documentsDirectory`, `downloadsDirectory`, `desktopDirectory`,
-  `musicDirectory`, `moviesDirectory`, `picturesDirectory`, `tempDirectory`
+  `musicDirectory`, `moviesDirectory`, `picturesDirectory`, `tempDirectory`, `currentDirectory`
 - `appDataDirectory` / `cacheDirectory` — per-user data and cache roots
 - `appSupportDirectory()` / `appCacheDirectory()` — `<root>/<Company>/<App>`
 - `commonAppDataDirectory` / `applicationsDirectory` — machine-wide roots
@@ -90,17 +97,24 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 
 ## Time — `Core/Utils/Time.h` (`eacp::Time`)
 
-- `MS` — a millisecond count, the unit every eacp API takes
+- `MS` — a millisecond count, the unit every eacp API takes; `MS + MS`, `MS * int64`
 - `sleep(MS)` / `sleepMS(int)` — block the calling thread
 - `Deadline(timeout)` — `expired()`, `remaining()`
 - In #177, pending: `sinceEpoch()`, `formatIso8601(MS)`
 
-## Encoding and archives — `Core/Utils/Base64.h`, `Core/Utils/Zip.h`
+## Encoding and archives — `Core/Utils/Base64.h`, `Core/Utils/Hash.h`, `Core/Utils/Zip.h`
 
 - `Base64::encode(bytes)` / `Base64::decode(text)` — RFC 4648
+- `Hashing::fnv1a64(text)` — standard 64-bit FNV-1a, stable across builds
+- `Hashing::toHex(value)` — 16 lowercase hex digits, zero padded
 - `Zip::Reader` — `entries`, `find`, `read`, `readText`, `extract`, `extractAll`
 - `Zip::Writer` — `add`, `addFile`, `addDirectory`, `finish`, `writeTo`
 - `Zip::compress` / `decompress` / `decompressText` — one zlib blob
+
+## Hashing — `Core/Utils/Sha256.h`
+
+- `Sha256` — `update(bytes | text)`, `finish()` to a `Sha256Digest`
+- `computeSha256Hex(text)` / `computeFileSha256(path)` / `computeFileSha256Hex(path)`
 
 ## Small utilities — `Core/Utils/`
 
@@ -128,6 +142,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 
 - `isMac`, `isIOS`, `isApple`, `isWindows`, `isAndroid`, `isLinux`,
   `isLinuxFamily`, `isPosix`, `name()` — compile-time OS checks
+- `architectureName()` — `"arm64"` or `"x64"`
 - `isStandalone()` / `isDLL()` — app or plugin copy
 - `getAppName()`, `getCompanyName()`, `getAppVersion()` — from AppInfo
 - Not here: `isDebuggerAttached`
@@ -151,6 +166,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `Async<T>` / `AsyncPromise<T>` — `then(onValue, onError)`, `resolve`, `reject`
 - `runEventLoopFor(MS)` / `runEventLoopUntil(predicate, ...)` — pump the loop
 - `BinarySemaphore` / `TaskSemaphore` (`TaskSemaphore.h`) — wait with timeout
+- `keepWindowsErrorReportingOn()` (`ThreadUtils-Windows.h`) — stop eacp hiding crashes from Windows Error Reporting
 
 ## Plugins — `Core/Plugins/`
 
@@ -167,7 +183,12 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `URL` — `parse`, `addParameter`, `getParameter`, `query`, `toString`
 - `urlEncode` / `urlDecode` / `parseQueryString` / `parseQueryParameters`
 - `setDefaultUserAgent` / `eacpUserAgent`
-- `Server` — `get`, `post`, `put`, `del`, `addRoute`, `listen`, `boundPort`
+- `Server` — `get`, `post`, `put`, `del`, `addRoute`, `listen`, `boundPort`;
+  a path ending in `/*` matches every path under it
+- `Server::addStreamingRoute` / `RequestBodyReader` — handler pulls the body
+  (Content-Length or chunked) and can answer before reading it
+- `Request::bodyFilePath` — upload a file without loading it;
+  `Response::contentFilePath` — serve a file in slices
 - `Json::Server` / `Json::makeHandler` / `Json::setJson` — reflected JSON routes
 - `throwError(message, status)` / `makePlainTextResponse` — error responses
 - `Rpc::Server` / `Rpc::Client` (`HTTPRpc/`) — RPC over HTTP
