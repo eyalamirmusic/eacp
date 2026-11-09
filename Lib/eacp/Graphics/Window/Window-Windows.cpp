@@ -84,9 +84,10 @@ POINT screenPointFromLParam(LPARAM lParam)
     return {static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
 }
 
-// The work area — the monitor minus the taskbar and any registered appbars — of
-// the display a window rect mostly sits on, in physical pixels.
-RECT workAreaForRect(const RECT& rect)
+// The display a window rect mostly sits on, in physical pixels: its whole
+// rect (rcMonitor) and its work area (rcWork), the monitor minus the taskbar
+// and any registered appbars.
+MONITORINFO monitorForRect(const RECT& rect)
 {
     auto monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
 
@@ -94,9 +95,17 @@ RECT workAreaForRect(const RECT& rect)
     info.cbSize = sizeof(info);
 
     if (monitor != nullptr && GetMonitorInfoW(monitor, &info))
-        return info.rcWork;
+        return info;
 
-    return RECT {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    info.rcMonitor =
+        RECT {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    info.rcWork = info.rcMonitor;
+    return info;
+}
+
+RECT workAreaForRect(const RECT& rect)
+{
+    return monitorForRect(rect).rcWork;
 }
 
 RECT workAreaForWindow(HWND hwnd)
@@ -317,7 +326,10 @@ struct Window::Native
                             (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
                             this);
 
-        if (host.hwnd && options.cornerRadius && !options.transparentBackground)
+        roundedCorners =
+            options.cornerRadius.has_value() && !options.transparentBackground;
+
+        if (host.hwnd && roundedCorners)
             applyRoundedCorners();
 
         // Match the title bar to the system theme and opt the process into
@@ -380,9 +392,13 @@ struct Window::Native
     // attribute and the window stays square.
     void applyRoundedCorners() const
     {
+        applyCornerPreference(2); // DWMWCP_ROUND
+    }
+
+    void applyCornerPreference(DWORD preference) const
+    {
         const DWORD attrWindowCornerPreference =
             33; // DWMWA_WINDOW_CORNER_PREFERENCE
-        DWORD preference = 2; // DWMWCP_ROUND
         DwmSetWindowAttribute(
             host.hwnd, attrWindowCornerPreference, &preference, sizeof(preference));
     }
@@ -415,6 +431,110 @@ struct Window::Native
             return;
 
         ShowWindow(host.hwnd, IsZoomed(host.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    }
+
+    // Windows has no full screen mode for a window, so it is built: the frame
+    // taken off and the window laid over the whole of the monitor it is
+    // mostly on, taskbar included. Leaving puts the style and the placement -
+    // maximised or not, and where - back as they were.
+    void setFullScreen(bool shouldBeFullScreen)
+    {
+        if (!host.hwnd || eacp::Apps::getAppEnvironment().headless
+            || fullScreen == shouldBeFullScreen)
+            return;
+
+        if (shouldBeFullScreen)
+            enterFullScreen();
+        else
+            leaveFullScreen();
+    }
+
+    void enterFullScreen()
+    {
+        windowedPlacement.length = sizeof(windowedPlacement);
+
+        if (!GetWindowPlacement(host.hwnd, &windowedPlacement))
+            return;
+
+        // Without WS_MAXIMIZE either way: a window still zoomed underneath
+        // its full screen would take the placement's maximise on the way back
+        // as one it already has, and keep the monitor's rect with the frame
+        // put back around it.
+        windowedStyle = GetWindowLongPtrW(host.hwnd, GWL_STYLE)
+                        & ~static_cast<LONG_PTR>(WS_MAXIMIZE);
+
+        // Set before the style changes: the frame change it causes asks
+        // WM_NCCALCSIZE and the hit test, which both look at it.
+        fullScreen = true;
+
+        SetWindowLongPtrW(host.hwnd,
+                          GWL_STYLE,
+                          windowedStyle
+                              & ~static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW));
+
+        if (roundedCorners)
+            applyCornerPreference(1); // DWMWCP_DONOTROUND
+
+        layOverMonitor(HWND_TOP, SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+
+    void leaveFullScreen()
+    {
+        fullScreen = false;
+
+        SetWindowLongPtrW(host.hwnd, GWL_STYLE, windowedStyle);
+
+        if (roundedCorners)
+            applyRoundedCorners();
+
+        SetWindowPlacement(host.hwnd, &windowedPlacement);
+        SetWindowPos(host.hwnd,
+                     nullptr,
+                     0,
+                     0,
+                     0,
+                     0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER
+                         | SWP_FRAMECHANGED);
+    }
+
+    // The monitor, or for a constrained window the largest size its rule
+    // allows centred on it - what macOS letterboxes in black and Windows
+    // leaves to the desktop. With the frame off, the window is all content.
+    RECT fullScreenFrame(const RECT& monitor, float scale) const
+    {
+        auto frame = monitor;
+        fitFrameToConstraint(frame, scale);
+
+        auto width = frame.right - frame.left;
+        auto height = frame.bottom - frame.top;
+
+        frame.left = monitor.left + ((monitor.right - monitor.left) - width) / 2;
+        frame.top = monitor.top + ((monitor.bottom - monitor.top) - height) / 2;
+        frame.right = frame.left + width;
+        frame.bottom = frame.top + height;
+
+        return frame;
+    }
+
+    // Over the monitor the window is mostly on. Also how a full screen window
+    // follows its monitor through a resolution change, rather than being
+    // contained in its work area as a window is.
+    void layOverMonitor(HWND insertAfter, UINT flags) const
+    {
+        auto window = RECT {};
+        GetWindowRect(host.hwnd, &window);
+
+        auto frame =
+            fullScreenFrame(monitorForRect(window).rcMonitor, host.getDpiScale());
+
+        SetWindowPos(host.hwnd,
+                     insertAfter,
+                     frame.left,
+                     frame.top,
+                     frame.right - frame.left,
+                     frame.bottom - frame.top,
+                     flags);
     }
 
     void showWindow() const
@@ -566,9 +686,10 @@ struct Window::Native
     // detail::resizeBandHitTest), as an HT* code.
     LRESULT hitTestResizeBand(POINT screenPoint) const
     {
-        // A maximized window has no edges to drag, and a band left live along
-        // the screen edge would let a stray drag pull it out of shape.
-        if (hasSystemManagedSize(host.hwnd))
+        // A maximized or full screen window has no edges to drag, and a band
+        // left live along the screen edge would let a stray drag pull it out
+        // of shape.
+        if (fullScreen || hasSystemManagedSize(host.hwnd))
             return HTCLIENT;
 
         auto frame = RECT {};
@@ -586,6 +707,12 @@ struct Window::Native
     {
         if (!host.hwnd || hasSystemManagedSize(host.hwnd))
             return;
+
+        if (fullScreen)
+        {
+            layOverMonitor(nullptr, SWP_NOZORDER | SWP_NOACTIVATE);
+            return;
+        }
 
         auto frame = RECT {};
         GetWindowRect(host.hwnd, &frame);
@@ -730,10 +857,12 @@ struct Window::Native
     }
 
     // `size` is content points already through the constraint (see
-    // Window::setSize); here it only becomes a frame in pixels.
+    // Window::setSize); here it only becomes a frame in pixels. A full screen
+    // window's size is its monitor's, as on the platforms where the system
+    // owns it.
     void setSize(Point size)
     {
-        if (host.hwnd == nullptr)
+        if (host.hwnd == nullptr || fullScreen)
             return;
 
         auto insets = nonClientInsets(host.hwnd, eatsFrame());
@@ -758,6 +887,13 @@ struct Window::Native
     bool ignoresMouseEvents = false;
     bool framelessRounded = false;
     bool framelessResizable = false;
+    bool roundedCorners = false;
+
+    // What the window was before it went full screen, so leaving puts it
+    // back just so.
+    bool fullScreen = false;
+    LONG_PTR windowedStyle = 0;
+    WINDOWPLACEMENT windowedPlacement {};
 };
 
 LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
@@ -892,10 +1028,20 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             // again too big for the 150% one it just moved to.
             // The window already reports the new DPI (so nonClientInsets is
             // right), but the host's scale is only updated below.
+            // A full screen window covers the monitor it moved to instead.
             auto frame = *reinterpret_cast<RECT*>(lParam);
-            detail::containWithinWorkArea(frame, workAreaForRect(frame));
-            self->fitFrameToConstraint(frame,
-                                       static_cast<float>(HIWORD(wParam)) / 96.f);
+            auto newScale = static_cast<float>(HIWORD(wParam)) / 96.f;
+
+            if (self->fullScreen)
+            {
+                frame =
+                    self->fullScreenFrame(monitorForRect(frame).rcMonitor, newScale);
+            }
+            else
+            {
+                detail::containWithinWorkArea(frame, workAreaForRect(frame));
+                self->fitFrameToConstraint(frame, newScale);
+            }
 
             SetWindowPos(hwnd,
                          nullptr,
@@ -992,6 +1138,16 @@ void Window::minimize()
 void Window::toggleMaximize()
 {
     impl->toggleMaximize();
+}
+
+void Window::setFullScreen(bool shouldBeFullScreen)
+{
+    impl->setFullScreen(shouldBeFullScreen);
+}
+
+bool Window::isFullScreen() const
+{
+    return impl->fullScreen;
 }
 
 void Window::setMouseLocked(bool locked)

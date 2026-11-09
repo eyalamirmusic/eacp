@@ -447,7 +447,11 @@ The Wayland half is one process-wide connection
 surface-to-window map, and the loop source that pumps it through
 `Threads::addLoopSource` with a pre-poll flush), a native that is a
 `wl_surface` under a libdecor frame with a viewport-stretched shm buffer behind
-the content (`Window/WaylandWindow-Linux.cpp`), a `wl_subsurface` per presenting
+the content (`Window/WaylandWindow-Linux.cpp`; maximise and full screen are
+libdecor requests whose state comes back in the configure, a full screen asked
+for before the frame exists is set on it before the map, and a configure with
+no size goes back to the last floating size, which is what un-maximising and
+leaving full screen restore), a `wl_subsurface` per presenting
 view (`View/WaylandViewSurface-Linux.cpp`, the Wayland `ViewSurfaceBackend`),
 seat protocol glue feeding the shared state machines with pointer-constraints
 for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
@@ -480,7 +484,12 @@ window once. `Window/X11Window-Linux.cpp` is the toplevel:
 `WM_PROTOCOLS`/`WM_DELETE_WINDOW`, `_NET_WM_NAME` with `WM_NAME` under it, a
 `WM_CLASS` of `eacp`, `_NET_WM_PID`, `WM_NORMAL_HINTS` (minimum size, a fixed
 size when not resizable, aspect), `_MOTIF_WM_HINTS` for borderless, a
-`_NET_WM_STATE` toggle for maximise and `WM_CHANGE_STATE` for iconify, `mapped`
+`_NET_WM_STATE` toggle for maximise, an add or remove of
+`_NET_WM_STATE_FULLSCREEN` for full screen (sent again at the `MapNotify`,
+since a window manager ignores it for a window it does not manage yet, and
+read back, with the maximise, from the `_NET_WM_STATE` the window manager
+writes — so under a bare Xvfb nothing grants it) and `WM_CHANGE_STATE` for
+iconify, `mapped`
 taken from the `MapNotify` rather than from the request, `ConfigureNotify` into
 a resize and a real `onMoved` through `xcb_translate_coordinates` — positions
 are real here, unlike Wayland — and `FocusIn`/`FocusOut` into activation. The
@@ -729,7 +738,7 @@ wraps a command in a headless Weston session, which is where
 `Scripts/with-xvfb` (`with-xvfb`) wraps one in an Xvfb with no window manager
 at all — the harshest thing a toplevel meets — exporting
 `EACP_WINDOW_SYSTEM=x11` and `EACP_XVFB_OUTPUT`, which is where
-`X11WindowTests` (47 cases over two sources, its own `main` defaulting the
+`X11WindowTests` (49 cases over two sources, its own `main` defaulting the
 same override so the binary run by hand on a desktop still tests X11; the 9
 `X11/clipboard` ones in `X11ClipboardTests-Linux.cpp` drive a second xcb
 connection as another client, on a thread of its own where it has to own the

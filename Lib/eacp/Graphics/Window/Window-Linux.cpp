@@ -106,6 +106,16 @@ void Window::toggleMaximize()
     impl->native->toggleMaximize();
 }
 
+void Window::setFullScreen(bool shouldBeFullScreen)
+{
+    impl->native->setFullScreen(shouldBeFullScreen);
+}
+
+bool Window::isFullScreen() const
+{
+    return impl->native->isFullScreen();
+}
+
 bool Window::isVisible()
 {
     return impl->native->isVisible();
