@@ -44,6 +44,8 @@ struct Point
         return {a.x - b.x, a.y - b.y};
     }
 
+    constexpr bool operator==(const Point&) const = default;
+
     T x = T {};
     T y = T {};
 };
@@ -55,6 +57,8 @@ struct Insets
 {
     // The width and height the four sides add up to.
     constexpr Point<T> size() const { return {left + right, top + bottom}; }
+
+    constexpr bool operator==(const Insets&) const = default;
 
     T top = T {};
     T left = T {};
@@ -245,6 +249,8 @@ struct Rectangle
                 roundedRight - roundedLeft,
                 roundedBottom - roundedTop};
     }
+
+    constexpr bool operator==(const Rectangle&) const = default;
 
     T x = T {};
     T y = T {};
