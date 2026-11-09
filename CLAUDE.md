@@ -841,8 +841,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   backend (`GameInput-Apple.mm`, GameController's `GCKeyboard`/`GCMouse` on a
   serial high-priority queue, shared through a ref-counted hub because the
   framework has one handler slot per device) owns a feed only once it has
-  delivered an event; `GameInput-Default.cpp` returns no backend on Linux
-  and Android, so those use `Window::events.input` alone. Input counts only
+  delivered an event; `GameInput-Default.cpp` returns no backend on Android,
+  so it uses `Window::events.input` alone, and the Linux one is gamepads
+  only, keys and mouse staying the window's. Input counts only
   while the window is key. `GameInputSource::WindowEvents` forces the window
   feed. Gamepads (`GamepadState` in `frame.gamepads()`, buttons named by
   position, raw sticks -1..1 y up and triggers 0..1, up to eight by stable id)
@@ -858,7 +859,26 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   connected slot is read every tick, an empty one once a second, the
   XInput user index is the player index, every pad is `GamepadFamily::Xbox`,
   and keys and mouse stay the window's, so `backendName()` still says
-  "Window events"); Linux and Android have none yet.
+  "Window events") and from evdev on Linux (`GameInput-Linux.cpp`: no new
+  dependency, one reader thread per process polling every `/dev/input/event*`
+  that reports `BTN_GAMEPAD`, an inotify watch on `/dev/input` for hotplug and
+  an eventfd to stop it or to hand a resumed `GameInput` the whole state, fed
+  through a ref-counted hub like the Windows one; packets are pushed on
+  `SYN_REPORT` stamped with the kernel's own `CLOCK_MONOTONIC` time, a
+  `SYN_DROPPED` re-reads the state through `EVIOCGKEY`/`EVIOCGABS`, a pad the
+  user may not open is told from a keyboard by its sysfs capabilities and
+  logged once, after a 2 s grace for udev's ACL on hotplug, and the player
+  index is -1). The mapping is `Input/EvdevGamepad-Linux.{h,cpp}`, device-free
+  so the tests build it from a capability set: the kernel's positional codes
+  (gamepad.rst) except that xpad, xpadneo and Microsoft's vendor id send
+  `BTN_X`/`BTN_Y` by label, so those two swap; the right stick `ABS_RX/RY`, or
+  `ABS_Z/RZ` where there is no RX/RY (Xbox over Bluetooth); triggers Z/RZ, else
+  `ABS_BRAKE/GAS`, else `ABS_HAT2Y/2X`, else `BTN_TL2/TR2` as 0 or 1 (Switch);
+  the d-pad `ABS_HAT0X/Y` and `BTN_DPAD_*` together; axes normalised over
+  `EVIOCGABS` min/max with no deadzone (`flat` is not applied, the axes being
+  raw everywhere), y flipped up; the family by driver (`xpad`, `playstation`,
+  `sony`, `nintendo`) then vendor id. Joystick-class pads that report
+  `BTN_TRIGGER` rather than `BTN_GAMEPAD` are not taken; Android has no feed yet.
   Axes are state, buttons follow the key rules, and disconnecting or
   `releaseAll` releases the buttons and zeroes the axes. Both feeds report
   changes only, so when a `GameInput` starts accepting again - the window
@@ -868,6 +888,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Graphics/GameInputTests.cpp` (28 `GameInput/` cases) drives the
   queue directly and real windows; the last one reports a controller that is
   actually plugged in and passes without one unless `EACP_REQUIRE_GAMEPAD=1`.
+  `Tests/Graphics/GameInputTests-Linux.cpp` (12 cases) checks the evdev
+  mapping per driver family with no device, and drives a uinput pad through
+  the whole backend - hotplug, buttons, axes, resume, a reader started with the
+  pad present, unplug - skipping where `/dev/uinput` or the node it makes is
+  not the user's (`Docs/Linux.md`, "Gamepads").
   `Apps/UI/GamepadDemo` is the controller tester: a disc the sticks move and aim, each of the fifteen buttons doing a
   visible thing and announcing its press and release in a log, and a panel of
   every button and axis named as the pad's `GamepadFamily` prints them
