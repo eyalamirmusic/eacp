@@ -15,3 +15,7 @@ add_subdirectory(WebViewToggle)
 
 # Options::userAgent and Options::loadDeclinedPopupsInline, tested by one page.
 add_subdirectory(UserAgent)
+
+# Options::forwardUnhandledKeys by hand: every key's page verdict and the
+# KeyCode that reached the native side, beside a long page for Page Up/Down.
+add_subdirectory(WebViewKeys)
