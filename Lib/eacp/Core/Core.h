@@ -4,6 +4,7 @@
 #include "App/App.h"
 #include "App/Clipboard.h"
 #include "App/LoginItem.h"
+#include "Geometry/Geometry.h"
 #include "Maths/Maths.h"
 #include "Plugins/DynamicLibrary.h"
 #include "Plugins/HotReloadLoop.h"
