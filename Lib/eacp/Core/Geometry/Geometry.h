@@ -34,14 +34,14 @@ struct Point
         return {static_cast<U>(x), static_cast<U>(y)};
     }
 
-    friend constexpr Point operator+(const Point& a, const Point& b)
+    constexpr Point operator+(const Point& other) const
     {
-        return {a.x + b.x, a.y + b.y};
+        return {x + other.x, y + other.y};
     }
 
-    friend constexpr Point operator-(const Point& a, const Point& b)
+    constexpr Point operator-(const Point& other) const
     {
-        return {a.x - b.x, a.y - b.y};
+        return {x - other.x, y - other.y};
     }
 
     constexpr bool operator==(const Point&) const = default;
