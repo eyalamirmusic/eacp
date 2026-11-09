@@ -1,0 +1,1471 @@
+#include "PlanBuilder.h"
+
+#include <Miro/Reflection/ReflectEnum.h>
+
+#include <algorithm>
+
+namespace eacp::GPU::CpuCompute
+{
+namespace
+{
+struct MathName
+{
+    std::string_view name;
+    MathFunction function;
+};
+
+constexpr auto mathNames = Array<MathName, 25> {
+    {"sin", MathFunction::Sin},     {"cos", MathFunction::Cos},
+    {"tan", MathFunction::Tan},     {"asin", MathFunction::Asin},
+    {"acos", MathFunction::Acos},   {"atan", MathFunction::Atan},
+    {"sinh", MathFunction::Sinh},   {"cosh", MathFunction::Cosh},
+    {"tanh", MathFunction::Tanh},   {"asinh", MathFunction::Asinh},
+    {"acosh", MathFunction::Acosh}, {"atanh", MathFunction::Atanh},
+    {"exp", MathFunction::Exp},     {"exp2", MathFunction::Exp2},
+    {"log", MathFunction::Log},     {"log2", MathFunction::Log2},
+    {"log10", MathFunction::Log10}, {"sqrt", MathFunction::Sqrt},
+    {"rsqrt", MathFunction::Rsqrt}, {"floor", MathFunction::Floor},
+    {"ceil", MathFunction::Ceil},   {"trunc", MathFunction::Trunc},
+    {"round", MathFunction::Round}, {"fract", MathFunction::Fract},
+    {"sign", MathFunction::Sign}};
+
+struct NamedOp
+{
+    std::string_view name;
+    Op op;
+    int arguments;
+};
+
+constexpr auto geometricNames =
+    Array<NamedOp, 8> {{"dot", Op::Dot, 2},
+                       {"length", Op::Length, 1},
+                       {"distance", Op::Distance, 2},
+                       {"normalize", Op::Normalize, 1},
+                       {"cross", Op::Cross, 2},
+                       {"reflect", Op::Reflect, 2},
+                       {"refract", Op::Refract, 3},
+                       {"faceforward", Op::FaceForward, 3}};
+
+constexpr auto broadcastNames = Array<NamedOp, 7> {{"pow", Op::Pow, 2},
+                                                   {"atan2", Op::Atan2, 2},
+                                                   {"step", Op::Step, 2},
+                                                   {"clamp", Op::Clamp, 3},
+                                                   {"mix", Op::Mix, 3},
+                                                   {"smoothstep", Op::Smoothstep, 3},
+                                                   {"fma", Op::Fma, 3}};
+
+struct HelperName
+{
+    std::string_view name;
+    HelperFunction function;
+};
+
+// The helpers applied per component, at any float width.
+constexpr auto componentHelperNames =
+    Array<HelperName, 4> {{"eacpErf", HelperFunction::Erf},
+                          {"eacpErfc", HelperFunction::Erfc},
+                          {"eacpSaturatingTanh", HelperFunction::SaturatingTanh},
+                          {"eacpQuantizeToF16", HelperFunction::QuantizeToF16}};
+
+} // namespace
+
+// The bit helpers, at any integer width: the value arguments are the result's
+// type, the field arguments (offset, count) a scalar UInt.
+struct BitHelperName
+{
+    std::string_view name;
+    HelperFunction unsignedFunction;
+    HelperFunction signedFunction;
+    int valueArguments;
+    int fieldArguments;
+};
+
+namespace
+{
+constexpr auto bitHelperNames =
+    Array<BitHelperName, 8> {{"eacpCountOneBits",
+                              HelperFunction::CountOneBits,
+                              HelperFunction::CountOneBits,
+                              1,
+                              0},
+                             {"eacpReverseBits",
+                              HelperFunction::ReverseBits,
+                              HelperFunction::ReverseBits,
+                              1,
+                              0},
+                             {"eacpCountLeadingZeros",
+                              HelperFunction::CountLeadingZeros,
+                              HelperFunction::CountLeadingZeros,
+                              1,
+                              0},
+                             {"eacpCountTrailingZeros",
+                              HelperFunction::CountTrailingZeros,
+                              HelperFunction::CountTrailingZeros,
+                              1,
+                              0},
+                             {"eacpFirstLeadingBit",
+                              HelperFunction::FirstLeadingBitUnsigned,
+                              HelperFunction::FirstLeadingBitSigned,
+                              1,
+                              0},
+                             {"eacpFirstTrailingBit",
+                              HelperFunction::FirstTrailingBit,
+                              HelperFunction::FirstTrailingBit,
+                              1,
+                              0},
+                             {"eacpExtractBits",
+                              HelperFunction::ExtractBitsUnsigned,
+                              HelperFunction::ExtractBitsSigned,
+                              1,
+                              2},
+                             {"eacpInsertBits",
+                              HelperFunction::InsertBits,
+                              HelperFunction::InsertBits,
+                              2,
+                              2}};
+
+// The second argument type is read only when the helper takes two.
+struct HelperSignature
+{
+    ValueType result;
+    int arguments;
+    ValueType first;
+    ValueType second;
+};
+
+constexpr auto readSignature =
+    HelperSignature {ValueType::Float, 2, ValueType::UInt, ValueType::UInt};
+constexpr auto unpackPairSignature =
+    HelperSignature {ValueType::Float2, 1, ValueType::UInt, ValueType::UInt};
+constexpr auto packPairSignature =
+    HelperSignature {ValueType::UInt, 1, ValueType::Float2, ValueType::UInt};
+constexpr auto unpackQuadSignature =
+    HelperSignature {ValueType::Float4, 1, ValueType::UInt, ValueType::UInt};
+constexpr auto packIntQuadSignature =
+    HelperSignature {ValueType::UInt, 1, ValueType::Int4, ValueType::UInt};
+constexpr auto packUIntQuadSignature =
+    HelperSignature {ValueType::UInt, 1, ValueType::UInt4, ValueType::UInt};
+constexpr auto packFloatQuadSignature =
+    HelperSignature {ValueType::UInt, 1, ValueType::Float4, ValueType::UInt};
+
+struct PackedHelperName
+{
+    std::string_view name;
+    HelperFunction function;
+    HelperSignature signature;
+};
+
+// The packed-data helpers, each with the one signature the shader defines.
+constexpr auto packedHelperNames = Array<PackedHelperName, 22> {
+    {"eacpUnpackHalf2", HelperFunction::UnpackHalf2, unpackPairSignature},
+    {"eacpPackHalf2", HelperFunction::PackHalf2, packPairSignature},
+    {"eacpReadHalf", HelperFunction::ReadHalf, readSignature},
+    {"eacpUnpackBFloat16x2", HelperFunction::UnpackBFloat16x2, unpackPairSignature},
+    {"eacpPackBFloat16x2", HelperFunction::PackBFloat16x2, packPairSignature},
+    {"eacpReadBFloat16", HelperFunction::ReadBFloat16, readSignature},
+    {"eacpReadInt8", HelperFunction::ReadInt8, readSignature},
+    {"eacpReadUInt8", HelperFunction::ReadUInt8, readSignature},
+    {"eacpUnpackInt8x4", HelperFunction::UnpackInt8x4, unpackQuadSignature},
+    {"eacpUnpackUInt8x4", HelperFunction::UnpackUInt8x4, unpackQuadSignature},
+    {"eacpUnpackInt4x4", HelperFunction::UnpackInt4x4, unpackQuadSignature},
+    {"eacpUnpackUInt4x4", HelperFunction::UnpackUInt4x4, unpackQuadSignature},
+    {"eacpPackInt8x4", HelperFunction::PackInt8x4, packIntQuadSignature},
+    {"eacpPackUInt8x4", HelperFunction::PackUInt8x4, packUIntQuadSignature},
+    {"eacpPackUnorm8x4", HelperFunction::PackUnorm8x4, packFloatQuadSignature},
+    {"eacpPackSnorm8x4", HelperFunction::PackSnorm8x4, packFloatQuadSignature},
+    {"eacpPackUnorm16x2", HelperFunction::PackUnorm16x2, packPairSignature},
+    {"eacpPackSnorm16x2", HelperFunction::PackSnorm16x2, packPairSignature},
+    {"eacpUnpackUnorm8x4", HelperFunction::UnpackUnorm8x4, unpackQuadSignature},
+    {"eacpUnpackSnorm8x4", HelperFunction::UnpackSnorm8x4, unpackQuadSignature},
+    {"eacpUnpackUnorm16x2", HelperFunction::UnpackUnorm16x2, unpackPairSignature},
+    {"eacpUnpackSnorm16x2", HelperFunction::UnpackSnorm16x2, unpackPairSignature}};
+
+// Op::Leaf marks an operator the type family does not have.
+constexpr auto noBinaryOp = Op::Leaf;
+
+struct BinaryOperator
+{
+    char symbol;
+    Op floatOp;
+    Op unsignedOp;
+    Op signedOp;
+};
+
+constexpr auto binaryOperators =
+    Array<BinaryOperator, 8> {{'+', Op::AddF, Op::AddI, Op::AddI},
+                              {'-', Op::SubF, Op::SubI, Op::SubI},
+                              {'*', Op::MulF, Op::MulI, Op::MulI},
+                              {'/', Op::DivF, Op::DivU, Op::DivS},
+                              {'%', noBinaryOp, Op::RemU, Op::RemS},
+                              {'&', noBinaryOp, Op::And, Op::And},
+                              {'|', noBinaryOp, Op::Or, Op::Or},
+                              {'^', noBinaryOp, Op::Xor, Op::Xor}};
+
+struct BoolRelation
+{
+    std::string_view text;
+    Op op;
+};
+
+constexpr auto boolRelations = Array<BoolRelation, 4> {
+    {"==", Op::EqMask}, {"!=", Op::Xor}, {"&&", Op::And}, {"||", Op::Or}};
+
+struct RelationName
+{
+    std::string_view text;
+    Relation relation;
+};
+
+constexpr auto relationNames =
+    Array<RelationName, 6> {{"<", Relation::Less},
+                            {"<=", Relation::LessEqual},
+                            {">", Relation::Greater},
+                            {">=", Relation::GreaterEqual},
+                            {"==", Relation::Equal},
+                            {"!=", Relation::NotEqual}};
+
+constexpr auto derivativeNames =
+    Array<std::string_view, 3> {"dfdx", "dfdy", "fwidth"};
+
+constexpr auto conversionTargets = Array<ValueType, 16> {ValueType::Float,
+                                                         ValueType::Float2,
+                                                         ValueType::Float3,
+                                                         ValueType::Float4,
+                                                         ValueType::UInt,
+                                                         ValueType::UInt2,
+                                                         ValueType::UInt3,
+                                                         ValueType::UInt4,
+                                                         ValueType::Int,
+                                                         ValueType::Int2,
+                                                         ValueType::Int3,
+                                                         ValueType::Int4,
+                                                         ValueType::Half,
+                                                         ValueType::Half2,
+                                                         ValueType::Half3,
+                                                         ValueType::Half4};
+
+bool isConversionName(std::string_view name)
+{
+    return std::ranges::any_of(conversionTargets,
+                               [name](ValueType type)
+                               { return name == typeName(type); });
+}
+
+bool isThreadIdShape(int index, int components)
+{
+    if (index == allComponents)
+        return components <= PlanBuilder::axisCount;
+
+    return index >= 0 && index < PlanBuilder::axisCount;
+}
+
+bool isFloatVector(ValueType type)
+{
+    return isFloatFamily(type) && !isMatrix(type);
+}
+
+bool isShiftOperator(std::string_view text)
+{
+    return text == "<<" || text == ">>";
+}
+
+std::string_view getMissingAxisReason(ExprKind kind)
+{
+    if (kind == ExprKind::LocalId)
+        return "names no axis of the local id";
+
+    if (kind == ExprKind::GroupId)
+        return "names no axis of the group id";
+
+    return "names no axis of the thread id";
+}
+
+struct UnaryOperator
+{
+    char symbol;
+    bool (*accepts)(ValueType);
+    Op op;
+};
+
+constexpr auto unaryOperators =
+    Array<UnaryOperator, 4> {{'-', isFloatFamily, Op::NegF},
+                             {'-', isSignedInteger, Op::NegI},
+                             {'!', isBoolean, Op::BitNot},
+                             {'~', isIntegerFamily, Op::BitNot}};
+
+std::optional<Op> findUnaryOp(char symbol, ValueType type)
+{
+    auto found = std::ranges::find_if(
+        unaryOperators,
+        [&](const UnaryOperator& entry)
+        { return entry.symbol == symbol && entry.accepts(type); });
+
+    if (found == unaryOperators.end())
+        return std::nullopt;
+
+    return found->op;
+}
+
+Op findBinaryOp(char symbol, ValueType type)
+{
+    auto found = std::ranges::find(binaryOperators, symbol, &BinaryOperator::symbol);
+
+    if (found == binaryOperators.end())
+        return noBinaryOp;
+
+    if (isFloatFamily(type))
+        return found->floatOp;
+
+    if (isSignedInteger(type))
+        return found->signedOp;
+
+    return isUnsignedInteger(type) ? found->unsignedOp : noBinaryOp;
+}
+
+Op getConversionToFloat(ValueType source)
+{
+    if (isUnsignedInteger(source))
+        return Op::FloatFromU;
+
+    if (isSignedInteger(source))
+        return Op::FloatFromS;
+
+    return isBoolean(source) ? Op::FloatFromMask : Op::CopyBits;
+}
+
+Op getConversionToInteger(ValueType source, ValueType target)
+{
+    if (isFloatFamily(source))
+        return isSignedInteger(target) ? Op::IntFromF : Op::UIntFromF;
+
+    return isBoolean(source) ? Op::IntFromMask : Op::CopyBits;
+}
+
+std::optional<Op> findMinMaxOp(ValueType type, bool isMin)
+{
+    if (isFloatVector(type))
+        return isMin ? Op::MinF : Op::MaxF;
+
+    if (isSignedInteger(type))
+        return isMin ? Op::MinS : Op::MaxS;
+
+    if (isUnsignedInteger(type))
+        return isMin ? Op::MinU : Op::MaxU;
+
+    return std::nullopt;
+}
+
+Op getComparisonOp(ValueType operand)
+{
+    if (isFloatFamily(operand))
+        return Op::CmpF;
+
+    return isSignedInteger(operand) ? Op::CmpS : Op::CmpU;
+}
+
+bool isSwizzleShape(std::size_t count, const Plan::Node& node, ValueType source)
+{
+    return count > 0 && count <= node.swizzle.size()
+           && static_cast<int>(count) == node.components && !isMatrix(source);
+}
+
+bool writeSwizzleComponents(Plan::Node& node, std::string_view letters, int width)
+{
+    for (auto at = std::size_t {0}; at < letters.size(); ++at)
+    {
+        auto component = std::string_view("xyzw").find(letters[at]);
+
+        if (component == std::string_view::npos
+            || static_cast<int>(component) >= width)
+            return false;
+
+        node.swizzle[at] = static_cast<std::uint8_t>(component);
+    }
+
+    return true;
+}
+
+bool isBitcast(ValueType source, ValueType target)
+{
+    return componentCount(source) == componentCount(target) && !isBoolean(source)
+           && !isBoolean(target);
+}
+
+bool isConversion(std::string_view name, ValueType source, ValueType target)
+{
+    return name == typeName(target)
+           && componentCount(source) == componentCount(target) && !isMatrix(source);
+}
+ValueType getArgumentType(const ShaderGraph& graph, const Expr& expr, int which)
+{
+    return graph.expr(expr.args[which]).type;
+}
+
+int getArgumentComponents(const ShaderGraph& graph, const Expr& expr, int which)
+{
+    const auto& argument = graph.expr(expr.args[which]);
+    return getFlatComponents(graph, argument.type, argument.structType);
+}
+
+// Refract's third argument is its scalar eta; every other argument is a float
+// vector of the first's width.
+bool hasGeometricWidths(const ShaderGraph& graph, const Expr& expr, Op op, int width)
+{
+    for (auto which = 1; which < expr.args.size(); ++which)
+    {
+        auto isEta = op == Op::Refract && which == 2;
+        auto expected = isEta ? 1 : width;
+
+        if (getArgumentComponents(graph, expr, which) != expected
+            || !isFloatFamily(getArgumentType(graph, expr, which)))
+            return false;
+    }
+
+    return true;
+}
+bool hasArgumentTypes(
+    const ShaderGraph& graph, const Expr& expr, int begin, int end, ValueType type)
+{
+    for (auto which = begin; which < end; ++which)
+        if (getArgumentType(graph, expr, which) != type)
+            return false;
+
+    return true;
+}
+
+bool isMatrixTimesVector(ValueType matrix, ValueType vector, int resultComponents)
+{
+    return isMatrix(matrix) && isFloatVector(vector)
+           && componentCount(vector) == matrixColumns(matrix)
+           && resultComponents == matrixRows(matrix);
+}
+
+bool isVectorTimesMatrix(ValueType vector, ValueType matrix, int resultComponents)
+{
+    return isFloatVector(vector) && isMatrix(matrix)
+           && componentCount(vector) == matrixRows(matrix)
+           && resultComponents == matrixColumns(matrix);
+}
+
+bool isMatrixTimesMatrix(ValueType left, ValueType right, ValueType result)
+{
+    if (!isMatrix(left) || !isMatrix(right)
+        || matrixColumns(left) != matrixRows(right))
+        return false;
+
+    return result == matrixOf(matrixColumns(right), matrixRows(left), isHalf(left));
+}
+
+bool isIndexType(ValueType type)
+{
+    return type == ValueType::Int || type == ValueType::UInt;
+}
+
+// Node::sub on an indexed read: 1 where the index is an Int.
+std::uint8_t signedIndexFlag(ValueType index)
+{
+    return index == ValueType::Int ? 1 : 0;
+}
+} // namespace
+
+Word PlanBuilder::overrideWord(const PipelineConstant& value)
+{
+    switch (value.type)
+    {
+        case PipelineConstantType::Bool:
+            return Lanes::maskOf(value.asBool());
+        case PipelineConstantType::Float:
+        case PipelineConstantType::Half:
+            return Lanes::toWord(value.asFloat());
+        case PipelineConstantType::Int:
+        case PipelineConstantType::UInt:
+            break;
+    }
+
+    return static_cast<Word>(value.bits);
+}
+
+bool PlanBuilder::resolveOverrideWords()
+{
+    const auto resolved = resolveOverrides(graph, options.overrides);
+
+    if (!resolved.isValid())
+    {
+        fail(resolved.error);
+        return false;
+    }
+
+    for (const auto& value: resolved.values)
+        overrideWords.add(overrideWord(value));
+
+    return true;
+}
+
+// An f16 node is computed in float and rounded to the nearest half where
+// it lands, which for + - * / and sqrt is the correctly rounded half (a
+// float holds every such result of two halves to more than twice a half's
+// precision) and for the rest is HLSL's own rounding. A leaf - a literal,
+// a read of storage or of a variable - already holds a half.
+void PlanBuilder::markHalfRounding(int id)
+{
+    auto& node = plan.nodes[id];
+    node.roundsToHalf = isHalf(graph.expr(id).type) && node.op != Op::Leaf;
+}
+
+Vector<int> PlanBuilder::collectReachableRoots() const
+{
+    auto roots = Vector<int> {};
+
+    for (const auto& schedule: pending)
+        for (auto root: schedule.roots)
+            if (root >= 0)
+                roots.add(root);
+
+    return roots;
+}
+
+void PlanBuilder::markReachable()
+{
+    auto stack = collectReachableRoots();
+
+    while (!stack.empty() && !failed())
+    {
+        auto id = stack.back();
+        stack.pop_back();
+
+        if (!markNodeReachable(id, stack))
+            return;
+    }
+}
+
+bool PlanBuilder::markNodeReachable(int id, Vector<int>& stack)
+{
+    if (plan.nodes[id].used)
+        return true;
+
+    plan.nodes[id].used = true;
+    const auto& expr = graph.expr(id);
+
+    if (!pushReachable(expr.args, stack))
+        return false;
+
+    return expr.kind != ExprKind::ArrayRead || markArrayReachable(expr.index, stack);
+}
+
+bool PlanBuilder::markArrayReachable(int array, Vector<int>& stack)
+{
+    if (array < 0 || array >= graph.arrays().size())
+    {
+        fail("an ArrayRead names array {}, which does not exist", array);
+        return false;
+    }
+
+    if (arrayUsed[array] != 0)
+        return true;
+
+    arrayUsed[array] = 1;
+    return pushReachable(graph.arrays()[array].elements, stack);
+}
+
+bool PlanBuilder::pushReachable(const Vector<int>& ids, Vector<int>& stack)
+{
+    for (auto id: ids)
+    {
+        if (!checkNode(id))
+            return false;
+
+        stack.add(id);
+    }
+
+    return true;
+}
+
+void PlanBuilder::rejectNodeWith(int id, std::string_view why)
+{
+    const auto& expr = graph.expr(id);
+    auto kind = Miro::enumToString(expr.kind);
+
+    if (expr.kind != ExprKind::Call)
+    {
+        fail("expression {} (node {}): {}", kind, id, why);
+        return;
+    }
+
+    fail("expression {} \"{}\" (node {}): {}", kind, expr.text, id, why);
+}
+
+bool PlanBuilder::requireArguments(int id, int count)
+{
+    if (graph.expr(id).args.size() == count)
+        return true;
+
+    rejectNode(id, "expected {} arguments", count);
+    return false;
+}
+
+bool PlanBuilder::requireBroadcastable(int id)
+{
+    const auto& expr = graph.expr(id);
+    auto width = componentCount(expr.type);
+
+    for (auto which = 0; which < expr.args.size(); ++which)
+    {
+        auto components = getArgumentComponents(graph, expr, which);
+
+        if (components != width && components != 1)
+        {
+            rejectNode(id, "an argument's width does not match the result");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool PlanBuilder::requireScalarIndex(int id, const Expr& expr)
+{
+    if (isScalarInteger(getArgumentType(graph, expr, 0)))
+        return true;
+
+    rejectNode(id, "the index is not a scalar integer");
+    return false;
+}
+
+bool PlanBuilder::requireUnaryFloatVector(int id, const Expr& expr)
+{
+    if (!requireArguments(id, 1))
+        return false;
+
+    if (isFloatVector(expr.type) && getArgumentType(graph, expr, 0) == expr.type)
+        return true;
+
+    rejectNode(id, "defined on the float vectors only");
+    return false;
+}
+
+void PlanBuilder::decodeNode(int id)
+{
+    using Entry = std::pair<ExprKind, NodeDecoder>;
+
+    static constexpr auto decoders = Array<Entry, 31> {
+        Entry {ExprKind::Input, &PlanBuilder::rejectRenderInput},
+        Entry {ExprKind::Varying, &PlanBuilder::rejectRenderInput},
+        Entry {ExprKind::BuiltIn, &PlanBuilder::decodeBuiltIn},
+        Entry {ExprKind::Sample, &PlanBuilder::rejectTexture},
+        Entry {ExprKind::Fetch, &PlanBuilder::rejectTexture},
+        Entry {ExprKind::TextureFunction, &PlanBuilder::rejectTexture},
+        Entry {ExprKind::TextureQuery, &PlanBuilder::rejectTexture},
+        Entry {ExprKind::FunctionCall, &PlanBuilder::rejectFunctionCall},
+        Entry {ExprKind::Override, &PlanBuilder::decodeOverride},
+        Entry {ExprKind::MatrixColumn, &PlanBuilder::decodeMatrixColumn},
+        Entry {ExprKind::AtomicLoad, &PlanBuilder::decodeAtomicLoad},
+        Entry {ExprKind::LocalId, &PlanBuilder::decodeIdLeaf},
+        Entry {ExprKind::GroupId, &PlanBuilder::decodeIdLeaf},
+        Entry {ExprKind::ThreadId, &PlanBuilder::decodeIdLeaf},
+        Entry {ExprKind::SharedRead, &PlanBuilder::decodeSharedRead},
+        Entry {ExprKind::SimdGroupIndex, &PlanBuilder::decodeLeaf},
+        Entry {ExprKind::Uniform, &PlanBuilder::decodeUniform},
+        Entry {ExprKind::Constant, &PlanBuilder::decodeLeaf},
+        Entry {ExprKind::GridExtent, &PlanBuilder::decodeLeaf},
+        Entry {ExprKind::VarRead, &PlanBuilder::decodeVarRead},
+        Entry {ExprKind::Construct, &PlanBuilder::decodeConstruct},
+        Entry {ExprKind::Swizzle, &PlanBuilder::decodeSwizzle},
+        Entry {ExprKind::Call, &PlanBuilder::decodeCall},
+        Entry {ExprKind::Unary, &PlanBuilder::decodeUnary},
+        Entry {ExprKind::Binary, &PlanBuilder::decodeBinary},
+        Entry {ExprKind::Compare, &PlanBuilder::decodeCompare},
+        Entry {ExprKind::Select, &PlanBuilder::decodeSelect},
+        Entry {ExprKind::Mul, &PlanBuilder::decodeMul},
+        Entry {ExprKind::BufferRead, &PlanBuilder::decodeBufferRead},
+        Entry {ExprKind::BufferVectorRead, &PlanBuilder::decodeBufferRead},
+        Entry {ExprKind::ArrayRead, &PlanBuilder::decodeArrayRead}};
+
+    const auto& expr = graph.expr(id);
+    auto& node = plan.nodes[id];
+    auto components = nodeComponents(expr);
+
+    if (components > std::numeric_limits<std::uint8_t>::max())
+    {
+        rejectNode(id, "a struct of more than 255 components");
+        return;
+    }
+
+    node.components = static_cast<std::uint8_t>(components);
+    node.argBegin = plan.arguments.size();
+    node.argCount = expr.args.size();
+
+    for (auto argument: expr.args)
+        plan.arguments.add(argument);
+
+    auto found = std::ranges::find(decoders, expr.kind, &Entry::first);
+    auto decoder = found->second;
+    (this->*decoder)(id, node, expr);
+}
+
+void PlanBuilder::rejectRenderInput(int id, Plan::Node&, const Expr&)
+{
+    rejectNode(id, "a render graph input cannot run as a kernel");
+}
+
+void PlanBuilder::decodeBuiltIn(int id, Plan::Node&, const Expr& expr)
+{
+    if (stageOf(static_cast<ShaderBuiltIn>(expr.index)) != ShaderStage::Compute)
+    {
+        rejectNode(id, "a render graph input cannot run as a kernel");
+        return;
+    }
+
+    plan.builtInLeaves.add({id, expr.index});
+}
+
+void PlanBuilder::rejectTexture(int id, Plan::Node&, const Expr&)
+{
+    rejectNode(id, "textures are not supported by the CPU executor");
+}
+
+void PlanBuilder::rejectFunctionCall(int id, Plan::Node&, const Expr&)
+{
+    rejectNode(id,
+               "a call in a constant array's element: the CPU "
+               "executor inlines calls in front of a statement");
+}
+
+void PlanBuilder::decodeOverride(int id, Plan::Node&, const Expr& expr)
+{
+    plan.constantNodes.add({id, overrideWords[expr.index]});
+}
+
+void PlanBuilder::decodeIdLeaf(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!isThreadIdShape(expr.index, node.components))
+    {
+        rejectNode(id, getMissingAxisReason(expr.kind));
+        return;
+    }
+
+    if (expr.kind == ExprKind::GroupId)
+        plan.groupIdLeaves.add({id, expr.index});
+    else if (expr.kind == ExprKind::ThreadId)
+        plan.threadIdLeaves.add({id, expr.index});
+}
+
+void PlanBuilder::decodeLeaf(int id, Plan::Node&, const Expr& expr)
+{
+    if (expr.kind == ExprKind::SimdGroupIndex)
+        plan.simdGroupLeaves.add(id);
+    else if (expr.kind == ExprKind::Constant)
+        plan.constantNodes.add({id, getConstantWord(expr)});
+    else
+        plan.extentLeaves.add({id, expr.index});
+}
+
+void PlanBuilder::decodeUniform(int id, Plan::Node&, const Expr& expr)
+{
+    if (expr.index < 0 || expr.index >= plan.uniformTypes.size())
+    {
+        rejectNode(id, "names a uniform slot that does not exist");
+        return;
+    }
+
+    plan.uniformLeaves.add({id, expr.index});
+}
+
+// A plain variable's read is its storage; a private array's element is
+// gathered by the lane's index.
+void PlanBuilder::decodeVarRead(int id, Plan::Node& node, const Expr& expr)
+{
+    if (expr.index < 0 || expr.index >= graph.variables().size())
+    {
+        rejectNode(id, "names a variable that does not exist");
+        return;
+    }
+
+    auto isArray = graph.variableArraySize(expr.index) > 0;
+    auto structId = graph.variableStructType(expr.index);
+
+    if (structId >= 0 || expr.member >= 0)
+    {
+        if (!isFieldRead(structId, expr))
+        {
+            rejectNode(id, "reads a struct variable other than a field at a time");
+            return;
+        }
+
+        node.component = fieldComponent(structId, expr.member);
+    }
+
+    if (!isArray && expr.args.empty())
+        return;
+
+    if (!isArray || !requireArguments(id, 1)
+        || !isIndexType(getArgumentType(graph, expr, 0)))
+    {
+        rejectNode(id, "a private array is read an element at an Int or UInt");
+        return;
+    }
+
+    node.op = Op::VariableElementRead;
+    node.immediate = expr.index;
+    node.sub = signedIndexFlag(getArgumentType(graph, expr, 0));
+}
+
+// A read of one named field of the struct, of that field's type.
+bool PlanBuilder::isFieldRead(int structId, const Expr& expr) const
+{
+    if (structId < 0 || expr.member < 0 || !isField(structId, expr.member))
+        return false;
+
+    return graph.structType(structId).fields[expr.member].type == expr.type;
+}
+
+void PlanBuilder::decodeMatrixColumn(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 2))
+        return;
+
+    auto matrix = getArgumentType(graph, expr, 0);
+
+    if (!isMatrix(matrix) || !isIndexType(getArgumentType(graph, expr, 1))
+        || node.components != matrixRows(matrix))
+    {
+        rejectNode(id, "takes a matrix and an Int or UInt column");
+        return;
+    }
+
+    node.op = Op::MatrixColumn;
+    node.columns = static_cast<std::uint8_t>(matrixColumns(matrix));
+    node.rows = static_cast<std::uint8_t>(matrixRows(matrix));
+    node.sub = signedIndexFlag(getArgumentType(graph, expr, 1));
+}
+
+void PlanBuilder::decodeSelect(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 3))
+        return;
+
+    if (getArgumentType(graph, expr, 0) != ValueType::Bool)
+    {
+        rejectNode(id, "the condition is not a scalar Bool");
+        return;
+    }
+
+    if (requireBroadcastable(id))
+        node.op = Op::Select;
+}
+
+void PlanBuilder::decodeBufferRead(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 1) || !checkSlot(expr.index))
+        return;
+
+    if (expr.member >= 0 || isStructSlot(expr.index))
+    {
+        decodeStructRead(id, node, expr);
+        return;
+    }
+
+    if (isMatrix(expr.type) || isBoolean(expr.type))
+    {
+        rejectNode(id, "reads a type no buffer holds");
+        return;
+    }
+
+    node.op =
+        expr.kind == ExprKind::BufferRead ? Op::BufferRead : Op::BufferVectorRead;
+    node.immediate = expr.index;
+}
+
+void PlanBuilder::decodeArrayRead(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 1))
+        return;
+
+    if (graph.arrays()[expr.index].elementType != expr.type)
+    {
+        rejectNode(id, "the element type does not match the array");
+        return;
+    }
+
+    node.op = Op::ArrayRead;
+    node.immediate = expr.index;
+}
+
+void PlanBuilder::decodeAtomicLoad(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 1) || !checkSlot(expr.index))
+        return;
+
+    if (!requireScalarIndex(id, expr))
+        return;
+
+    auto slot = static_cast<std::size_t>(expr.index);
+
+    if (plan.slotAccess[slot] != BufferAccess::Atomic
+        || expr.type != plan.slotElement[slot])
+    {
+        rejectNode(id, "reads a slot that is not atomic");
+        return;
+    }
+
+    node.op = Op::AtomicLoad;
+    node.immediate = expr.index;
+}
+
+void PlanBuilder::decodeStructRead(int id, Plan::Node& node, const Expr& expr)
+{
+    auto structId = graph.storageStructType(expr.index);
+
+    if (expr.kind != ExprKind::BufferRead || !isFieldRead(structId, expr))
+    {
+        rejectNode(id, "reads a struct buffer other than a field at a time");
+        return;
+    }
+
+    if (!requireScalarIndex(id, expr))
+        return;
+
+    node.op = Op::StructRead;
+    node.immediate = expr.index;
+    node.component = fieldComponent(structId, expr.member);
+}
+
+void PlanBuilder::decodeSharedRead(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 1) || !requireScalarIndex(id, expr))
+        return;
+
+    if (expr.index < 0 || expr.index >= graph.sharedArrays().size())
+    {
+        rejectNode(id, "names a shared array that does not exist");
+        return;
+    }
+
+    if (graph.sharedArrays()[expr.index].elementType != expr.type)
+    {
+        rejectNode(id, "the element type does not match the shared array");
+        return;
+    }
+
+    node.op = Op::SharedRead;
+    node.immediate = expr.index;
+}
+
+Word PlanBuilder::getConstantWord(const Expr& expr)
+{
+    switch (expr.type)
+    {
+        case ValueType::Float:
+        case ValueType::Half:
+            return Lanes::toWord(expr.value);
+        case ValueType::Bool:
+            return Lanes::maskOf(expr.index != 0);
+        default:
+            return static_cast<Word>(expr.index);
+    }
+}
+
+void PlanBuilder::decodeConstruct(int id, Plan::Node& node, const Expr& expr)
+{
+    auto total = 0;
+
+    for (auto which = 0; which < expr.args.size(); ++which)
+        total += getArgumentComponents(graph, expr, which);
+
+    if (total != node.components || expr.args.empty())
+    {
+        rejectNode(id,
+                   "its arguments hold {} components where the result has {}",
+                   total,
+                   node.components);
+        return;
+    }
+
+    node.op = Op::Construct;
+}
+
+void PlanBuilder::decodeSwizzle(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 1))
+        return;
+
+    const auto& letters = expr.text;
+    auto source = getArgumentType(graph, expr, 0);
+
+    if (!isSwizzleShape(letters.size(), node, source)
+        || !writeSwizzleComponents(node, letters, componentCount(source)))
+    {
+        rejectNode(id, "malformed component list \"{}\"", letters);
+        return;
+    }
+
+    node.op = Op::Swizzle;
+}
+
+void PlanBuilder::decodeUnary(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 1))
+        return;
+
+    auto op = findUnaryOp(expr.op, expr.type);
+
+    if (op)
+    {
+        node.op = *op;
+        return;
+    }
+
+    rejectNode(id, "unsupported operator '{}' on {}", expr.op, typeName(expr.type));
+}
+
+void PlanBuilder::decodeBinary(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 2) || !requireBroadcastable(id))
+        return;
+
+    if (!expr.text.empty())
+    {
+        decodeShift(id, node, expr);
+        return;
+    }
+
+    auto op = findBinaryOp(expr.op, expr.type);
+
+    if (op != noBinaryOp)
+    {
+        node.op = op;
+        return;
+    }
+
+    rejectNode(id, "unsupported operator '{}' on {}", expr.op, typeName(expr.type));
+}
+
+void PlanBuilder::decodeShift(int id, Plan::Node& node, const Expr& expr)
+{
+    auto type = expr.type;
+
+    if (!isIntegerFamily(type) || !isShiftOperator(expr.text))
+    {
+        rejectNode(
+            id, "unsupported operator \"{}\" on {}", expr.text, typeName(type));
+        return;
+    }
+
+    if (expr.text == "<<")
+        node.op = Op::Shl;
+    else
+        node.op = isSignedInteger(type) ? Op::ShrS : Op::ShrU;
+}
+
+void PlanBuilder::decodeCompare(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 2) || !requireBroadcastable(id))
+        return;
+
+    if (!isBoolean(expr.type))
+    {
+        rejectNode(id, "the result is not a Bool");
+        return;
+    }
+
+    auto operandType = getArgumentType(graph, expr, 0);
+
+    if (isBoolean(operandType))
+    {
+        decodeBoolCompare(id, node, expr);
+        return;
+    }
+
+    auto text = std::string_view {expr.text};
+    auto found = std::ranges::find(relationNames, text, &RelationName::text);
+
+    if (found == relationNames.end() || isMatrix(operandType))
+    {
+        rejectNode(
+            id, "unsupported relation \"{}\" on {}", text, typeName(operandType));
+        return;
+    }
+
+    node.sub = static_cast<std::uint8_t>(found->relation);
+    node.op = getComparisonOp(operandType);
+}
+
+void PlanBuilder::decodeBoolCompare(int id, Plan::Node& node, const Expr& expr)
+{
+    auto text = std::string_view {expr.text};
+    auto found = std::ranges::find(boolRelations, text, &BoolRelation::text);
+
+    if (found == boolRelations.end())
+    {
+        rejectNode(id, "unsupported relation \"{}\" on a Bool", text);
+        return;
+    }
+
+    node.op = found->op;
+}
+
+void PlanBuilder::decodeMul(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 2))
+        return;
+
+    auto left = getArgumentType(graph, expr, 0);
+    auto right = getArgumentType(graph, expr, 1);
+    auto shape = [](int value) { return static_cast<std::uint8_t>(value); };
+
+    if (isMatrixTimesVector(left, right, node.components))
+    {
+        node.op = Op::MatVec;
+        node.columns = shape(matrixColumns(left));
+        node.rows = shape(matrixRows(left));
+    }
+    else if (isVectorTimesMatrix(left, right, node.components))
+    {
+        node.op = Op::VecMat;
+        node.columns = shape(matrixColumns(right));
+        node.rows = shape(matrixRows(right));
+    }
+    else if (isMatrixTimesMatrix(left, right, expr.type))
+    {
+        node.op = Op::MatMat;
+        node.order = shape(matrixColumns(left));
+        node.rows = shape(matrixRows(left));
+        node.columns = shape(matrixColumns(right));
+    }
+    else
+    {
+        rejectNode(
+            id, "unsupported product of {} and {}", typeName(left), typeName(right));
+    }
+}
+
+void PlanBuilder::decodeCall(int id, Plan::Node& node, const Expr& expr)
+{
+    const auto& name = expr.text;
+
+    if (derivativeNames.contains(name))
+        rejectNode(id, "derivatives exist only in a fragment shader");
+    else if (name.starts_with("eacp"))
+        decodeHelper(id, node, expr);
+    else if (expr.args.empty())
+        rejectNode(id, "a call with no arguments");
+    else if (!decodeNamedCall(id, node, expr))
+        decodeConversionCall(id, node, expr);
+}
+
+void PlanBuilder::decodeConversionCall(int id, Plan::Node& node, const Expr& expr)
+{
+    const auto& name = expr.text;
+
+    if (name.starts_with("as_type<"))
+        decodeBitcast(id, node, expr);
+    else if (isConversionName(name))
+        decodeConversion(id, node, expr);
+    else
+        rejectNode(id, "unknown builtin");
+}
+
+bool PlanBuilder::decodeNamedCall(int id, Plan::Node& node, const Expr& expr)
+{
+    using Entry = std::pair<std::string_view, NodeDecoder>;
+
+    static constexpr auto decoders =
+        Array<Entry, 7> {Entry {"abs", &PlanBuilder::decodeAbs},
+                         Entry {"min", &PlanBuilder::decodeMinMax},
+                         Entry {"max", &PlanBuilder::decodeMinMax},
+                         Entry {"transpose", &PlanBuilder::decodeMatrixFunction},
+                         Entry {"determinant", &PlanBuilder::decodeMatrixFunction},
+                         Entry {"all", &PlanBuilder::decodeBoolReduction},
+                         Entry {"any", &PlanBuilder::decodeBoolReduction}};
+
+    auto name = std::string_view {expr.text};
+
+    if (auto math = std::ranges::find(mathNames, name, &MathName::name);
+        math != mathNames.end())
+    {
+        decodeMath(id, node, expr, math->function);
+        return true;
+    }
+
+    if (auto broadcast = std::ranges::find(broadcastNames, name, &NamedOp::name);
+        broadcast != broadcastNames.end())
+    {
+        if (requireArguments(id, broadcast->arguments) && requireBroadcastable(id))
+            decodeBroadcast(id, node, expr, broadcast->op);
+
+        return true;
+    }
+
+    if (auto geometric = std::ranges::find(geometricNames, name, &NamedOp::name);
+        geometric != geometricNames.end())
+    {
+        if (requireArguments(id, geometric->arguments))
+            decodeGeometric(id, node, expr, geometric->op);
+
+        return true;
+    }
+
+    auto found = std::ranges::find(decoders, name, &Entry::first);
+
+    if (found == decoders.end())
+        return false;
+
+    auto decoder = found->second;
+    (this->*decoder)(id, node, expr);
+    return true;
+}
+
+void PlanBuilder::decodeMath(int id,
+                             Plan::Node& node,
+                             const Expr& expr,
+                             MathFunction function)
+{
+    if (!requireUnaryFloatVector(id, expr))
+        return;
+
+    node.op = Op::UnaryMath;
+    node.sub = static_cast<std::uint8_t>(function);
+}
+
+void PlanBuilder::decodeBroadcast(int id, Plan::Node& node, const Expr& expr, Op op)
+{
+    if (isFloatVector(expr.type))
+        node.op = op;
+    else
+        rejectNode(id, "defined on the float vectors only");
+}
+
+void PlanBuilder::decodeAbs(int id, Plan::Node& node, const Expr& expr)
+{
+    auto type = expr.type;
+
+    if (!requireArguments(id, 1))
+        return;
+
+    if (getArgumentType(graph, expr, 0) != type || isMatrix(type))
+    {
+        rejectNode(id, "the argument and the result differ");
+    }
+    else if (isFloatFamily(type))
+    {
+        node.op = Op::UnaryMath;
+        node.sub = static_cast<std::uint8_t>(MathFunction::Abs);
+    }
+    else if (isSignedInteger(type))
+    {
+        node.op = Op::AbsS;
+    }
+    else
+    {
+        rejectNode(id, "unsupported on {}", typeName(type));
+    }
+}
+
+void PlanBuilder::decodeMinMax(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 2) || !requireBroadcastable(id))
+        return;
+
+    auto op = findMinMaxOp(expr.type, expr.text == "min");
+
+    if (!op)
+    {
+        rejectNode(id, "unsupported on {}", typeName(expr.type));
+        return;
+    }
+
+    node.op = *op;
+}
+
+void PlanBuilder::decodeMatrixFunction(int id, Plan::Node& node, const Expr& expr)
+{
+    auto operand = getArgumentType(graph, expr, 0);
+    auto type = expr.type;
+    auto isTranspose = expr.text == "transpose";
+
+    if (!requireArguments(id, 1) || !isMatrix(operand)
+        || (isTranspose && type != transposedMatrix(operand))
+        || (!isTranspose && matrixOrder(operand) == 0))
+    {
+        rejectNode(id, isTranspose ? "takes a matrix" : "takes a square matrix");
+        return;
+    }
+
+    node.op = isTranspose ? Op::Transpose : Op::Determinant;
+    node.order = static_cast<std::uint8_t>(matrixOrder(operand));
+    node.columns = static_cast<std::uint8_t>(matrixColumns(operand));
+    node.rows = static_cast<std::uint8_t>(matrixRows(operand));
+}
+
+void PlanBuilder::decodeBoolReduction(int id, Plan::Node& node, const Expr& expr)
+{
+    auto operand = getArgumentType(graph, expr, 0);
+
+    if (!requireArguments(id, 1))
+        return;
+
+    if (!isBoolean(operand) || expr.type != ValueType::Bool)
+    {
+        rejectNode(id, "takes a Bool vector");
+        return;
+    }
+
+    node.op = expr.text == "all" ? Op::All : Op::Any;
+    node.order = static_cast<std::uint8_t>(componentCount(operand));
+}
+
+void PlanBuilder::decodeBitcast(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 1))
+        return;
+
+    if (!isBitcast(getArgumentType(graph, expr, 0), expr.type))
+    {
+        rejectNode(id, "the bitcast changes the width");
+        return;
+    }
+
+    node.op = Op::CopyBits;
+}
+
+void PlanBuilder::decodeHelper(int id, Plan::Node& node, const Expr& expr)
+{
+    auto name = std::string_view {expr.text};
+    auto helper = std::ranges::find(componentHelperNames, name, &HelperName::name);
+
+    if (helper == componentHelperNames.end())
+    {
+        decodePackedHelper(id, node, expr);
+        return;
+    }
+
+    if (requireUnaryFloatVector(id, expr))
+    {
+        node.op = Op::Helper;
+        node.sub = static_cast<std::uint8_t>(helper->function);
+    }
+}
+
+void PlanBuilder::decodePackedHelper(int id, Plan::Node& node, const Expr& expr)
+{
+    auto name = std::string_view {expr.text};
+    auto packed =
+        std::ranges::find(packedHelperNames, name, &PackedHelperName::name);
+
+    if (packed == packedHelperNames.end())
+    {
+        decodeNamedBitHelper(id, node, expr);
+        return;
+    }
+
+    const auto& signature = packed->signature;
+
+    if (!requireArguments(id, signature.arguments))
+        return;
+
+    auto matches = expr.type == signature.result
+                   && getArgumentType(graph, expr, 0) == signature.first
+                   && (signature.arguments == 1
+                       || getArgumentType(graph, expr, 1) == signature.second);
+
+    if (!matches)
+    {
+        rejectNode(id, "its argument or result types differ from the helper's");
+        return;
+    }
+
+    node.op = Op::Helper;
+    node.sub = static_cast<std::uint8_t>(packed->function);
+}
+
+void PlanBuilder::decodeNamedBitHelper(int id, Plan::Node& node, const Expr& expr)
+{
+    auto name = std::string_view {expr.text};
+    auto helper = std::ranges::find(bitHelperNames, name, &BitHelperName::name);
+
+    if (helper == bitHelperNames.end())
+        rejectNode(id, "unknown helper");
+    else
+        decodeBitHelper(id, node, expr, *helper);
+}
+
+void PlanBuilder::decodeBitHelper(int id,
+                                  Plan::Node& node,
+                                  const Expr& expr,
+                                  const BitHelperName& helper)
+{
+    auto type = expr.type;
+
+    if (!requireArguments(id, helper.valueArguments + helper.fieldArguments))
+        return;
+
+    if (!isSignedInteger(type) && !isUnsignedInteger(type))
+    {
+        rejectNode(id, "defined on the integers only");
+        return;
+    }
+
+    if (!hasArgumentTypes(graph, expr, 0, helper.valueArguments, type))
+    {
+        rejectNode(id, "its argument and result types differ");
+        return;
+    }
+
+    if (!hasArgumentTypes(
+            graph, expr, helper.valueArguments, expr.args.size(), ValueType::UInt))
+    {
+        rejectNode(id, "its offset and count are not scalar UInts");
+        return;
+    }
+
+    node.op = Op::Helper;
+    node.sub = static_cast<std::uint8_t>(
+        isSignedInteger(type) ? helper.signedFunction : helper.unsignedFunction);
+}
+
+void PlanBuilder::decodeGeometric(int id, Plan::Node& node, const Expr& expr, Op op)
+{
+    auto operand = getArgumentType(graph, expr, 0);
+    auto width = componentCount(operand);
+
+    if (!isFloatVector(operand) || width < 2)
+    {
+        rejectNode(id, "takes float vectors");
+        return;
+    }
+
+    if (!hasGeometricWidths(graph, expr, op, width))
+    {
+        rejectNode(id, "the arguments' widths differ");
+        return;
+    }
+
+    if (op == Op::Cross && width != 3)
+    {
+        rejectNode(id, "takes Float3s");
+        return;
+    }
+
+    node.op = op;
+    node.order = static_cast<std::uint8_t>(width);
+}
+
+void PlanBuilder::decodeConversion(int id, Plan::Node& node, const Expr& expr)
+{
+    auto source = getArgumentType(graph, expr, 0);
+    auto target = expr.type;
+
+    if (!requireArguments(id, 1))
+        return;
+
+    if (!isConversion(expr.text, source, target))
+    {
+        rejectNode(id, "the conversion changes the width");
+        return;
+    }
+
+    if (isFloatFamily(target))
+        node.op = getConversionToFloat(source);
+    else
+        node.op = getConversionToInteger(source, target);
+}
+} // namespace eacp::GPU::CpuCompute
