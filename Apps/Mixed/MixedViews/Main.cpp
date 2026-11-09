@@ -211,6 +211,7 @@ Graphics::WebView::Options transparentOptions()
 {
     auto options = Graphics::WebView::Options {};
     options.transparentBackground = true;
+    options.trustedOrigins = {"https://localhost"};
     return options;
 }
 

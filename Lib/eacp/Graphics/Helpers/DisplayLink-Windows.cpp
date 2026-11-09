@@ -107,12 +107,12 @@ struct DisplayLink::Native
             return;
 
         callAsync(
-            [state = state]
+            [tickState = state]
             {
-                state->pending = false;
+                tickState->pending = false;
 
-                if (state->alive)
-                    state->cb();
+                if (tickState->alive)
+                    tickState->cb();
             });
     }
 

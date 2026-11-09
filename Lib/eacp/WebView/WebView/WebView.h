@@ -153,6 +153,25 @@ public:
         // the user is the one wrong answer.
         bool loadDeclinedPopupsInline = true;
 
+        // Origins whose pages may post to message handlers and get the window
+        // bridges. Every page message is checked against its sender before
+        // any handler runs: the framework's own (__eacpBridge and so every
+        // bound API method and armFileDrag, __eacpKeyEvent, the window-drag
+        // and window-control bridges) and the app's alike. A message from
+        // anywhere else is dropped, so a remote page, or a foreign iframe, in
+        // this view cannot drive the app or the window hosting it — inside a
+        // plugin editor, the DAW's.
+        //
+        // Empty, the default, means only the content the view serves itself:
+        // pages on one of its own `schemes` / `streamingSchemes` (the embedded
+        // scheme included), the Vite dev server when Embedded picked it, and
+        // the document loadHTML loads without a base URL. A UI served from
+        // anywhere else — a remote site, or loadHTML with an http(s) base URL
+        // — has to list its origin here: "https://example.com", or with an
+        // explicit port, "http://localhost:8080". "*" trusts every origin,
+        // which is the behaviour before this option existed.
+        Vector<std::string> trustedOrigins;
+
         // macOS/iOS: back this WebView with a non-persistent (in-memory)
         // WKWebsiteDataStore instead of the app-wide default store. Two
         // effects: nothing the page stores (cookies, localStorage, caches)

@@ -57,6 +57,21 @@
 
 namespace eacp::GPU
 {
+namespace detail
+{
+// Whether a texture is what a storage member asks for: valid, in the member's
+// format, and of its shape - a 2D array taking a cube or a cube array as the
+// array of its faces.
+bool fitsStorageMember(const Texture& texture, const StorageTextureLayout& layout);
+
+// Whether a sampler member binds the sampler assigned to it: a valid one, with
+// a CompareFunction exactly where the member is a comparison sampler. A
+// mismatch is logged, once per process, naming the member.
+bool fitsSamplerMember(const char* name, const Sampler& sampler, bool comparison);
+
+bool isCubeType(TextureType type);
+} // namespace detail
+
 constexpr VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
@@ -67,26 +82,9 @@ constexpr VertexFormat toVertexFormat(ValueType type)
             return VertexFormat::Float2;
         case ValueType::Float3:
             return VertexFormat::Float3;
-        case ValueType::Float4:
-        case ValueType::Float2x2:
-        case ValueType::Float3x3:
-        case ValueType::Float4x4:
-        case ValueType::UInt:
-        case ValueType::UInt2:
-        case ValueType::UInt3:
-        case ValueType::UInt4:
-        case ValueType::Int:
-        case ValueType::Int2:
-        case ValueType::Int3:
-        case ValueType::Int4:
-        case ValueType::Bool:
-        case ValueType::Bool2:
-        case ValueType::Bool3:
-        case ValueType::Bool4:
+        default:
             return VertexFormat::Float4; // matrix/integer/bool are never attributes
     }
-
-    return VertexFormat::Float;
 }
 
 // A CPU vertex field's wire format.
@@ -144,6 +142,12 @@ public:
 
     // The shader as the EDSL recorded it; source() is one platform's spelling.
     const ShaderGraph& graph() const;
+
+    // What the program binds and passes - each member at its slot and under
+    // its name with the stages that read it, the uniform block's members at
+    // their offsets, the vertex inputs and varyings, overrides, functions and
+    // structs - read from graph() (ShaderReflection.h).
+    const ShaderReflection& reflection() const;
 
     // Uploads the typed vertex data and owns the resulting buffer. The element
     // type's size must match the layout pulled from it in define().
@@ -285,6 +289,31 @@ public:
     // ignored.
     void prepare(RenderPipelineDescriptor descriptor);
 
+    // The same, with values for the shader's overrides (OverrideValues.h),
+    // both stages alike; the ones left out take their defaults. Values the
+    // shader refuses leave a pipeline that is not valid, and log why. The
+    // descriptor's own constants are replaced by these. Every prepare()
+    // compiles the library afresh and forgets the pipelines built before it.
+    void prepare(RenderPipelineDescriptor descriptor,
+                 const OverrideValues& overrides);
+
+    // Makes the shader specialised with these values the one draw(program)
+    // uses, on the library and the descriptor the last prepare() was given:
+    // the pipeline already built for the same values since then, or one built
+    // now. See ComputeProgram::specialize. Returns whether it is valid.
+    bool specialize(const OverrideValues& overrides);
+
+    // Whether the device runs this shader's f16 values, if it has any
+    // (Device::supportsShaderFloat16). prepare() refuses one that does not
+    // fit, leaving a pipeline that is not valid and logging why.
+    bool fitsShaderFloat16(const Device& device) const;
+
+    // Whether the device runs this shader's fragment stage per sample, if it
+    // asks for that - a sampleIndex() read or a Sample-interpolated varying
+    // (Device::supportsSampleRateShading). prepare() refuses one that does not
+    // fit, as it does an f16 one.
+    bool fitsSampleRateShading(const Device& device) const;
+
     const RenderPipeline& pipeline() const;
 
     // Whether prepare() loaded the shader from a blob compiled at build time
@@ -321,8 +350,9 @@ public:
     bool vertexReadsUniforms() const;
     bool fragmentReadsUniforms() const;
 
-    // Binds every assigned texture member to the pass; a no-op for programs
-    // without textures. RenderPass::bind and RenderPass::draw(program) call it
+    // Binds every assigned texture member to the pass - to the fragment stage,
+    // and to the vertex stage as well where vertexStage() reads it; a no-op for
+    // programs without textures. RenderPass::bind and RenderPass::draw(program) call it
     // once - and so does a caller drawing sub-ranges of one buffer that differ
     // by their texture, which is what this is public for: after bind(), the
     // per-draw state is the caller's to restate, and a texture is the commonest
@@ -409,15 +439,41 @@ protected:
     Float4 varying(const Float4& vertexValue);
     UInt varying(const UInt& vertexValue);
 
+    // With WGSL's @interpolate; see ShaderBuilder::varying.
+    Float varying(const Float& vertexValue, const Interpolation& interpolation);
+    Float2 varying(const Float2& vertexValue, const Interpolation& interpolation);
+    Float3 varying(const Float3& vertexValue, const Interpolation& interpolation);
+    Float4 varying(const Float4& vertexValue, const Interpolation& interpolation);
+    UInt varying(const UInt& vertexValue, const Interpolation& interpolation);
+
     // The stage built-ins; see ShaderBuilder for what each one holds.
     Float4 fragmentCoordinate();
     UInt vertexId();
     UInt instanceId();
+    Bool frontFacing();
+    UInt sampleIndex();
+    UInt sampleMask();
 
     Float constant(float value);
+    Half halfConstant(float value);
     Bool boolean(bool value);
     Int integer(int value);
     UInt unsignedInteger(unsigned value);
+
+    // WGSL's override, its value given at prepare() (OverrideValues.h) and
+    // readable in both stages. See ShaderBuilder::overrideConstant.
+    template <OverridableHandle T>
+    T overrideConstant(const std::string& name)
+    {
+        return builder.overrideConstant<T>(name);
+    }
+
+    template <OverridableHandle T>
+    T overrideConstant(const std::string& name,
+                       typename detail::OverrideDefault<T>::type defaultValue)
+    {
+        return builder.overrideConstant<T>(name, defaultValue);
+    }
 
     template <ShaderValueLike T, SameShaderShape<T>... Rest>
     ConstantArray<ShaderBase<T>, 1 + (int) sizeof...(Rest)>
@@ -448,10 +504,39 @@ protected:
         return builder.var(initialValue);
     }
 
+    template <ShaderStructLike T>
+    Var<T> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
+    // A shader struct's zero value.
+    template <ShaderStructLike T>
+    T structZero()
+    {
+        return builder.structZero<T>();
+    }
+
     Var<Float> var(float initialValue);
     Var<Bool> var(bool initialValue);
     Var<Int> var(int initialValue);
     Var<UInt> var(unsigned initialValue);
+
+    // A private array per invocation, in the stage open when it is created
+    // (see PrivateArray and ShaderBuilder::privateArray).
+    template <typename T, int Size>
+    PrivateArray<T, Size> privateArray()
+    {
+        return builder.privateArray<T, Size>();
+    }
+
+    template <typename T, typename... Rest>
+        requires(ShaderHandleLike<T> || ShaderMatrixLike<T>)
+    PrivateArray<detail::StoredHandle<T>, 1 + (int) sizeof...(Rest)>
+        privateArray(const T& first, const Rest&... rest)
+    {
+        return builder.privateArray(first, rest...);
+    }
 
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)
@@ -472,8 +557,78 @@ protected:
         builder.loop(condition, std::forward<Body>(body));
     }
 
+    template <typename Body, typename Continuing>
+    void loop(const Bool& condition, Body&& body, Continuing&& continuing)
+    {
+        builder.loop(condition,
+                     std::forward<Body>(body),
+                     std::forward<Continuing>(continuing));
+    }
+
+    template <typename Update, typename Body>
+    void forLoop(const Bool& condition, Update&& update, Body&& body)
+    {
+        builder.forLoop(
+            condition, std::forward<Update>(update), std::forward<Body>(body));
+    }
+
     void breakLoop();
     void continueLoop();
+    void breakLoopIf(const Bool& condition);
+
+    template <typename Selector, typename... Bodies>
+    void switchOn(const Selector& selector, const SwitchClause<Bodies>&... clauses)
+    {
+        builder.switchOn(selector, clauses...);
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>> caseOf(std::int64_t value, Body&& body)
+    {
+        return GPU::caseOf(value, std::forward<Body>(body));
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>>
+        caseOf(std::initializer_list<std::int64_t> values, Body&& body)
+    {
+        return GPU::caseOf(values, std::forward<Body>(body));
+    }
+
+    template <typename Body>
+    static SwitchClause<std::decay_t<Body>> defaultCase(Body&& body)
+    {
+        return GPU::defaultCase(std::forward<Body>(body));
+    }
+
+    // The fragment or vertex function returns here with its outputs as they
+    // evaluate now, and discard() drops the fragment. See ShaderBuilder.
+    // Inside a function's body they are the function's: returnEarly() leaves
+    // it, and returnEarly(value) returns its result.
+    void returnEarly();
+    void discard();
+
+    template <ShaderFunctionValue T>
+    void returnEarly(const T& value)
+    {
+        builder.returnEarly(value);
+    }
+
+    // WGSL's fn: a function emitted once and called from either stage through
+    // the handle returned. See ShaderBuilder::function and ShaderFunction.h.
+    template <typename Signature, typename Body>
+    ShaderFunction<Signature> function(const std::string& name, Body&& body)
+    {
+        return builder.function<Signature>(name, std::forward<Body>(body));
+    }
+
+    // The statements `body` records go to the vertex function. See
+    // ShaderBuilder::vertexStage.
+    template <typename Body>
+    void vertexStage(Body&& body)
+    {
+        builder.vertexStage(std::forward<Body>(body));
+    }
 
     // In-shader transform builders, matching column-major / right-handed [0,1]
     // depth conventions. Build the model/view/projection inside define() from
@@ -489,6 +644,12 @@ protected:
 
     void setPosition(const Float4& clipPosition);
     void setFragment(const Float4& color);
+
+    // The fragment's other two outputs, beside its colour: a depth replacing
+    // the rasterized one, and a coverage mask over the samples it writes. See
+    // ShaderBuilder::fragmentDepth and fragmentSampleMask.
+    void setFragmentDepth(const Float& depth);
+    void setSampleMask(const UInt& mask);
 
     // Kills the fragment when value falls below threshold, before any colour or
     // depth is written — the alpha test a masked texture needs, so a sprite's
@@ -537,10 +698,30 @@ private:
     VertexLayout vertexLayoutData;
     Vector<std::byte> uniformBytes;
 
+    // An invalid pipeline made current, for a refused shader or values.
+    void useRefusedPipeline();
+
+    // One pipeline per set of constants the shader was specialised with.
+    struct Specialization
+    {
+        explicit Specialization(const RenderPipelineDescriptor& descriptor)
+            : constants(descriptor.constants)
+            , pipeline(Device::shared(), descriptor)
+        {
+        }
+
+        PipelineConstants constants;
+        RenderPipeline pipeline;
+    };
+
     std::optional<Buffer> vertexBufferData;
     std::optional<Buffer> indexBufferData;
     std::optional<ShaderLibrary> shaderLibrary;
-    std::optional<RenderPipeline> pipelineState;
+    std::optional<RenderPipelineDescriptor> preparedDescriptor;
+    OwnedVector<Specialization> specializations;
+    std::optional<ShaderLibrary> refusedLibrary;
+    std::optional<RenderPipeline> refusedPipeline;
+    const RenderPipeline* currentPipeline = nullptr;
 
     // Per-instance buffers indexed by their vertex-buffer slot; slot 0 stays
     // empty (the per-vertex buffer). Populated by setInstances, bound by

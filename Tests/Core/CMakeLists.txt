@@ -1,4 +1,6 @@
 set(core_test_sources
+        # Never shows a dialog: every case installs a presenter or is headless.
+        AlertTests.cpp
         AllocationCount.cpp
         AppAffordanceTests.cpp
         AppTests.cpp

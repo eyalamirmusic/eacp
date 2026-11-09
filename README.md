@@ -115,7 +115,8 @@ explains how a frame is built.
 ## Everything else
 
 - **Application lifecycle** — a struct is the app; one view in one window
-  needs no struct at all.
+  needs no struct at all. Native alerts with your own buttons, answered
+  asynchronously.
 - **Command-line tools** — a console runner, an argument parser that binds
   options to your variables and writes the help, and plain stdout lines.
 - **Event loop and threads** — the loop, timers, deferred and delayed calls,
@@ -166,8 +167,8 @@ Vulkan, and Wayland or X11 with Vulkan.
 | ML through Core ML | ✅ | — | ✅ | — | — |
 
 Where there is no 2D tier, everything drawn through the GPU — the component
-tier, its text and images, and SVG — works in full, and Android keeps its own
-image codecs. Gamepads come from GameController on Apple platforms and XInput
+tier, its text and images, and SVG — works in full, and Android and Linux keep
+the image codecs. Gamepads come from GameController on Apple platforms and XInput
 on Windows; elsewhere game input is the window's own keys and mouse.
 
 Android is a NativeActivity app on Vulkan 1.1 with touch and soft-keyboard

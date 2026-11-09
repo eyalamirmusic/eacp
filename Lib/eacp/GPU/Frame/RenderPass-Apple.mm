@@ -469,6 +469,36 @@ void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
                      sampler.nativeSampler());
 }
 
+namespace
+{
+void bindStageSampler(NSObject<MTLRenderCommandEncoder>* encoder,
+                      ShaderStage stage,
+                      const Sampler& sampler,
+                      int slot)
+{
+    auto metalSampler = (__bridge id<MTLSamplerState>) sampler.nativeSampler();
+
+    if (encoder == nil || metalSampler == nil || slot < 0
+        || slot >= RenderPass::maxStageTextureSlots)
+        return;
+
+    if (stage == ShaderStage::Vertex)
+        [encoder setVertexSamplerState:metalSampler atIndex:(NSUInteger) slot];
+    else
+        [encoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+} // namespace
+
+void RenderPass::setFragmentSampler(const Sampler& sampler, int slot)
+{
+    bindStageSampler(impl->encoder.get(), ShaderStage::Fragment, sampler, slot);
+}
+
+void RenderPass::setVertexSampler(const Sampler& sampler, int slot)
+{
+    bindStageSampler(impl->encoder.get(), ShaderStage::Vertex, sampler, slot);
+}
+
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
 {
     setVertexStorageBuffer(BufferRange::of(buffer), slot);

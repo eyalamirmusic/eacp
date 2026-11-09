@@ -124,14 +124,14 @@ struct TestProxy
     template <typename Fn>
     TestProxy& operator=(Fn body)
     {
-        inner = [body = std::move(body)]
+        inner = [testBody = std::move(body)]
         {
             Detail::runAllRestarts();
 
             if constexpr (std::is_void_v<std::invoke_result_t<Fn>>)
-                body();
+                testBody();
             else
-                body().waitFor(defaultTestTimeout);
+                testBody().waitFor(defaultTestTimeout);
         };
         return *this;
     }

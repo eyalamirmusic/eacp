@@ -14,16 +14,36 @@ target_compile_options(eacp-gpu-codegen PUBLIC
 
 target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ComputeKernel.cpp
+        Codegen/OverrideValues.cpp
         Codegen/PackedScalars.cpp
         Codegen/PackedVertex.cpp
+        Codegen/Samplers.cpp
         Codegen/ShaderBuilder.cpp
+        Codegen/ShaderComputeEmitter.cpp
+        Codegen/ShaderDeclarations.cpp
+        Codegen/ShaderDialect.cpp
         Codegen/ShaderEmitter.cpp
+        Codegen/ShaderExpressionPrinter.cpp
+        Codegen/ShaderFunctionEmission.cpp
+        Codegen/ShaderFunctionInlining.cpp
+        Codegen/ShaderGraphAnalysis.cpp
+        Codegen/ShaderHelpers.cpp
+        Codegen/ShaderStageEmitter.cpp
+        Codegen/ShaderStageEmitterGroups.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderMembers.cpp
+        Codegen/ShaderOverrideEmission.cpp
+        Codegen/ShaderReflection.cpp
         Codegen/ShaderSets.cpp
+        Codegen/ShaderStruct.cpp
+        Codegen/ShaderStructEmission.cpp
+        Codegen/ShaderTexturePrinter.cpp
         Codegen/ShaderValue.cpp
+        Codegen/TextureFunctions.cpp
         Codegen/UniformLayout.cpp
         Pipeline/VertexLayout.cpp
+        Shader/CompilationInfo.cpp
+        Shader/PipelineConstants.cpp
         Shader/ShaderSource.cpp
         Texture/Texture.cpp)
 
@@ -94,7 +114,9 @@ if (APPLE)
             Frame/OcclusionQueries-Apple.mm
             Frame/RenderPass-Apple.mm
             Pipeline/ComputePipeline-Apple.mm
+            Pipeline/MetalFunctions-Apple.mm
             Pipeline/RenderPipeline-Apple.mm
+            Shader/Dxc-Default.cpp
             Shader/ShaderLibrary-Apple.mm
             Texture/Texture-Apple.mm
             Timing/GpuTimestamps-Apple.mm
@@ -124,6 +146,7 @@ elseif (WIN32)
             Frame/RenderPass-Windows.cpp
             Pipeline/ComputePipeline-Windows.cpp
             Pipeline/RenderPipeline-Windows.cpp
+            Shader/Dxc-Windows.cpp
             Shader/ShaderLibrary-Windows.cpp
             Texture/Texture-Windows.cpp
             Timing/GpuTimestamps-Windows.cpp
@@ -162,6 +185,7 @@ else ()
             Frame/RenderPass-Linux.cpp
             Pipeline/ComputePipeline-Linux.cpp
             Pipeline/RenderPipeline-Linux.cpp
+            Shader/Dxc-Default.cpp
             Shader/ShaderLibrary-Linux.cpp
             Texture/Texture-Linux.cpp
             Timing/GpuTimestamps-Linux.cpp
@@ -183,3 +207,8 @@ endif ()
 set_default_target_setting(eacp-gpu)
 eacp_enable_unity_build(eacp-gpu)
 add_ide_sources(eacp-gpu)
+
+# Dxc::Options::locateLibrary's default answer, fetching the official DXC
+# release through OnlineResource. Its own target so eacp-gpu stays free of
+# eacp-network, and an app that never opts in links nothing for it.
+add_subdirectory(Dxc)
