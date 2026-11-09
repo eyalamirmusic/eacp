@@ -46,13 +46,19 @@ bool anyInjected()
     return !s.injected.empty();
 }
 
-void reportRequiredMiss(std::string_view resourceName, std::string_view reason)
+void reportRequiredMiss(std::string_view resourceName,
+                        std::string_view reason,
+                        CompilationInfo& messages)
 {
-    LOG("GPU: EACP_REQUIRE_PRECOMPILED_SHADERS=1 and the precompiled shader ",
+    auto text = Strings::concat(
+        "EACP_REQUIRE_PRECOMPILED_SHADERS=1 and the precompiled shader ",
         resourceName,
         " ",
         reason,
         ", so the shader library is invalid");
+
+    LOG("GPU: ", text);
+    messages.add(CompilationMessageType::Error, text);
 }
 } // namespace
 
@@ -150,11 +156,11 @@ void reportMiss(std::string_view resourceName, std::string_view reason)
         "); compiling from source");
 }
 
-bool fallBackAfterMiss(std::string_view resourceName)
+bool fallBackAfterMiss(std::string_view resourceName, CompilationInfo& messages)
 {
     if (isRequired())
     {
-        reportRequiredMiss(resourceName, "is not embedded");
+        reportRequiredMiss(resourceName, "is not embedded", messages);
         return false;
     }
 
@@ -164,11 +170,14 @@ bool fallBackAfterMiss(std::string_view resourceName)
     return true;
 }
 
-bool fallBackAfterLoadFailure(std::string_view resourceName, std::string_view reason)
+bool fallBackAfterLoadFailure(std::string_view resourceName,
+                              std::string_view reason,
+                              CompilationInfo& messages)
 {
     if (isRequired())
     {
-        reportRequiredMiss(resourceName, Strings::concat("did not load: ", reason));
+        reportRequiredMiss(
+            resourceName, Strings::concat("did not load: ", reason), messages);
         return false;
     }
 

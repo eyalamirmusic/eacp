@@ -14,24 +14,36 @@ target_compile_options(eacp-gpu-codegen PUBLIC
 
 target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ComputeKernel.cpp
+        Codegen/OverrideValues.cpp
         Codegen/PackedScalars.cpp
         Codegen/PackedVertex.cpp
+        Codegen/Samplers.cpp
         Codegen/ShaderBuilder.cpp
         Codegen/ShaderComputeEmitter.cpp
         Codegen/ShaderDeclarations.cpp
         Codegen/ShaderDialect.cpp
         Codegen/ShaderEmitter.cpp
         Codegen/ShaderExpressionPrinter.cpp
+        Codegen/ShaderFunctionEmission.cpp
+        Codegen/ShaderFunctionInlining.cpp
         Codegen/ShaderGraphAnalysis.cpp
         Codegen/ShaderHelpers.cpp
         Codegen/ShaderStageEmitter.cpp
         Codegen/ShaderStageEmitterGroups.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderMembers.cpp
+        Codegen/ShaderOverrideEmission.cpp
+        Codegen/ShaderReflection.cpp
         Codegen/ShaderSets.cpp
+        Codegen/ShaderStruct.cpp
+        Codegen/ShaderStructEmission.cpp
+        Codegen/ShaderTexturePrinter.cpp
         Codegen/ShaderValue.cpp
+        Codegen/TextureFunctions.cpp
         Codegen/UniformLayout.cpp
         Pipeline/VertexLayout.cpp
+        Shader/CompilationInfo.cpp
+        Shader/PipelineConstants.cpp
         Shader/ShaderSource.cpp
         Texture/Texture.cpp)
 
@@ -103,6 +115,7 @@ if (APPLE)
             Frame/OcclusionQueries-Apple.mm
             Frame/RenderPass-Apple.mm
             Pipeline/ComputePipeline-Apple.mm
+            Pipeline/MetalFunctions-Apple.mm
             Pipeline/RenderPipeline-Apple.mm
             Shader/Dxc-Default.cpp
             Shader/ShaderLibrary-Apple.mm
