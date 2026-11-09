@@ -15,6 +15,14 @@
 //     SetRenderingDevice(). A lost device therefore invalidates every target,
 //     visual and surface, not just their pixels. Objects stamp themselves with
 //     getCompositionGeneration() and rebuild when it moves.
+//
+// Everything declared here is main-thread only. The compositor is one
+// unsynchronised process-wide object built on first use, a recovery replaces
+// its devices in place and then calls back into every host, view and listener,
+// and its retries run from the event loop. A device pointer read on another
+// thread can be released under it. (The D3D11 device is created without
+// D3D11_CREATE_DEVICE_SINGLETHREADED for the composition engine's own threads,
+// not for callers.)
 
 #include "D2D-Windows.h"
 
@@ -68,9 +76,36 @@ HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
 uint64_t getCompositionGeneration();
 
 // Recovers the shared D3D/D2D/DComp devices when `hr` is a device-loss HRESULT
-// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
-// recovery ran; the caller should drop the current frame — every host rebuilds
-// and redraws once the replacement device is live.
+// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if a
+// replacement rendering device is live; the caller should drop the current
+// frame — every host rebuilds and redraws. False for any other HRESULT, and
+// when the replacement failed (a GPU still resetting): the devices are then
+// null and the recovery is retried from the event loop, backing off from 0.5 s
+// to 30 s, until it works. So is a composition device that was up before the
+// loss and did not come back, on the rendering device already replaced.
 bool handleDeviceLossIfNeeded(HRESULT hr);
+
+// Runs a failed recovery's next attempt now if it is due, for a caller that
+// needs a device in a process that may never pump the event loop.
+void retryDeviceRecoveryIfDue();
+
+namespace Detail
+{
+// Test seam: the next `count` passes through `point` fail with `hr`, as a
+// device that is still resetting would.
+enum class DeviceFault
+{
+    CreateRenderingDevice,
+    CreateCompositionDevice,
+    SnapshotCreateDeviceContext,
+    SnapshotEndDraw,
+    Count
+};
+
+void injectDeviceFault(DeviceFault point, HRESULT hr, int count = 1);
+
+// S_OK, or the failure injected at `point`, which it consumes.
+HRESULT takeInjectedDeviceFault(DeviceFault point);
+} // namespace Detail
 
 } // namespace eacp::Graphics

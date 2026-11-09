@@ -505,11 +505,12 @@ void CompositionHostWindow::initializeComposition(bool topMost)
     target.Reset();
     generation = getCompositionGeneration();
 
+    // With or without a device: a recovery that brings one back rebuilds it.
+    EA::Vectors::addIfNotThere(compositionHosts(), this);
+
     auto* device = getCompositionDevice();
     if (!device)
         return;
-
-    EA::Vectors::addIfNotThere(compositionHosts(), this);
 
     if (FAILED(device->CreateTargetForHwnd(hwnd, topMost, target.GetAddressOf())))
     {

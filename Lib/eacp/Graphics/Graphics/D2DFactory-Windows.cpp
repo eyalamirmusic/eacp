@@ -7,6 +7,10 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
+#include <algorithm>
+#include <chrono>
+#include <optional>
+
 namespace eacp::Graphics
 {
 
@@ -48,7 +52,41 @@ bool compositionForcedUnavailable()
     const auto value = getEnvValue("EACP_DCOMP_UNAVAILABLE");
     return !value.empty() && value != "0";
 }
+
+struct InjectedFault
+{
+    HRESULT hr = S_OK;
+    int remaining = 0;
+};
+
+using InjectedFaults =
+    Array<InjectedFault, static_cast<int>(Detail::DeviceFault::Count)>;
+
+InjectedFaults& injectedFaults()
+{
+    static auto faults = InjectedFaults {};
+    return faults;
+}
 } // namespace
+
+namespace Detail
+{
+void injectDeviceFault(DeviceFault point, HRESULT hr, int count)
+{
+    injectedFaults()[static_cast<int>(point)] = {hr, count};
+}
+
+HRESULT takeInjectedDeviceFault(DeviceFault point)
+{
+    auto& fault = injectedFaults()[static_cast<int>(point)];
+
+    if (fault.remaining <= 0)
+        return S_OK;
+
+    --fault.remaining;
+    return fault.hr;
+}
+} // namespace Detail
 
 // Registers a callback for after the shared D3D/D2D device was replaced
 // following device loss. Used by eacp-gpu to re-acquire the device and rebuild
@@ -66,6 +104,12 @@ public:
     {
         static auto instance = DCompCompositor();
         return instance;
+    }
+
+    void retryRecoveryIfDue()
+    {
+        if (retryDue && Clock::now() >= *retryDue)
+            retryRecovery();
     }
 
     bool recoverFromDeviceLoss(HRESULT hr)
@@ -154,6 +198,15 @@ private:
 
     static void logCompositionUnavailable(HRESULT hr)
     {
+        if (compositionForcedUnavailable())
+        {
+            LOG("DCompCompositor: DirectComposition turned off by "
+                "EACP_DCOMP_UNAVAILABLE, standing in for a session with no "
+                "desktop compositor; nothing will reach the screen. Text, "
+                "Direct2D drawing and renderToImage still work.");
+            return;
+        }
+
         LOGF("DCompCompositor: DirectComposition device creation failed "
              "(hr=0x{:08x}); nothing will reach the screen. Expected in a "
              "session with no desktop compositor (a service, a CI runner, "
@@ -187,6 +240,11 @@ private:
         // whose factories never came up.
         if (!d2dFactory)
             return E_POINTER;
+
+        if (auto hr = Detail::takeInjectedDeviceFault(
+                Detail::DeviceFault::CreateRenderingDevice);
+            FAILED(hr))
+            return hr;
 
         // BGRA support is required for D2D interop.
         Array featureLevels = {D3D_FEATURE_LEVEL_11_1,
@@ -242,35 +300,45 @@ private:
         if (compositionForcedUnavailable())
             return E_ACCESSDENIED;
 
+        if (auto hr = Detail::takeInjectedDeviceFault(
+                Detail::DeviceFault::CreateCompositionDevice);
+            FAILED(hr))
+            return hr;
+
         return DCompositionCreateDevice2(d2dDevice.Get(),
                                          IID_PPV_ARGS(device.GetAddressOf()));
     }
 
-    // Never touches the factories: they are device-independent, the text laid
-    // out against them stays good across a device loss, and the next retry
-    // builds its device from them.
+    // Never touches the factories: they are device-independent, and the text
+    // laid out against them stays good across a device loss.
     bool recreateRenderingDevice()
     {
-        if (FAILED(createRenderingDevice()))
+        compositionWanted = compositionWanted || initialized;
+
+        if (auto hr = createRenderingDevice(); FAILED(hr))
         {
-            // The GPU may still be resetting; the next BeginDraw failure retries.
             releaseDevices();
             initialized = false;
+            recoveryFailed("D3D11/Direct2D device", hr);
             return false;
         }
 
-        // Optional here as at startup: a replacement rendering device with no
-        // compositor still serves off-screen drawing.
-        if (auto hr = createCompositionDevice(); FAILED(hr))
-        {
-            if (initialized)
-                logCompositionUnavailable(hr);
+        // Optional here as at startup, unless it was up before the loss.
+        auto compositionResult = createCompositionDevice();
+        initialized = SUCCEEDED(compositionResult);
 
-            initialized = false;
+        if (initialized || !compositionWanted)
+        {
+            recoveryComplete();
+        }
+        else if (compositionForcedUnavailable())
+        {
+            logCompositionUnavailable(compositionResult);
+            recoveryComplete();
         }
         else
         {
-            initialized = true;
+            recoveryFailed("DirectComposition device", compositionResult);
         }
 
         // Everything built against the old device — targets, visuals, surfaces —
@@ -279,6 +347,85 @@ private:
         handleRenderingDeviceReplaced();
 
         return true;
+    }
+
+    // On the live rendering device, which is kept.
+    void recreateCompositionDevice()
+    {
+        if (auto hr = createCompositionDevice(); FAILED(hr))
+        {
+            if (compositionForcedUnavailable())
+            {
+                logCompositionUnavailable(hr);
+                recoveryComplete();
+            }
+            else
+            {
+                recoveryFailed("DirectComposition device", hr);
+            }
+
+            return;
+        }
+
+        initialized = true;
+        recoveryComplete();
+
+        ++generation;
+        handleRenderingDeviceReplaced();
+    }
+
+    // With no device nothing draws, so nothing would fail into another
+    // recovery: the next attempt is scheduled, backing off between attempts.
+    void recoveryFailed(std::string_view what, HRESULT hr)
+    {
+        if (!recoveryFailing)
+            LOGF("DCompCompositor: replacing the lost {} failed (hr=0x{:08x}); "
+                 "retrying, from every {} ms up to every {} s.",
+                 what,
+                 static_cast<unsigned long>(hr),
+                 firstRetryDelay.count(),
+                 maxRetryDelay.count() / 1000);
+
+        retryDelay = recoveryFailing ? std::min(retryDelay * 2, maxRetryDelay)
+                                     : firstRetryDelay;
+        recoveryFailing = true;
+
+        if (!d2dFactory)
+            return;
+
+        retryDue = Clock::now() + retryDelay;
+        scheduleRetry();
+    }
+
+    // Each failure schedules a fresh callback and supersedes any still pending,
+    // late or dropped (a hosted copy detaching stops the scheduler).
+    void scheduleRetry()
+    {
+        const auto token = ++retryToken;
+        Threads::callAfter(Time::MS {retryDelay.count()},
+                           [this, token]
+                           {
+                               if (token == retryToken)
+                                   retryRecovery();
+                           });
+    }
+
+    void retryRecovery()
+    {
+        if (!d2dDevice)
+            recreateRenderingDevice();
+        else if (compositionWanted && !initialized)
+            recreateCompositionDevice();
+    }
+
+    void recoveryComplete()
+    {
+        if (recoveryFailing)
+            LOG("DCompCompositor: the lost devices are replaced.");
+
+        recoveryFailing = false;
+        compositionWanted = false;
+        retryDue.reset();
     }
 
     void releaseDevices()
@@ -296,8 +443,20 @@ private:
         dwriteFactory.Reset();
     }
 
+    using Clock = std::chrono::steady_clock;
+
+    static constexpr auto firstRetryDelay = std::chrono::milliseconds {500};
+    static constexpr auto maxRetryDelay = std::chrono::milliseconds {30000};
+
     bool initialized = false;
     uint64_t generation = 1;
+
+    // Composition was up before a recovery that has not brought it back.
+    bool compositionWanted = false;
+    bool recoveryFailing = false;
+    std::chrono::milliseconds retryDelay = firstRetryDelay;
+    std::optional<Clock::time_point> retryDue;
+    uint64_t retryToken = 0;
 
     ComPtr<ID3D11Device> d3dDevice;
     ComPtr<IDXGIDevice> dxgiDevice;
@@ -366,6 +525,11 @@ uint64_t getCompositionGeneration()
 bool handleDeviceLossIfNeeded(HRESULT hr)
 {
     return DCompCompositor::instance().recoverFromDeviceLoss(hr);
+}
+
+void retryDeviceRecoveryIfDue()
+{
+    DCompCompositor::instance().retryRecoveryIfDue();
 }
 
 } // namespace eacp::Graphics
