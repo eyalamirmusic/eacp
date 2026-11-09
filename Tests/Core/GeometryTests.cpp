@@ -89,4 +89,14 @@ auto tSplitsIntegerRectangles = test("Geometry/splitsIntegerRectangles") = []
     check(isSameRectangle(area.inset(Insets<int> {.left = 1, .right = 2}),
                           {1, 5, 7, 15}));
 };
+constexpr auto compileTimePixels =
+    Rectangle<float> {-1.5f, 0.25f, 3.f, 2.5f}.roundedOutwardTo<int>();
+static_assert(compileTimePixels.x == -2 && compileTimePixels.y == 0);
+static_assert(compileTimePixels.w == 4 && compileTimePixels.h == 3);
+static_assert(Rectangle<int> {0, 0, 10, 10}.contains(Rectangle<int> {2, 2, 3, 3}));
+static_assert(Rectangle<int> {0, 0, 10, 10}.intersects({5, 5, 10, 10}));
+static_assert(Rectangle<int> {0, 0, 10, 10}.intersection({20, 20, 5, 5}).isEmpty());
+static_assert(Rectangle<float> {1.5f, 0.f, 1.f, 1.f}.to<int>().x == 1);
+static_assert((Point<int> {1, 2} + Point<int> {3, 4}).x == 4);
+static_assert(Insets<int> {.top = 1, .bottom = 2}.size().y == 3);
 } // namespace GeometryTests

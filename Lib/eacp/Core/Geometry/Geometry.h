@@ -5,12 +5,31 @@
 
 namespace eacp::Geometry
 {
+// std::floor and std::ceil are only constexpr from C++23.
+template <typename Whole, typename T>
+constexpr Whole floorToWhole(T value)
+{
+    const auto truncated = static_cast<Whole>(value);
+    if (static_cast<T>(truncated) > value)
+        return truncated - 1;
+    return truncated;
+}
+
+template <typename Whole, typename T>
+constexpr Whole ceilToWhole(T value)
+{
+    const auto truncated = static_cast<Whole>(value);
+    if (static_cast<T>(truncated) < value)
+        return truncated + 1;
+    return truncated;
+}
+
 template <typename T>
 struct Point
 {
-    Point() = default;
+    constexpr Point() = default;
 
-    Point(T xToUse, T yToUse)
+    constexpr Point(T xToUse, T yToUse)
         : x(xToUse)
         , y(yToUse)
     {
@@ -29,7 +48,7 @@ struct Point
     }
 
     template <typename U>
-    Point<U> to() const
+    constexpr Point<U> to() const
     {
         return {static_cast<U>(x), static_cast<U>(y)};
     }
@@ -39,13 +58,13 @@ struct Point
 };
 
 template <typename T>
-Point<T> operator+(const Point<T>& a, const Point<T>& b)
+constexpr Point<T> operator+(const Point<T>& a, const Point<T>& b)
 {
     return {a.x + b.x, a.y + b.y};
 }
 
 template <typename T>
-Point<T> operator-(const Point<T>& a, const Point<T>& b)
+constexpr Point<T> operator-(const Point<T>& a, const Point<T>& b)
 {
     return {a.x - b.x, a.y - b.y};
 }
@@ -56,7 +75,7 @@ template <typename T>
 struct Insets
 {
     // The width and height the four sides add up to.
-    Point<T> size() const { return {left + right, top + bottom}; }
+    constexpr Point<T> size() const { return {left + right, top + bottom}; }
 
     T top = T {};
     T left = T {};
@@ -77,9 +96,9 @@ struct Insets
 template <typename T>
 struct Rectangle
 {
-    Rectangle() = default;
+    constexpr Rectangle() = default;
 
-    Rectangle(T xToUse, T yToUse, T wToUse, T hToUse)
+    constexpr Rectangle(T xToUse, T yToUse, T wToUse, T hToUse)
         : x(xToUse)
         , y(yToUse)
         , w(wToUse)
@@ -87,22 +106,22 @@ struct Rectangle
     {
     }
 
-    Rectangle getRelative(const Rectangle& ratio) const
+    constexpr Rectangle getRelative(const Rectangle& ratio) const
     {
         return {x + (w * ratio.x), y + (h * ratio.y), w * ratio.w, h * ratio.h};
     }
 
-    Point<T> getRelativePoint(const Point<T>& point) const
+    constexpr Point<T> getRelativePoint(const Point<T>& point) const
     {
         return {(point.x - x) / w, (point.y - y) / h};
     }
 
-    bool contains(const Point<T>& point) const
+    constexpr bool contains(const Point<T>& point) const
     {
         return point.x >= x && point.x < x + w && point.y >= y && point.y < y + h;
     }
 
-    bool contains(const Rectangle& other) const
+    constexpr bool contains(const Rectangle& other) const
     {
         return other.x >= x && other.y >= y && other.right() <= right()
                && other.bottom() <= bottom();
@@ -111,9 +130,9 @@ struct Rectangle
     // A rect with no area. Both an explicitly empty rect and one whose width or
     // height has gone negative — which is what oversized insets and splitters
     // produce — count, so callers can test the result of either.
-    bool isEmpty() const { return w <= T {} || h <= T {}; }
+    constexpr bool isEmpty() const { return w <= T {} || h <= T {}; }
 
-    bool intersects(const Rectangle& other) const
+    constexpr bool intersects(const Rectangle& other) const
     {
         return !isEmpty() && !other.isEmpty() && x < other.right()
                && other.x < right() && y < other.bottom() && other.y < bottom();
@@ -123,7 +142,7 @@ struct Rectangle
     // the reason this exists: the GPU has exactly one scissor rect and no stack,
     // so a child's clip has to be intersected with its parent's on the way down
     // rather than replacing it.
-    Rectangle intersection(const Rectangle& other) const
+    constexpr Rectangle intersection(const Rectangle& other) const
     {
         const auto newX = std::max(x, other.x);
         const auto newY = std::max(y, other.y);
@@ -138,17 +157,17 @@ struct Rectangle
                 std::max(newBottom - newY, T {})};
     }
 
-    Rectangle inset(T amount) const
+    constexpr Rectangle inset(T amount) const
     {
         return {x + amount, y + amount, w - amount * 2, h - amount * 2};
     }
 
-    Rectangle inset(T horizontal, T vertical) const
+    constexpr Rectangle inset(T horizontal, T vertical) const
     {
         return {x + horizontal, y + vertical, w - horizontal * 2, h - vertical * 2};
     }
 
-    Rectangle inset(const Insets<T>& insets) const
+    constexpr Rectangle inset(const Insets<T>& insets) const
     {
         return {x + insets.left,
                 y + insets.top,
@@ -156,34 +175,37 @@ struct Rectangle
                 h - insets.top - insets.bottom};
     }
 
-    Rectangle withX(T newX) const { return {newX, y, w, h}; }
-    Rectangle withY(T newY) const { return {x, newY, w, h}; }
-    Rectangle withWidth(T newW) const { return {x, y, newW, h}; }
-    Rectangle withHeight(T newH) const { return {x, y, w, newH}; }
-    Rectangle withPosition(T newX, T newY) const { return {newX, newY, w, h}; }
-    Rectangle withSize(T newW, T newH) const { return {x, y, newW, newH}; }
+    constexpr Rectangle withX(T newX) const { return {newX, y, w, h}; }
+    constexpr Rectangle withY(T newY) const { return {x, newY, w, h}; }
+    constexpr Rectangle withWidth(T newW) const { return {x, y, newW, h}; }
+    constexpr Rectangle withHeight(T newH) const { return {x, y, w, newH}; }
+    constexpr Rectangle withPosition(T newX, T newY) const
+    {
+        return {newX, newY, w, h};
+    }
+    constexpr Rectangle withSize(T newW, T newH) const { return {x, y, newW, newH}; }
 
-    Rectangle fromLeft(T width, T margin = T {}) const
+    constexpr Rectangle fromLeft(T width, T margin = T {}) const
     {
         return {x + margin, y, width, h};
     }
 
-    Rectangle fromRight(T width, T margin = T {}) const
+    constexpr Rectangle fromRight(T width, T margin = T {}) const
     {
         return {x + w - width - margin, y, width, h};
     }
 
-    Rectangle fromTop(T height, T margin = T {}) const
+    constexpr Rectangle fromTop(T height, T margin = T {}) const
     {
         return {x, y + margin, w, height};
     }
 
-    Rectangle fromBottom(T height, T margin = T {}) const
+    constexpr Rectangle fromBottom(T height, T margin = T {}) const
     {
         return {x, y + h - height - margin, w, height};
     }
 
-    Rectangle removeFromLeft(T amount)
+    constexpr Rectangle removeFromLeft(T amount)
     {
         auto removed = Rectangle {x, y, amount, h};
         x += amount;
@@ -191,13 +213,13 @@ struct Rectangle
         return removed;
     }
 
-    Rectangle removeFromRight(T amount)
+    constexpr Rectangle removeFromRight(T amount)
     {
         w -= amount;
         return {x + w, y, amount, h};
     }
 
-    Rectangle removeFromTop(T amount)
+    constexpr Rectangle removeFromTop(T amount)
     {
         auto removed = Rectangle {x, y, w, amount};
         y += amount;
@@ -205,23 +227,23 @@ struct Rectangle
         return removed;
     }
 
-    Rectangle removeFromBottom(T amount)
+    constexpr Rectangle removeFromBottom(T amount)
     {
         h -= amount;
         return {x, y + h, w, amount};
     }
 
-    Point<T> center() const { return {x + w / T {2}, y + h / T {2}}; }
+    constexpr Point<T> center() const { return {x + w / T {2}, y + h / T {2}}; }
 
     // Edge coordinates. `top` is the smaller y and `bottom` the larger, so
     // top <= bottom for any rect with a non-negative height.
-    T left() const { return x; }
-    T right() const { return x + w; }
-    T top() const { return y; }
-    T bottom() const { return y + h; }
+    constexpr T left() const { return x; }
+    constexpr T right() const { return x + w; }
+    constexpr T top() const { return y; }
+    constexpr T bottom() const { return y + h; }
 
     template <typename U>
-    Rectangle<U> to() const
+    constexpr Rectangle<U> to() const
     {
         return {static_cast<U>(x),
                 static_cast<U>(y),
@@ -232,12 +254,12 @@ struct Rectangle
     // The smallest rectangle of whole U units that covers this one: left and
     // top floored, right and bottom ceiled.
     template <typename U>
-    Rectangle<U> roundedOutwardTo() const
+    constexpr Rectangle<U> roundedOutwardTo() const
     {
-        const auto roundedLeft = static_cast<U>(std::floor(left()));
-        const auto roundedTop = static_cast<U>(std::floor(top()));
-        const auto roundedRight = static_cast<U>(std::ceil(right()));
-        const auto roundedBottom = static_cast<U>(std::ceil(bottom()));
+        const auto roundedLeft = floorToWhole<U>(left());
+        const auto roundedTop = floorToWhole<U>(top());
+        const auto roundedRight = ceilToWhole<U>(right());
+        const auto roundedBottom = ceilToWhole<U>(bottom());
 
         return {roundedLeft,
                 roundedTop,
