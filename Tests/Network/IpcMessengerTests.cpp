@@ -1,6 +1,8 @@
 #include "Common.h"
 
+#include <atomic>
 #include <optional>
+#include <thread>
 
 using namespace nano;
 using eacp::IPC::MessageServer;
@@ -209,6 +211,7 @@ constexpr auto stuckReaderMessageBytes = std::size_t {1} << 20;
 constexpr auto stuckReaderMessagesWithinLimit = 16;
 constexpr auto stuckReaderMessagesPastLimit = 80;
 constexpr auto sendingToAStuckReaderLimit = eacp::Time::MS {500};
+constexpr auto sendingPollInterval = eacp::Time::MS {5};
 
 struct StuckReaderSession
 {
@@ -229,15 +232,32 @@ struct StuckReaderSession
     }
 };
 
-bool isSendingFinishedWithinLimit(Messenger& session, int messageCount)
+bool isSendingFinishedWithinLimit(StuckReaderSession& stuck, int messageCount)
 {
-    auto payload = std::string(stuckReaderMessageBytes, 'x');
+    auto isFinished = std::atomic<bool> {false};
+    auto sender = std::thread(
+        [&stuck, &isFinished, messageCount]
+        {
+            auto payload = std::string(stuckReaderMessageBytes, 'x');
+
+            for (auto index = 0; index < messageCount; ++index)
+                stuck.session->send(payload);
+
+            isFinished = true;
+        });
+
     auto deadline = eacp::Time::Deadline {sendingToAStuckReaderLimit};
 
-    for (auto index = 0; index < messageCount; ++index)
-        session.send(payload);
+    while (!isFinished && !deadline.expired())
+        eacp::Time::sleep(sendingPollInterval);
 
-    return !deadline.expired();
+    auto isFinishedInTime = isFinished.load();
+
+    if (!isFinishedInTime)
+        stuck.reader.close();
+
+    sender.join();
+    return isFinishedInTime;
 }
 } // namespace
 
@@ -248,8 +268,7 @@ auto tSendingToAStuckReaderReturns =
     check(runEventLoopUntil([&] { return stuck.session != nullptr; },
                             messengerPumpTimeout));
 
-    check(isSendingFinishedWithinLimit(*stuck.session,
-                                       stuckReaderMessagesWithinLimit));
+    check(isSendingFinishedWithinLimit(stuck, stuckReaderMessagesWithinLimit));
     check(stuck.session->isConnected());
 };
 
@@ -260,8 +279,7 @@ auto tStuckReaderIsDisconnected =
     check(runEventLoopUntil([&] { return stuck.session != nullptr; },
                             messengerPumpTimeout));
 
-    check(isSendingFinishedWithinLimit(*stuck.session,
-                                       stuckReaderMessagesPastLimit));
+    check(isSendingFinishedWithinLimit(stuck, stuckReaderMessagesPastLimit));
     check(runEventLoopUntil([&] { return stuck.isGone; }, messengerPumpTimeout));
     check(!stuck.session->isConnected());
 };
