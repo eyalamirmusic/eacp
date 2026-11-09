@@ -6,16 +6,27 @@ namespace eacp::GPU::CpuCompute
 {
 namespace
 {
-PlanLevel getLeafLevel(ExprKind kind)
+bool isDispatchWideBuiltIn(const Expr& expr)
 {
-    switch (kind)
+    auto which = static_cast<ShaderBuiltIn>(expr.index);
+    return which == ShaderBuiltIn::GroupCount
+           || which == ShaderBuiltIn::SimdGroupSize;
+}
+
+PlanLevel getLeafLevel(const Expr& expr)
+{
+    switch (expr.kind)
     {
         case ExprKind::Constant:
+        case ExprKind::Override:
         case ExprKind::Uniform:
         case ExprKind::GridExtent:
             return PlanLevel::Dispatch;
         case ExprKind::GroupId:
             return PlanLevel::Group;
+        case ExprKind::BuiltIn:
+            return isDispatchWideBuiltIn(expr) ? PlanLevel::Dispatch
+                                               : PlanLevel::Lane;
         default:
             return PlanLevel::Lane;
     }
@@ -36,6 +47,7 @@ bool readsChangingMemory(const Plan& plan, const Plan::Node& node)
     {
         case Op::BufferRead:
         case Op::BufferVectorRead:
+        case Op::StructRead:
             return plan.access(node.immediate) != BufferAccess::Read;
         case Op::ArrayRead:
         case Op::SharedRead:
@@ -136,7 +148,7 @@ int PlanBuilder::mapBlock(int block, int depth)
         auto subtreeLast = stepId;
         stepBlocks[stepId] = block;
 
-        for (auto body: {step.body, step.elseBody})
+        for (auto body: {step.body, step.elseBody, step.continuing})
         {
             if (body < 0)
                 continue;
@@ -182,7 +194,7 @@ PlanLevel PlanBuilder::calculateNodeLevel(int id) const
         return PlanLevel::Lane;
 
     if (node.op == Op::Leaf)
-        return getLeafLevel(graph.expr(id).kind);
+        return getLeafLevel(graph.expr(id));
 
     if (readsChangingMemory(plan, node))
         return PlanLevel::Lane;

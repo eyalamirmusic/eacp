@@ -7,7 +7,7 @@ namespace eacp::GPU::CpuCompute
 namespace
 {
 constexpr int laneAlignment = 16;
-constexpr int mostComponents = 16;
+constexpr int mostComponents = 255;
 constexpr std::uint64_t wordRange = std::uint64_t {1} << 32;
 
 std::uint32_t roundUp(int value, int multiple)
@@ -15,9 +15,14 @@ std::uint32_t roundUp(int value, int multiple)
     return static_cast<std::uint32_t>((value + multiple - 1) / multiple * multiple);
 }
 
-bool ownsScratch(ExprKind kind)
+// A plain variable's read is its storage and a local id the lane's own
+// coordinates; a private array's element is gathered into scratch.
+bool ownsScratch(const Expr& expr)
 {
-    return kind != ExprKind::VarRead && kind != ExprKind::LocalId;
+    if (expr.kind == ExprKind::VarRead)
+        return !expr.args.empty();
+
+    return expr.kind != ExprKind::LocalId;
 }
 
 // Times: schedule position p is 2p, and a step's commit, which reads its roots
@@ -92,9 +97,12 @@ LaneForm calculateShiftForm(const LaneForm& a, const LaneForm& amount)
 class LaneFormAnalysis
 {
 public:
-    LaneFormAnalysis(const Plan& planToRead, const ShaderGraph& graphToRead)
+    LaneFormAnalysis(const Plan& planToRead,
+                     const ShaderGraph& graphToRead,
+                     const Vector<Word>& overrideWordsToRead)
         : plan(planToRead)
         , graph(graphToRead)
+        , overrideWords(overrideWordsToRead)
     {
         forms.resize(graph.nodeCount(), LaneForm {});
 
@@ -188,6 +196,8 @@ private:
         {
             case ExprKind::Constant:
                 return getConstantForm(PlanBuilder::getConstantWord(expr));
+            case ExprKind::Override:
+                return getConstantForm(overrideWords[expr.index]);
             case ExprKind::Uniform:
             case ExprKind::GridExtent:
                 return getLaneInvariantForm();
@@ -256,19 +266,20 @@ private:
 
     const Plan& plan;
     const ShaderGraph& graph;
+    const Vector<Word>& overrideWords;
     Vector<LaneForm> forms;
 };
 } // namespace
 
 bool PlanBuilder::usesAtomics() const
 {
-    auto isAtomicAdd = [](const Plan::Step& step)
-    { return step.kind == StatementKind::AtomicAdd; };
+    auto isAtomic = [](const Plan::Step& step)
+    { return step.kind == StatementKind::Atomic; };
 
     auto isAtomicLoad = [](const Plan::Node& node)
     { return node.used && node.op == Op::AtomicLoad; };
 
-    return std::ranges::any_of(plan.steps, isAtomicAdd)
+    return std::ranges::any_of(plan.steps, isAtomic)
            || std::ranges::any_of(plan.nodes, isAtomicLoad);
 }
 
@@ -299,7 +310,7 @@ void PlanBuilder::chooseBatchWidth()
 
 void PlanBuilder::markRamps()
 {
-    const auto forms = LaneFormAnalysis {plan, graph};
+    const auto forms = LaneFormAnalysis {plan, graph, overrideWords};
 
     for (auto id = 0; id < graph.nodeCount(); ++id)
     {
@@ -375,11 +386,14 @@ void PlanBuilder::layOutNodes()
 
 void PlanBuilder::layOutVariables()
 {
-    for (auto type: graph.variables())
+    for (auto slot = 0; slot < graph.variables().size(); ++slot)
     {
+        auto size = graph.variableArraySize(slot);
         auto variable = Plan::Variable {};
-        variable.components = componentCount(type);
-        variable.storage = allocate(variable.components);
+        variable.components = variableComponents(slot);
+        variable.elements = size > 0 ? size : 1;
+        variable.isArray = size > 0;
+        variable.storage = allocate(variable.components * variable.elements);
         plan.variableLayouts.add(variable);
     }
 
@@ -387,8 +401,11 @@ void PlanBuilder::layOutVariables()
     {
         const auto& expr = graph.expr(id);
 
-        if (plan.nodes[id].used && expr.kind == ExprKind::VarRead)
-            plan.nodes[id].scratch = plan.variableLayouts[expr.index].storage;
+        if (plan.nodes[id].used && expr.kind == ExprKind::VarRead
+            && !ownsScratch(expr))
+            plan.nodes[id].scratch =
+                plan.variableLayouts[expr.index].storage
+                + static_cast<std::uint32_t>(plan.nodes[id].component * plan.stride);
     }
 }
 
@@ -441,7 +458,7 @@ void PlanBuilder::layOut()
 
 bool PlanBuilder::hasOwnScratch(int id) const
 {
-    return plan.nodes[id].used && ownsScratch(graph.expr(id).kind);
+    return plan.nodes[id].used && ownsScratch(graph.expr(id));
 }
 
 // A node evaluated in a statement's schedule, whose scratch is free again once

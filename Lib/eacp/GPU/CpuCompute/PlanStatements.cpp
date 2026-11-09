@@ -40,6 +40,17 @@ bool PlanBuilder::checkGraph()
         return false;
     }
 
+    for (auto slot = 0; slot < graph.textureCount(); ++slot)
+    {
+        if (graph.textureAccess(slot) == TextureAccess::Sampler)
+        {
+            fail("texture slot " + std::to_string(slot)
+                 + " is a sampler: samplers are not supported by the CPU "
+                   "executor");
+            return false;
+        }
+    }
+
     const auto& slots = graph.storageBuffers();
 
     if (slots.size() > Plan::maxSlots)
@@ -57,9 +68,39 @@ bool PlanBuilder::checkGraph()
         plan.slotAccess[static_cast<std::size_t>(slot)] = slots[slot];
         plan.slotElement[static_cast<std::size_t>(slot)] =
             graph.storageElementType(slot);
+        recordStructSlot(slot);
     }
 
     return checkThreadGroupShape() && packUniforms();
+}
+
+void PlanBuilder::recordStructSlot(int slot)
+{
+    auto structId = graph.storageStructType(slot);
+
+    if (structId < 0)
+        return;
+
+    const auto& type = graph.structType(structId);
+    auto at = static_cast<std::size_t>(slot);
+    plan.slotStructStride[at] = type.size;
+    plan.slotStructComponents[at].begin = plan.structComponentList.size();
+
+    for (const auto& component: type.components)
+        plan.structComponentList.add(component);
+
+    plan.slotStructComponents[at].end = plan.structComponentList.size();
+}
+
+int PlanBuilder::nodeComponents(const Expr& expr) const
+{
+    return getFlatComponents(graph, expr.type, expr.structType);
+}
+
+int PlanBuilder::variableComponents(int slot) const
+{
+    return getFlatComponents(
+        graph, graph.variables()[slot], graph.variableStructType(slot));
 }
 
 bool PlanBuilder::checkThreadGroupShape()
@@ -153,7 +194,7 @@ PlanBuilder::BlockResult
     if (!enterBlock(graphBlock))
         return {};
 
-    auto walk = BlockWalk {loopDepth, depth};
+    auto walk = BlockWalk {graphBlock, loopDepth, depth};
     auto id = plan.blocks.size();
     plan.blocks.add(Plan::BlockRange {});
     plan.nesting = std::max(plan.nesting, depth);
@@ -163,15 +204,15 @@ PlanBuilder::BlockResult
     for (auto statementId: graph.block(graphBlock).statements)
     {
         if (failed() || !checkStatement(statementId))
-            return {id, walk.jumpsOut};
+            return {id, walk.jumpsOut, walk.returns};
 
         auto stepId = plan.steps.size();
         plan.steps.add(Plan::Step {});
         pending.add(PendingSchedule {});
         stepIds.add(stepId);
 
-        if (!buildStep(graph.statement(statementId), stepId, walk))
-            return {id, walk.jumpsOut};
+        if (!buildStep(graph.statement(statementId), statementId, stepId, walk))
+            return {id, walk.jumpsOut, walk.returns};
     }
 
     auto& range = plan.blocks[id];
@@ -181,27 +222,36 @@ PlanBuilder::BlockResult
         plan.blockSteps.add(stepId);
 
     range.end = plan.blockSteps.size();
-    return {id, walk.jumpsOut};
+    return {id, walk.jumpsOut, walk.returns};
 }
 
-bool PlanBuilder::buildStep(const Statement& statement, int stepId, BlockWalk& walk)
+bool PlanBuilder::buildStep(const Statement& statement,
+                            int statementId,
+                            int stepId,
+                            BlockWalk& walk)
 {
     using Entry = std::pair<StatementKind, StepBuilder>;
 
-    static constexpr auto builders = Array<Entry, 17> {
+    static constexpr auto builders = Array<Entry, 23> {
         Entry {StatementKind::Declare, &PlanBuilder::buildVariableStep},
         Entry {StatementKind::Assign, &PlanBuilder::buildVariableStep},
         Entry {StatementKind::If, &PlanBuilder::buildIfStep},
         Entry {StatementKind::Loop, &PlanBuilder::buildLoopStep},
         Entry {StatementKind::Break, &PlanBuilder::buildJumpStep},
         Entry {StatementKind::Continue, &PlanBuilder::buildJumpStep},
+        Entry {StatementKind::BreakIf, &PlanBuilder::buildBreakIfStep},
+        Entry {StatementKind::Switch, &PlanBuilder::buildSwitchStep},
+        Entry {StatementKind::Case, &PlanBuilder::buildCaseStep},
+        Entry {StatementKind::Return, &PlanBuilder::buildReturnStep},
+        Entry {StatementKind::Discard, &PlanBuilder::buildDiscardStep},
+        Entry {StatementKind::Call, &PlanBuilder::buildCallStep},
         Entry {StatementKind::Store, &PlanBuilder::buildStoreStep},
         Entry {StatementKind::VectorStore, &PlanBuilder::buildVectorStoreStep},
         Entry {StatementKind::TextureStore, &PlanBuilder::buildTextureStoreStep},
         Entry {StatementKind::SharedStore, &PlanBuilder::buildSharedStoreStep},
         Entry {StatementKind::Barrier, &PlanBuilder::buildBarrierStep},
         Entry {StatementKind::GroupReduce, &PlanBuilder::buildReductionStep},
-        Entry {StatementKind::AtomicAdd, &PlanBuilder::buildAtomicAddStep},
+        Entry {StatementKind::Atomic, &PlanBuilder::buildAtomicStep},
         Entry {StatementKind::SimdMatrixFill, &PlanBuilder::buildSimdMatrixFillStep},
         Entry {StatementKind::SimdMatrixLoad,
                &PlanBuilder::buildSimdMatrixTransferStep},
@@ -210,7 +260,7 @@ bool PlanBuilder::buildStep(const Statement& statement, int stepId, BlockWalk& w
         Entry {StatementKind::SimdMatrixMultiplyAdd,
                &PlanBuilder::buildSimdMatrixMultiplyAddStep}};
 
-    auto draft = StepDraft {walk, {}, {}};
+    auto draft = StepDraft {walk, statementId, {}, {}};
     draft.step.kind = statement.kind;
     draft.step.value = statement.value;
     draft.step.index = statement.index;
@@ -232,10 +282,16 @@ bool PlanBuilder::buildStep(const Statement& statement, int stepId, BlockWalk& w
 
 bool PlanBuilder::buildVariableStep(const Statement& statement, StepDraft& draft)
 {
-    if (!checkVariableValue(statement))
+    if (!checkVariableValue(statement) || !checkElementIndex(statement))
         return false;
 
+    if (statement.index >= 0)
+        draft.step.type = graph.expr(statement.index).type;
+
+    draft.step.component =
+        fieldComponent(graph.variableStructType(statement.slot), statement.member);
     draft.schedule.roots[0] = statement.value;
+    draft.schedule.roots[1] = statement.index;
     return true;
 }
 
@@ -250,6 +306,7 @@ bool PlanBuilder::buildIfStep(const Statement& statement, StepDraft& draft)
     auto body = buildBlock(statement.body, walk.loopDepth, walk.depth + 1);
     step.body = body.id;
     step.bodiesJumpOut = body.jumpsOut;
+    walk.returns = walk.returns || body.returns;
 
     if (statement.elseBody >= 0)
     {
@@ -257,6 +314,7 @@ bool PlanBuilder::buildIfStep(const Statement& statement, StepDraft& draft)
             buildBlock(statement.elseBody, walk.loopDepth, walk.depth + 1);
         step.elseBody = elseBody.id;
         step.bodiesJumpOut = step.bodiesJumpOut || elseBody.jumpsOut;
+        walk.returns = walk.returns || elseBody.returns;
     }
 
     walk.jumpsOut = walk.jumpsOut || step.bodiesJumpOut;
@@ -271,8 +329,23 @@ bool PlanBuilder::buildLoopStep(const Statement& statement, StepDraft& draft)
     if (!checkCondition(statement.value))
         return false;
 
-    draft.step.body =
-        buildBlock(statement.body, walk.loopDepth + 1, walk.depth + 1).id;
+    auto& step = draft.step;
+    auto body = buildBlock(statement.body, walk.loopDepth + 1, walk.depth + 1);
+    step.body = body.id;
+
+    if (statement.continuing >= 0)
+    {
+        auto enclosing = continuingLoopDepth;
+        continuingLoopDepth = walk.loopDepth + 1;
+        auto continuing =
+            buildBlock(statement.continuing, walk.loopDepth + 1, walk.depth + 1);
+        continuingLoopDepth = enclosing;
+        step.continuing = continuing.id;
+    }
+
+    step.bodiesJumpOut = body.returns;
+    walk.jumpsOut = walk.jumpsOut || body.returns;
+    walk.returns = walk.returns || body.returns;
     draft.schedule.roots[0] = statement.value;
     return true;
 }
@@ -287,7 +360,117 @@ bool PlanBuilder::buildJumpStep(const Statement& statement, StepDraft& draft)
         return false;
     }
 
+    if (walk.loopDepth == continuingLoopDepth)
+    {
+        fail("statement {} inside a continuing block",
+             Miro::enumToString(statement.kind));
+        return false;
+    }
+
     walk.jumpsOut = true;
+    return true;
+}
+
+bool PlanBuilder::buildBreakIfStep(const Statement& statement, StepDraft& draft)
+{
+    auto& walk = draft.walk;
+
+    if (!checkBreakIf(statement, draft.statementId, walk.graphBlock, walk.loopDepth))
+        return false;
+
+    if (walk.depth + 1 > plan.nesting)
+        plan.nesting = walk.depth + 1;
+
+    walk.jumpsOut = true;
+    draft.schedule.roots[0] = statement.value;
+    return true;
+}
+
+bool PlanBuilder::buildSwitchStep(const Statement& statement, StepDraft& draft)
+{
+    auto& walk = draft.walk;
+
+    if (!checkSwitch(statement))
+        return false;
+
+    auto& step = draft.step;
+    auto enclosingCases = casesBlock;
+    casesBlock = statement.body;
+    auto cases = buildBlock(statement.body, walk.loopDepth, walk.depth + 1);
+    casesBlock = enclosingCases;
+    step.body = cases.id;
+    step.isDefault = hasDefaultClause(statement.body);
+    step.bodiesJumpOut = cases.jumpsOut;
+    walk.jumpsOut = walk.jumpsOut || cases.jumpsOut;
+    walk.returns = walk.returns || cases.returns;
+    draft.schedule.roots[0] = statement.value;
+    return true;
+}
+
+bool PlanBuilder::buildCaseStep(const Statement& statement, StepDraft& draft)
+{
+    auto& walk = draft.walk;
+
+    if (walk.graphBlock != casesBlock)
+    {
+        fail("statement Case outside a switch's clause list");
+        return false;
+    }
+
+    auto& step = draft.step;
+    const auto& labels = graph.caseLabels(statement.slot);
+    step.caseLabelBegin = plan.caseLabelWords.size();
+    step.caseLabelCount = labels.values.size();
+    step.isDefault = labels.isDefault;
+
+    for (auto value: labels.values)
+        plan.caseLabelWords.add(static_cast<Word>(value));
+
+    auto body = buildBlock(statement.body, walk.loopDepth, walk.depth);
+    step.body = body.id;
+    step.bodiesJumpOut = body.jumpsOut;
+    walk.jumpsOut = walk.jumpsOut || body.jumpsOut;
+    walk.returns = walk.returns || body.returns;
+    return true;
+}
+
+bool PlanBuilder::buildReturnStep(const Statement&, StepDraft& draft)
+{
+    auto& walk = draft.walk;
+
+    if (continuingLoopDepth >= 0)
+    {
+        fail("statement Return inside a continuing block");
+        return false;
+    }
+
+    walk.jumpsOut = true;
+    walk.returns = true;
+    return true;
+}
+
+bool PlanBuilder::buildDiscardStep(const Statement&, StepDraft&)
+{
+    fail("statement Discard: a kernel has no fragment to discard");
+    return false;
+}
+
+bool PlanBuilder::buildCallStep(const Statement& statement, StepDraft& draft)
+{
+    if (statement.body < 0)
+    {
+        fail("statement Call that was not inlined");
+        return false;
+    }
+
+    auto enclosingContinuing = continuingLoopDepth;
+    auto enclosingCases = casesBlock;
+    continuingLoopDepth = -1;
+    casesBlock = -1;
+    auto body = buildBlock(statement.body, 0, draft.walk.depth + 1);
+    continuingLoopDepth = enclosingContinuing;
+    casesBlock = enclosingCases;
+    draft.step.body = body.id;
     return true;
 }
 
@@ -295,8 +478,18 @@ bool PlanBuilder::buildStoreStep(const Statement& statement, StepDraft& draft)
 {
     auto& walk = draft.walk;
 
-    if (!checkStore(statement, 1))
+    if (isStructSlot(statement.slot))
+    {
+        if (!checkStructStore(statement))
+            return false;
+
+        draft.step.component = fieldComponent(
+            graph.storageStructType(statement.slot), statement.member);
+    }
+    else if (!checkStore(statement, 1))
+    {
         return false;
+    }
 
     draft.schedule.roots = Array<int, 3> {statement.index, statement.value, -1};
 
@@ -392,32 +585,20 @@ bool PlanBuilder::buildReductionStep(const Statement& statement, StepDraft& draf
     return true;
 }
 
-bool PlanBuilder::buildAtomicAddStep(const Statement& statement, StepDraft& draft)
+bool PlanBuilder::buildAtomicStep(const Statement& statement, StepDraft& draft)
 {
-    if (!checkVariable(statement.slot) || !checkSlot(statement.bufferSlot))
+    if (!checkAtomic(statement))
         return false;
 
-    if (!checkIndexAndValue(statement)
-        || !checkScalarInteger(statement, statement.index, "an index"))
-        return false;
-
-    if (plan.slotAccess[static_cast<std::size_t>(statement.bufferSlot)]
-        != BufferAccess::Atomic)
-    {
-        fail("an AtomicAdd names storage slot {}, which is not atomic",
-             statement.bufferSlot);
-        return false;
-    }
-
-    if (graph.variables()[statement.slot] != ValueType::UInt
-        || graph.expr(statement.value).type != ValueType::UInt)
-    {
-        fail("an AtomicAdd adds or returns a value that is not a UInt");
-        return false;
-    }
-
-    draft.step.buffer = statement.bufferSlot;
-    draft.schedule.roots = Array<int, 3> {statement.index, statement.value, -1};
+    auto& step = draft.step;
+    step.buffer = statement.bufferSlot;
+    step.memory = statement.memory;
+    step.atomic = statement.atomic;
+    step.compare = statement.compare;
+    step.exchanged = statement.exchanged;
+    step.type = graph.variables()[statement.slot];
+    draft.schedule.roots =
+        Array<int, 3> {statement.index, statement.value, statement.compare};
     return true;
 }
 
@@ -513,10 +694,40 @@ bool PlanBuilder::checkVariable(int slot)
     return false;
 }
 
+// A struct field's first flat component; the whole struct's, 0.
+int PlanBuilder::fieldComponent(int structId, int field) const
+{
+    if (structId < 0 || field < 0)
+        return 0;
+
+    return graph.structType(structId).fields[field].firstComponent;
+}
+
+bool PlanBuilder::isField(int structId, int field) const
+{
+    return structId >= 0 && field >= -1
+           && field < graph.structType(structId).fields.size();
+}
+
 bool PlanBuilder::checkVariableValue(const Statement& statement)
 {
     if (!checkVariable(statement.slot) || !checkNode(statement.value))
         return false;
+
+    auto structId = graph.variableStructType(statement.slot);
+
+    if (structId >= 0 || statement.member >= 0)
+    {
+        if (isField(structId, statement.member)
+            && graph.fitsField(structId, statement.member, statement.value))
+            return true;
+
+        fail("statement {} gives struct variable {} a value that is not of its "
+             "field's type",
+             Miro::enumToString(statement.kind),
+             statement.slot);
+        return false;
+    }
 
     auto variableType = graph.variables()[statement.slot];
     auto valueType = graph.expr(statement.value).type;
@@ -530,6 +741,144 @@ bool PlanBuilder::checkVariableValue(const Statement& statement)
          typeName(variableType),
          typeName(valueType));
     return false;
+}
+
+// An Assign to a private array names its element with an Int or a UInt;
+// nothing else is indexed.
+bool PlanBuilder::checkElementIndex(const Statement& statement)
+{
+    auto isArray = graph.variableArraySize(statement.slot) > 0;
+    auto isElementWrite = statement.kind == StatementKind::Assign && isArray;
+
+    if (statement.index < 0 && !isElementWrite)
+        return true;
+
+    if (!isElementWrite)
+    {
+        fail("statement {} indexes variable {}, which is not a private array "
+             "being assigned",
+             Miro::enumToString(statement.kind),
+             statement.slot);
+        return false;
+    }
+
+    if (!checkNode(statement.index))
+        return false;
+
+    auto indexType = graph.expr(statement.index).type;
+
+    if (indexType == ValueType::Int || indexType == ValueType::UInt)
+        return true;
+
+    fail("an element of private array " + std::to_string(statement.slot)
+         + " is indexed by a " + typeName(indexType));
+    return false;
+}
+
+bool PlanBuilder::checkBreakIf(const Statement& statement,
+                               int statementId,
+                               int graphBlock,
+                               int loopDepth)
+{
+    if (!checkCondition(statement.value))
+        return false;
+
+    const auto& block = graph.block(graphBlock);
+
+    if (loopDepth == continuingLoopDepth && block.role == BlockRole::Continuing
+        && block.statements.back() == statementId)
+        return true;
+
+    fail("statement BreakIf other than as a continuing block's last");
+    return false;
+}
+
+bool PlanBuilder::isValidCase(int statementId) const
+{
+    if (statementId < 0 || statementId >= graph.statementCount())
+        return false;
+
+    const auto& clause = graph.statement(statementId);
+    return clause.kind == StatementKind::Case && clause.slot >= 0
+           && clause.slot < graph.caseCount();
+}
+
+bool PlanBuilder::hasDefaultClause(int cases) const
+{
+    for (auto clause: graph.block(cases).statements)
+        if (graph.caseLabels(graph.statement(clause).slot).isDefault)
+            return true;
+
+    return false;
+}
+
+// Labels that fit the selector, none twice, at most one default.
+bool PlanBuilder::checkSwitchLabels(const Statement& statement, ValueType selector)
+{
+    auto seen = Vector<std::int64_t> {};
+    auto defaults = 0;
+    const auto low = selector == ValueType::Int
+                         ? std::int64_t {std::numeric_limits<std::int32_t>::min()}
+                         : std::int64_t {0};
+    const auto high = selector == ValueType::Int
+                          ? std::int64_t {std::numeric_limits<std::int32_t>::max()}
+                          : std::int64_t {std::numeric_limits<std::uint32_t>::max()};
+
+    for (auto clause: graph.block(statement.body).statements)
+    {
+        const auto& labels = graph.caseLabels(graph.statement(clause).slot);
+        defaults += labels.isDefault ? 1 : 0;
+
+        for (auto value: labels.values)
+        {
+            if (value < low || value > high || seen.contains(value))
+            {
+                fail("a switch label " + std::to_string(value)
+                     + " is repeated or does not fit its selector");
+                return false;
+            }
+
+            seen.add(value);
+        }
+    }
+
+    if (defaults <= 1)
+        return true;
+
+    fail("a switch has more than one default clause");
+    return false;
+}
+
+bool PlanBuilder::checkSwitch(const Statement& statement)
+{
+    if (!checkNode(statement.value))
+        return false;
+
+    auto selector = graph.expr(statement.value).type;
+
+    if (selector != ValueType::Int && selector != ValueType::UInt)
+    {
+        fail("a Switch selector is not a scalar Int or UInt");
+        return false;
+    }
+
+    if (statement.body < 0 || statement.body >= graph.blockCount())
+    {
+        fail("a statement names block " + std::to_string(statement.body)
+             + ", which does not exist");
+        return false;
+    }
+
+    for (auto clause: graph.block(statement.body).statements)
+    {
+        if (!isValidCase(clause))
+        {
+            fail("a Switch's clause list holds a statement other than a Case");
+            return false;
+        }
+    }
+
+    return checkSwitchLabels(statement, selector);
 }
 
 bool PlanBuilder::checkCondition(int node)
@@ -554,6 +903,46 @@ bool PlanBuilder::checkSlot(int slot)
 
     fail("storage slot {} does not exist", slot);
     return false;
+}
+
+bool PlanBuilder::isStructSlot(int slot) const
+{
+    return slot >= 0 && slot < plan.slotCount && graph.storageStructType(slot) >= 0;
+}
+
+bool PlanBuilder::checkStructStore(const Statement& statement)
+{
+    if (!checkSlot(statement.slot) || !checkNode(statement.index)
+        || !checkNode(statement.value))
+        return false;
+
+    auto structId = graph.storageStructType(statement.slot);
+
+    if (plan.slotAccess[static_cast<std::size_t>(statement.slot)]
+        != BufferAccess::Write)
+    {
+        fail("a Store writes struct slot " + std::to_string(statement.slot)
+             + ", which is read-only");
+        return false;
+    }
+
+    if (!isField(structId, statement.member)
+        || !graph.fitsField(structId, statement.member, statement.value))
+    {
+        fail("a Store gives struct slot " + std::to_string(statement.slot)
+             + " a value that is not of its field's type");
+        return false;
+    }
+
+    auto index = graph.expr(statement.index).type;
+
+    if (componentCount(index) != 1 || !isIntegerFamily(index))
+    {
+        fail("a Store has an index that is not a scalar integer");
+        return false;
+    }
+
+    return true;
 }
 
 bool PlanBuilder::checkStore(const Statement& statement, int width)
@@ -586,7 +975,8 @@ bool PlanBuilder::checkStore(const Statement& statement, int width)
 
     auto element = plan.slotElement[slot];
 
-    if (isFloatFamily(valueType) == isFloatFamily(element))
+    if (isFloatFamily(valueType) == isFloatFamily(element)
+        && isHalf(valueType) == isHalf(element))
         return true;
 
     failStatement(statement,
@@ -714,6 +1104,84 @@ bool PlanBuilder::checkSimdMatrixStorage(const Statement& statement)
         failStatement(statement,
                       "writes storage slot {}, which is read-only",
                       statement.bufferSlot);
+        return false;
+    }
+
+    return true;
+}
+
+// The element type of the atomic storage an Atomic names, or Float where
+// it names none.
+ValueType PlanBuilder::atomicElement(const Statement& statement)
+{
+    if (statement.memory == MemorySpace::Shared)
+    {
+        if (!checkSharedSlot(statement.bufferSlot))
+            return ValueType::Float;
+
+        const auto& shared = graph.sharedArrays()[statement.bufferSlot];
+
+        if (shared.atomic)
+            return shared.elementType;
+
+        fail("an Atomic names shared array " + std::to_string(statement.bufferSlot)
+             + ", which is not atomic");
+        return ValueType::Float;
+    }
+
+    if (!checkSlot(statement.bufferSlot))
+        return ValueType::Float;
+
+    auto slot = static_cast<std::size_t>(statement.bufferSlot);
+
+    if (plan.slotAccess[slot] == BufferAccess::Atomic)
+        return plan.slotElement[slot];
+
+    fail("an Atomic names storage slot " + std::to_string(statement.bufferSlot)
+         + ", which is not atomic");
+    return ValueType::Float;
+}
+
+bool PlanBuilder::checkComparand(const Statement& statement, ValueType element)
+{
+    auto comparing = statement.atomic == AtomicOperation::CompareExchange;
+
+    if (!comparing)
+        return statement.compare < 0 && statement.exchanged < 0;
+
+    if (!checkNode(statement.compare) || !checkVariable(statement.exchanged))
+        return false;
+
+    return graph.expr(statement.compare).type == element
+           && graph.variables()[statement.exchanged] == ValueType::Bool;
+}
+
+bool PlanBuilder::checkAtomic(const Statement& statement)
+{
+    if (!checkVariable(statement.slot) || !checkIndexAndValue(statement)
+        || !checkScalarInteger(statement, statement.index, "an index"))
+        return false;
+
+    auto element = atomicElement(statement);
+
+    if (failed())
+        return false;
+
+    if (element != ValueType::UInt && element != ValueType::Int)
+    {
+        fail("an Atomic acts on elements of " + std::string(typeName(element))
+             + "; only UInt and Int are atomic");
+        return false;
+    }
+
+    if (graph.variables()[statement.slot] != element
+        || graph.expr(statement.value).type != element
+        || !checkComparand(statement, element))
+    {
+        if (!failed())
+            fail("an Atomic takes, compares or returns a value that is not "
+                 "its element's type");
+
         return false;
     }
 

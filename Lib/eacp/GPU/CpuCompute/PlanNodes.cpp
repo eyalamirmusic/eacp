@@ -14,18 +14,20 @@ struct MathName
     MathFunction function;
 };
 
-constexpr auto mathNames = Array<MathName, 22> {
+constexpr auto mathNames = Array<MathName, 25> {
     {"sin", MathFunction::Sin},     {"cos", MathFunction::Cos},
     {"tan", MathFunction::Tan},     {"asin", MathFunction::Asin},
     {"acos", MathFunction::Acos},   {"atan", MathFunction::Atan},
     {"sinh", MathFunction::Sinh},   {"cosh", MathFunction::Cosh},
-    {"tanh", MathFunction::Tanh},   {"exp", MathFunction::Exp},
-    {"exp2", MathFunction::Exp2},   {"log", MathFunction::Log},
-    {"log2", MathFunction::Log2},   {"log10", MathFunction::Log10},
-    {"sqrt", MathFunction::Sqrt},   {"rsqrt", MathFunction::Rsqrt},
-    {"floor", MathFunction::Floor}, {"ceil", MathFunction::Ceil},
-    {"trunc", MathFunction::Trunc}, {"round", MathFunction::Round},
-    {"fract", MathFunction::Fract}, {"sign", MathFunction::Sign}};
+    {"tanh", MathFunction::Tanh},   {"asinh", MathFunction::Asinh},
+    {"acosh", MathFunction::Acosh}, {"atanh", MathFunction::Atanh},
+    {"exp", MathFunction::Exp},     {"exp2", MathFunction::Exp2},
+    {"log", MathFunction::Log},     {"log2", MathFunction::Log2},
+    {"log10", MathFunction::Log10}, {"sqrt", MathFunction::Sqrt},
+    {"rsqrt", MathFunction::Rsqrt}, {"floor", MathFunction::Floor},
+    {"ceil", MathFunction::Ceil},   {"trunc", MathFunction::Trunc},
+    {"round", MathFunction::Round}, {"fract", MathFunction::Fract},
+    {"sign", MathFunction::Sign}};
 
 struct NamedOp
 {
@@ -44,13 +46,13 @@ constexpr auto geometricNames =
                        {"refract", Op::Refract, 3},
                        {"faceforward", Op::FaceForward, 3}};
 
-constexpr auto broadcastNames =
-    Array<NamedOp, 6> {{"pow", Op::Pow, 2},
-                       {"atan2", Op::Atan2, 2},
-                       {"step", Op::Step, 2},
-                       {"clamp", Op::Clamp, 3},
-                       {"mix", Op::Mix, 3},
-                       {"smoothstep", Op::Smoothstep, 3}};
+constexpr auto broadcastNames = Array<NamedOp, 7> {{"pow", Op::Pow, 2},
+                                                   {"atan2", Op::Atan2, 2},
+                                                   {"step", Op::Step, 2},
+                                                   {"clamp", Op::Clamp, 3},
+                                                   {"mix", Op::Mix, 3},
+                                                   {"smoothstep", Op::Smoothstep, 3},
+                                                   {"fma", Op::Fma, 3}};
 
 struct HelperName
 {
@@ -60,9 +62,67 @@ struct HelperName
 
 // The helpers applied per component, at any float width.
 constexpr auto componentHelperNames =
-    Array<HelperName, 3> {{"eacpErf", HelperFunction::Erf},
+    Array<HelperName, 4> {{"eacpErf", HelperFunction::Erf},
                           {"eacpErfc", HelperFunction::Erfc},
-                          {"eacpSaturatingTanh", HelperFunction::SaturatingTanh}};
+                          {"eacpSaturatingTanh", HelperFunction::SaturatingTanh},
+                          {"eacpQuantizeToF16", HelperFunction::QuantizeToF16}};
+
+} // namespace
+
+// The bit helpers, at any integer width: the value arguments are the result's
+// type, the field arguments (offset, count) a scalar UInt.
+struct BitHelperName
+{
+    std::string_view name;
+    HelperFunction unsignedFunction;
+    HelperFunction signedFunction;
+    int valueArguments;
+    int fieldArguments;
+};
+
+namespace
+{
+constexpr BitHelperName planBitHelperNames[] = {
+    {"eacpCountOneBits",
+     HelperFunction::CountOneBits,
+     HelperFunction::CountOneBits,
+     1,
+     0},
+    {"eacpReverseBits",
+     HelperFunction::ReverseBits,
+     HelperFunction::ReverseBits,
+     1,
+     0},
+    {"eacpCountLeadingZeros",
+     HelperFunction::CountLeadingZeros,
+     HelperFunction::CountLeadingZeros,
+     1,
+     0},
+    {"eacpCountTrailingZeros",
+     HelperFunction::CountTrailingZeros,
+     HelperFunction::CountTrailingZeros,
+     1,
+     0},
+    {"eacpFirstLeadingBit",
+     HelperFunction::FirstLeadingBitUnsigned,
+     HelperFunction::FirstLeadingBitSigned,
+     1,
+     0},
+    {"eacpFirstTrailingBit",
+     HelperFunction::FirstTrailingBit,
+     HelperFunction::FirstTrailingBit,
+     1,
+     0},
+    {"eacpExtractBits",
+     HelperFunction::ExtractBitsUnsigned,
+     HelperFunction::ExtractBitsSigned,
+     1,
+     2},
+    {"eacpInsertBits",
+     HelperFunction::InsertBits,
+     HelperFunction::InsertBits,
+     2,
+     2}};
 
 // The second argument type is read only when the helper takes two.
 struct HelperSignature
@@ -85,6 +145,8 @@ constexpr auto packIntQuadSignature =
     HelperSignature {ValueType::UInt, 1, ValueType::Int4, ValueType::UInt};
 constexpr auto packUIntQuadSignature =
     HelperSignature {ValueType::UInt, 1, ValueType::UInt4, ValueType::UInt};
+constexpr auto packFloatQuadSignature =
+    HelperSignature {ValueType::UInt, 1, ValueType::Float4, ValueType::UInt};
 
 struct PackedHelperName
 {
@@ -94,7 +156,7 @@ struct PackedHelperName
 };
 
 // The packed-data helpers, each with the one signature the shader defines.
-constexpr auto packedHelperNames = Array<PackedHelperName, 14> {
+constexpr auto packedHelperNames = Array<PackedHelperName, 22> {
     {"eacpUnpackHalf2", HelperFunction::UnpackHalf2, unpackPairSignature},
     {"eacpPackHalf2", HelperFunction::PackHalf2, packPairSignature},
     {"eacpReadHalf", HelperFunction::ReadHalf, readSignature},
@@ -108,7 +170,15 @@ constexpr auto packedHelperNames = Array<PackedHelperName, 14> {
     {"eacpUnpackInt4x4", HelperFunction::UnpackInt4x4, unpackQuadSignature},
     {"eacpUnpackUInt4x4", HelperFunction::UnpackUInt4x4, unpackQuadSignature},
     {"eacpPackInt8x4", HelperFunction::PackInt8x4, packIntQuadSignature},
-    {"eacpPackUInt8x4", HelperFunction::PackUInt8x4, packUIntQuadSignature}};
+    {"eacpPackUInt8x4", HelperFunction::PackUInt8x4, packUIntQuadSignature},
+    {"eacpPackUnorm8x4", HelperFunction::PackUnorm8x4, packFloatQuadSignature},
+    {"eacpPackSnorm8x4", HelperFunction::PackSnorm8x4, packFloatQuadSignature},
+    {"eacpPackUnorm16x2", HelperFunction::PackUnorm16x2, packPairSignature},
+    {"eacpPackSnorm16x2", HelperFunction::PackSnorm16x2, packPairSignature},
+    {"eacpUnpackUnorm8x4", HelperFunction::UnpackUnorm8x4, unpackQuadSignature},
+    {"eacpUnpackSnorm8x4", HelperFunction::UnpackSnorm8x4, unpackQuadSignature},
+    {"eacpUnpackUnorm16x2", HelperFunction::UnpackUnorm16x2, unpackPairSignature},
+    {"eacpUnpackSnorm16x2", HelperFunction::UnpackSnorm16x2, unpackPairSignature}};
 
 // Op::Leaf marks an operator the type family does not have.
 constexpr auto noBinaryOp = Op::Leaf;
@@ -157,7 +227,7 @@ constexpr auto relationNames =
 constexpr auto derivativeNames =
     Array<std::string_view, 3> {"dfdx", "dfdy", "fwidth"};
 
-constexpr auto conversionTargets = Array<ValueType, 12> {ValueType::Float,
+constexpr auto conversionTargets = Array<ValueType, 16> {ValueType::Float,
                                                          ValueType::Float2,
                                                          ValueType::Float3,
                                                          ValueType::Float4,
@@ -168,7 +238,11 @@ constexpr auto conversionTargets = Array<ValueType, 12> {ValueType::Float,
                                                          ValueType::Int,
                                                          ValueType::Int2,
                                                          ValueType::Int3,
-                                                         ValueType::Int4};
+                                                         ValueType::Int4,
+                                                         ValueType::Half,
+                                                         ValueType::Half2,
+                                                         ValueType::Half3,
+                                                         ValueType::Half4};
 
 bool isConversionName(std::string_view name)
 {
@@ -193,13 +267,6 @@ bool isFloatVector(ValueType type)
 bool isShiftOperator(std::string_view text)
 {
     return text == "<<" || text == ">>";
-}
-
-// A vector of the order's width, which an order-sized matrix multiplies.
-bool isVectorFor(ValueType vector, int order)
-{
-    return order > 0 && matrixOrder(vector) == 0 && componentCount(vector) == order
-           && isFloatFamily(vector);
 }
 
 std::string_view getMissingAxisReason(ExprKind kind)
@@ -336,7 +403,8 @@ ValueType getArgumentType(const ShaderGraph& graph, const Expr& expr, int which)
 
 int getArgumentComponents(const ShaderGraph& graph, const Expr& expr, int which)
 {
-    return componentCount(getArgumentType(graph, expr, which));
+    const auto& argument = graph.expr(expr.args[which]);
+    return getFlatComponents(graph, argument.type, argument.structType);
 }
 
 // Refract's third argument is its scalar eta; every other argument is a float
@@ -355,7 +423,61 @@ bool hasGeometricWidths(const ShaderGraph& graph, const Expr& expr, Op op, int w
 
     return true;
 }
+bool isIndexType(ValueType type)
+{
+    return type == ValueType::Int || type == ValueType::UInt;
+}
+
+// Node::sub on an indexed read: 1 where the index is an Int.
+std::uint8_t signedIndexFlag(ValueType index)
+{
+    return index == ValueType::Int ? 1 : 0;
+}
 } // namespace
+
+Word PlanBuilder::overrideWord(const PipelineConstant& value)
+{
+    switch (value.type)
+    {
+        case PipelineConstantType::Bool:
+            return Lanes::maskOf(value.asBool());
+        case PipelineConstantType::Float:
+        case PipelineConstantType::Half:
+            return Lanes::toWord(value.asFloat());
+        case PipelineConstantType::Int:
+        case PipelineConstantType::UInt:
+            break;
+    }
+
+    return static_cast<Word>(value.bits);
+}
+
+bool PlanBuilder::resolveOverrideWords()
+{
+    const auto resolved = resolveOverrides(graph, options.overrides);
+
+    if (!resolved.isValid())
+    {
+        fail(resolved.error);
+        return false;
+    }
+
+    for (const auto& value: resolved.values)
+        overrideWords.add(overrideWord(value));
+
+    return true;
+}
+
+// An f16 node is computed in float and rounded to the nearest half where
+// it lands, which for + - * / and sqrt is the correctly rounded half (a
+// float holds every such result of two halves to more than twice a half's
+// precision) and for the rest is HLSL's own rounding. A leaf - a literal,
+// a read of storage or of a variable - already holds a half.
+void PlanBuilder::markHalfRounding(int id)
+{
+    auto& node = plan.nodes[id];
+    node.roundsToHalf = isHalf(graph.expr(id).type) && node.op != Op::Leaf;
+}
 
 Vector<int> PlanBuilder::collectReachableRoots() const
 {
@@ -492,12 +614,17 @@ void PlanBuilder::decodeNode(int id)
 {
     using Entry = std::pair<ExprKind, NodeDecoder>;
 
-    static constexpr auto decoders = Array<Entry, 26> {
+    static constexpr auto decoders = Array<Entry, 31> {
         Entry {ExprKind::Input, &PlanBuilder::rejectRenderInput},
         Entry {ExprKind::Varying, &PlanBuilder::rejectRenderInput},
-        Entry {ExprKind::BuiltIn, &PlanBuilder::rejectRenderInput},
+        Entry {ExprKind::BuiltIn, &PlanBuilder::decodeBuiltIn},
         Entry {ExprKind::Sample, &PlanBuilder::rejectTexture},
         Entry {ExprKind::Fetch, &PlanBuilder::rejectTexture},
+        Entry {ExprKind::TextureFunction, &PlanBuilder::rejectTexture},
+        Entry {ExprKind::TextureQuery, &PlanBuilder::rejectTexture},
+        Entry {ExprKind::FunctionCall, &PlanBuilder::rejectFunctionCall},
+        Entry {ExprKind::Override, &PlanBuilder::decodeOverride},
+        Entry {ExprKind::MatrixColumn, &PlanBuilder::decodeMatrixColumn},
         Entry {ExprKind::AtomicLoad, &PlanBuilder::decodeAtomicLoad},
         Entry {ExprKind::LocalId, &PlanBuilder::decodeIdLeaf},
         Entry {ExprKind::GroupId, &PlanBuilder::decodeIdLeaf},
@@ -522,7 +649,15 @@ void PlanBuilder::decodeNode(int id)
 
     const auto& expr = graph.expr(id);
     auto& node = plan.nodes[id];
-    node.components = static_cast<std::uint8_t>(componentCount(expr.type));
+    auto components = nodeComponents(expr);
+
+    if (components > std::numeric_limits<std::uint8_t>::max())
+    {
+        rejectNode(id, "a struct of more than 255 components");
+        return;
+    }
+
+    node.components = static_cast<std::uint8_t>(components);
     node.argBegin = plan.arguments.size();
     node.argCount = expr.args.size();
 
@@ -539,9 +674,32 @@ void PlanBuilder::rejectRenderInput(int id, Plan::Node&, const Expr&)
     rejectNode(id, "a render graph input cannot run as a kernel");
 }
 
+void PlanBuilder::decodeBuiltIn(int id, Plan::Node&, const Expr& expr)
+{
+    if (stageOf(static_cast<ShaderBuiltIn>(expr.index)) != ShaderStage::Compute)
+    {
+        rejectNode(id, "a render graph input cannot run as a kernel");
+        return;
+    }
+
+    plan.builtInLeaves.add({id, expr.index});
+}
+
 void PlanBuilder::rejectTexture(int id, Plan::Node&, const Expr&)
 {
     rejectNode(id, "textures are not supported by the CPU executor");
+}
+
+void PlanBuilder::rejectFunctionCall(int id, Plan::Node&, const Expr&)
+{
+    rejectNode(id,
+               "a call in a constant array's element: the CPU "
+               "executor inlines calls in front of a statement");
+}
+
+void PlanBuilder::decodeOverride(int id, Plan::Node&, const Expr& expr)
+{
+    plan.constantNodes.add({id, overrideWords[expr.index]});
 }
 
 void PlanBuilder::decodeIdLeaf(int id, Plan::Node& node, const Expr& expr)
@@ -579,10 +737,64 @@ void PlanBuilder::decodeUniform(int id, Plan::Node&, const Expr& expr)
     plan.uniformLeaves.add({id, expr.index});
 }
 
-void PlanBuilder::decodeVarRead(int id, Plan::Node&, const Expr& expr)
+// A plain variable's read is its storage; a private array's element is
+// gathered by the lane's index.
+void PlanBuilder::decodeVarRead(int id, Plan::Node& node, const Expr& expr)
 {
     if (expr.index < 0 || expr.index >= graph.variables().size())
+    {
         rejectNode(id, "names a variable that does not exist");
+        return;
+    }
+
+    auto isArray = graph.variableArraySize(expr.index) > 0;
+    auto structId = graph.variableStructType(expr.index);
+
+    if (structId >= 0 || expr.member >= 0)
+    {
+        if (!isField(structId, expr.member) || expr.member < 0
+            || graph.structType(structId).fields[expr.member].type != expr.type)
+        {
+            rejectNode(id, "reads a struct variable other than a field at a time");
+            return;
+        }
+
+        node.component = fieldComponent(structId, expr.member);
+    }
+
+    if (!isArray && expr.args.empty())
+        return;
+
+    if (!isArray || !requireArguments(id, 1)
+        || !isIndexType(getArgumentType(graph, expr, 0)))
+    {
+        rejectNode(id, "a private array is read an element at an Int or UInt");
+        return;
+    }
+
+    node.op = Op::VariableElementRead;
+    node.immediate = expr.index;
+    node.sub = signedIndexFlag(getArgumentType(graph, expr, 0));
+}
+
+void PlanBuilder::decodeMatrixColumn(int id, Plan::Node& node, const Expr& expr)
+{
+    if (!requireArguments(id, 2))
+        return;
+
+    auto matrix = getArgumentType(graph, expr, 0);
+
+    if (!isMatrix(matrix) || !isIndexType(getArgumentType(graph, expr, 1))
+        || node.components != matrixRows(matrix))
+    {
+        rejectNode(id, "takes a matrix and an Int or UInt column");
+        return;
+    }
+
+    node.op = Op::MatrixColumn;
+    node.columns = static_cast<std::uint8_t>(matrixColumns(matrix));
+    node.rows = static_cast<std::uint8_t>(matrixRows(matrix));
+    node.sub = signedIndexFlag(getArgumentType(graph, expr, 1));
 }
 
 void PlanBuilder::decodeSelect(int id, Plan::Node& node, const Expr& expr)
@@ -604,6 +816,12 @@ void PlanBuilder::decodeBufferRead(int id, Plan::Node& node, const Expr& expr)
 {
     if (!requireArguments(id, 1) || !checkSlot(expr.index))
         return;
+
+    if (expr.member >= 0 || isStructSlot(expr.index))
+    {
+        decodeStructRead(id, node, expr);
+        return;
+    }
 
     if (isMatrix(expr.type) || isBoolean(expr.type))
     {
@@ -639,8 +857,10 @@ void PlanBuilder::decodeAtomicLoad(int id, Plan::Node& node, const Expr& expr)
     if (!requireScalarIndex(id, expr))
         return;
 
-    if (plan.slotAccess[static_cast<std::size_t>(expr.index)] != BufferAccess::Atomic
-        || expr.type != ValueType::UInt)
+    auto slot = static_cast<std::size_t>(expr.index);
+
+    if (plan.slotAccess[slot] != BufferAccess::Atomic
+        || expr.type != plan.slotElement[slot])
     {
         rejectNode(id, "reads a slot that is not atomic");
         return;
@@ -648,6 +868,26 @@ void PlanBuilder::decodeAtomicLoad(int id, Plan::Node& node, const Expr& expr)
 
     node.op = Op::AtomicLoad;
     node.immediate = expr.index;
+}
+
+void PlanBuilder::decodeStructRead(int id, Plan::Node& node, const Expr& expr)
+{
+    auto structId = graph.storageStructType(expr.index);
+
+    if (expr.kind != ExprKind::BufferRead || structId < 0 || expr.member < 0
+        || !isField(structId, expr.member)
+        || graph.structType(structId).fields[expr.member].type != expr.type)
+    {
+        rejectNode(id, "reads a struct buffer other than a field at a time");
+        return;
+    }
+
+    if (!requireScalarIndex(id, expr))
+        return;
+
+    node.op = Op::StructRead;
+    node.immediate = expr.index;
+    node.component = fieldComponent(structId, expr.member);
 }
 
 void PlanBuilder::decodeSharedRead(int id, Plan::Node& node, const Expr& expr)
@@ -676,6 +916,7 @@ Word PlanBuilder::getConstantWord(const Expr& expr)
     switch (expr.type)
     {
         case ValueType::Float:
+        case ValueType::Half:
             return Lanes::toWord(expr.value);
         case ValueType::Bool:
             return Lanes::maskOf(expr.index != 0);
@@ -830,23 +1071,36 @@ void PlanBuilder::decodeMul(int id, Plan::Node& node, const Expr& expr)
 
     auto left = getArgumentType(graph, expr, 0);
     auto right = getArgumentType(graph, expr, 1);
-    auto leftOrder = matrixOrder(left);
-    auto rightOrder = matrixOrder(right);
+    auto isLeftVector = isFloatFamily(left) && !isMatrix(left);
+    auto isRightVector = isFloatFamily(right) && !isMatrix(right);
+    auto shape = [](int value) { return static_cast<std::uint8_t>(value); };
 
-    if (isVectorFor(right, leftOrder))
+    if (isMatrix(left) && isRightVector
+        && componentCount(right) == matrixColumns(left)
+        && node.components == matrixRows(left))
     {
         node.op = Op::MatVec;
-        node.order = static_cast<std::uint8_t>(leftOrder);
+        node.columns = shape(matrixColumns(left));
+        node.rows = shape(matrixRows(left));
     }
-    else if (isVectorFor(left, rightOrder))
+    else if (isLeftVector && isMatrix(right)
+             && componentCount(left) == matrixRows(right)
+             && node.components == matrixColumns(right))
     {
         node.op = Op::VecMat;
-        node.order = static_cast<std::uint8_t>(rightOrder);
+        node.columns = shape(matrixColumns(right));
+        node.rows = shape(matrixRows(right));
     }
-    else if (leftOrder > 0 && leftOrder == rightOrder)
+    else if (isMatrix(left) && isMatrix(right)
+             && matrixColumns(left) == matrixRows(right)
+             && expr.type
+                    == matrixOf(
+                        matrixColumns(right), matrixRows(left), isHalf(left)))
     {
         node.op = Op::MatMat;
-        node.order = static_cast<std::uint8_t>(leftOrder);
+        node.order = shape(matrixColumns(left));
+        node.rows = shape(matrixRows(left));
+        node.columns = shape(matrixColumns(right));
     }
     else
     {
@@ -996,15 +1250,21 @@ void PlanBuilder::decodeMinMax(int id, Plan::Node& node, const Expr& expr)
 void PlanBuilder::decodeMatrixFunction(int id, Plan::Node& node, const Expr& expr)
 {
     auto operand = getArgumentType(graph, expr, 0);
+    auto type = expr.type;
+    auto isTranspose = expr.text == "transpose";
 
-    if (!requireArguments(id, 1) || !isMatrix(operand))
+    if (!requireArguments(id, 1) || !isMatrix(operand)
+        || (isTranspose && type != transposedMatrix(operand))
+        || (!isTranspose && matrixOrder(operand) == 0))
     {
-        rejectNode(id, "takes a matrix");
+        rejectNode(id, isTranspose ? "takes a matrix" : "takes a square matrix");
         return;
     }
 
-    node.op = expr.text == "transpose" ? Op::Transpose : Op::Determinant;
+    node.op = isTranspose ? Op::Transpose : Op::Determinant;
     node.order = static_cast<std::uint8_t>(matrixOrder(operand));
+    node.columns = static_cast<std::uint8_t>(matrixColumns(operand));
+    node.rows = static_cast<std::uint8_t>(matrixRows(operand));
 }
 
 void PlanBuilder::decodeBoolReduction(int id, Plan::Node& node, const Expr& expr)
@@ -1064,6 +1324,15 @@ void PlanBuilder::decodePackedHelper(int id, Plan::Node& node, const Expr& expr)
 
     if (packed == packedHelperNames.end())
     {
+        for (const auto& helper: planBitHelperNames)
+        {
+            if (name != helper.name)
+                continue;
+
+            decodeBitHelper(id, node, expr, helper);
+            return;
+        }
+
         rejectNode(id, "unknown helper");
         return;
     }
@@ -1086,6 +1355,45 @@ void PlanBuilder::decodePackedHelper(int id, Plan::Node& node, const Expr& expr)
 
     node.op = Op::Helper;
     node.sub = static_cast<std::uint8_t>(packed->function);
+}
+
+void PlanBuilder::decodeBitHelper(int id,
+                                  Plan::Node& node,
+                                  const Expr& expr,
+                                  const BitHelperName& helper)
+{
+    auto type = expr.type;
+
+    if (!requireArguments(id, helper.valueArguments + helper.fieldArguments))
+        return;
+
+    if (!isSignedInteger(type) && !isUnsignedInteger(type))
+    {
+        rejectNode(id, "defined on the integers only");
+        return;
+    }
+
+    for (auto which = 0; which < helper.valueArguments; ++which)
+    {
+        if (getArgumentType(graph, expr, which) != type)
+        {
+            rejectNode(id, "its argument and result types differ");
+            return;
+        }
+    }
+
+    for (auto which = helper.valueArguments; which < expr.args.size(); ++which)
+    {
+        if (getArgumentType(graph, expr, which) != ValueType::UInt)
+        {
+            rejectNode(id, "its offset and count are not scalar UInts");
+            return;
+        }
+    }
+
+    node.op = Op::Helper;
+    node.sub = static_cast<std::uint8_t>(
+        isSignedInteger(type) ? helper.signedFunction : helper.unsignedFunction);
 }
 
 void PlanBuilder::decodeGeometric(int id, Plan::Node& node, const Expr& expr, Op op)

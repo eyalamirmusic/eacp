@@ -19,7 +19,7 @@ PlanBuilder::PlanBuilder(Plan& planToFill,
 
 void PlanBuilder::build()
 {
-    if (!checkGraph())
+    if (!checkGraph() || !resolveOverrideWords())
         return;
 
     plan.nodes.resize(graph.nodeCount());
@@ -35,8 +35,13 @@ void PlanBuilder::build()
     markReachable();
 
     for (auto id = 0; id < graph.nodeCount() && !failed(); ++id)
-        if (plan.nodes[id].used)
-            decodeNode(id);
+    {
+        if (!plan.nodes[id].used)
+            continue;
+
+        decodeNode(id);
+        markHalfRounding(id);
+    }
 
     if (failed())
         return;
@@ -63,6 +68,14 @@ std::uint64_t nextPlanSerial()
 } // namespace
 
 Plan::Plan(const ShaderGraph& graph, Options options)
+{
+    if (graph.functionCount() > 0)
+        build(graph.withFunctionsInlined(), options);
+    else
+        build(graph, options);
+}
+
+void Plan::build(const ShaderGraph& graph, const Options& options)
 {
     auto groupLimit = std::numeric_limits<int>::max();
 
@@ -100,6 +113,23 @@ bool Plan::referencesSlot(int slot) const
 {
     return slot >= 0 && slot < slotCount
            && slotReferenced[static_cast<std::size_t>(slot)];
+}
+
+int Plan::structStride(int slot) const
+{
+    return slot >= 0 && slot < slotCount
+               ? slotStructStride[static_cast<std::size_t>(slot)]
+               : 0;
+}
+
+std::span<const StructComponent> Plan::structComponents(int slot) const
+{
+    if (structStride(slot) == 0)
+        return {};
+
+    const auto& range = slotStructComponents[static_cast<std::size_t>(slot)];
+    return {structComponentList.data() + range.begin,
+            static_cast<std::size_t>(range.end - range.begin)};
 }
 
 ValueType Plan::uniformType(int slot) const

@@ -27,14 +27,38 @@ inline bool isIntegerFamily(ValueType type)
     return isUnsignedInteger(type) || isSignedInteger(type);
 }
 
+// Both float families: an f16 lane is held as the float it rounds to.
 inline bool isFloatFamily(ValueType type)
 {
-    return !isIntegerFamily(type) && !isBoolean(type);
+    switch (type)
+    {
+        case ValueType::Float:
+        case ValueType::Float2:
+        case ValueType::Float3:
+        case ValueType::Float4:
+        case ValueType::Half:
+        case ValueType::Half2:
+        case ValueType::Half3:
+        case ValueType::Half4:
+            return true;
+        default:
+            return isMatrix(type);
+    }
 }
 
 inline bool isScalarInteger(ValueType type)
 {
     return componentCount(type) == 1 && isIntegerFamily(type);
+}
+
+// How many words a value takes in a lane: its components, a struct's
+// every field's laid end to end.
+inline int getFlatComponents(const ShaderGraph& graph, ValueType type, int structId)
+{
+    if (type == ValueType::Struct)
+        return structId >= 0 ? graph.structType(structId).components.size() : 0;
+
+    return componentCount(type);
 }
 
 // Fixed text is taken as it is; only a pattern given values is formatted.
@@ -46,6 +70,8 @@ std::string formatReason(std::string_view pattern, const Args&... args)
     else
         return Strings::format(pattern, args...);
 }
+
+struct BitHelperName;
 
 class PlanBuilder
 {
@@ -77,23 +103,29 @@ private:
         int pinned = -1;
     };
 
+    // jumpsOut: something in the block may leave the frame it runs in empty -
+    // a jump, or a return; returns: a return, which no loop stops.
     struct BlockResult
     {
         int id = -1;
         bool jumpsOut = false;
+        bool returns = false;
     };
 
     struct BlockWalk
     {
+        int graphBlock = -1;
         int loopDepth = 0;
         int depth = 0;
         int pinned = -1;
         bool jumpsOut = false;
+        bool returns = false;
     };
 
     struct StepDraft
     {
         BlockWalk& walk;
+        int statementId = -1;
         Plan::Step step;
         PendingSchedule schedule;
     };
@@ -134,23 +166,32 @@ private:
 
     // PlanStatements.cpp
     bool checkGraph();
+    void recordStructSlot(int slot);
+    int nodeComponents(const Expr& expr) const;
+    int variableComponents(int slot) const;
     bool checkThreadGroupShape();
     bool packUniforms();
     bool enterBlock(int graphBlock);
     bool checkStatement(int statement);
     BlockResult buildBlock(int graphBlock, int loopDepth, int depth);
-    bool buildStep(const Statement&, int stepId, BlockWalk&);
+    bool buildStep(const Statement&, int statementId, int stepId, BlockWalk&);
     bool buildVariableStep(const Statement&, StepDraft&);
     bool buildIfStep(const Statement&, StepDraft&);
     bool buildLoopStep(const Statement&, StepDraft&);
     bool buildJumpStep(const Statement&, StepDraft&);
+    bool buildBreakIfStep(const Statement&, StepDraft&);
+    bool buildSwitchStep(const Statement&, StepDraft&);
+    bool buildCaseStep(const Statement&, StepDraft&);
+    bool buildReturnStep(const Statement&, StepDraft&);
+    bool buildDiscardStep(const Statement&, StepDraft&);
+    bool buildCallStep(const Statement&, StepDraft&);
     bool buildStoreStep(const Statement&, StepDraft&);
     bool buildVectorStoreStep(const Statement&, StepDraft&);
     bool buildTextureStoreStep(const Statement&, StepDraft&);
     bool buildSharedStoreStep(const Statement&, StepDraft&);
     bool buildBarrierStep(const Statement&, StepDraft&);
     bool buildReductionStep(const Statement&, StepDraft&);
-    bool buildAtomicAddStep(const Statement&, StepDraft&);
+    bool buildAtomicStep(const Statement&, StepDraft&);
     bool buildSimdMatrixFillStep(const Statement&, StepDraft&);
     bool buildSimdMatrixTransferStep(const Statement&, StepDraft&);
     bool buildSimdMatrixMultiplyAddStep(const Statement&, StepDraft&);
@@ -158,9 +199,22 @@ private:
     bool checkSimdMatrixMultiplyAdd(const Statement&);
     bool checkNode(int node);
     bool checkVariable(int slot);
+    int fieldComponent(int structId, int field) const;
+    bool isField(int structId, int field) const;
     bool checkVariableValue(const Statement&);
+    bool checkElementIndex(const Statement&);
+    bool checkBreakIf(const Statement&,
+                      int statementId,
+                      int graphBlock,
+                      int loopDepth);
+    bool isValidCase(int statementId) const;
+    bool hasDefaultClause(int cases) const;
+    bool checkSwitchLabels(const Statement&, ValueType selector);
+    bool checkSwitch(const Statement&);
     bool checkCondition(int node);
     bool checkSlot(int slot);
+    bool isStructSlot(int slot) const;
+    bool checkStructStore(const Statement&);
     bool checkStore(const Statement&, int width);
     bool checkIndexAndValue(const Statement&);
     bool checkSharedSlot(int slot);
@@ -171,8 +225,14 @@ private:
     bool checkSimdMatrixElement(const Statement&);
     bool checkSimdMatrixMemory(const Statement&);
     bool checkSimdMatrixStorage(const Statement&);
+    ValueType atomicElement(const Statement&);
+    bool checkComparand(const Statement&, ValueType element);
+    bool checkAtomic(const Statement&);
 
     // PlanNodes.cpp
+    static Word overrideWord(const PipelineConstant& value);
+    bool resolveOverrideWords();
+    void markHalfRounding(int id);
     void markReachable();
     Vector<int> collectReachableRoots() const;
     bool markNodeReachable(int id, Vector<int>& stack);
@@ -189,8 +249,13 @@ private:
     void decodeIdLeaf(int id, Plan::Node&, const Expr&);
     void decodeUniform(int id, Plan::Node&, const Expr&);
     void decodeVarRead(int id, Plan::Node&, const Expr&);
+    void decodeMatrixColumn(int id, Plan::Node&, const Expr&);
+    void decodeOverride(int id, Plan::Node&, const Expr&);
+    void decodeBuiltIn(int id, Plan::Node&, const Expr&);
+    void rejectFunctionCall(int id, Plan::Node&, const Expr&);
     void decodeSelect(int id, Plan::Node&, const Expr&);
     void decodeBufferRead(int id, Plan::Node&, const Expr&);
+    void decodeStructRead(int id, Plan::Node&, const Expr&);
     void decodeArrayRead(int id, Plan::Node&, const Expr&);
     void decodeAtomicLoad(int id, Plan::Node&, const Expr&);
     void decodeSharedRead(int id, Plan::Node&, const Expr&);
@@ -214,6 +279,7 @@ private:
     void decodeBitcast(int id, Plan::Node&, const Expr&);
     void decodeHelper(int id, Plan::Node&, const Expr&);
     void decodePackedHelper(int id, Plan::Node&, const Expr&);
+    void decodeBitHelper(int id, Plan::Node&, const Expr&, const BitHelperName&);
     void decodeGeometric(int id, Plan::Node&, const Expr&, Op);
     void decodeConversion(int id, Plan::Node&, const Expr&);
 
@@ -288,6 +354,14 @@ private:
     Vector<int> definitions;
     Vector<int> lastUses;
     Vector<int> lastDefinitions;
+
+    // Each override's value, by id, as the word a constant of its type holds.
+    Vector<Word> overrideWords;
+
+    // The loop depth of the continuing block being built, or -1 outside one,
+    // and the clause list of the switch being built, or -1.
+    int continuingLoopDepth = -1;
+    int casesBlock = -1;
     int stamp = 0;
     std::size_t cursor = 0;
 };

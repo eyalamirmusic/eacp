@@ -2614,6 +2614,30 @@ auto tOutOfTier = test("Executor/everyOutOfTierConstructIsRefusedByName") = []
     check(values[0] == sentinel);
 };
 
+auto tSamplerSlot = test("Executor/aSamplerSlotIsRefusedByName") = []
+{
+    for (auto comparison: {false, true})
+    {
+        auto builder = ShaderBuilder {};
+        auto output = builder.outputBuffer();
+        auto i = builder.threadId();
+        builder.samplerOf(comparison);
+        builder.write(output, i, toFloat(i));
+
+        check(refusedNaming(Executor {builder.graph()}, "sampler"));
+    }
+
+    auto builder = ShaderBuilder {};
+    auto output = builder.outputBuffer();
+    auto texture = builder.texture();
+    auto smooth = builder.sampler();
+    auto i = builder.threadId();
+    builder.write(
+        output, i, sampleLevel(texture, smooth, float2(toFloat(i), 0.5f), 0.f).x());
+
+    check(refusedNaming(Executor {builder.graph()}, "texture slot 1 is a sampler"));
+};
+
 // ---------------------------------------------------------------------------
 // Bare graphs the typed builder cannot produce, each refused with a reason.
 
@@ -3506,7 +3530,7 @@ auto tSharedAcrossStatements =
     check(executor.isValid(), executor.reason());
 
     const auto& plan = executor.plan();
-    auto atomic = firstStepOf(plan, StatementKind::AtomicAdd);
+    auto atomic = firstStepOf(plan, StatementKind::Atomic);
     auto store = firstStepOf(plan, StatementKind::Store);
     check(atomic >= 0 && store >= 0);
 

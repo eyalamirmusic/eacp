@@ -1,4 +1,4 @@
-include(FindPkgConfig)
+find_package(PkgConfig ${EACP_FIND_QUIET} REQUIRED)
 
 # The X11 half of the Linux graphics backend: xcb and the extension libraries
 # a window needs - XKB for the keymap, RandR for the outputs, XFixes for the

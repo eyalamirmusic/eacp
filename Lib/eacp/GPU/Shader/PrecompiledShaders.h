@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CompilationInfo.h"
 #include "PrecompiledNames.h"
 
 #include <ResEmbed/ResEmbed.h>
@@ -42,10 +43,12 @@ int embeddedCount();
 void reportMiss(std::string_view resourceName, std::string_view reason);
 
 // Whether a library that did not find `resourceName` should compile its source.
-// False under the require flag, which says so in the log.
-bool fallBackAfterMiss(std::string_view resourceName);
+// False under the require flag, which says so in the log and as an error in
+// `messages`, the library's compilation info.
+bool fallBackAfterMiss(std::string_view resourceName, CompilationInfo& messages);
 
 // The same for one that found it and could not load it.
 bool fallBackAfterLoadFailure(std::string_view resourceName,
-                              std::string_view reason);
+                              std::string_view reason,
+                              CompilationInfo& messages);
 } // namespace eacp::GPU::Precompiled
