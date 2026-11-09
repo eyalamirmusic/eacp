@@ -84,14 +84,16 @@ struct GPUView::Native
 
     void updateSize()
     {
-        auto scale = platformBackingScale(view);
+        auto displayScale = platformBackingScale(view);
+        auto scale = displayScale * renderScale;
 
         auto bounds = Graphics::toCGRect(view.getLocalBounds());
         auto pixelWidth = (NSUInteger) (bounds.size.width * scale);
         auto pixelHeight = (NSUInteger) (bounds.size.height * scale);
 
+        // The layer stretches a drawable smaller than its bounds over them.
         metalLayer.get().frame = bounds;
-        metalLayer.get().contentsScale = scale;
+        metalLayer.get().contentsScale = displayScale;
         metalLayer.get().drawableSize = CGSizeMake(pixelWidth, pixelHeight);
 
         updateMultisampleTexture(pixelWidth, pixelHeight);
@@ -272,6 +274,7 @@ struct GPUView::Native
     bool rendering = false;
     bool depthEnabled = false;
     bool stencilEnabled = false;
+    float renderScale = 1.f;
 
     // Device pixels per logical point, refreshed by updateSize(). Zero until the
     // first update, which is how the initial scale is told apart from a change.
@@ -393,6 +396,23 @@ bool GPUView::isTransparent() const
     return impl->transparent;
 }
 
+void GPUView::setRenderScale(float scale)
+{
+    const auto clamped = clampRenderScale(scale);
+
+    if (clamped == impl->renderScale)
+        return;
+
+    impl->renderScale = clamped;
+    impl->updateSize();
+    repaint();
+}
+
+float GPUView::renderScale() const
+{
+    return impl->renderScale;
+}
+
 // Serves both events: the drawable follows the new bounds or the new scale, and
 // updateSize() fires onBackingScaleChanged for itself when the scale is what
 // moved.
@@ -412,15 +432,16 @@ void GPUView::resizeFinished()
 
 float GPUView::backingScale() const
 {
-    if (renderScale > 0.f)
-        return renderScale;
+    if (snapshotScale > 0.f)
+        return snapshotScale;
 
     // updateSize() has not run before the view is first laid out, so fall back to
     // asking the platform rather than reporting a nonsense zero.
     if (impl->backingScale > 0.f)
         return impl->backingScale;
 
-    return (float) platformBackingScale(const_cast<GPUView&>(*this));
+    return (float) platformBackingScale(const_cast<GPUView&>(*this))
+           * impl->renderScale;
 }
 
 void GPUView::paint(Graphics::Context& context)
@@ -521,9 +542,9 @@ Graphics::Image GPUView::renderNativeContent(float scale)
             // display would otherwise rasterize its masks and glyphs, and
             // place its scissor rects, for pixels twice the size of the ones
             // it is drawn into.
-            renderScale = scale;
+            snapshotScale = scale;
             render(frame);
-            renderScale = 0.f;
+            snapshotScale = 0.f;
         }
 
         // Copy the private colour texture into a shared buffer so the CPU can
