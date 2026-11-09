@@ -1,12 +1,16 @@
-#include "Common.h"
-
+#include <eacp/Network/IPC/Messenger.h>
 #include <eacp/Network/IPCRpc/RpcClient.h>
 #include <eacp/Network/IPCRpc/RpcServer.h>
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <string>
 #include <thread>
+#include <vector>
+
+#include <NanoTest/NanoTest.h>
 
 using namespace nano;
 using eacp::IPC::Channel;
@@ -263,4 +267,44 @@ auto tRpcClientSeesHubRestart =
               [](const std::string&) {});
 
     check(runEventLoopUntil([&answer] { return answer == 7; }, recoveryPumpTimeout));
+};
+
+namespace
+{
+constexpr auto stuckSessionCount = 3;
+constexpr auto stuckSessionBacklogMessages = 4;
+constexpr auto serverShutdownLimit = eacp::Time::MS {900};
+} // namespace
+
+auto tServerShutsDownPastStuckSessions =
+    test("Ipc/Recovery/aServerWithStuckSessionsShutsDownPromptly") = []
+{
+    const auto name = std::string {"eacp.tests.recovery.stuckShutdown"};
+    auto server = std::optional<MessageServer> {};
+    server.emplace(name);
+
+    auto sessions = std::vector<Messenger*> {};
+    server->onClient = [&sessions](Messenger& arrived) { sessions.push_back(&arrived); };
+
+    auto stuckReaders = std::vector<Channel> {};
+
+    for (auto index = 0; index < stuckSessionCount; ++index)
+        stuckReaders.push_back(Channel::connect(name));
+
+    check(runEventLoopUntil([&sessions]
+                            { return sessions.size() == stuckSessionCount; },
+                            recoveryPumpTimeout));
+
+    auto payload = std::string(overflowMessageBytes, 'x');
+
+    for (auto* session: sessions)
+    {
+        for (auto index = 0; index < stuckSessionBacklogMessages; ++index)
+            session->send(payload);
+    }
+
+    auto deadline = eacp::Time::Deadline {serverShutdownLimit};
+    server.reset();
+
+    check(!deadline.expired());
 };

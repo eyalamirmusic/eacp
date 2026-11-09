@@ -67,9 +67,11 @@ private:
 
     void begin();
     [[nodiscard]] bool finished() const;
+    void abandonUnsentMessages();
 
     void work();
     bool dial();
+    bool tryConnectingOnce();
     void readUntilGone();
     void finishReading();
     std::optional<std::string> takeNextUnsentMessage();

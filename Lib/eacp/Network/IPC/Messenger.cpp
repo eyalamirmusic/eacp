@@ -280,6 +280,11 @@ void Messenger::begin()
     impl->worker = std::thread([this] { work(); });
 }
 
+void Messenger::abandonUnsentMessages()
+{
+    impl->endConversation();
+}
+
 bool Messenger::finished() const
 {
     return impl->areStreamThreadsDone();
@@ -400,24 +405,30 @@ void Messenger::finishReading()
     impl->closeChannelIfLastStreamThread();
 }
 
+bool Messenger::tryConnectingOnce()
+{
+    try
+    {
+        impl->adoptDialedChannel(Channel::connect(impl->name, Time::MS {0}));
+        return true;
+    }
+    catch (const Error&)
+    {
+        return false;
+    }
+}
+
 bool Messenger::dial()
 {
     auto deadline = Time::Deadline {impl->timeout};
 
     while (!impl->stop)
     {
-        try
-        {
-            auto opened = Channel::connect(impl->name, Time::MS {0});
-
-            impl->adoptDialedChannel(std::move(opened));
+        if (tryConnectingOnce())
             return true;
-        }
-        catch (const Error&)
-        {
-            if (deadline.expired())
-                return false;
-        }
+
+        if (deadline.expired())
+            return false;
 
         auto remaining = deadline.remaining();
         impl->waitBeforeRetrying(remaining < dialRetry ? remaining : dialRetry);
@@ -516,7 +527,11 @@ MessageServer::~MessageServer()
 
     // The sessions die here, on the main thread, not whenever the last
     // queued delivery lets go of impl: each Messenger destructor is what
-    // guarantees its callbacks never fire again.
+    // guarantees its callbacks never fire again. A closing server owes its
+    // clients nothing more, so no session waits to flush.
+    for (auto& session: impl->sessions)
+        session->abandonUnsentMessages();
+
     impl->sessions.clear();
     impl->ending.clear();
 }
