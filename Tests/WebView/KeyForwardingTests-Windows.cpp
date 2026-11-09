@@ -114,15 +114,19 @@ struct ExpectedKeyCode
     uint16_t keyCode = 0;
 };
 
-const Vector<ExpectedKeyCode> navigationKeyCodes = {
-    {domNavigationKeys[0], KeyCode::PageUp},
-    {domNavigationKeys[1], KeyCode::PageDown},
-    {domNavigationKeys[2], KeyCode::Home},
-    {domNavigationKeys[3], KeyCode::End},
-    {domNavigationKeys[4], KeyCode::LeftArrow},
-    {domNavigationKeys[5], KeyCode::UpArrow},
-    {domNavigationKeys[6], KeyCode::RightArrow},
-    {domNavigationKeys[7], KeyCode::DownArrow}};
+// A function, not a table: domNavigationKeys is an inline variable another
+// translation unit may initialise after a namespace-scope table here.
+Vector<ExpectedKeyCode> getNavigationKeyCodes()
+{
+    return {{domNavigationKeys[0], KeyCode::PageUp},
+            {domNavigationKeys[1], KeyCode::PageDown},
+            {domNavigationKeys[2], KeyCode::Home},
+            {domNavigationKeys[3], KeyCode::End},
+            {domNavigationKeys[4], KeyCode::LeftArrow},
+            {domNavigationKeys[5], KeyCode::UpArrow},
+            {domNavigationKeys[6], KeyCode::RightArrow},
+            {domNavigationKeys[7], KeyCode::DownArrow}};
+}
 } // namespace
 
 auto tKeyForwardUnhandled = test("KeyForwardingWin/unhandledKeyReachesCallback") = []
@@ -170,6 +174,7 @@ auto tKeyForwardNavigationKeyCodes =
     test("KeyForwardingWin/navigationKeysReachCallbackWithTheirKeyCode") = []
 {
     auto fix = KeyForwardingFixture {};
+    auto navigationKeyCodes = getNavigationKeyCodes();
 
     for (auto& expected: navigationKeyCodes)
         fix.dispatchKey(createDomKeyPress(expected.domKey));
