@@ -49,6 +49,8 @@ Status load()
 
 Status status()
 {
-    return {.state = isEnabled() ? State::unsupported : State::disabled};
+    auto result = Status {};
+    result.state = isEnabled() ? State::unsupported : State::disabled;
+    return result;
 }
 } // namespace eacp::GPU::Dxc
