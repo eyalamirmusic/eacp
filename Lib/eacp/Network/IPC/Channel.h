@@ -42,6 +42,11 @@ public:
     [[nodiscard]] bool isOpen() const;
     void close();
 
+    // Closes at once, dropping whatever the peer has not read yet. close()
+    // on Windows first gives the peer up to 250 ms to read it; on POSIX the
+    // two are the same.
+    void closeWithoutWaitingForThePeer();
+
     // Wakes I/O blocked on this channel in other threads, so a reader
     // thread can be told to leave: an interrupted receive reports a clean
     // end of stream. On POSIX one call is permanent - the socket is shut

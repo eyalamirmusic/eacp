@@ -5,6 +5,8 @@
 
 #include <aclapi.h>
 
+#include <thread>
+
 namespace eacp::IPC::detail
 {
 namespace
@@ -12,6 +14,12 @@ namespace
 // Sized for bulk payloads (video frames run to megabytes): the quota is
 // advisory, but an undersized one forces writer/reader ping-pong.
 constexpr auto pipeBufferSize = DWORD {1} << 20;
+
+// A peer that is alive but no longer reading would hold a close in
+// FlushFileBuffers forever; it gets this long to read before the flush is
+// cancelled.
+constexpr auto stuckPeerFlushTimeout = Time::MS {250};
+constexpr auto flushCancelRetry = Time::MS {5};
 
 [[noreturn]] void fail(const std::string& context, DWORD reason)
 {
@@ -67,6 +75,29 @@ bool completed(HANDLE pipe, Operation& operation, DWORD& transferred, DWORD& rea
 
     reason = ::GetLastError();
     return false;
+}
+
+// FlushFileBuffers has no timeout, so it runs on a thread of its own. A
+// cancel only reaches a flush already in progress, and the thread may not
+// have entered it yet, so the cancel repeats until the thread has left.
+void flushUnlessThePeerIsStuck(HANDLE pipe)
+{
+    auto flusher = std::thread([pipe] { ::FlushFileBuffers(pipe); });
+    const HANDLE flusherHandle = flusher.native_handle();
+    const auto flushTimeout = static_cast<DWORD>(stuckPeerFlushTimeout.count);
+    const auto cancelRetry = static_cast<DWORD>(flushCancelRetry.count);
+
+    auto isFlusherRunning =
+        ::WaitForSingleObject(flusherHandle, flushTimeout) == WAIT_TIMEOUT;
+
+    while (isFlusherRunning)
+    {
+        ::CancelSynchronousIo(flusherHandle);
+        isFlusherRunning =
+            ::WaitForSingleObject(flusherHandle, cancelRetry) == WAIT_TIMEOUT;
+    }
+
+    flusher.join();
 }
 
 std::wstring pipePath(const std::string& safeName)
@@ -366,10 +397,16 @@ void channelClose(NativeChannel channel) noexcept
 
     // Unlike a socket, a pipe may drop written-but-unread bytes when its
     // handle closes; the flush holds the door until the peer has read them.
-    // A vanished peer fails the flush immediately, so this cannot hang on
-    // the dead.
-    ::FlushFileBuffers((HANDLE) channel);
+    // A vanished peer fails the flush immediately, and a stuck one is given
+    // up on after stuckPeerFlushTimeout.
+    flushUnlessThePeerIsStuck((HANDLE) channel);
     ::CloseHandle((HANDLE) channel);
+}
+
+void channelCloseWithoutWaiting(NativeChannel channel) noexcept
+{
+    if (channel != invalidChannel)
+        ::CloseHandle((HANDLE) channel);
 }
 
 void channelServerClose(NativeChannel listener, const std::string&) noexcept

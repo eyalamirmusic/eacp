@@ -299,6 +299,11 @@ void channelClose(NativeChannel channel) noexcept
         ::close((int) channel);
 }
 
+void channelCloseWithoutWaiting(NativeChannel channel) noexcept
+{
+    channelClose(channel);
+}
+
 void channelServerClose(NativeChannel listener, const std::string& safeName) noexcept
 {
     if (listener == invalidChannel)

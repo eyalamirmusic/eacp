@@ -136,6 +136,7 @@ struct Messenger::Impl : std::enable_shared_from_this<Impl>
     std::optional<Channel> channel;
     std::atomic<bool> connected = false;
     std::atomic<bool> conversationEnded = false;
+    std::atomic<bool> isAbandoned = false;
 
     std::atomic<bool> stop = false;
     std::atomic<bool> workerDone = false;
@@ -196,13 +197,24 @@ struct Messenger::Impl : std::enable_shared_from_this<Impl>
             channel->interrupt();
     }
 
+    // An abandoned conversation skips the wait for the peer to read what is
+    // left (up to 250 ms on Windows): nobody is owed those bytes any more.
+    void closeChannel()
+    {
+        auto guard = std::lock_guard {mutex};
+
+        if (channel && isAbandoned)
+            channel->closeWithoutWaitingForThePeer();
+
+        channel.reset();
+    }
+
     void closeChannelIfLastStreamThread()
     {
         if (streamThreadsRunning.fetch_sub(1) != 1 || stop)
             return;
 
-        auto guard = std::lock_guard {mutex};
-        channel.reset();
+        closeChannel();
     }
 
     [[nodiscard]] bool hasMessageToWrite() const
@@ -273,6 +285,8 @@ struct Messenger::Impl : std::enable_shared_from_this<Impl>
 
         if (writer.joinable())
             writer.join();
+
+        closeChannel();
     }
 
     void work();
@@ -326,6 +340,7 @@ void Messenger::begin()
 
 void Messenger::abandonUnsentMessages()
 {
+    impl->isAbandoned = true;
     impl->endConversation();
 }
 
@@ -581,7 +596,8 @@ MessageServer::~MessageServer()
     // The sessions die here, on the main thread, not whenever the last
     // queued delivery lets go of impl: each Messenger destructor is what
     // guarantees its callbacks never fire again. A closing server owes its
-    // clients nothing more, so no session waits to flush.
+    // clients nothing more, so no session waits to send what is queued or for
+    // its peer to read what was already written.
     for (auto& session: impl->sessions)
         session->abandonUnsentMessages();
 
