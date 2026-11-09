@@ -591,6 +591,7 @@ void D3D12Shared::createDevice()
     quirks = probeDriverQuirks();
     device = createHardwareOrWarpDevice();
     adapterName = describeAdapter(device.get());
+    LOG("D3D12: rendering on ", adapterName);
 }
 
 void D3D12Shared::createRootSignatures()

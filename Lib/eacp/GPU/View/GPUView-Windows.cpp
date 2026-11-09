@@ -508,8 +508,7 @@ struct GPUView::Native : DeviceResourceHolder
     {
         auto& context = getD3D12Context(Device::shared());
 
-        if (rendering || !swapChain || !context.isValid() || width == 0
-            || height == 0)
+        if (!canRenderFrame(context))
             return false;
 
         // Blocks until the swapchain is ready for another frame, so the CPU
@@ -564,6 +563,23 @@ struct GPUView::Native : DeviceResourceHolder
 
         checkDeviceRemoved();
         return true;
+    }
+
+    bool canRenderFrame(const D3D12Context& context)
+    {
+        if (rendering || !swapChain || !context.isValid() || width == 0
+            || height == 0)
+            return false;
+
+        return !isWaitingForDeviceRecovery();
+    }
+
+    bool isWaitingForDeviceRecovery()
+    {
+        checkDeviceRemoved();
+
+        return device != Device::shared().nativeDevice()
+               || FAILED(device->GetDeviceRemovedReason());
     }
 
     void checkDeviceRemoved()
