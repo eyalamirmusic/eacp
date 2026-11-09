@@ -3,6 +3,7 @@
 #include "../Window/Window.h"
 #include <algorithm>
 #include <ranges>
+#include <utility>
 
 namespace eacp::Graphics
 {
@@ -93,15 +94,18 @@ void View::removeFromParent()
 // hold inside the removed subtree - hover, press, key focus, touches - by
 // walking up from those views through their parents, so the subtree has to be
 // intact while that happens.
+//
+// Walks a list moved out first: a platform callback during the native detach
+// (AppKit's, inside removeFromSuperview) could add or remove subviews.
 void View::detachSubviews()
 {
-    for (auto* view: subviews)
+    auto orphans = std::exchange(subviews, {});
+
+    for (auto* view: orphans)
     {
         viewRemoved(*view);
         view->parent = nullptr;
     }
-
-    subviews.clear();
 }
 
 Window* View::getWindow() const
@@ -212,6 +216,12 @@ void View::removeSubview(View& view)
         forgetTouchesIn(view);
         forgetKeyFocusIn(view);
         viewRemoved(view);
+
+        // Last, since the clearing above walks up through the removed views.
+        // Left set, the parent pointer outlives the removal and dangles once
+        // this view is destroyed.
+        if (view.parent == this)
+            view.parent = nullptr;
     }
 }
 

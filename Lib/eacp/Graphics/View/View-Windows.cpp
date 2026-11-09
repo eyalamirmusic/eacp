@@ -411,16 +411,30 @@ struct View::Native
         repaint();
     }
 
+    // A view hidden by its own flag joins its new parent the way a hidden view
+    // stays in one: out of the visual tree, remembering where setVisible(true)
+    // puts it back.
     void addSubview(View& view)
     {
         if (visual && view.impl->visual)
         {
-            view.impl->attachToParent(getVisual());
+            if (view.isVisible())
+                view.impl->attachToParent(getVisual());
+            else
+                view.impl->parentWhileHidden = getVisual();
+
             view.impl->updateVisualPosition();
         }
     }
 
-    void removeSubview(View& view) { view.impl->detachFromParent(); }
+    // A hidden view forgets the parent it would have gone back to, which may
+    // be about to be destroyed: setVisible(true) after a re-add shows it in its
+    // new parent, never in the old one's visual.
+    void removeSubview(View& view)
+    {
+        view.impl->detachFromParent();
+        view.impl->parentWhileHidden.Reset();
+    }
 
     void setOpacity(float opacity)
     {
