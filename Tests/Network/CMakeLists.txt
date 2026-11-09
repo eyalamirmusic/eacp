@@ -28,6 +28,7 @@ if (NOT IOS)
             IpcChannelTests.cpp
             IpcLockTests.cpp
             IpcMessengerTests.cpp
+            IpcRecoveryTests.cpp
             IpcRpcTests.cpp)
 endif ()
 
