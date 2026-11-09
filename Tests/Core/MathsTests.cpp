@@ -1,5 +1,6 @@
 #include "Common.h"
 
+#include <cmath>
 #include <limits>
 
 using namespace nano;
@@ -254,6 +255,37 @@ auto tInverted = test("Maths/inverted") = []
 auto tInvertedSingularIsIdentity = test("Maths/invertedSingularIsIdentity") = []
 { check(Mat4::scale({1.f, 0.f, 1.f}).inverted() == Mat4 {}); };
 
+// The volume a transform scales by, read off the 3x3 alone: a translation moves
+// nothing's size, so it must not move the answer either.
+auto tLinearDeterminant = test("Maths/linearDeterminant") = []
+{
+    static_assert(Mat4 {}.linearDeterminant() == 1.f);
+    static_assert(Mat4::scale({2.f, 3.f, 4.f}).linearDeterminant() == 24.f);
+
+    auto moved = Mat4::translation({7.f, -3.f, 9.f}) * Mat4::scale(2.f);
+    check(moved.linearDeterminant() == 8.f);
+
+    auto turned = Mat4::rotationY(0.7f) * Mat4::rotationX(-1.3f);
+    check(nearlyEqual(turned.linearDeterminant(), 1.f));
+
+    check(Mat4::scale({1.f, 0.f, 1.f}).linearDeterminant() == 0.f);
+};
+
+// A mirror is what the sign is for: it reverses a triangle's winding, so a
+// renderer reads this to flip the front face. A rotation must not hide it.
+auto tLinearDeterminantOfAMirrorIsNegative =
+    test("Maths/linearDeterminantOfAMirrorIsNegative") = []
+{
+    auto mirrored = Mat4::scale({-0.8f, 0.8f, 0.8f});
+    check(nearlyEqual(mirrored.linearDeterminant(), -0.512f));
+
+    auto turnedMirror = Mat4::rotationZ(0.4f) * mirrored * Mat4::rotationY(2.1f);
+    check(nearlyEqual(turnedMirror.linearDeterminant(), -0.512f));
+
+    auto doubleMirror = Mat4::scale({-1.f, -1.f, 1.f});
+    check(doubleMirror.linearDeterminant() == 1.f);
+};
+
 // Right-handed with a [0, 1] depth range: the camera looks down -z, the near
 // plane lands on 0 and the far plane on 1. Matching ShaderProgram::perspective
 // is what lets a CPU-built matrix and a shader-built one agree.
@@ -270,6 +302,46 @@ auto tPerspectiveDepthRange = test("Maths/perspectiveDepthRange") = []
     // w is the view-space distance, which is what the divide by w needs it to be.
     check(nearlyEqual(onNear.w, 1.f));
     check(nearlyEqual(onFar.w, 100.f));
+};
+
+// Reversed: near on 1, far on 0, and the same x, y and w as the forward matrix,
+// so only the depth a fragment carries changes.
+auto tPerspectiveReversedZ = test("Maths/perspectiveReversedZMapsNearToOne") = []
+{
+    auto forward = Mat4::perspective(1.5f, radians(60.f), 1.f, 100.f);
+    auto reversed = Mat4::perspectiveReversedZ(1.5f, radians(60.f), 1.f, 100.f);
+
+    auto onNear = reversed * Vec4 {0.f, 0.f, -1.f, 1.f};
+    auto onFar = reversed * Vec4 {0.f, 0.f, -100.f, 1.f};
+    auto between = reversed * Vec4 {0.f, 0.f, -10.f, 1.f};
+
+    check(nearlyEqual(onNear.z / onNear.w, 1.f));
+    check(nearlyEqual(onFar.z / onFar.w, 0.f));
+    check(between.z / between.w > 0.f && between.z / between.w < 1.f);
+
+    auto point = Vec4 {2.f, -3.f, -7.f, 1.f};
+    auto a = forward * point;
+    auto b = reversed * point;
+
+    check(nearlyEqual(a.x, b.x) && nearlyEqual(a.y, b.y) && nearlyEqual(a.w, b.w));
+};
+
+// With no far plane, depth only approaches 0 and never crosses it, so nothing
+// at any distance is clipped behind the buffer's clear value.
+auto tPerspectiveReversedZInfinite =
+    test("Maths/perspectiveReversedZAllowsAnInfiniteFarPlane") = []
+{
+    auto projection = Mat4::perspectiveReversedZ(1.f, radians(60.f), 0.5f);
+
+    auto onNear = projection * Vec4 {0.f, 0.f, -0.5f, 1.f};
+    auto distant = projection * Vec4 {0.f, 0.f, -1.0e6f, 1.f};
+
+    check(nearlyEqual(onNear.z / onNear.w, 1.f));
+    check(distant.z / distant.w > 0.f);
+    check(nearlyEqual(distant.z / distant.w, 0.f));
+
+    for (auto value: projection.values)
+        check(!std::isnan(value));
 };
 
 auto tPerspectiveAspect = test("Maths/perspectiveAspect") = []

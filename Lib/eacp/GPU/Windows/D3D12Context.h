@@ -559,12 +559,12 @@ private:
 
     // The pool logic both acquireStagingBuffer and acquireReadbackBuffer are:
     // reuse a free slot that already fits, else grow one, else add one.
-    ID3D12Resource* acquirePooled(Vector<StagingBuffer>& pool,
+    ID3D12Resource* acquirePooled(Vector<StagingBuffer>& poolToUse,
                                   Vector<int>& taken,
                                   std::size_t bytes,
                                   D3D12_HEAP_TYPE heapType);
 
-    void returnPooled(Vector<StagingBuffer>& pool,
+    void returnPooled(Vector<StagingBuffer>& poolToUse,
                       Vector<int>& taken,
                       std::uint64_t freeAt);
 

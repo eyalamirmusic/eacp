@@ -1,12 +1,24 @@
 #include "Strings.h"
 
 #include <cctype>
+#include <cerrno>
+#include <clocale>
+#include <cmath>
+#include <cstdlib>
+
+#if defined(__APPLE__)
+#include <xlocale.h>
+#elif !defined(_WIN32) && !defined(__ANDROID__)
+#include <locale.h>
+#endif
 
 namespace eacp::Strings
 {
 namespace
 {
 constexpr auto replacementChar = char32_t {0xFFFD};
+constexpr auto hexPrefixes = Array<std::string_view, 2> {"0x", "0X"};
+constexpr auto hexBase = 16;
 
 // D800..DBFF and DC00..DFFF are the two halves of a UTF-16 surrogate pair.
 // Neither is a scalar value on its own, so a UTF-8 sequence decoding to one is
@@ -237,12 +249,58 @@ std::string trim(std::string_view s)
     return std::string {s.substr(begin, end - begin + 1)};
 }
 
+namespace
+{
+std::string_view::size_type lineStart(std::string_view text,
+                                      std::string_view::size_type position)
+{
+    if (position == 0)
+        return 0;
+
+    auto previousBreak = text.find_last_of("\r\n", position - 1);
+    return previousBreak == std::string_view::npos ? 0 : previousBreak + 1;
+}
+} // namespace
+
+std::string lastNonEmptyLine(std::string_view text)
+{
+    auto end = text.find_last_not_of("\r\n \t");
+
+    if (end == std::string_view::npos)
+        return {};
+
+    auto first = lineStart(text, end);
+    return std::string {text.substr(first, end + 1 - first)};
+}
+
+std::string lineContaining(std::string_view text, std::string_view needle)
+{
+    auto found = text.find(needle);
+
+    if (found == std::string_view::npos)
+        return {};
+
+    auto first = lineStart(text, found);
+    auto last = text.find_first_of("\r\n", found);
+    auto length = last == std::string_view::npos ? last : last - first;
+    return std::string {text.substr(first, length)};
+}
+
 std::string toLower(std::string_view s)
 {
     auto result = std::string {};
     result.reserve(s.size());
     for (auto c: s)
         result.push_back((char) std::tolower((unsigned char) c));
+    return result;
+}
+
+std::string toUpper(std::string_view s)
+{
+    auto result = std::string {};
+    result.reserve(s.size());
+    for (auto c: s)
+        result.push_back((char) std::toupper((unsigned char) c));
     return result;
 }
 
@@ -274,6 +332,40 @@ bool equalsCaseInsensitive(std::string_view a, std::string_view b)
     return toLower(a) == toLower(b);
 }
 
+Vector<std::string> split(std::string_view text, char delimiter, int maximumParts)
+{
+    auto parts = Vector<std::string> {};
+
+    while (maximumParts <= 0 || parts.size() + 1 < maximumParts)
+    {
+        const auto end = text.find(delimiter);
+
+        if (end == std::string_view::npos)
+            break;
+
+        parts.emplace_back(text.substr(0, end));
+        text.remove_prefix(end + 1);
+    }
+
+    parts.emplace_back(text);
+    return parts;
+}
+
+std::string join(const Vector<std::string>& parts, std::string_view separator)
+{
+    auto joined = std::string {};
+
+    for (auto index = 0; index < parts.size(); ++index)
+    {
+        if (index > 0)
+            joined += separator;
+
+        joined += parts[index];
+    }
+
+    return joined;
+}
+
 int hexCharToInt(char c)
 {
     if (c >= '0' && c <= '9')
@@ -283,6 +375,45 @@ int hexCharToInt(char c)
     if (c >= 'A' && c <= 'F')
         return c - 'A' + 10;
     return -1;
+}
+
+std::optional<std::uint64_t> parseHex(std::string_view text)
+{
+    for (const auto prefix: hexPrefixes)
+    {
+        if (text.starts_with(prefix))
+        {
+            text.remove_prefix(prefix.size());
+            break;
+        }
+    }
+
+    auto value = std::uint64_t {0};
+    const auto* last = text.data() + text.size();
+    const auto [stop, error] = std::from_chars(text.data(), last, value, hexBase);
+
+    if (text.empty() || error != std::errc {} || stop != last)
+        return std::nullopt;
+
+    return value;
+}
+
+std::string toHex(Span<const std::uint8_t> bytes)
+{
+    constexpr auto hexDigits = std::string_view {"0123456789abcdef"};
+    constexpr auto nibbleBits = 4;
+    constexpr auto nibbleMask = 0xf;
+
+    auto hex = std::string {};
+    hex.reserve(bytes.getSize() * 2);
+
+    for (auto byte: bytes)
+    {
+        hex.push_back(hexDigits[byte >> nibbleBits]);
+        hex.push_back(hexDigits[byte & nibbleMask]);
+    }
+
+    return hex;
 }
 
 std::optional<float> tryParseFloat(const std::string& s)
@@ -307,6 +438,128 @@ std::optional<int> tryParseInt(const std::string& s)
     {
         return std::nullopt;
     }
+}
+
+namespace
+{
+bool isAsciiDigit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+bool startsWithHexPrefix(std::string_view s)
+{
+    return s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
+}
+
+// strtod reads a superset of what from_chars does: leading whitespace, a '+',
+// hex floats. Anything outside from_chars' grammar is turned away up front so
+// both halves of tryParse accept the same kind of text.
+bool looksLikeAFromCharsNumber(std::string_view s)
+{
+    auto body = !s.empty() && s.front() == '-' ? s.substr(1) : s;
+
+    if (body.empty() || startsWithHexPrefix(body))
+        return false;
+
+    auto first = body.front();
+    auto lower = static_cast<char>(std::tolower(static_cast<unsigned char>(first)));
+
+    return isAsciiDigit(first) || first == '.' || lower == 'i' || lower == 'n';
+}
+
+#if defined(_WIN32)
+_locale_t cLocale()
+{
+    static auto locale = _create_locale(LC_ALL, "C");
+    return locale;
+}
+
+float readFloating(const char* text, char** end, float*)
+{
+    return _strtof_l(text, end, cLocale());
+}
+
+double readFloating(const char* text, char** end, double*)
+{
+    return _strtod_l(text, end, cLocale());
+}
+#elif defined(__ANDROID__)
+// Bionic's strtod ignores LC_NUMERIC, so the plain functions are already the
+// C locale's.
+float readFloating(const char* text, char** end, float*)
+{
+    return std::strtof(text, end);
+}
+
+double readFloating(const char* text, char** end, double*)
+{
+    return std::strtod(text, end);
+}
+#else
+locale_t cLocale()
+{
+    static auto locale = newlocale(LC_ALL_MASK, "C", locale_t {});
+    return locale;
+}
+
+float readFloating(const char* text, char** end, float*)
+{
+    return strtof_l(text, end, cLocale());
+}
+
+double readFloating(const char* text, char** end, double*)
+{
+    return strtod_l(text, end, cLocale());
+}
+#endif
+
+template <typename T>
+bool parseFloatingAs(std::string_view s, T& out)
+{
+    if (!looksLikeAFromCharsNumber(s))
+        return false;
+
+    // strtod needs a terminator, and a NUL inside the view stops it early, so
+    // the end check below rejects one.
+    auto text = std::string {s};
+    auto* end = static_cast<char*>(nullptr);
+
+    errno = 0;
+    auto value = readFloating(text.c_str(), &end, static_cast<T*>(nullptr));
+
+    if (end != text.c_str() + text.size())
+        return false;
+
+    if (errno == ERANGE && std::isinf(value))
+        return false;
+
+    out = value;
+    return true;
+}
+} // namespace
+
+bool Detail::parseFloating(std::string_view s, float& out)
+{
+    return parseFloatingAs(s, out);
+}
+
+bool Detail::parseFloating(std::string_view s, double& out)
+{
+    return parseFloatingAs(s, out);
+}
+
+std::optional<bool> tryParseBool(std::string_view s)
+{
+    for (auto word: {"true", "yes", "on", "1"})
+        if (equalsCaseInsensitive(s, word))
+            return true;
+
+    for (auto word: {"false", "no", "off", "0"})
+        if (equalsCaseInsensitive(s, word))
+            return false;
+
+    return std::nullopt;
 }
 
 float parseFloatOr(const std::string& s, float fallback)

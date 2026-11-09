@@ -33,7 +33,7 @@ struct DemoCameraView final : Cameras::CameraView
 {
     void update(Threads::FrameTime frameTime) override { elapsed = frameTime.time; }
 
-    void drawOverlay(Sprites::SpriteRenderer& renderer,
+    void drawOverlay(Sprites::SpriteRenderer& sprites,
                      const Graphics::Rect& imageArea) override
     {
         ++overlayTicks;
@@ -49,18 +49,18 @@ struct DemoCameraView final : Cameras::CameraView
         // over the live camera texture in one pass.
         auto bx = center.x + std::cos((float) elapsed) * radius;
         auto by = center.y + std::sin((float) elapsed) * radius;
-        renderer.fillRect({bx - 12.0f, by - 12.0f, 24.0f, 24.0f},
-                          {1.0f, 0.85f, 0.2f, 0.85f});
+        sprites.fillRect({bx - 12.0f, by - 12.0f, 24.0f, 24.0f},
+                         {1.0f, 0.85f, 0.2f, 0.85f});
 
-        renderer.drawLine({center.x - 24.0f, center.y},
-                          {center.x + 24.0f, center.y},
-                          {1.0f, 1.0f, 1.0f, 0.9f},
-                          2.0f);
-        renderer.drawLine({center.x, center.y - 24.0f},
-                          {center.x, center.y + 24.0f},
-                          {1.0f, 1.0f, 1.0f, 0.9f},
-                          2.0f);
-        renderer.drawRect(bounds, {0.2f, 1.0f, 0.45f, 0.8f}, 3.0f);
+        sprites.drawLine({center.x - 24.0f, center.y},
+                         {center.x + 24.0f, center.y},
+                         {1.0f, 1.0f, 1.0f, 0.9f},
+                         2.0f);
+        sprites.drawLine({center.x, center.y - 24.0f},
+                         {center.x, center.y + 24.0f},
+                         {1.0f, 1.0f, 1.0f, 0.9f},
+                         2.0f);
+        sprites.drawRect(bounds, {0.2f, 1.0f, 0.45f, 0.8f}, 3.0f);
 
         if (overlayTicks % 30 == 0)
             LOG("render tick ",

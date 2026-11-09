@@ -1,7 +1,7 @@
 #include "MILWriter.h"
 #include "Half.h"
 
-#include <cstdio>
+#include <eacp/Core/Utils/Format.h>
 
 namespace eacp::ML::MIL
 {
@@ -124,9 +124,7 @@ Writer encodeShape(const Vector<std::int64_t>& shape)
 
 std::string numberText(double number)
 {
-    char text[32];
-    std::snprintf(text, sizeof(text), "%g", number);
-    return text;
+    return Strings::format("{:g}", number);
 }
 
 template <typename T, typename Format>

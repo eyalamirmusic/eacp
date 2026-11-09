@@ -31,7 +31,6 @@ endif ()
 # live in ESIMD, which is always built -O3 -- so ImageOps.cpp holds only thin
 # wrappers and needs no per-source optimization flag here. (The old per-config
 # per-source -O2 also broke the Xcode generator, which the iOS build uses.)
-find_package(ESIMD REQUIRED)
 target_link_libraries(eacp-graphics PUBLIC eacp-core ESIMD)
 
 # PUBLIC so the capability is a compile-time fact for every consumer, not just
@@ -176,9 +175,9 @@ elseif (ANDROID)
     target_link_libraries(eacp-graphics PUBLIC android log PRIVATE jnigraphics)
     target_link_options(eacp-graphics INTERFACE "-u" "ANativeActivity_onCreate")
 elseif (UNIX)
-    # Wayland and X11 side by side, plus stubs for what needs a codec or a
-    # desktop environment. Path is the exception, recording geometry rather
-    # than pixels.
+    # Wayland and X11 side by side, plus stubs for what needs a desktop
+    # environment. Path is the exception, recording geometry rather than
+    # pixels.
     target_sources(eacp-graphics PRIVATE
             Graphics/Keyboard-Linux.cpp
             Helpers/DisplayLink-Linux.cpp
@@ -215,6 +214,13 @@ elseif (UNIX)
     include(FindWayland)
     include(FindX11Backend)
     target_link_libraries(eacp-graphics PRIVATE eacp-wayland eacp-x11)
+
+    # The PNG/JPEG codec: stb's implementations are compiled in Image-Linux.cpp
+    # alone, so it stays out of the unity batches.
+    include(FindStb)
+    target_link_libraries(eacp-graphics PRIVATE eacp-stb)
+    set_source_files_properties(Image/Image-Linux.cpp
+            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 endif ()
 
 set_default_target_setting(eacp-graphics)

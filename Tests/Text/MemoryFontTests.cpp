@@ -165,6 +165,136 @@ auto tRegisteringAgainIsNotAnError =
     }
 };
 
+namespace
+{
+GlyphBitmap boxIn(const GlyphRasterizer& rasterizer, const FontVariant& variant)
+{
+    const auto run = rasterizer.shape("A", variant);
+
+    if (run.glyphs.empty())
+        return {};
+
+    return rasterizer.rasterize(run.glyphs[0].key, variant, {});
+}
+
+int firstInkedColumn(const GlyphBitmap& bitmap, int row)
+{
+    for (auto column = 0; column < bitmap.width; ++column)
+        if (bitmap.pixels[row * bitmap.bytesPerRow() + column] > 127)
+            return column;
+
+    return -1;
+}
+
+int firstInkedRow(const GlyphBitmap& bitmap, int from, int step)
+{
+    for (auto row = from; row >= 0 && row < bitmap.height; row += step)
+        if (firstInkedColumn(bitmap, row) >= 0)
+            return row;
+
+    return from;
+}
+
+// How far right of its bottom edge the box's top edge starts, in pixels.
+int leanOf(const GlyphBitmap& bitmap)
+{
+    const auto top = firstInkedRow(bitmap, 0, 1);
+    const auto bottom = firstInkedRow(bitmap, bitmap.height - 1, -1);
+
+    return firstInkedColumn(bitmap, top) - firstInkedColumn(bitmap, bottom);
+}
+} // namespace
+
+// The face has no italic, so an italic is the box sheared: its top edge, 70
+// pixels above the baseline, lands about 17 (tan 14°) right of its bottom,
+// the bitmap widens by as much, and the advance does not move.
+auto tAnItalicItLacksIsSheared =
+    test("MemoryFont/anItalicTheFamilyLacksIsTheUprightFaceSheared") = []
+{
+    const auto registered = registerMemoryFont(testFont, sizeof(testFont));
+
+    if (!registered)
+        return;
+
+    const auto rasterizer = GlyphRasterizer {requestFor(registered->family)};
+    const auto italicVariant = FontVariant {400, true};
+    const auto upright = boxIn(rasterizer, FontVariant {});
+    const auto italic = boxIn(rasterizer, italicVariant);
+
+    check(!upright.isEmpty() && !italic.isEmpty());
+
+    if (upright.isEmpty() || italic.isEmpty())
+        return;
+
+    check(italic.width >= upright.width + 10, "the sheared box is wider");
+    check(leanOf(upright) <= 1, "the upright box stands straight");
+    check(leanOf(italic) >= 10, "the sheared box leans right at the top");
+    check(approx(rasterizer.shape("A", italicVariant).advance, 60.f),
+          "a shear moves no advance");
+};
+
+auto tAWithheldItalicStaysUpright =
+    test("MemoryFont/anItalicWhoseSynthesisIsWithheldStaysUpright") = []
+{
+    if constexpr (Platform::isAndroid())
+        return;
+
+    const auto registered = registerMemoryFont(testFont, sizeof(testFont));
+
+    if (!registered)
+        return;
+
+    const auto rasterizer = GlyphRasterizer {requestFor(registered->family)};
+    const auto upright = boxIn(rasterizer, FontVariant {});
+    const auto withheld = boxIn(rasterizer, FontVariant {400, true, false});
+    const auto sheared = boxIn(rasterizer, FontVariant {400, true});
+
+    check(withheld.width == upright.width);
+    check(leanOf(withheld) <= 1);
+    check(leanOf(sheared) >= 10, "the same face asked with it allowed leans");
+};
+
+namespace
+{
+std::optional<GlyphBitmap> fallbackIn(const GlyphRasterizer& rasterizer,
+                                      const FontVariant& variant)
+{
+    const auto run = rasterizer.shape("H", variant);
+
+    if (run.glyphs.empty() || run.glyphs[0].key.font == 0)
+        return std::nullopt;
+
+    return rasterizer.rasterize(run.glyphs[0].key, variant, {});
+}
+} // namespace
+
+// The face has no 'H', so it comes from a fallback, which leans with the
+// sheared face it stands in for rather than standing upright in the run.
+auto tAFallbackLeansWithTheSyntheticItalic =
+    test("MemoryFont/aFallbackGlyphInASyntheticItalicLeansToo") = []
+{
+    if constexpr (!Platform::isApple())
+        return;
+
+    const auto registered = registerMemoryFont(testFont, sizeof(testFont));
+
+    if (!registered)
+        return;
+
+    const auto rasterizer = GlyphRasterizer {requestFor(registered->family)};
+    const auto upright = fallbackIn(rasterizer, FontVariant {});
+    const auto italic = fallbackIn(rasterizer, FontVariant {400, true});
+
+    check(upright && italic, "the face's missing 'H' comes from a fallback");
+
+    if (!upright || !italic || upright->isEmpty() || italic->isEmpty())
+        return;
+
+    check(leanOf(*italic) >= leanOf(*upright) + 8,
+          "the fallback leans: " + std::to_string(leanOf(*upright)) + " upright, "
+              + std::to_string(leanOf(*italic)) + " italic");
+};
+
 auto tNotAFontRegistersNothing = test("MemoryFont/bytesThatAreNotAFontRegisterNothing") = []
 {
     constexpr char junk[] = "not a font at all";

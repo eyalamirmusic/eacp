@@ -232,8 +232,21 @@ bool supportsComputeWrite(TextureFormat format)
 
 int samplingIndex(const TextureSampling& sampling)
 {
-    return (sampling.filter == TextureFilter::Linear ? 2 : 0)
+    return (sampling.compare == TextureCompare::LessEqual ? 4 : 0)
+           + (sampling.filter == TextureFilter::Linear ? 2 : 0)
            + (sampling.addressMode == TextureAddressMode::Repeat ? 1 : 0);
+}
+
+TextureSampling samplingConfiguration(int index)
+{
+    auto sampling = TextureSampling {};
+    sampling.filter =
+        (index & 2) != 0 ? TextureFilter::Linear : TextureFilter::Nearest;
+    sampling.addressMode =
+        (index & 1) != 0 ? TextureAddressMode::Repeat : TextureAddressMode::Clamp;
+    sampling.compare =
+        (index & 4) != 0 ? TextureCompare::LessEqual : TextureCompare::None;
+    return sampling;
 }
 
 TextureRegion TextureRegion::wholeLevel(int level, int slice)

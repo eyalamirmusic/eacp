@@ -3,6 +3,7 @@
 #include "../Device/Device.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Vulkan/VulkanTypes.h"
+#include "VulkanSpecialization-Linux.h"
 
 namespace eacp::GPU
 {
@@ -387,6 +388,20 @@ VkPipelineRasterizationStateCreateInfo
     state.frontFace = toVkFrontFace(from.frontFace);
     state.lineWidth = 1.0f;
 
+    const auto bias = appliedDepthBias(from);
+
+    if (!bias.isNone())
+    {
+        state.depthBiasEnable = VK_TRUE;
+        state.depthBiasConstantFactor = bias.constant;
+        state.depthBiasSlopeFactor = bias.slopeScale;
+
+        // A clamp is a device feature here and nowhere else; without it the
+        // bias is applied unclamped rather than the pipeline refused.
+        if (getVulkanShared().getFeatures().depthBiasClamp == VK_TRUE)
+            state.depthBiasClamp = bias.clamp;
+    }
+
     return state;
 }
 
@@ -420,6 +435,7 @@ struct RenderPipeline::Native
         : topology(descriptor.topology)
         , cullMode(descriptor.cullMode)
         , frontFace(descriptor.frontFace)
+        , depthBias(appliedDepthBias(descriptor))
     {
         state.topology = toVkTopology(descriptor.topology);
         state.cullMode = toVkCullMode(descriptor.cullMode);
@@ -487,17 +503,21 @@ struct RenderPipeline::Native
                const PipelineLayouts& layouts,
                const RenderPipelineDescriptor& descriptor)
     {
+        const auto specialization = VulkanSpecialization {descriptor.constants};
+
         VkPipelineShaderStageCreateInfo stages[2] = {};
 
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
         stages[0].module = program.vertex;
         stages[0].pName = "main";
+        stages[0].pSpecializationInfo = specialization.get();
 
         stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         stages[1].module = program.fragment;
         stages[1].pName = "main";
+        stages[1].pSpecializationInfo = specialization.get();
 
         auto attributes = makeAttributes(descriptor.vertexLayout);
         auto bindings = makeBindings(descriptor.vertexLayout, state);
@@ -627,6 +647,7 @@ struct RenderPipeline::Native
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     CullMode cullMode = CullMode::None;
     Winding frontFace = Winding::CounterClockwise;
+    DepthBias depthBias;
     VulkanRenderPipeline state;
 };
 
@@ -654,6 +675,11 @@ CullMode RenderPipeline::cullMode() const
 Winding RenderPipeline::frontFace() const
 {
     return impl->frontFace;
+}
+
+DepthBias RenderPipeline::depthBias() const
+{
+    return impl->depthBias;
 }
 
 void* RenderPipeline::nativeState() const

@@ -11,6 +11,12 @@ namespace eacp::Plugins::Detail
 // dlopen/LoadLibrary with local, eager binding. Returns nullptr on failure.
 void* loadImage(const FilePath& path);
 
+// dlerror/GetLastError as text, read straight after a failed loadImage.
+std::string lastLoadError();
+
+// getpid/GetCurrentProcessId, for names no other running copy will pick.
+long long currentProcessId();
+
 // dlclose/FreeLibrary. The registry calls loadImage once per path and
 // unloadImage once at the last close, so the image genuinely unmaps here.
 void unloadImage(void* handle);

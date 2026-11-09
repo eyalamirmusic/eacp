@@ -230,19 +230,19 @@ void ListBox::paintHeader(Graphics& g)
     if (height <= 0.f)
         return;
 
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto header = getLocalBounds().withHeight(height);
 
-    g.setColour(theme.panel);
+    g.setColour(theme.get(ThemeKeys::panel));
     g.fillRect(header);
 
-    g.setColour(theme.dimText);
+    g.setColour(theme.get(ThemeKeys::dimText));
 
     for (auto index = 0; index < columns.size(); ++index)
         g.drawText(columns[index].name,
                    getColumnBounds(index, header).inset(headerInset, 0.f));
 
-    g.setColour(theme.outline);
+    g.setColour(theme.get(ThemeKeys::outline));
     g.drawLine({header.x, header.bottom()}, {header.right(), header.bottom()});
 }
 
@@ -265,14 +265,14 @@ void ListBox::paintRows(Graphics& g)
 
     for (auto row = first; row <= last; ++row)
     {
-        auto bounds = getRowBounds(row);
+        auto rowBounds = getRowBounds(row);
         auto selected = row == selectedRow;
 
-        model->paintRow(g, row, bounds, selected);
+        model->paintRow(g, row, rowBounds, selected);
 
         for (auto column = 0; column < columns.size(); ++column)
             model->paintCell(
-                g, row, column, getColumnBounds(column, bounds), selected);
+                g, row, column, getColumnBounds(column, rowBounds), selected);
     }
 }
 
@@ -283,7 +283,7 @@ void ListBox::paintScrollIndicator(Graphics& g)
     if (maximum <= 0.f)
         return;
 
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto rows = getRowArea();
     auto track = rows.fromRight(indicatorWidth);
 
@@ -291,17 +291,17 @@ void ListBox::paintScrollIndicator(Graphics& g)
     auto thumbHeight = std::max(24.f, rows.h * visibleProportion);
     auto thumbY = rows.y + (rows.h - thumbHeight) * (scrollOffset / maximum);
 
-    g.setColour(theme.outline);
+    g.setColour(theme.get(ThemeKeys::outline));
     g.fillRoundedRect(track, indicatorWidth * 0.5f);
 
-    g.setColour(theme.dimText);
+    g.setColour(theme.get(ThemeKeys::dimText));
     g.fillRoundedRect({track.x, thumbY, indicatorWidth, thumbHeight},
                       indicatorWidth * 0.5f);
 }
 
 void ListBox::paint(Graphics& g)
 {
-    g.fillAll(defaultTheme().background);
+    g.fillAll(getHostTheme().get(ThemeKeys::background));
 
     paintHeader(g);
     paintRows(g);

@@ -31,6 +31,8 @@ set(graphics_test_sources
         MagnifyTests.cpp
         MenuCommandsTests.cpp
         MenuTests.cpp
+        MouseTrackingLifetimeTests.cpp
+        OptionalViewTests.cpp
         RectTests.cpp
         RoundedRectTests.cpp
         ScrollWheelTests.cpp
@@ -43,8 +45,8 @@ set(graphics_test_sources
 
 # The ones that need a platform image codec or a 2D Context. Listed rather than
 # left to self-skip: a suite that skips every case still reports as a pass.
-# Android has a codec without a Context; desktop Linux has neither.
-if (EACP_HAS_CONTEXT OR ANDROID)
+# Android and desktop Linux have a codec without a Context.
+if (EACP_HAS_CONTEXT OR ANDROID OR LINUX)
     list(APPEND graphics_test_sources ImageCodecTests.cpp)
 endif ()
 
@@ -100,6 +102,7 @@ if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
             GlobalHotKeyTests-Windows.cpp
+            KeyFocusTests-Windows.cpp
             KeyForwardingTests-Windows.cpp
             MouseDeltaTests-Windows.cpp
             MouseWheelTests-Windows.cpp

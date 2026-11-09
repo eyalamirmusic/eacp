@@ -2,6 +2,9 @@
 
 #include <eacp/Core/Utils/Strings.h>
 
+#include <array>
+#include <clocale>
+
 using namespace nano;
 using eacp::Strings::widen;
 
@@ -175,4 +178,231 @@ auto tToLower = test("Strings/toLower") = []
     check(eacp::Strings::toLower(".WAV") == ".wav");
     check(eacp::Strings::toLower("MiXeD") == "mixed");
     check(eacp::Strings::toLower("").empty());
+};
+
+auto tTryParseInteger = test("Strings/tryParse integers are strict") = []
+{
+    using eacp::Strings::tryParse;
+
+    check(tryParse<int>("42") == 42);
+    check(tryParse<int>("-7") == -7);
+    check(!tryParse<int>("4x"));
+    check(!tryParse<int>(" 4"));
+    check(!tryParse<int>(""));
+    check(!tryParse<unsigned>("-1"));
+};
+
+auto tTryParseFloating = test("Strings/tryParse reads float and double") = []
+{
+    using eacp::Strings::tryParse;
+
+    check(tryParse<double>("1.5") == 1.5);
+    check(tryParse<double>("-0.25") == -0.25);
+    check(tryParse<double>("1e3") == 1000.0);
+    check(tryParse<double>(".5") == 0.5);
+    check(tryParse<float>("2.5") == 2.5f);
+    check(tryParse<double>("inf").has_value());
+};
+
+auto tTryParseFloatingStrict =
+    test("Strings/tryParse floating rejects what from_chars would") = []
+{
+    using eacp::Strings::tryParse;
+
+    check(!tryParse<double>(""));
+    check(!tryParse<double>("-"));
+    check(!tryParse<double>("1.5x"));
+    check(!tryParse<double>("1e"));
+    check(!tryParse<double>(" 1.5"));
+    check(!tryParse<double>("1.5 "));
+    check(!tryParse<double>("+1.5"));
+    check(!tryParse<double>("0x10"));
+    check(!tryParse<double>("1,5"));
+    check(!tryParse<double>("--1"));
+    check(!tryParse<double>(std::string_view {"1\0"
+                                              "5",
+                                              3}));
+    check(!tryParse<float>("1e60"));
+    check(!tryParse<double>("1e400"));
+};
+
+auto tTryParseFloatingLocale =
+    test("Strings/tryParse floating ignores a comma-decimal locale") = []
+{
+    auto previous = std::string {std::setlocale(LC_NUMERIC, nullptr)};
+
+    // Passes trivially where no such locale is installed.
+    for (auto name: {"de_DE.UTF-8", "de_DE", "German_Germany"})
+    {
+        if (std::setlocale(LC_NUMERIC, name) == nullptr)
+            continue;
+
+        check(eacp::Strings::tryParse<double>("1.5") == 1.5);
+        check(!eacp::Strings::tryParse<double>("1,5"));
+        break;
+    }
+
+    std::setlocale(LC_NUMERIC, previous.c_str());
+};
+
+auto tTryParseFloatingView = test("Strings/tryParse reads only the view") = []
+{
+    // The view's end is not a terminator, so this proves the copy is bounded.
+    auto text = std::string_view {"2.5junk"}.substr(0, 3);
+    check(eacp::Strings::tryParse<double>(text) == 2.5);
+};
+
+auto tTryParseBool = test("Strings/tryParseBool") = []
+{
+    using eacp::Strings::tryParseBool;
+
+    for (auto word: {"true", "TRUE", "Yes", "on", "1"})
+        check(tryParseBool(word) == true);
+
+    for (auto word: {"false", "False", "NO", "off", "0"})
+        check(tryParseBool(word) == false);
+
+    for (auto word: {"", "maybe", "2", " true", "yes "})
+        check(!tryParseBool(word).has_value());
+};
+
+auto tLastNonEmptyLineEmpty = test("Strings/lastNonEmptyLine of nothing") = []
+{
+    using eacp::Strings::lastNonEmptyLine;
+
+    check(lastNonEmptyLine("").empty());
+    check(lastNonEmptyLine(" \t\r\n\n  ").empty());
+};
+
+auto tLastNonEmptyLineSingle = test("Strings/lastNonEmptyLine of one line") = []
+{
+    using eacp::Strings::lastNonEmptyLine;
+
+    check(lastNonEmptyLine("only") == "only");
+    check(lastNonEmptyLine("  indented  ") == "  indented");
+};
+
+auto tLastNonEmptyLineTrailingBlanks =
+    test("Strings/lastNonEmptyLine skips trailing blank lines") = []
+{
+    using eacp::Strings::lastNonEmptyLine;
+
+    check(lastNonEmptyLine("first\nsecond \t\n\n   \n") == "second");
+    check(lastNonEmptyLine("first\r\nsecond\r\n\r\n") == "second");
+};
+
+auto tLineContainingFirst = test("Strings/lineContaining on the first line") = []
+{
+    check(eacp::Strings::lineContaining("a error: x\nb\nc", "error:")
+          == "a error: x");
+};
+
+auto tLineContainingMiddle = test("Strings/lineContaining on a middle line") = []
+{
+    using eacp::Strings::lineContaining;
+
+    check(lineContaining("a\nb error: y\nc", "error:") == "b error: y");
+    check(lineContaining("a\r\nb error: y\r\nc", "error:") == "b error: y");
+};
+
+auto tLineContainingLast =
+    test("Strings/lineContaining on an unterminated last line") = []
+{
+    check(eacp::Strings::lineContaining("a\nb\nc error: z", "error:")
+          == "c error: z");
+};
+
+auto tLineContainingFirstMatch =
+    test("Strings/lineContaining takes the first match") = []
+{ check(eacp::Strings::lineContaining("one x\ntwo x", "x") == "one x"); };
+
+auto tLineContainingAbsent = test("Strings/lineContaining an absent needle") = []
+{
+    using eacp::Strings::lineContaining;
+
+    check(lineContaining("a\nb", "error:").empty());
+    check(lineContaining("", "error:").empty());
+};
+
+auto tLineContainingEmptyNeedle =
+    test("Strings/lineContaining an empty needle matches the first line") = []
+{
+    using eacp::Strings::lineContaining;
+
+    check(lineContaining("first\nsecond", "") == "first");
+    check(lineContaining("\nsecond", "").empty());
+    check(lineContaining("", "").empty());
+};
+
+auto tParseHexWithAndWithoutPrefix =
+    test("Strings/parseHex with and without 0x") = []
+{
+    using eacp::Strings::parseHex;
+    check(parseHex("0x64dc") == std::uint64_t {0x64dc});
+    check(parseHex("0X64DC") == std::uint64_t {0x64dc});
+    check(parseHex("ffffffffffffffff") == std::uint64_t {0xffffffffffffffff});
+    check(parseHex("0") == std::uint64_t {0});
+};
+
+auto tParseHexRejects = test("Strings/parseHex rejects what is not hex") = []
+{
+    using eacp::Strings::parseHex;
+    check(!parseHex("").has_value());
+    check(!parseHex("0x").has_value());
+    check(!parseHex("12g4").has_value());
+    check(!parseHex(" 12").has_value());
+    check(!parseHex("10000000000000000").has_value());
+};
+
+auto tToUpper = test("Strings/toUpper is ASCII only") = []
+{
+    using eacp::Strings::toUpper;
+    check(toUpper("0ea5e0bc-c597") == "0EA5E0BC-C597");
+    check(toUpper("") == "");
+    check(toUpper("caf\xC3\xA9") == "CAF\xC3\xA9");
+};
+
+auto tSplitKeepsEmptyPieces = test("Strings/split keeps empty pieces") = []
+{
+    using eacp::Strings::split;
+    using Pieces = eacp::Vector<std::string>;
+    check(split("a,b,,c", ',') == Pieces {"a", "b", "", "c"});
+    check(split("", ',') == Pieces {""});
+    check(split("abc", ',') == Pieces {"abc"});
+    check(split(",", ',') == Pieces {"", ""});
+};
+
+auto tSplitStopsAtMaximumParts = test("Strings/split leaves the rest whole") = []
+{
+    using eacp::Strings::split;
+    using Pieces = eacp::Vector<std::string>;
+    check(split("FUNC 64cc 1c 0 Ns::f(int a, int b)", ' ', 5)
+          == Pieces {"FUNC", "64cc", "1c", "0", "Ns::f(int a, int b)"});
+    check(split("a b", ' ', 5) == Pieces {"a", "b"});
+    check(split("a b c", ' ', 1) == Pieces {"a b c"});
+};
+
+auto tJoin = test("Strings/join puts the separator between parts") = []
+{
+    using eacp::Strings::join;
+    check(join({"Tamber", "2.1.0-1a2b3c4", "macOS"}, "  ")
+          == "Tamber  2.1.0-1a2b3c4  macOS");
+    check(join({}, ", ").empty());
+    check(join({"a", "", "b"}, ",") == "a,,b");
+};
+
+auto tFormatPadsToAWidthGivenAtRunTime =
+    test("Strings/format pads to a width given at run time") = []
+{
+    constexpr auto columnWidth = 6;
+    check(eacp::Strings::format("{:<{}}|", "#1", columnWidth) == "#1    |");
+};
+
+auto tToHexWritesLowercasePairs = test("Strings/toHex writes two digits a byte") = []
+{
+    const auto bytes = std::array<std::uint8_t, 4> {0x00, 0x0a, 0xab, 0xff};
+
+    check(eacp::Strings::toHex(bytes) == "000aabff");
+    check(eacp::Strings::toHex({}).empty());
+    check(eacp::Strings::parseHex(eacp::Strings::toHex(bytes)) == 0x000aabffu);
 };

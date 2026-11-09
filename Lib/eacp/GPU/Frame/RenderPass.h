@@ -258,6 +258,18 @@ public:
                                     int slot,
                                     const Sampler& sampler);
 
+    // A sampler alone, for a shader that declares its sampler as a binding of
+    // its own - the codegen layer's SamplerBinding and ComparisonSamplerBinding
+    // (Samplers.h), whose slots come from the texture counter: MSL
+    // sampler(slot), HLSL s<samplerRegisterBase + slot>, Vulkan the sampler of
+    // the combined image sampler at 8 + slot (its image half taken from a
+    // texture bound elsewhere in the pass, which the shader never reads). On
+    // a slot that also holds a texture this replaces only its sampler. An
+    // invalid sampler binds nothing, as does D3D12's static-sampler fallback
+    // (Device::supportsPerBindSamplers).
+    void setFragmentSampler(const Sampler& sampler, int slot);
+    void setVertexSampler(const Sampler& sampler, int slot);
+
     // Binds a Storage buffer for indexed reads in a shader stage - the thing a
     // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
     // one element per vertex or per instance; this binds the buffer so the
@@ -608,7 +620,7 @@ public:
 
     // The D3D12 sampler register a per-bind sampler for texture slot n sits at:
     // s<samplerRegisterBase + n>. Above the static samplers the codegen layer's
-    // TextureSampling declarations use, which hold s0..s3.
+    // TextureSampling declarations use, which hold s0..s7.
     static constexpr int samplerRegisterBase = 8;
 
 private:

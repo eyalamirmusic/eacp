@@ -101,6 +101,16 @@ constexpr std::string_view name()
     return "Unknown";
 }
 
+// The CPU architecture this binary was built for: "arm64" or "x64".
+constexpr std::string_view architectureName()
+{
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return "arm64";
+#else
+    return "x64";
+#endif
+}
+
 // Linkage of this eacp copy: isStandalone when it is compiled into the
 // process executable, isDLL when it lives in a dynamic library (a
 // runtime-loaded plugin). Resolved at runtime from this copy's own image

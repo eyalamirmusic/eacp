@@ -1,7 +1,7 @@
 #include "TemporaryFile.h"
 #include "Files.h"
+#include "Format.h"
 
-#include <cstdio>
 #include <mutex>
 #include <random>
 #include <utility>
@@ -21,12 +21,7 @@ std::string randomHexToken()
     static auto mutex = std::mutex {};
     auto lock = std::lock_guard {mutex};
 
-    char buffer[17] {};
-    std::snprintf(buffer,
-                  sizeof(buffer),
-                  "%016llx",
-                  static_cast<unsigned long long>(generator()));
-    return buffer;
+    return Strings::format("{:016x}", generator());
 }
 
 FilePath unusedTemporaryPath(const FilePath& directory, std::string_view suffix)

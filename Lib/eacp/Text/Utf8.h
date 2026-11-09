@@ -44,7 +44,8 @@ constexpr int encodeUtf8(char32_t codepoint, char* into)
 // costs one replacement glyph rather than desynchronising the rest of the line.
 constexpr char32_t decodeUtf8(std::string_view text, int& index)
 {
-    const auto lead = static_cast<unsigned char>(text[index]);
+    const auto lead =
+        static_cast<unsigned char>(text[static_cast<std::size_t>(index)]);
 
     const auto continuationBytes = lead < 0x80   ? 0
                                    : lead < 0xC0 ? -1
@@ -64,7 +65,8 @@ constexpr char32_t decodeUtf8(std::string_view text, int& index)
 
     for (auto i = 1; i <= continuationBytes; ++i)
     {
-        const auto byte = static_cast<unsigned char>(text[index + i]);
+        const auto byte =
+            static_cast<unsigned char>(text[static_cast<std::size_t>(index + i)]);
 
         if ((byte & 0xC0) != 0x80)
         {

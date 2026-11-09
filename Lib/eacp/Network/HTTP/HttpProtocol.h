@@ -119,6 +119,12 @@ public:
     State feed(const char* data, int length);
     Request& request();
 
+    // True once the request line and headers are in, whatever the body's state.
+    bool hasHeaders() const;
+
+    // The bytes received past the blank line ending the headers.
+    std::string takeBytesAfterHeaders();
+
 private:
     State tryParseHeaders();
     void readContentLengthFromHeaders();

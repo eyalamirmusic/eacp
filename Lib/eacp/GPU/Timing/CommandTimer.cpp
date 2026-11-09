@@ -51,15 +51,21 @@ const FrameTimings& CommandTimer::timings(const Device& device)
     if (!pending || !timestamps->isSlotComplete(slot, device))
         return latest;
 
-    double milliseconds[GpuTimestamps::maxTimedPasses] = {};
+    PassActivity activity[GpuTimestamps::maxTimedPasses] = {};
+    double shares[GpuTimestamps::maxTimedPasses] = {};
+    double spans[GpuTimestamps::maxTimedPasses] = {};
 
-    latest.milliseconds = timestamps->resolveSlot(slot, passCount, milliseconds);
+    latest.milliseconds = timestamps->resolveSlot(slot, passCount, activity);
+    sharePassTimes<GpuTimestamps::maxTimedPasses>(
+        activity, passCount, shares, spans);
+
     latest.passes.resize(passCount);
 
     for (auto pass = 0; pass < passCount; ++pass)
     {
         latest.passes[pass].label = labels[pass];
-        latest.passes[pass].milliseconds = milliseconds[pass];
+        latest.passes[pass].milliseconds = shares[pass];
+        latest.passes[pass].spanMilliseconds = spans[pass];
     }
 
     pending = false;

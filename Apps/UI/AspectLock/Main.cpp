@@ -54,15 +54,15 @@ struct Header final : UI::Component
     Header()
     {
         title.setFontSize(15.f);
-        hint.setColour(UI::defaultTheme().dimText);
+        hint.setThemeColour(UI::ThemeKeys::dimText);
         hint.setJustification(UI::Justification::Right);
         addChildren({title, hint});
     }
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().panel);
-        g.setColour(UI::defaultTheme().outline);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::panel));
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::outline));
         g.fillRect(getLocalBounds().fromBottom(1.f));
     }
 
@@ -84,7 +84,7 @@ struct Canvas final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
         g.fillAll({0.07f, 0.08f, 0.10f, 1.f});
 
@@ -92,26 +92,26 @@ struct Canvas final : UI::Component
 
         for (auto column = 1; column < 16; ++column)
         {
-            auto x = bounds.w * (float) column / 16.f;
-            g.drawLine({x, 0.f}, {x, bounds.h});
+            auto x = area.w * (float) column / 16.f;
+            g.drawLine({x, 0.f}, {x, area.h});
         }
 
         for (auto row = 1; row < 9; ++row)
         {
-            auto y = bounds.h * (float) row / 9.f;
-            g.drawLine({0.f, y}, {bounds.w, y});
+            auto y = area.h * (float) row / 9.f;
+            g.drawLine({0.f, y}, {area.w, y});
         }
 
-        g.setColour(UI::defaultTheme().accentDim);
-        g.drawLine({0.f, 0.f}, {bounds.w, bounds.h});
-        g.drawLine({bounds.w, 0.f}, {0.f, bounds.h});
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::accentDim));
+        g.drawLine({0.f, 0.f}, {area.w, area.h});
+        g.drawLine({area.w, 0.f}, {0.f, area.h});
 
-        g.setColour(UI::defaultTheme().accent);
-        g.drawRect(bounds, 2.f);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::accent));
+        g.drawRect(area, 2.f);
 
         g.setFontSize(28.f);
-        g.setColour(UI::defaultTheme().text);
-        g.drawText("16 : 9", bounds, UI::Justification::Centred);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::text));
+        g.drawText("16 : 9", area, UI::Justification::Centred);
     }
 
     void resized() override { onSizeChanged(getWidth(), getHeight()); }
@@ -127,7 +127,7 @@ struct Inspector final : UI::Component
         heading.setFontSize(15.f);
 
         for (auto* caption: {&windowCaption, &canvasCaption, &ratioCaption})
-            caption->setColour(UI::defaultTheme().dimText);
+            caption->setThemeColour(UI::ThemeKeys::dimText);
 
         addChildren({heading,
                      windowCaption,
@@ -153,8 +153,8 @@ struct Inspector final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().panel);
-        g.setColour(UI::defaultTheme().outline);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::panel));
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::outline));
         g.fillRect(getLocalBounds().fromLeft(1.f));
     }
 
@@ -219,7 +219,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override

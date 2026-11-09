@@ -124,6 +124,16 @@ ObjC::Ptr<NSObject<MTLSamplerState>>
 
     return [metalDevice newSamplerStateWithDescriptor:metal];
 }
+
+// macOS 27 deprecates the Mac2 family because it runs only on Apple GPUs, but
+// the deployment target still reaches Intel Macs, whose GPUs are Mac2 only.
+bool isMac2Family(id<MTLDevice> metalDevice)
+{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    return [metalDevice supportsFamily:MTLGPUFamilyMac2] == YES;
+#pragma clang diagnostic pop
+}
 } // namespace
 
 struct Device::Native
@@ -145,18 +155,14 @@ struct Device::Native
         }
     }
 
-    // Every sampling configuration gets its state up front: there are four of
+    // Every sampling configuration gets its state up front: there are eight of
     // them, they are cheap, and building them here keeps nativeSampler() a
     // const lookup that any thread can make without a lazy-init race.
     void buildSamplers()
     {
-        for (auto filter: {TextureFilter::Nearest, TextureFilter::Linear})
-            for (auto mode: {TextureAddressMode::Clamp, TextureAddressMode::Repeat})
-            {
-                const auto sampling = TextureSampling {filter, mode};
-                samplers[samplingIndex(sampling)] =
-                    makeMetalSampler(device.get(), SamplerDescriptor::from(sampling));
-            }
+        for (auto index = 0; index < samplingConfigurations; ++index)
+            samplers[index] = makeMetalSampler(
+                device.get(), SamplerDescriptor::from(samplingConfiguration(index)));
     }
 
     ObjC::Ptr<NSObject<MTLDevice>> device;
@@ -295,7 +301,7 @@ bool Device::supportsCubeArrays() const
     if (metalDevice == nil)
         return false;
 
-    return [metalDevice supportsFamily:MTLGPUFamilyMac2] == YES
+    return isMac2Family(metalDevice)
            || [metalDevice supportsFamily:MTLGPUFamilyApple4] == YES;
 }
 
@@ -306,7 +312,7 @@ bool Device::supportsLayeredRendering() const
     if (metalDevice == nil)
         return false;
 
-    return [metalDevice supportsFamily:MTLGPUFamilyMac2] == YES
+    return isMac2Family(metalDevice)
            || [metalDevice supportsFamily:MTLGPUFamilyApple5] == YES;
 }
 
@@ -355,6 +361,16 @@ bool readWritesAtTierTwo(TextureFormat format)
     }
 }
 } // namespace
+
+bool Device::supportsShaderFloat16() const
+{
+    return isValid();
+}
+
+bool Device::supportsSampleRateShading() const
+{
+    return isValid();
+}
 
 bool Device::supportsComputeReadWrite(TextureFormat format) const
 {

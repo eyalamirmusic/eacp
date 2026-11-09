@@ -8,7 +8,6 @@ target_link_libraries(DownloadAndPlay PRIVATE eacp-video-view eacp-text eacp-net
 # with no file to ship or locate, and read back through a Miro-reflected type
 # (Catalogue.h) rather than hand-written parsing. The ResEmbed runtime key is
 # the file's basename, so Clips.json must keep that name.
-find_package(ResEmbed REQUIRED)
 res_embed_add(DownloadAndPlay
         FILES     "${CMAKE_CURRENT_SOURCE_DIR}/Clips.json"
         NAMESPACE Clips

@@ -3,6 +3,7 @@
 #include "../Utils/Containers.h"
 #include "Vec.h"
 
+#include <limits>
 #include <utility>
 
 namespace eacp::Maths
@@ -29,6 +30,15 @@ struct Mat4
     static Mat4 rotationZ(float radians);
 
     static Mat4 perspective(float aspect, float fovY, float nearZ, float farZ);
+
+    // The same frustum with depth reversed: near lands on 1 and far on 0, for a
+    // pass cleared to 0 and tested GreaterEqual. An infinite farZ is allowed,
+    // the far plane then being at depth 0 in the limit.
+    static Mat4
+        perspectiveReversedZ(float aspect,
+                             float fovY,
+                             float nearZ,
+                             float farZ = std::numeric_limits<float>::infinity());
 
     static constexpr Mat4 orthographic(
         float left, float right, float bottom, float top, float nearZ, float farZ);
@@ -60,6 +70,11 @@ struct Mat4
     // A singular matrix has no inverse, and the identity comes back for one, so
     // the result stays usable rather than turning into a block of NaNs.
     constexpr Mat4 inverted() const;
+
+    // The determinant of the upper-left 3x3: how the transform scales volume,
+    // translation and projection left out. Negative for a mirroring transform,
+    // which is what flips a triangle's winding and so the face to cull.
+    constexpr float linearDeterminant() const;
 
     constexpr const float* data() const { return values.data(); }
 
@@ -180,6 +195,11 @@ constexpr Mat4 Mat4::inverted() const
     }
 
     return result;
+}
+
+constexpr float Mat4::linearDeterminant() const
+{
+    return dot(column(0).xyz(), cross(column(1).xyz(), column(2).xyz()));
 }
 
 constexpr Mat4 operator*(const Mat4& a, const Mat4& b)

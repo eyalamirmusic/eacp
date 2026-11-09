@@ -53,6 +53,21 @@ Mat4 Mat4::perspective(float aspect, float fovY, float nearZ, float farZ)
     return result;
 }
 
+Mat4 Mat4::perspectiveReversedZ(float aspect, float fovY, float nearZ, float farZ)
+{
+    auto result = perspective(aspect, fovY, nearZ, farZ);
+
+    // The finite form's limit as farZ grows, since inf / inf would be a NaN.
+    const auto infinite = std::isinf(farZ);
+    const auto zScale = infinite ? 0.f : nearZ / (farZ - nearZ);
+    const auto zOffset = infinite ? nearZ : (farZ * nearZ) / (farZ - nearZ);
+
+    result.setColumn(2, {0.f, 0.f, zScale, -1.f});
+    result.setColumn(3, {0.f, 0.f, zOffset, 0.f});
+
+    return result;
+}
+
 Mat4 Mat4::lookAt(const Vec3& eye, const Vec3& target, const Vec3& up)
 {
     // Backward rather than forward: the camera looks down -z, so the third

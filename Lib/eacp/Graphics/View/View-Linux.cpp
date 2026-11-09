@@ -182,12 +182,8 @@ struct View::Native
         ownerView->resizeFinished();
     }
 
-    void focus() { focused = true; }
-    bool hasFocus() const { return focused; }
-
     View* ownerView;
     Rect bounds;
-    bool focused = false;
 };
 
 View::View()
@@ -323,13 +319,13 @@ bool View::startFileDrag(const Vector<std::string>&, const FileDragOptions&)
 
 void View::focus()
 {
-    impl->focus();
+    takeKeyFocus();
     linuxViewFocused(properties.wantsTextInput);
 }
 
 bool View::hasFocus() const
 {
-    return impl->hasFocus();
+    return holdsKeyFocus();
 }
 
 void notifyBackingScaleChanged(View& view)

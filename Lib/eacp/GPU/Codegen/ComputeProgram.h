@@ -71,6 +71,26 @@ public:
 
     void prepare();
 
+    // The same, with values for the kernel's overrides (OverrideValues.h): the
+    // pipeline built is the kernel specialised with them, and the ones left
+    // out take their defaults. Values the kernel refuses - an unknown name, a
+    // value of the wrong type, an override with no default given none - leave
+    // a pipeline that is not valid, and log why. Every prepare() compiles the
+    // library afresh and forgets the pipelines built before it, which is what
+    // a restored device needs.
+    void prepare(Device& device, const OverrideValues& overrides);
+    void prepare(const OverrideValues& overrides);
+
+    // Makes the kernel specialised with these values the one a dispatch runs,
+    // on the library and the device the last prepare() was given: the pipeline
+    // already built for the same values since then, or one built now. Value
+    // sets that come to the same constants - a default given or left out -
+    // share one pipeline; every set shares the library, which on D3D compiles
+    // a variant of its source once per set instead (PipelineConstants.h).
+    // Refused as prepare() refuses; false before any prepare(), after one that
+    // refused the kernel, and for values it refuses. Returns isValid().
+    bool specialize(const OverrideValues& overrides);
+
     // Whether threadgroupMemoryBytes() is inside what the device allows. The
     // two are what a kernel author sizes a tile against, together with
     // Device::maxThreadgroupMemory, instead of carrying the backend's number in
@@ -93,6 +113,19 @@ public:
     // A kernel that loads no packed fragment builds anywhere.
     bool fitsPackedSimdMatrix(const Device& device) const;
 
+    // Whether every storage texture this kernel declares is one the device
+    // takes: a Write one in a format Device::supportsComputeWrite names, a
+    // ReadWrite one in a format Device::supportsComputeReadWrite names. A Read
+    // one loads through the read binding, which every format has. prepare()
+    // refuses a kernel that does not fit, as it refuses a packed fragment the
+    // device has no instruction for, and logs the slot and the query.
+    bool fitsStorageTextures(const Device& device) const;
+
+    // Whether the device runs this kernel's f16 values, if it has any:
+    // Device::supportsShaderFloat16 answers. prepare() refuses one that does
+    // not fit, as it refuses a storage texture the device takes no store of.
+    bool fitsShaderFloat16(const Device& device) const;
+
     const ComputePipeline& pipeline() const;
 
     // Whether prepare() left something dispatchable. False before prepare(), of
@@ -100,6 +133,10 @@ public:
     // states in which a dispatch of this program does nothing, so a caller that
     // would rather know than find out asks here.
     bool isValid() const;
+
+    // Whether prepare() loaded the kernel from a blob compiled at build time
+    // rather than compiling its source. False before prepare().
+    bool isPrecompiled() const;
 
     // Binds every assigned buffer and texture member to the pass at its
     // declared slot. ComputePass::dispatch(program, ...) calls this.
@@ -131,12 +168,42 @@ private:
 
     void reportUnsupportedPackedSimdMatrix(const Device& device) const;
 
+    void reportUnsupportedStorageTexture(const Device& device) const;
+
+    void reportUnsupportedShaderFloat16() const;
+
     // Named here rather than left to the backend, which reports a threadgroup
     // allocation it cannot make as a pipeline that would not build - on Metal
     // after the library compiled clean, which points at the wrong thing.
     void reportThreadgroupMemoryOverBudget(const Device& device) const;
 
+    // Whether the device takes this kernel at all, logging why not.
+    bool fitsDevice(Device& device) const;
+
+    // An invalid pipeline made current, for values specialize() refused.
+    void useRefusedPipeline(Device& device);
+
+    // One pipeline per set of constants the kernel was specialised with.
+    struct Specialization
+    {
+        Specialization(Device& device,
+                       const ShaderLibrary& library,
+                       const PipelineConstants& constantsToUse)
+            : constants(constantsToUse)
+            , pipeline(device, library, constantsToUse)
+        {
+        }
+
+        PipelineConstants constants;
+        ComputePipeline pipeline;
+    };
+
+    Device* preparedDevice = nullptr;
+    bool refused = false;
     std::optional<ShaderLibrary> shaderLibrary;
-    std::optional<ComputePipeline> pipelineState;
+    OwnedVector<Specialization> specializations;
+    std::optional<ShaderLibrary> refusedLibrary;
+    std::optional<ComputePipeline> refusedPipeline;
+    const ComputePipeline* currentPipeline = nullptr;
 };
 } // namespace eacp::GPU

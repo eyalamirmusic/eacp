@@ -17,6 +17,15 @@ if (LINUX AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endforeach ()
 endif ()
 
+# GCC exempts the main file's own types from -Wsubobject-linkage, and in a unity
+# batch every source is an include, so each anonymous-namespace member warns.
+# Directory-scoped because the test executables never pass through
+# set_default_warnings_level.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(
+            "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<BOOL:$<TARGET_PROPERTY:UNITY_BUILD>>>:-Wno-subobject-linkage>")
+endif ()
+
 function(eacp_bundle_plist_template out_var)
     if (IOS)
         set(${out_var} "${EACP_IOS_PLIST}" PARENT_SCOPE)
@@ -119,6 +128,10 @@ function(set_default_warnings_level target)
     # narrowing that is genuinely intended is written as a cast with a comment.
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
         target_compile_options(${target} PRIVATE -Wshorten-64-to-32)
+
+        # Set by eacp_add_hot_reload on the app and its module.
+        target_compile_options(${target} PRIVATE
+                $<$<BOOL:$<TARGET_PROPERTY:EACP_HOT_RELOAD_ABI>>:-Wno-return-type-c-linkage>)
     endif ()
 endfunction()
 
@@ -277,8 +290,9 @@ function(eacp_force_optimization target)
         # The cl/clang-cl Debug defaults fight optimization: /RTC1 is a hard
         # error under any /O level (D8016) and /Od warns when overridden by /O2
         # (D9025). Strip both before forcing the level below.
-        # Both languages: a vendored C library (ThirdParty/miniz) is forced
-        # the same way, and cl's C Debug defaults carry the same two flags.
+        # Both languages: the vendored libraries (ThirdParty/miniz, which is C,
+        # and ThirdParty/fmt) are forced the same way, and cl's C Debug
+        # defaults carry the same two flags.
         foreach (lang C CXX)
             string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_${lang}_FLAGS_DEBUG
                     "${CMAKE_${lang}_FLAGS_DEBUG}")
@@ -389,8 +403,6 @@ END
     "version": "@app_version@"
 }
 ]==])
-
-    find_package(ResEmbed REQUIRED)
     res_embed_add(${target}
             FILES     "${app_info_json}"
             NAMESPACE AppInfo

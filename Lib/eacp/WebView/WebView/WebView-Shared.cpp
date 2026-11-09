@@ -20,13 +20,13 @@ WebView::SnapshotCallback
 {
     auto answered = std::make_shared<bool>(false);
 
-    auto once = [answered, callback = std::move(callback)](Bytes pngBytes,
-                                                           const std::string& error)
+    auto once = [answered, deliver = std::move(callback)](Bytes pngBytes,
+                                                          const std::string& error)
     {
         if (std::exchange(*answered, true))
             return;
 
-        callback(std::move(pngBytes), error);
+        deliver(std::move(pngBytes), error);
     };
 
     // The deadline rides the run loop rather than a thread of its own, and a
@@ -49,15 +49,15 @@ bool WebView::hasAsyncContent() const
 void WebView::captureAsyncContent(float, std::function<void(Image)> done)
 {
     takeSnapshot(
-        [done = std::move(done)](Bytes pngBytes, const std::string& error)
+        [onImage = std::move(done)](Bytes pngBytes, const std::string& error)
         {
             if (!error.empty() || pngBytes.empty())
             {
-                done({});
+                onImage({});
                 return;
             }
 
-            done(Image::decode(pngBytes));
+            onImage(Image::decode(pngBytes));
         });
 }
 
@@ -346,10 +346,10 @@ std::string fileURLToPath(std::string_view url)
 
 FileProvider fromResEmbed(std::string category)
 {
-    return [category = std::move(category)](
+    return [embedCategory = std::move(category)](
                std::string_view path) -> std::optional<ByteView>
     {
-        auto view = ResEmbed::get(std::string(path), category);
+        auto view = ResEmbed::get(std::string(path), embedCategory);
 
         if (!view)
             return std::nullopt;
@@ -370,7 +370,7 @@ StreamingProvider
     fileStreamProvider(Vector<std::string> roots,
                        std::function<std::string(std::string_view path)> mimeForFile)
 {
-    return [roots = std::move(roots), mimeForFile = std::move(mimeForFile)](
+    return [allowedRoots = std::move(roots), mimeOverride = std::move(mimeForFile)](
                std::string_view url) -> std::optional<StreamingResource>
     {
         auto pathStr = fileURLToPath(url);
@@ -384,9 +384,9 @@ StreamingProvider
         auto file = std::make_shared<eacp::File>(pathStr);
 
         auto allowed =
-            roots.empty()
-            || std::any_of(roots.begin(),
-                           roots.end(),
+            allowedRoots.empty()
+            || std::any_of(allowedRoots.begin(),
+                           allowedRoots.end(),
                            [&](const auto& root) { return file->isUnder(root); });
 
         if (!allowed || !file->isRegularFile() || !file->openForRead())
@@ -394,7 +394,7 @@ StreamingProvider
 
         auto response = StreamingResource {};
         response.mimeType =
-            mimeForFile ? mimeForFile(pathStr) : mimeForPath(pathStr);
+            mimeOverride ? mimeOverride(pathStr) : mimeForPath(pathStr);
         response.size = file->size();
         response.read = [file](RangeSize offset, ByteSpan out)
         { return (int) file->read(offset, out); };
@@ -407,11 +407,11 @@ namespace
 ResourceProvider makeResourceProviderFromFiles(FileProvider provider,
                                                std::string indexFile)
 {
-    return [provider = std::move(provider), indexFile = std::move(indexFile)](
+    return [files = std::move(provider), index = std::move(indexFile)](
                std::string_view url) -> std::optional<ResourceResponse>
     {
-        auto path = pathFromURL(url, indexFile);
-        auto bytes = provider ? provider(path) : std::nullopt;
+        auto path = pathFromURL(url, index);
+        auto bytes = files ? files(path) : std::nullopt;
 
         if (!bytes)
             return std::nullopt;
@@ -450,6 +450,9 @@ WebView::WebView(Options options)
 
     if (options.embedded.enabled && !useDevServer)
         registerEmbeddedScheme(options);
+
+    if (useDevServer)
+        options.trustedOrigins.add(options.embedded.devServerURL);
 
     auto embedded = options.embedded;
     initNative(std::move(options));

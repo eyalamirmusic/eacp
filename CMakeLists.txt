@@ -17,26 +17,15 @@ if (CMAKE_SIZEOF_VOID_P EQUAL 4)
 endif ()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# eacp builds runtime-loaded plugins and webview helpers as shared libraries,
-# and those link eacp-core together with its static dependencies (ea_data_structures,
-# Miro, ResEmbed, ESIMD). Every such static lib must be position-independent or the
-# shared-object link fails on Linux (ld: "final link failed: bad value"). Force
-# PIC for every target, including the CPM-fetched dependencies configured below.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if (APPLE)
     enable_language(OBJCXX)
-
-    # CMake already puts -lobjc on the link line of everything that pulls in
-    # Objective-C. Xcode adds -fobjc-link-runtime on top for any target with its
-    # own .mm sources, and ld warns about the duplicate.
     set(CMAKE_XCODE_ATTRIBUTE_CLANG_LINK_OBJC_RUNTIME NO)
 endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
-# Before anything that fetches or probes: it decides how loud they are.
 include(ConfigureLog)
 
 option(EACP_UNITY_BUILD "Compile eacp libraries as CMake unity builds" OFF)
@@ -44,6 +33,9 @@ option(EACP_UNITY_BUILD_TESTS "Compile the test executables as unity builds" OFF
 option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
+option(EACP_HOT_RELOAD
+        "Hot reload for every eacp_add_hot_reload app that names no HOT_RELOAD of its own"
+        OFF)
 
 if (EACP_CI_BUILD)
     set(EACP_UNITY_BUILD ON CACHE BOOL
@@ -52,6 +44,8 @@ if (EACP_CI_BUILD)
             "Compile the test executables as unity builds" FORCE)
     set(MIRO_UNITY_BUILD ON CACHE BOOL
             "Enable CMake unity build for the Miro library" FORCE)
+    set(ESIMD_UNITY_BUILD ON CACHE BOOL
+            "Compile ESIMD as a CMake unity build" FORCE)
     # EACP_PCH stays off: CI compiles under ccache, which cannot cache MSVC's
     # precompiled headers at all and needs per-compiler flags for the others,
     # and a cache hit saves the whole compile where the image saved a third.
@@ -128,6 +122,7 @@ include(TargetSetup)
 include(EacpSchema)
 include(EacpPlugin)
 include(EacpPch)
+include(PrecompiledShaders)
 
 option(EACP_HIDDEN_VISIBILITY "Compile eacp with hidden symbol visibility" ON)
 
@@ -139,11 +134,6 @@ if (EACP_HIDDEN_VISIBILITY)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN TRUE)
 endif ()
 
-# GCC gives some STL statics STB_GNU_UNIQUE binding, and glibc refuses to unmap
-# any library exporting one. eacp libraries link statically into runtime-loaded
-# plugins, so a unique symbol anywhere in them pins the plugin resident and
-# defeats the unload contract DynamicLibrary is built on (eacp_add_plugin sets
-# the same flag on a plugin's own sources). Clang emits no such symbols.
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fno-gnu-unique)
 endif ()
@@ -155,15 +145,14 @@ if (PROJECT_IS_TOP_LEVEL)
     eacp_default_setup()
 endif ()
 
-# Deliberately outside that guard: a consumer building eacp as a subproject is
-# exactly who gets no deployment target and needs telling.
-#eacp_check_deployment_target()
-
 set(CMAKE_CXX_STANDARD 20)
 
-# Vendored single-file C libraries, ahead of Lib so its modules can link them.
-add_subdirectory(ThirdParty)
+find_package(ESIMD REQUIRED)
+find_package(EADataStructures REQUIRED)
+find_package(ResEmbed REQUIRED)
+find_package(Miro REQUIRED)
 
+add_subdirectory(ThirdParty)
 add_subdirectory(Lib)
 
 option(EACP_ENABLE_EXAMPLES "Enable Examples for EACP" ${PROJECT_IS_TOP_LEVEL})
@@ -177,6 +166,4 @@ if (EACP_ENABLE_TESTS)
     add_subdirectory(Tests)
 endif ()
 
-# Builds the shared precompiled header and points every target above at it.
-# Has to run after the last add_subdirectory: it walks the targets they created.
 eacp_apply_pch()

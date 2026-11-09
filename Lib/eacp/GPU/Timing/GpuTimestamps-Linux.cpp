@@ -156,7 +156,7 @@ bool GpuTimestamps::isSlotComplete(int slot, const Device& device) const
            && getVulkanContext(device).hasCompleted(entry.completionValue);
 }
 
-double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
+double GpuTimestamps::resolveSlot(int slot, int passCount, PassActivity* activity)
 {
     const auto& entry = impl->slots[slot];
 
@@ -202,11 +202,18 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
                / 1'000'000.0;
     };
 
-    for (auto pass = 0; pass < passCount; ++pass)
-        milliseconds[pass] = toMilliseconds(tick(pass * 2), tick(pass * 2 + 1));
-
     const auto frameStart = tick(vulkanFrameStartQuery);
     const auto frameEnd = tick(vulkanFrameEndQuery);
+
+    for (auto pass = 0; pass < passCount; ++pass)
+    {
+        const auto start = tick(pass * 2);
+        const auto end = tick(pass * 2 + 1);
+
+        if (start != 0 && end > start)
+            activity[pass].add(toMilliseconds(frameStart, start),
+                               toMilliseconds(frameStart, end));
+    }
 
     // Absolute ticks, read once the submission completed, so both being zero
     // cannot mean a quick frame - only that the device never wrote them.

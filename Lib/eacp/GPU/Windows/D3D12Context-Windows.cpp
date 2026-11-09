@@ -13,7 +13,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -656,15 +655,21 @@ void D3D12Shared::createRootSignatures()
     for (auto configuration = 0; configuration < samplingConfigurations;
          ++configuration)
     {
-        const auto linear = (configuration & 2) != 0;
-        const auto repeat = (configuration & 1) != 0;
-        const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
-                                    : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        const auto sampling = samplingConfiguration(configuration);
+        const auto linear = sampling.filter == TextureFilter::Linear;
+        const auto compare = sampling.compare == TextureCompare::LessEqual;
+        const auto address = sampling.addressMode == TextureAddressMode::Repeat
+                                 ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                 : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
         auto& sampler = staticSamplers[configuration];
 
-        sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
-                                : D3D12_FILTER_MIN_MAG_MIP_POINT;
+        if (compare)
+            sampler.Filter = linear ? D3D12_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR
+                                    : D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT;
+        else
+            sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
+                                    : D3D12_FILTER_MIN_MAG_MIP_POINT;
         sampler.AddressU = address;
         sampler.AddressV = address;
         sampler.AddressW = address;
@@ -673,7 +678,8 @@ void D3D12Shared::createRootSignatures()
         // Not left at 0: zero is not a legal D3D12_COMPARISON_FUNC (they run
         // 1..8), and a static sampler is validated when the root signature is
         // serialised rather than quietly ignored.
-        sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        sampler.ComparisonFunc = compare ? D3D12_COMPARISON_FUNC_LESS_EQUAL
+                                         : D3D12_COMPARISON_FUNC_ALWAYS;
         sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
         sampler.ShaderRegister = static_cast<UINT>(configuration);
         sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -1617,10 +1623,8 @@ void D3D12Context::reportFailedClose() const
     auto* device = getDevice();
     const auto reason = device != nullptr ? device->GetDeviceRemovedReason() : S_OK;
 
-    char code[16] = {};
-    std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(reason));
-
-    LOG("D3D12Context: a recording failed to close; device removed reason ", code);
+    LOGF("D3D12Context: a recording failed to close; device removed reason 0x{:08X}",
+         static_cast<unsigned long>(reason));
 }
 
 void D3D12Context::discard(CommandContext* commands)
@@ -1848,7 +1852,7 @@ D3D12Context::ConstantPage* D3D12Context::pageFor(CommandContext& commands,
     return take(constantPages.size() - 1);
 }
 
-ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
+ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& poolToUse,
                                             Vector<int>& taken,
                                             std::size_t bytes,
                                             D3D12_HEAP_TYPE heapType)
@@ -1862,9 +1866,9 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
     // A free slot already big enough is the common case once the traffic
     // settles: every frame of a given clip, and every run of a given model,
     // moves exactly the same number of bytes.
-    for (auto index = 0; index < pool.size(); ++index)
+    for (auto index = 0; index < poolToUse.size(); ++index)
     {
-        auto& slot = pool[index];
+        auto& slot = poolToUse[index];
 
         if (isFree(slot) && slot.bytes >= bytes)
         {
@@ -1876,9 +1880,9 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
 
     // Otherwise grow a free slot rather than adding one, so a stream that
     // switches to a larger frame size does not strand the old buffers.
-    for (auto index = 0; index < pool.size(); ++index)
+    for (auto index = 0; index < poolToUse.size(); ++index)
     {
-        auto& slot = pool[index];
+        auto& slot = poolToUse[index];
 
         if (!isFree(slot))
             continue;
@@ -1907,8 +1911,8 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
     slot.lent = true;
 
     auto* resource = slot.resource.get();
-    pool.add(std::move(slot));
-    taken.add(pool.size() - 1);
+    poolToUse.add(std::move(slot));
+    taken.add(poolToUse.size() - 1);
     return resource;
 }
 
@@ -1926,17 +1930,17 @@ ID3D12Resource* D3D12Context::acquireReadbackBuffer(CommandContext& commands,
         readback, commands.readbackTaken, bytes, D3D12_HEAP_TYPE_READBACK);
 }
 
-void D3D12Context::returnPooled(Vector<StagingBuffer>& pool,
+void D3D12Context::returnPooled(Vector<StagingBuffer>& poolToUse,
                                 Vector<int>& taken,
                                 std::uint64_t freeAt)
 {
     for (auto index: taken)
     {
-        if (index < 0 || index >= pool.size())
+        if (index < 0 || index >= poolToUse.size())
             continue;
 
-        pool[index].lent = false;
-        pool[index].freeAt = freeAt;
+        poolToUse[index].lent = false;
+        poolToUse[index].freeAt = freeAt;
     }
 
     taken.clear();

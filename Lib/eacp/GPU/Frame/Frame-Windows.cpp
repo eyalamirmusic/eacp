@@ -441,9 +441,9 @@ RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
         list->ClearRenderTargetView(target, clearColor, 0, nullptr);
     }
 
-    // Depth is cleared to the far plane (1.0) whenever a depth buffer is bound
-    // and the pass did not ask to resume one - and the stencil plane with it, to
-    // the value the descriptor names, whenever the buffer has one.
+    // Depth is cleared to the descriptor's clearDepth whenever a depth buffer is
+    // bound and the pass did not ask to resume one - and the stencil plane with
+    // it, to the value the descriptor names, whenever the buffer has one.
     //
     // Only the load half of DepthAction exists here. There is no store to
     // choose: a D3D12 depth buffer is a committed resource that rests in
@@ -452,7 +452,7 @@ RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
     if (hasDepth && descriptor.depthAction != DepthAction::Resume)
         list->ClearDepthStencilView(impl->depth->view,
                                     depthClearFlags(impl->depth->stencil),
-                                    1.0f,
+                                    descriptor.clearDepth,
                                     descriptor.clearStencil,
                                     0,
                                     nullptr);
@@ -593,13 +593,13 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
         list->ClearRenderTargetView(attachments[index], clearColor, 0, nullptr);
     }
 
-    // Cleared to the far plane whenever there is one and the pass is not
-    // resuming, matching the drawable pass above - and, as there, with no store
-    // to decide, the resource keeping what was written to it either way.
+    // Cleared to clearDepth whenever there is one and the pass is not resuming,
+    // matching the drawable pass above - and, as there, with no store to
+    // decide, the resource keeping what was written to it either way.
     if (hasDepth && descriptor.depthAction != DepthAction::Resume)
         list->ClearDepthStencilView(dsv,
                                     depthClearFlags(depthOwner->hasStencil()),
-                                    1.0f,
+                                    descriptor.clearDepth,
                                     descriptor.clearStencil,
                                     0,
                                     nullptr);

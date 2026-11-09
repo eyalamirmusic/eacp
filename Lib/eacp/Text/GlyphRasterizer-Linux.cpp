@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <utility>
@@ -121,10 +122,11 @@ constexpr auto linuxSlantAxis = linuxAxisTag('s', 'l', 'n', 't');
 constexpr auto linuxOpticalSizeAxis = linuxAxisTag('o', 'p', 's', 'z');
 
 // CSS oblique on the slnt axis, which counts degrees anticlockwise from upright.
-constexpr float linuxObliqueSlant = -14.f;
+constexpr float linuxObliqueSlant = -syntheticItalicAngle;
 
-// The same lean as a shear: tan(14°).
-constexpr float linuxObliqueShear = 0.24933f;
+// The same lean as a shear.
+const float linuxObliqueShear =
+    std::tan(syntheticItalicAngle * std::numbers::pi_v<float> / 180.f);
 
 // Fraction of the em; what HarfBuzz measures and FreeType draws share it.
 constexpr float linuxSyntheticBoldRatio = 0.02f;
@@ -760,7 +762,7 @@ struct GlyphRasterizer::Native
 
     static int variantKey(const FontVariant& variant)
     {
-        return weightClass(variant.weight) * 2 + (variant.italic ? 1 : 0);
+        return faceKeyOf(variant);
     }
 
     const LinuxSizedFace* variantFace(const FontVariant& variant) const
@@ -789,7 +791,7 @@ struct GlyphRasterizer::Native
         sized.syntheticBold = weightClass(variant.weight) >= 600
                               && source->weight < 600 && !supplied.weight;
         sized.syntheticOblique =
-            variant.italic && !source->italic && !supplied.slant;
+            wantsSyntheticItalic(variant, source->italic) && !supplied.slant;
 
         linuxAttachShaper(sized);
 

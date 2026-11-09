@@ -394,6 +394,13 @@ Font Component::getHostFont() const
     return found != nullptr ? found->getFont() : Font {};
 }
 
+const Theme& Component::getHostTheme() const
+{
+    auto* found = findHost();
+
+    return found != nullptr ? found->getTheme() : defaultTheme();
+}
+
 bool Component::hitTest(Point localPoint) const
 {
     return getLocalBounds().contains(localPoint);

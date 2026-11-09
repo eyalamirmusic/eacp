@@ -1,0 +1,9 @@
+#!/bin/sh
+# Refuses a commit whose author or committer is Claude or Anthropic.
+for ident in GIT_AUTHOR_IDENT GIT_COMMITTER_IDENT; do
+    value=$(git var "$ident")
+    if printf '%s\n' "$value" | grep -q -i -E 'claude|anthropic'; then
+        echo "pre-commit: refused, $ident is $value" >&2
+        exit 1
+    fi
+done

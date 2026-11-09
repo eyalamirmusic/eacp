@@ -1,5 +1,7 @@
 #include "Sampler.h"
 
+#include "../Pipeline/RenderPipeline.h"
+
 #include <functional>
 
 namespace eacp::GPU
@@ -19,6 +21,10 @@ SamplerDescriptor SamplerDescriptor::from(const TextureSampling& sampling)
     descriptor.magFilter = descriptor.minFilter;
     descriptor.mipFilter =
         linear ? SamplerMipFilter::Linear : SamplerMipFilter::Nearest;
+
+    if (sampling.compare == TextureCompare::LessEqual)
+        descriptor.compare = CompareFunction::LessEqual;
+
     return descriptor;
 }
 

@@ -227,7 +227,8 @@ struct Frame::Native
         depthAttachment.loadOp = vulkanDepthLoadOp(descriptor.depthAction);
         depthAttachment.storeOp = vulkanDepthStoreOp(descriptor.depthAction);
         depthAttachment.clearValue.depthStencil = {
-            1.f, static_cast<std::uint32_t>(descriptor.clearStencil)};
+            descriptor.clearDepth,
+            static_cast<std::uint32_t>(descriptor.clearStencil)};
 
         // Where independentResolveNone is false both planes must resolve
         // identically, so the stencil attachment shares this mode and view.

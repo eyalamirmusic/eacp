@@ -196,6 +196,46 @@ uint16_t keyCodeFromKeyMessage(int vk, LPARAM lParam)
     }
 }
 
+// What the key types with Control and Alt let go: KeyEvent's
+// charactersIgnoringModifiers, which is what a Ctrl+letter or leader shortcut
+// matches on. The WM_CHAR text cannot answer it, since Ctrl+A arrives there as
+// "\x01". Shift stays, as it does in NSEvent's charactersIgnoringModifiers,
+// and AltGr goes with the other two because Windows reports it as Ctrl+Alt.
+//
+// Flag 0x4 keeps ToUnicodeEx from touching the kernel's keyboard state, so a
+// dead key pending for the WM_CHAR that follows is still pending afterwards.
+std::string charactersIgnoringModifiersForVirtualKey(int vk)
+{
+    BYTE keyState[256] = {};
+
+    if (!GetKeyboardState(keyState))
+        return {};
+
+    for (auto modifier: {VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
+        keyState[modifier] = 0;
+
+    for (auto modifier: {VK_MENU, VK_LMENU, VK_RMENU})
+        keyState[modifier] = 0;
+
+    constexpr auto leaveKeyboardStateAlone = UINT {0x4};
+    constexpr auto bufferLength = 8;
+
+    const auto key = static_cast<UINT>(vk);
+    wchar_t buffer[bufferLength] = {};
+    auto length = ToUnicodeEx(key,
+                              MapVirtualKeyW(key, MAPVK_VK_TO_VSC),
+                              keyState,
+                              buffer,
+                              bufferLength,
+                              leaveKeyboardStateAlone,
+                              GetKeyboardLayout(0));
+
+    if (length <= 0)
+        return {};
+
+    return Strings::narrow(std::wstring(buffer, static_cast<size_t>(length)));
+}
+
 int virtualKeyFromKeyCode(uint16_t keyCode)
 {
     return toVirtualKey(keyCode);

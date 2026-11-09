@@ -451,6 +451,71 @@ auto tImageIsCutByClip = test("ImageBatch/anImageIsCutByTheClip") = []
     check(isImageColour(rendered.at(30.f, 20.f), Color::white()), "cut by the clip");
 };
 
+auto tRadiiFitTheRect = test("RoundedRect/radiiPastTheRectShrinkTogether") = []
+{
+    auto uniform = fittedRadii({{0.f, 0.f, 40.f, 20.f}, CornerRadii::all(30.f)});
+
+    check(isNearlyEqual(uniform.topLeft, 10.f), "half the shorter side");
+    check(isNearlyEqual(uniform.bottomRight, 10.f));
+
+    auto uneven = fittedRadii({{0.f, 0.f, 40.f, 40.f}, {30.f, 50.f, 0.f, 10.f}});
+
+    check(isNearlyEqual(uneven.topLeft, 15.f), "the top asks for twice its length");
+    check(isNearlyEqual(uneven.topRight, 25.f));
+    check(isNearlyEqual(uneven.bottomLeft, 5.f));
+
+    auto kept = fittedRadii({{0.f, 0.f, 40.f, 40.f}, {4.f, 0.f, 8.f, 2.f}});
+
+    check(isNearlyEqual(kept.topLeft, 4.f) && isNearlyEqual(kept.bottomRight, 8.f),
+          "radii that fit are left alone");
+};
+
+auto tImageIsCutByCorners = test("ImageBatch/anImageIsCutByItsCorners") = []
+{
+    if (!hasDevice())
+        return;
+
+    struct Rounded final : Component
+    {
+        void paint(UI::Graphics& g) override
+        {
+            auto image = getHost()->getImageCache().get(solid(2, red));
+            auto bounds = getLocalBounds();
+            auto box = RoundedRect {bounds, {16.f, 16.f, 16.f, 0.f}};
+            auto source = Rect {0.f, 0.f, 2.f, 2.f};
+
+            for (auto i = 0; i < 4; ++i)
+                g.drawImage(image,
+                            source,
+                            {(float) i * 10.f, 0.f, 10.f, bounds.h},
+                            box);
+        }
+    };
+
+    auto host = ComponentHost {};
+    auto rounded = Rounded {};
+
+    host.setBackgroundColour(Color::white());
+    host.setRootComponent(rounded);
+    host.setBounds({0.f, 0.f, 40.f, 40.f});
+    host.resized();
+
+    auto rendered = Rendered {host};
+
+    check(isImageColour(rendered.at(20.f, 20.f), red));
+    check(isImageColour(rendered.at(1.f, 1.f), Color::white()),
+          "the top-left corner is cut by the box, not by its tile");
+    check(isImageColour(rendered.at(38.5f, 1.f), Color::white()));
+    check(isImageColour(rendered.at(38.5f, 38.5f), Color::white()));
+    check(isImageColour(rendered.at(1.f, 38.5f), red), "a square corner stays");
+    check(isImageColour(rendered.at(5.f, 20.f), red), "the edge between corners");
+    check(host.getLastImageDrawCount() == 1, "four tiles, one box, one draw");
+
+    auto edge = rendered.at(16.f - 16.f / std::sqrt(2.f), 16.f - 16.f / std::sqrt(2.f));
+
+    check(edge.g > 0.05f && edge.g < 0.95f, "anti-aliased on the curve");
+};
+
 auto tUnusedTextureGoes =
     test("ComponentHost/aTextureNothingDrawsIsDroppedAfterTheWalk") = []
 {
@@ -577,4 +642,104 @@ auto tDeviceChainDrawsLikeCpu =
               "minified, " + std::to_string(largestDifference(small, smallCached))
                   + " apart" + label);
     }
+};
+
+namespace
+{
+struct Cut final : Component
+{
+    void paint(UI::Graphics& g) override
+    {
+        auto image = getHost()->getImageCache().get(solid(2, red));
+
+        g.drawImage(image, {0.f, 0.f, 2.f, 2.f}, area, corners);
+    }
+
+    Rect area;
+    RoundedRect corners;
+};
+
+eacp::Graphics::Image drawCut(ComponentHost& host,
+                              Cut& cut,
+                              const RoundedRect& corners,
+                              float scale)
+{
+    cut.corners = corners;
+    cut.repaint();
+
+    return host.renderToImage(scale);
+}
+} // namespace
+
+// An uncut quad is cut by a square just past its edges, which has to read one
+// at every pixel the quad touches. Multisampled, a pixel a sample of the quad
+// covers shades at a centre outside it - at half a point per device pixel, an
+// edge at 5.7 or 14.3 device pixels - so the edges are compared against the
+// same quad cut by a square nowhere near it, which costs no alpha anywhere.
+auto tUncutEdgesKeepTheirAlpha =
+    test("ImageBatch/anUncutImageDrawsItsEdgesAsAFarCutDoes") = []
+{
+    if (!hasDevice() || !GPU::Device::shared().supportsSampleCount(4))
+        return;
+
+    auto cut = Cut {};
+    auto host = ComponentHost {};
+
+    cut.area = {11.4f, 11.4f, 17.2f, 17.2f};
+
+    host.setSampleCount(4);
+    host.setBackgroundColour(Color::white());
+    host.setRootComponent(cut);
+    host.setBounds({0.f, 0.f, 40.f, 40.f});
+    host.resized();
+
+    auto far = RoundedRect {{-20.f, -20.f, 80.f, 80.f}, CornerRadii::all(1.f)};
+
+    for (auto scale: {0.5f, 1.f, 2.f})
+    {
+        auto uncut = drawCut(host, cut, {}, scale);
+        auto reference = drawCut(host, cut, far, scale);
+
+        check(largestDifference(uncut, reference) == 0,
+              "at " + std::to_string(scale) + "x, "
+                  + std::to_string(largestDifference(uncut, reference)) + " apart");
+    }
+};
+
+// A rect with no radius is no cut, whether it is recorded or handed to the
+// batch: a square cut is what the clip is for.
+auto tZeroRadiiAreNoCut = test("ImageBatch/aRectWithNoRadiusDoesNotCut") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto square = RoundedRect {{10.f, 10.f, 20.f, 20.f}};
+
+    check(!square.isRounded());
+    check(RoundedRect {square.rect, {0.f, 0.f, 2.f, 0.f}}.isRounded());
+    check(!RoundedRect {{}, CornerRadii::all(4.f)}.isRounded(), "nor an empty one");
+
+    auto cache = ImageCache {};
+    auto image = cache.get(solid(2, red));
+    auto recorder = Recorder {};
+
+    recorder.g.drawImage(image, {0.f, 0.f, 2.f, 2.f}, {0.f, 0.f, 40.f, 40.f}, square);
+
+    check(recorder.list.getImages()[0].corners.isEmpty(), "recorded uncut");
+
+    auto cut = Cut {};
+    auto host = ComponentHost {};
+
+    cut.area = {0.f, 0.f, 40.f, 40.f};
+    cut.corners = square;
+
+    host.setBackgroundColour(Color::white());
+    host.setRootComponent(cut);
+    host.setBounds({0.f, 0.f, 40.f, 40.f});
+    host.resized();
+
+    auto rendered = Rendered {host};
+
+    check(isImageColour(rendered.at(20.f, 20.f), red));
+    check(isImageColour(rendered.at(5.f, 5.f), red), "drawn past the square");
 };

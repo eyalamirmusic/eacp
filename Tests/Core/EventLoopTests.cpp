@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <eacp/Core/Threads/CallAfter.h>
+
 #include <array>
 #include <chrono>
 #include <thread>
@@ -162,4 +164,23 @@ auto tCallAfterNestsFromItsOwnCallback =
     callAfter(eacp::Time::MS {5}, [&] { scheduleNext(scheduleNext); });
 
     check(runEventLoopUntil([&] { return ticks == 5; }, eacp::Time::MS {5000}));
+};
+
+// The scheduler thread sleeps on the nearest deadline while stop() frees the
+// entry holding it, which is what the static destructor does at exit. Under
+// ASan this is a heap-use-after-free if the wait reads the deadline in place.
+auto tCallAfterStopsWithADeadlinePending =
+    test("EventLoop/callAfter/stopsWhileADeadlineIsPending") = []
+{
+    auto stale = false;
+    callAfter(eacp::Time::MS {60000}, [&] { stale = true; });
+
+    eacp::Time::sleepMS(50);
+    eacp::Threads::stopCallAfterScheduler();
+
+    auto fired = false;
+    callAfter(eacp::Time::MS {5}, [&] { fired = true; });
+
+    check(runEventLoopUntil([&] { return fired; }, eacp::Time::MS {2000}));
+    check(!stale);
 };

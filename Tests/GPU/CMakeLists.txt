@@ -3,11 +3,29 @@
 nano_add_executable(GPUCodegenTests
         SOURCES
             AtomicCodegenTests.cpp
+            AtomicOpsCodegenTests.cpp
+            CompilationInfoTests.cpp
             ComputeKernelCodegenTests.cpp
+            ControlFlowCodegenTests.cpp
+            Float16CodegenTests.cpp
+            FunctionCodegenTests.cpp
             GroupReductionCodegenTests.cpp
+            InterpolationCodegenTests.cpp
+            OverrideCodegenTests.cpp
+            ReflectionCodegenTests.cpp
+            SamplerBindingCodegenTests.cpp
             ShaderCodegenTests.cpp
+            ShaderCompilerTests.cpp
+            ShaderEmissionTests.cpp
             SimdMatrixCodegenTests.cpp
-        TARGETS eacp-gpu-codegen eacp-cpu-compute)
+            StageBuiltInCodegenTests.cpp
+            StorageTextureCodegenTests.cpp
+            StructCodegenTests.cpp
+            TextureFunctionCodegenTests.cpp
+            TypesCodegenTests.cpp
+            VertexStatementCodegenTests.cpp
+            WgslBuiltinCodegenTests.cpp
+        TARGETS eacp-gpu-codegen eacp-cpu-compute eacp-shader-compiler)
 
 # With eacp-spirv around, every emitted GLSL source is compiled by glslang too;
 # without it the checks compile to nothing and the string assertions stand alone.
@@ -20,6 +38,14 @@ endfunction()
 
 eacp_enable_glsl_compile_checks(GPUCodegenTests)
 
+if (MSVC)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(GPUCodegenTests PRIVATE /clang:-ffp-contract=off)
+    endif ()
+else ()
+    target_compile_options(GPUCodegenTests PRIVATE -ffp-contract=off)
+endif ()
+
 if (NOT EACP_HAS_GPU)
     return ()
 endif ()
@@ -29,6 +55,7 @@ endif ()
 # except for the CPU half of a compute cross-check (CpuCrossCheck.h).
 set(gpu_test_sources
         AdoptedMemoryTests.cpp
+        AtomicOpsDeviceTests.cpp
         AtomicTests.cpp
         BackingScaleTests.cpp
         BaseVertexTests.cpp
@@ -38,19 +65,25 @@ set(gpu_test_sources
         BufferRangeTests.cpp
         CommandBufferTimingTests.cpp
         CommandBufferWaitTests.cpp
+        CompilationInfoDeviceTests.cpp
         CompressedTextureTests.cpp
         CopyTests.cpp
         ComputeBufferRangeTests.cpp
         ComputeBufferSlotTests.cpp
         ConcurrentPassTests.cpp
+        ContinuousRenderSwitchTests.cpp
+        ControlFlowDeviceTests.cpp
         CoordinateSpaceTests.cpp
         CubeTextureTests.cpp
         CullModeTests.cpp
         DepthActionTests.cpp
+        DepthBiasTests.cpp
+        DepthClearTests.cpp
         DepthTextureTests.cpp
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp
         ExternalGeometryTests.cpp
+        Float16DeviceTests.cpp
         FormatTargetTests.cpp
         TextureFormatTests.cpp
         DrawableCopyTests.cpp
@@ -58,6 +91,8 @@ set(gpu_test_sources
         FrameComputeTests.cpp
         FrameRedirectTests.cpp
         FrameTimingTests.cpp
+        FragmentBuiltInTests.cpp
+        FunctionDeviceTests.cpp
         GPUSmokeTests.cpp
         GPUSnapshotTests.cpp
         GroupReductionTests.cpp
@@ -66,7 +101,9 @@ set(gpu_test_sources
         IndirectDrawTests.cpp
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
+        InterpolationDeviceTests.cpp
         IntrinsicTests.cpp
+        KernelBuiltInDeviceTests.cpp
         KernelImageTests.cpp
         LargeBufferTests.cpp
         MipmapTests.cpp
@@ -75,30 +112,39 @@ set(gpu_test_sources
         MipGenerationTests.cpp
         MultiTargetTests.cpp
         OcclusionQueryTests.cpp
+        OverrideDeviceTests.cpp
         PackedBFloat16Tests.cpp
         PackedHalfTests.cpp
         PackedQuantizedTests.cpp
+        PerDeviceTests.cpp
         PipelineStateTests.cpp
+        PrecompiledShaderTests.cpp
         ProgramGraphTests.cpp
         RecordedCountsTests.cpp
         RenderBufferRangeTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
+        SamplerBindingDeviceTests.cpp
         SamplerTests.cpp
         ScissorTests.cpp
         SelectTests.cpp
         ShaderBlendTests.cpp
         ShaderCompileTests.cpp
+        ShadowSamplingTests.cpp
         SharedMemoryTests.cpp
         SimdMatrixTests.cpp
         SpriteBatchTests.cpp
+        StageBuiltInTests.cpp
         StencilTests.cpp
+        StorageTextureDeviceTests.cpp
         StorePlacementTests.cpp
         StreamedRangeDrawTests.cpp
         StreamingBufferTests.cpp
+        StructDeviceTests.cpp
         SubresourceTargetTests.cpp
         SuppliedMipChainTests.cpp
         TextureCreationTests.cpp
+        TextureFunctionDeviceTests.cpp
         TextureReadTests.cpp
         TextureRegionTests.cpp
         TextureArrayTests.cpp
@@ -106,19 +152,37 @@ set(gpu_test_sources
         TextureUpdateTests.cpp
         ThreadGroupSizeTests.cpp
         ThreadIndexVectorTests.cpp
+        TypesDeviceTests.cpp
         UIntBufferTests.cpp
         UIntBufferVectorTests.cpp
         UIntScalarTests.cpp
         UIntVectorTests.cpp
         VertexFormatTests.cpp
         VertexOnlyPipelineTests.cpp
+        VertexStatementDeviceTests.cpp
         VertexTextureTests.cpp
         ViewportTests.cpp
+        WgslIntrinsicTests.cpp
         TestMain.cpp)
 
-# The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++.
+# The zero-copy CVPixelBuffer wrap test and the Metal build-failure policy are
+# Metal-only Objective-C++.
 if (APPLE)
-    list(APPEND gpu_test_sources TextureInteropTests.mm)
+    list(APPEND gpu_test_sources TextureInteropTests.mm MetalErrorsTests.mm)
+
+    if (NOT IOS)
+        list(APPEND gpu_test_sources HiddenWindowTests-macOS.mm)
+    endif ()
+endif ()
+
+# PrecompiledShaderTests' build played in-process: each platform compiles a
+# source to its own backend's binary (PrecompiledTestBlobs.h).
+if (APPLE)
+    list(APPEND gpu_test_sources PrecompiledTestBlobs-Apple.cpp)
+elseif (WIN32)
+    list(APPEND gpu_test_sources PrecompiledTestBlobs-Windows.cpp)
+else ()
+    list(APPEND gpu_test_sources PrecompiledTestBlobs-Linux.cpp)
 endif ()
 
 # The one file that needs a display: a GPUView presenting through a Vulkan
@@ -135,6 +199,12 @@ if (WIN32)
     list(APPEND gpu_test_sources TransparentViewTests-Windows.cpp)
 endif ()
 
+# The opt-in DXC compile, and EACP_D3D12_DXC=1 in TestMain.cpp, which runs the
+# whole suite under it.
+if (WIN32)
+    list(APPEND gpu_test_sources DxcTests-Windows.cpp)
+endif ()
+
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
 # that draw it, so it cannot be checked without one of them. SpriteBatchTests
@@ -149,6 +219,10 @@ nano_add_executable(GPUTests
 
 eacp_enable_glsl_compile_checks(GPUTests)
 
+if (WIN32)
+    target_link_libraries(GPUTests PRIVATE eacp-gpu-dxc)
+endif ()
+
 # TextureSettleTests reads VulkanContext::submissionCount, so this one test
 # target sees the backend eacp-gpu otherwise keeps to itself.
 if (LINUX)
@@ -157,6 +231,10 @@ endif ()
 
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")
+endif ()
+
+if (APPLE AND NOT IOS)
+    target_link_libraries(GPUTests PRIVATE "-framework Cocoa")
 endif ()
 
 # The present cases open a window each, and on the X11 lane they share the

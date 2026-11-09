@@ -218,18 +218,84 @@ CTFontRef withPinnedAxes(CTFontRef font, float pointSize, const AxisSettings& se
     return (CTFontRef) CFRetain(font);
 }
 
-// Returns a +1 retained font; callers adopt it into a CFRef.
-CTFontRef makeVariant(CTFontRef base, FontStyle style)
+bool isItalicFont(CTFontRef font)
 {
-    const auto wanted = (CTFontSymbolicTraits) ((isBold(style) ? kCTFontTraitBold : 0)
-                                                | (isItalic(style) ? kCTFontTraitItalic : 0));
+    return (CTFontGetSymbolicTraits(font) & kCTFontTraitItalic) != 0;
+}
 
-    if (wanted != 0)
-        if (auto* derived = CTFontCreateCopyWithSymbolicTraits(
-                base, 0, nullptr, wanted, kCTFontTraitBold | kCTFontTraitItalic))
+CTFontRef retained(CTFontRef font)
+{
+    return (CTFontRef) CFRetain(font);
+}
+
+// The font leaning syntheticItalicAngle to the right, as WebKit draws a
+// synthetic italic: a shear on the font's own matrix, so every glyph CoreText
+// draws or bounds leans. Returns a +1 retained font.
+CTFontRef sheared(CTFontRef font)
+{
+    constexpr auto degreesToRadians = 3.14159265358979323846 / 180.0;
+    const auto shear = (CGFloat) std::tan(syntheticItalicAngle * degreesToRadians);
+    const auto matrix = CGAffineTransformMake(1, 0, shear, 1, 0, 0);
+
+    if (auto* leaning =
+            CTFontCreateCopyWithAttributes(font, CTFontGetSize(font), &matrix, nullptr))
+        return leaning;
+
+    return retained(font);
+}
+
+// The italic sibling CoreText finds for a face, else the face itself.
+// Returns a +1 retained font.
+CTFontRef italicSiblingOf(CTFontRef font)
+{
+    if (auto* derived = CTFontCreateCopyWithSymbolicTraits(
+            font, 0, nullptr, kCTFontTraitItalic, kCTFontTraitItalic))
+    {
+        if (isItalicFont(derived))
             return derived;
 
-    return (CTFontRef) CFRetain(base);
+        CFRelease(derived);
+    }
+
+    return retained(font);
+}
+
+// A variant's face, twice: the font it is shaped and measured in, and the one
+// its glyphs are drawn from. They differ only for a synthetic italic, drawn
+// sheared and shaped upright - CoreText shapes a sheared font a fraction of
+// a pixel a word narrower, which is enough to rewrap a paragraph, and the
+// lean is meant to move nothing but the ink.
+struct VariantFont
+{
+    CFRef<CTFontRef> shaping;
+    CFRef<CTFontRef> drawing;
+};
+
+VariantFont variantFontOf(CTFontRef font, bool lacksItalic, const FontVariant& variant)
+{
+    auto result = VariantFont {};
+    result.shaping.reset(lacksItalic ? italicSiblingOf(font) : retained(font));
+
+    const auto leans =
+        lacksItalic && wantsSyntheticItalic(variant, isItalicFont(result.shaping.get()));
+
+    result.drawing.reset(leans ? sheared(result.shaping.get())
+                               : retained(result.shaping.get()));
+
+    return result;
+}
+
+VariantFont makeVariant(CTFontRef base, const FontVariant& variant)
+{
+    auto font = CFRef<CTFontRef> {retained(base)};
+
+    if (variant.weight >= 600)
+        if (auto* derived = CTFontCreateCopyWithSymbolicTraits(
+                base, 0, nullptr, kCTFontTraitBold, kCTFontTraitBold))
+            font.reset(derived);
+
+    return variantFontOf(
+        font.get(), variant.italic && !isItalicFont(font.get()), variant);
 }
 
 // CoreText's weight trait is a number from -1 to 1 on a scale of its own;
@@ -482,34 +548,51 @@ struct GlyphRasterizer::Native
         return best;
     }
 
-    CTFontRef fontFor(const FontVariant& variant) const
+    const VariantFont* variantFor(const FontVariant& variant) const
     {
         if (!base)
             return nullptr;
 
-        const auto key = weightClass(variant.weight) * 2 + (variant.italic ? 1 : 0);
+        const auto key = faceKeyOf(variant);
         auto found = variants.find(key);
 
-        if (found != variants.end())
-            return found->second.get();
+        if (found == variants.end())
+            found = variants.emplace(key, makeFont(variant)).first;
 
-        auto font = CFRef<CTFontRef> {makeFont(variant)};
-        auto* result = font.get();
-        variants.emplace(key, std::move(font));
-
-        return result;
+        return &found->second;
     }
 
-    // Returns a +1 retained font: the family's nearest face, moved along its
-    // own axes to what the face itself was not, given the traits it still
-    // lacks synthetically where CoreText can, and the base face when the
-    // family could not be enumerated at all.
-    CTFontRef makeFont(const FontVariant& variant) const
+    CTFontRef fontFor(const FontVariant& variant) const
+    {
+        const auto* font = variantFor(variant);
+
+        return font != nullptr ? font->shaping.get() : nullptr;
+    }
+
+    CTFontRef drawingFontFor(const FontVariant& variant) const
+    {
+        const auto* font = variantFor(variant);
+
+        return font != nullptr ? font->drawing.get() : nullptr;
+    }
+
+    bool leansSynthetically(const FontVariant& variant) const
+    {
+        const auto* font = variantFor(variant);
+
+        return font != nullptr && font->drawing.get() != font->shaping.get();
+    }
+
+    // The family's nearest face, moved along its own axes to what the face
+    // itself was not, given the traits it still lacks synthetically where
+    // CoreText can, and the base face when the family could not be
+    // enumerated at all.
+    VariantFont makeFont(const FontVariant& variant) const
     {
         const auto* face = nearestFace(variant);
 
         if (face == nullptr)
-            return makeVariant(base.get(), styleOf(variant));
+            return makeVariant(base.get(), variant);
 
         auto matched = CFRef<CTFontRef> {CTFontCreateWithFontDescriptor(
             face->descriptor.get(), request.pixelSize(), nullptr)};
@@ -520,21 +603,19 @@ struct GlyphRasterizer::Native
             withPinnedAxes(matched.get(), request.pointSize, settings)};
 
         if (!font)
-            return makeVariant(base.get(), styleOf(variant));
+            return makeVariant(base.get(), variant);
 
         const auto missingBold =
             variant.weight >= 600 && face->weight < 600 && !settings.weight;
         const auto missingItalic = variant.italic && !face->italic
                                    && !settings.italic && !settings.slant;
-        const auto wanted = (CTFontSymbolicTraits) ((missingBold ? kCTFontTraitBold : 0)
-                                                    | (missingItalic ? kCTFontTraitItalic : 0));
 
-        if (wanted != 0)
+        if (missingBold)
             if (auto* derived = CTFontCreateCopyWithSymbolicTraits(
-                    font.get(), 0, nullptr, wanted, wanted))
-                return derived;
+                    font.get(), 0, nullptr, kCTFontTraitBold, kCTFontTraitBold))
+                font.reset(derived);
 
-        return (CTFontRef) CFRetain(font.get());
+        return variantFontOf(font.get(), missingItalic, variant);
     }
 
     FontMetrics metrics(const FontVariant& variant) const
@@ -578,6 +659,34 @@ struct GlyphRasterizer::Native
         fallbacks.create((CTFontRef) CFRetain(runFont));
 
         return fallbacks.size();
+    }
+
+    // A fallback in a run drawn sheared leans with the face it stands in for,
+    // unless it is an italic of its own.
+    CTFontRef drawingFontOf(GlyphKey key, const FontVariant& variant) const
+    {
+        if (key.font == 0)
+            return drawingFontFor(variant);
+
+        auto* fallback = fontOf(key, variant);
+
+        if (fallback == nullptr || isItalicFont(fallback)
+            || !leansSynthetically(variant))
+            return fallback;
+
+        return shearedFallback(key.font - 1);
+    }
+
+    CTFontRef shearedFallback(int index) const
+    {
+        auto found = shearedFallbacks.find(index);
+
+        if (found == shearedFallbacks.end())
+            found = shearedFallbacks
+                        .emplace(index, CFRef<CTFontRef> {sheared(fallbacks[index].get())})
+                        .first;
+
+        return found->second.get();
     }
 
     CTFontRef fontOf(GlyphKey key, const FontVariant& variant) const
@@ -668,16 +777,17 @@ struct GlyphRasterizer::Native
                           const RasterRequest& request) const
     {
         auto result = GlyphBitmap {};
-        auto font = fontOf(key, variant);
+        auto shaping = fontOf(key, variant);
+        auto font = drawingFontOf(key, variant);
 
-        if (font == nullptr)
+        if (shaping == nullptr || font == nullptr)
             return result;
 
         auto glyph = (CGGlyph) key.glyph;
 
         result.valid = true;
         result.advance = (float) CTFontGetAdvancesForGlyphs(
-            font, kCTFontOrientationHorizontal, &glyph, nullptr, 1);
+            shaping, kCTFontOrientationHorizontal, &glyph, nullptr, 1);
 
         const auto colored =
             (CTFontGetSymbolicTraits(font) & kCTFontTraitColorGlyphs) != 0;
@@ -781,8 +891,9 @@ struct GlyphRasterizer::Native
     FontRequest request;
     CFRef<CTFontRef> base;
     Vector<FamilyFace> familyFaces;
-    mutable std::map<int, CFRef<CTFontRef>> variants;
+    mutable std::map<int, VariantFont> variants;
     mutable Vector<CFRef<CTFontRef>> fallbacks;
+    mutable std::map<int, CFRef<CTFontRef>> shearedFallbacks;
     bool valid = false;
     std::string resolved;
 };

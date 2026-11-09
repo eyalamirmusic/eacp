@@ -7,12 +7,25 @@
 
 namespace eacp::GPU
 {
-// How long one labelled pass took on the GPU: the start of its first stage to
-// the end of its last.
+// How long one labelled pass took on the GPU, two ways.
+//
+// `milliseconds` is the pass's share of the frame, and the one to add up: the
+// time the GPU had this pass's work in flight, with any stretch it shared with
+// other timed passes split evenly between them. The shares of a frame's passes
+// sum to the time at least one of them was running, so never to more than
+// FrameTimings::milliseconds, and to nearly all of it when every pass is
+// labelled. On D3D12 and Vulkan, whose passes do not overlap, a share is the
+// pass's span.
+//
+// `spanMilliseconds` is the start of the pass's first stage to the end of its
+// last: the waiting as well as the working, and not summable on Metal. A
+// tile-based GPU starts a render pass's vertex stage while the passes before it
+// are still shading, so a late pass's span can cover most of the frame.
 struct PassTiming
 {
     std::string label;
     double milliseconds = 0.0;
+    double spanMilliseconds = 0.0;
 };
 
 // What one frame cost the GPU - every pass that was given a label, in the order

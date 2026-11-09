@@ -32,3 +32,7 @@ endif ()
 
 # Key events and the clipboard, shown live.
 add_subdirectory(KeyInspector)
+
+# Apps::showAlert: each icon, a cancel button, five buttons and one raised from
+# a worker thread, with the answer written beside them.
+add_subdirectory(AlertDemo)

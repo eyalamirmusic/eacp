@@ -63,6 +63,9 @@ public:
     void setStencil(bool enabled);
     bool hasStencil() const;
 
+    // On macOS continuous mode pauses while the view's window is minimised,
+    // ordered out, covered or on a sleeping display, and resumes when it can
+    // be seen again; update() does not run in between.
     void setContinuous(bool continuous);
     bool isContinuous() const;
 

@@ -53,6 +53,10 @@ static EventLoopState& getEventLoopState()
 
 static thread_local int runForDepth = 0;
 
+// runForDepth across every thread, so isEventLoopRunning() asked on a worker
+// sees the loop thread's nested pumps, which are what its callAsync reaches.
+static std::atomic<int> runForDepthInProcess {0};
+
 struct PendingCallbacks
 {
     void run()
@@ -104,6 +108,15 @@ static LRESULT CALLBACK messageWindowProc(HWND hwnd,
     }
 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// Every eacp copy in the process posts the same WM_EACP_RUN_PENDING id, so
+// only the thread-message fallback is unambiguously this copy's. One addressed
+// to a window must be dispatched: to this copy's messageWindowProc, or to
+// another copy's (a plugin DLL's) whose callbacks would otherwise never run.
+static bool isRunPendingThreadMessage(const MSG& msg)
+{
+    return msg.message == WM_EACP_RUN_PENDING && msg.hwnd == nullptr;
 }
 
 // The message-only window's class: registered once per copy against this
@@ -207,7 +220,7 @@ static DWORD getParentProcessId()
     return parent;
 }
 
-static void installParentDeathWatchdog()
+static void startParentDeathWatchdog()
 {
     auto parentPid = getParentProcessId();
     if (parentPid == 0)
@@ -237,6 +250,13 @@ static void installParentDeathWatchdog()
             callAsync([] { getEventLoop().quit(); });
         })
         .detach();
+}
+
+// runFor re-enters initLoopThread on every pass of a nested pump; one watchdog is enough.
+static void installParentDeathWatchdog()
+{
+    static auto parentDeathWatchdogInstalled = std::once_flag {};
+    std::call_once(parentDeathWatchdogInstalled, startParentDeathWatchdog);
 }
 
 namespace
@@ -290,7 +310,7 @@ void EventLoop::run()
         if (result == 0 || result == -1)
             break;
 
-        if (msg.message == WM_EACP_RUN_PENDING)
+        if (isRunPendingThreadMessage(msg))
         {
             getPendingCallbacks().run();
             continue;
@@ -315,7 +335,13 @@ bool EventLoop::runFor(Time::MS timeout)
     initLoopThread();
 
     runForDepth++;
-    auto popDepth = std::shared_ptr<void> {nullptr, [](void*) { runForDepth--; }};
+    runForDepthInProcess++;
+    auto popDepth = std::shared_ptr<void> {nullptr,
+                                           [](void*)
+                                           {
+                                               runForDepth--;
+                                               runForDepthInProcess--;
+                                           }};
 
     auto deadline = Time::Deadline {timeout};
     auto timedOut = false;
@@ -353,7 +379,7 @@ bool EventLoop::runFor(Time::MS timeout)
                 break;
             }
 
-            if (msg.message == WM_EACP_RUN_PENDING)
+            if (isRunPendingThreadMessage(msg))
             {
                 getPendingCallbacks().run();
                 continue;
@@ -386,7 +412,8 @@ void EventLoop::quit()
 
 bool isEventLoopRunning()
 {
-    return runForDepth > 0 || getEnvValue("EACP_ROOT_LOOP") == "1";
+    return runForDepth > 0 || runForDepthInProcess > 0
+           || getEnvValue("EACP_ROOT_LOOP") == "1";
 }
 
 void stopProcessRootLoop()

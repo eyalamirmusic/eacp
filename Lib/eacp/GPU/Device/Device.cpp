@@ -3,10 +3,12 @@
 #include "../Frame/Frame.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <eacp/Graphics/Image/Image.h>
 
 #include <cassert>
 #include <mutex>
+#include <typeindex>
 #include <unordered_map>
 
 // Portable Device members. The platform backends (Device-macOS.mm /
@@ -90,16 +92,6 @@ std::shared_ptr<Device::SamplerCache> Device::makeSamplerCache()
     return std::make_shared<SamplerCache>();
 }
 
-namespace
-{
-constexpr TextureSampling samplingConfigurationsInOrder[] = {
-    {TextureFilter::Nearest, TextureAddressMode::Clamp},
-    {TextureFilter::Nearest, TextureAddressMode::Repeat},
-    {TextureFilter::Linear, TextureAddressMode::Clamp},
-    {TextureFilter::Linear, TextureAddressMode::Repeat},
-};
-} // namespace
-
 Sampler Device::makeSampler(const SamplerDescriptor& descriptor)
 {
     if (!isValid())
@@ -113,9 +105,9 @@ Sampler Device::makeSampler(const SamplerDescriptor& descriptor)
 
     auto native = static_cast<void*>(nullptr);
 
-    for (const auto& sampling: samplingConfigurationsInOrder)
-        if (SamplerDescriptor::from(sampling) == descriptor)
-            native = nativeSampler(sampling);
+    for (auto index = 0; index < samplingConfigurations; ++index)
+        if (SamplerDescriptor::from(samplingConfiguration(index)) == descriptor)
+            native = nativeSampler(samplingConfiguration(index));
 
     if (native == nullptr)
         native = createNativeSampler(descriptor);
@@ -126,6 +118,50 @@ Sampler Device::makeSampler(const SamplerDescriptor& descriptor)
     auto sampler = Sampler {native, descriptor};
     cache.emplace(descriptor, sampler);
     return sampler;
+}
+
+// Recursive because a perDevice object's constructor may ask for another, and
+// a Vector rather than a map so they go newest first, as statics do: one made
+// inside another's constructor is still there for its destructor.
+struct Device::PerDeviceObjects
+{
+    struct Entry
+    {
+        std::type_index type;
+        std::shared_ptr<void> object;
+    };
+
+    ~PerDeviceObjects()
+    {
+        while (!entries.empty())
+        {
+            auto newest = std::move(entries.back().object);
+            entries.pop_back();
+        }
+    }
+
+    std::recursive_mutex mutex;
+    Vector<Entry> entries;
+};
+
+std::shared_ptr<Device::PerDeviceObjects> Device::makePerDeviceObjects()
+{
+    return std::make_shared<PerDeviceObjects>();
+}
+
+void* Device::findOrMakePerDevice(const std::type_info& type,
+                                  std::shared_ptr<void> (*make)())
+{
+    auto lock = std::scoped_lock(perDeviceObjects->mutex);
+    auto& entries = perDeviceObjects->entries;
+
+    for (auto& entry: entries)
+        if (entry.type == type)
+            return entry.object.get();
+
+    auto object = make();
+    entries.add(PerDeviceObjects::Entry {type, object});
+    return object.get();
 }
 
 ShaderLibrary Device::makeShaderLibrary(const ShaderSource& source)
@@ -141,6 +177,12 @@ RenderPipeline Device::makeRenderPipeline(const RenderPipelineDescriptor& descri
 ComputePipeline Device::makeComputePipeline(const ShaderLibrary& library)
 {
     return {*this, library};
+}
+
+ComputePipeline Device::makeComputePipeline(const ShaderLibrary& library,
+                                            const PipelineConstants& constants)
+{
+    return {*this, library, constants};
 }
 
 CommandBuffer Device::makeCommandBuffer()

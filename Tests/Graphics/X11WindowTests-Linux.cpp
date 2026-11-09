@@ -18,14 +18,18 @@
 #endif
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <source_location>
 #include <linux/input-event-codes.h>
 #include <optional>
+#include <poll.h>
+#include <signal.h>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
 #include <vector>
 
 // The X11 backend against a real server: not headless, and every case
@@ -2634,9 +2638,96 @@ auto tEmulatedWheelButtonsAreDropped =
     check(!x11IsEmulatedWheelButton(emulated, 8));
 };
 
+namespace
+{
+struct sigaction sigPipeDisposition()
+{
+    struct sigaction current {};
+    ::sigaction(SIGPIPE, nullptr, &current);
+
+    return current;
+}
+
+void setSigPipeDisposition(const struct sigaction& disposition)
+{
+    ::sigaction(SIGPIPE, &disposition, nullptr);
+}
+
+void setSigPipeHandler(void (*handler)(int))
+{
+    struct sigaction disposition {};
+    disposition.sa_handler = handler;
+    ::sigemptyset(&disposition.sa_mask);
+
+    setSigPipeDisposition(disposition);
+}
+
+bool sigPipeIsDefault()
+{
+    const auto current = sigPipeDisposition();
+
+    return (current.sa_flags & SA_SIGINFO) == 0 && current.sa_handler == SIG_DFL;
+}
+
+void hostsOwnSigPipeHandler(int) {}
+
+// Waits on the socket without reading it, so xcb still believes the
+// connection is up when this returns true.
+bool serverClosedItsEnd(xcb_connection_t* connection)
+{
+    auto descriptor = pollfd {xcb_get_file_descriptor(connection), POLLRDHUP, 0};
+    auto deadline = Time::Deadline {x11TestTimeout};
+
+    while (!deadline.expired())
+    {
+        descriptor.revents = 0;
+
+        if (::poll(&descriptor, 1, 10) > 0
+            && (descriptor.revents & (POLLRDHUP | POLLHUP)) != 0)
+            return true;
+    }
+
+    return false;
+}
+
+// What libxcb's writev does when the server hangs up between its poll and its
+// write: with SIGPIPE at its default, this ends the process.
+void writeIntoTheClosedSocket(xcb_connection_t* connection)
+{
+    const auto byte = char {};
+    const auto written = ::write(xcb_get_file_descriptor(connection), &byte, 1);
+
+    check(written < 0 && errno == EPIPE, "the closed socket took a write");
+}
+} // namespace
+
+// No display needed: libxcb writes with no MSG_NOSIGNAL, so a dead server's
+// SIGPIPE has to be ignored before the connection opens - but only when nobody
+// in the process asked for something else, since a plugin copy shares its
+// dispositions with the host it was loaded into.
+auto tBrokenPipesAreIgnoredUnlessHandled =
+    test("X11/aDefaultSigPipeIsIgnoredAndAHostsHandlerKept") = []
+{
+    const auto saved = sigPipeDisposition();
+
+    setSigPipeHandler(SIG_DFL);
+    x11IgnoreBrokenPipesUnlessHandled();
+
+    check(sigPipeDisposition().sa_handler == SIG_IGN,
+          "the default SIGPIPE was left to kill the process");
+
+    setSigPipeHandler(hostsOwnSigPipeHandler);
+    x11IgnoreBrokenPipesUnlessHandled();
+
+    check(sigPipeDisposition().sa_handler == hostsOwnSigPipeHandler,
+          "a handler the host installed was replaced");
+
+    setSigPipeDisposition(saved);
+};
+
 // Last in the file on purpose: the connection it closes is the process's only
-// one, so every case after it in a direct run would find itself surfaceless.
-// ctest gives each case a process of its own, which is where this is honest.
+// one, so every case after it in the same process would find itself
+// surfaceless - and ctest runs the whole X11 group in one process.
 auto tLosingTheConnectionTearsTheWindowsDown =
     test("X11/zLosingTheConnectionTearsTheWindowsDown") = []
 {
@@ -2662,8 +2753,19 @@ auto tLosingTheConnectionTearsTheWindowsDown =
 
     check(connection != nullptr);
 
+    // Whatever an earlier case in this process did: the connection made sure
+    // a request flushed into the closed socket cannot end the process.
+    check(!sigPipeIsDefault(), "a write after the loss would raise SIGPIPE");
+
     xcb_kill_client(connection, presenter.record.handle.window);
     xcb_flush(connection);
+
+    // xcb reads before it writes, so its own flush only hits the closed socket
+    // when the hang-up lands between the two - rarely, on a loaded machine, and
+    // from Mesa's thread as easily as ours. The same write, made on purpose.
+    if (checkArrived(serverClosedItsEnd(connection),
+                     "the server never closed the connection"))
+        writeIntoTheClosedSocket(connection);
 
     Threads::runEventLoopUntil([&] { return presenter.lost > 0; }, x11TestTimeout);
 

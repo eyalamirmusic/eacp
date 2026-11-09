@@ -66,6 +66,20 @@ std::wstring buildCommandLine(const std::string& executable,
     return line;
 }
 
+// A caller's own command line goes to CreateProcessW exactly as written, the
+// way JUCE's ChildProcess::start(String) passes it, so cmd sees its own syntax
+// (`a.bat && b.exe "x y"`) rather than CommandLineToArgvW escaping. The result
+// is null-terminated and writable, as CreateProcessW requires.
+std::wstring commandLineFor(const ProcessOptions& options)
+{
+    auto line = options.commandLine.empty()
+                    ? buildCommandLine(options.executable, options.arguments)
+                    : Strings::widen(options.commandLine);
+
+    line.push_back(L'\0');
+    return line;
+}
+
 std::wstring nameOf(const std::wstring& entry)
 {
     auto equals = entry.find(L'=');
@@ -150,6 +164,7 @@ struct Process::Native
 {
     explicit Native(ProcessOptions options)
         : detached(options.detached)
+        , onOutput(std::move(options.onOutput))
     {
         launch(std::move(options));
     }
@@ -270,7 +285,10 @@ private:
             return;
         }
 
-        if (!CreatePipe(&errRead, &errWrite, &inherit, 0))
+        // Merged stderr shares the stdout pipe, so there is no error pipe.
+        const auto merge = options.mergeErrorOutput;
+
+        if (!merge && !CreatePipe(&errRead, &errWrite, &inherit, 0))
         {
             CloseHandle(inRead);
             CloseHandle(inWrite);
@@ -282,17 +300,18 @@ private:
         // The parent-side ends must not leak into the child.
         SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
-        SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
+
+        if (!merge)
+            SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
 
         STARTUPINFOW startup {};
         startup.cb = sizeof startup;
         startup.dwFlags = STARTF_USESTDHANDLES;
         startup.hStdInput = inRead;
         startup.hStdOutput = outWrite;
-        startup.hStdError = errWrite;
+        startup.hStdError = merge ? outWrite : errWrite;
 
-        auto commandLine = buildCommandLine(options.executable, options.arguments);
-        commandLine.push_back(L'\0');
+        auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
         auto environment = buildEnvironmentBlock(options.environment);
@@ -312,13 +331,18 @@ private:
 
         CloseHandle(inRead);
         CloseHandle(outWrite);
-        CloseHandle(errWrite);
+
+        if (errWrite != nullptr)
+            CloseHandle(errWrite);
 
         if (!created)
         {
             CloseHandle(inWrite);
             CloseHandle(outRead);
-            CloseHandle(errRead);
+
+            if (errRead != nullptr)
+                CloseHandle(errRead);
+
             return;
         }
 
@@ -327,8 +351,12 @@ private:
         processId = info.dwProcessId;
         inputWrite = inWrite;
 
-        outReader = std::thread([this, outRead] { drain(outRead, outBuffer); });
-        errReader = std::thread([this, errRead] { drain(errRead, errBuffer); });
+        outReader =
+            std::thread([this, outRead] { drain(outRead, outBuffer, onOutput); });
+
+        if (errRead != nullptr)
+            errReader =
+                std::thread([this, errRead] { drain(errRead, errBuffer, nullptr); });
     }
 
     // No pipes: the child writes straight to the launcher's stdio, so a
@@ -362,8 +390,7 @@ private:
         startup.hStdOutput = handles[1];
         startup.hStdError = handles[2];
 
-        auto commandLine = buildCommandLine(options.executable, options.arguments);
-        commandLine.push_back(L'\0');
+        auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
         auto environment = buildEnvironmentBlock(options.environment);
@@ -398,8 +425,7 @@ private:
         STARTUPINFOW startup {};
         startup.cb = sizeof startup;
 
-        auto commandLine = buildCommandLine(options.executable, options.arguments);
-        commandLine.push_back(L'\0');
+        auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
         auto environment = buildEnvironmentBlock(options.environment);
@@ -429,13 +455,18 @@ private:
         processId = info.dwProcessId;
     }
 
-    void drain(HANDLE handle, std::string& dest)
+    void drain(HANDLE handle,
+               std::string& dest,
+               const std::function<void(std::string_view)>& onChunk)
     {
         char buffer[4096];
         DWORD count = 0;
 
         while (ReadFile(handle, buffer, sizeof buffer, &count, nullptr) && count > 0)
         {
+            if (onChunk)
+                onChunk(std::string_view {buffer, (std::size_t) count});
+
             auto lock = std::lock_guard {bufferMutex};
             dest.append(buffer, count);
         }
@@ -500,6 +531,7 @@ private:
     HANDLE threadHandle = nullptr;
     DWORD processId = 0;
     const bool detached;
+    const std::function<void(std::string_view)> onOutput;
     HANDLE inputWrite = nullptr;
 
     std::thread outReader;

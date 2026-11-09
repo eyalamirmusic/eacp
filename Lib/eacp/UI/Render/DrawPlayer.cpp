@@ -285,8 +285,11 @@ void DrawPlayer::playImages(const DrawList& list,
 
         prepareToDraw(target, Renderer::Images);
 
-        images.draw(
-            image.image->texture, target, image.uv, Color::white(image.opacity));
+        images.draw(image.image->texture,
+                    target,
+                    image.uv,
+                    Color::white(image.opacity),
+                    {offsetBy(image.corners.rect, origin), image.corners.radii});
     }
 }
 

@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Containers.h"
+
 #include <charconv>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,8 +13,17 @@ namespace eacp::Strings
 {
 // Strips leading and trailing spaces, tabs, CRs and LFs.
 std::string trim(std::string_view s);
+
+// The last line holding anything but whitespace, its trailing whitespace and
+// line ending stripped; empty when there is none.
+std::string lastNonEmptyLine(std::string_view text);
+// The whole line, without its line ending, holding the first occurrence of
+// needle; empty when needle is absent. An empty needle matches the first line.
+std::string lineContaining(std::string_view text, std::string_view needle);
+
 // ASCII-only lowercasing, for matching extensions, header names and the like.
 std::string toLower(std::string_view s);
+std::string toUpper(std::string_view s);
 
 // Changes the case of the first character only, leaving the rest as written -
 // for identifiers and labels, where lowercasing the whole string would destroy
@@ -22,7 +34,23 @@ std::string uncapitalize(std::string_view s);
 
 bool equalsCaseInsensitive(std::string_view a, std::string_view b);
 
+// The pieces between each delimiter, empty ones included. With maximumParts
+// above zero the last piece is the unsplit rest, so "a b c" split on ' ' into
+// two is {"a", "b c"}.
+Vector<std::string>
+    split(std::string_view text, char delimiter, int maximumParts = 0);
+
+// The parts with separator between each, empty parts included.
+std::string join(const Vector<std::string>& parts, std::string_view separator);
+
 int hexCharToInt(char c);
+
+// A hexadecimal number, with or without a leading "0x" or "0X", the whole of
+// text: nullopt for empty text, any other character, or a value past 64 bits.
+std::optional<std::uint64_t> parseHex(std::string_view text);
+
+// Two lowercase hex digits per byte, in order: {0x0a, 0xff} is "0aff".
+std::string toHex(Span<const std::uint8_t> bytes);
 
 // UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
 // (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the
@@ -73,21 +101,50 @@ std::string concat(const Args&... args)
     return (std::string {} + ... + toString(args));
 }
 
-// string → number, the counterpart to toString. Uses from_chars, so it neither
-// throws nor depends on the locale, and it rejects trailing junk. Returns
-// nullopt unless the whole string is a valid T.
+namespace Detail
+{
+// The floating half of tryParse, out of line because floating from_chars is
+// not available on every target eacp supports (Apple's libc++ has it only from
+// macOS 26). It reads through strtod/strtof under the C locale and holds them
+// to from_chars' grammar: an optional '-', no '+', no leading whitespace, no
+// hex, and the whole input consumed. A value too large for the type fails;
+// one too small rounds towards zero.
+bool parseFloating(std::string_view s, float& out);
+bool parseFloating(std::string_view s, double& out);
+} // namespace Detail
+
+// string → number, the counterpart to toString. Integers go through from_chars
+// and float/double through Detail::parseFloating, so neither throws nor depends
+// on the locale, and both reject trailing junk. Returns nullopt unless the
+// whole string is a valid T.
 template <typename T>
 std::optional<T> tryParse(std::string_view s)
 {
-    static_assert(std::is_integral_v<T>,
-                  "tryParse<T> handles integers; use tryParseFloat for reals");
+    static_assert((std::is_integral_v<T> && !std::is_same_v<T, bool>)
+                      || std::is_same_v<T, float> || std::is_same_v<T, double>,
+                  "tryParse<T> handles integers, float and double; use "
+                  "tryParseBool for bool");
     auto value = T {};
-    auto* last = s.data() + s.size();
-    auto [ptr, ec] = std::from_chars(s.data(), last, value);
-    if (ec != std::errc {} || ptr != last)
-        return std::nullopt;
+
+    if constexpr (std::is_floating_point_v<T>)
+    {
+        if (!Detail::parseFloating(s, value))
+            return std::nullopt;
+    }
+    else
+    {
+        auto* last = s.data() + s.size();
+        auto [ptr, ec] = std::from_chars(s.data(), last, value);
+        if (ec != std::errc {} || ptr != last)
+            return std::nullopt;
+    }
+
     return value;
 }
+
+// true/yes/on/1 and false/no/off/0, in any case. Nothing else, not even
+// surrounding whitespace.
+std::optional<bool> tryParseBool(std::string_view s);
 
 template <typename T>
 T parseOr(std::string_view s, T fallback)

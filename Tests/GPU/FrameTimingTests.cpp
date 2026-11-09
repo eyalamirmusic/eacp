@@ -1,5 +1,9 @@
 #include "Common.h"
 
+#include <eacp/GPU/Timing/PassShares.h>
+
+#include <cmath>
+#include <memory>
 #include <string>
 
 // Device::lastFrameTimings() - what the GPU spent on each labelled pass.
@@ -10,11 +14,11 @@
 // slot recycled a frame early shows up there as labels and numbers that do not
 // line up, and it shows up the same way on both backends.
 //
-// The durations themselves are a measurement, so the only honest assertions
-// about them are bounds - non-negative, not absurd, and the frame at least as
-// long as any single pass inside it. Asserting that one pass is faster than
-// another would be asserting how a GPU schedules work, which is not a fact
-// about this code.
+// The durations themselves are a measurement, so the assertions about them are
+// bounds - non-negative, not absurd, the frame at least as long as the passes
+// inside it. How overlapping passes are charged is arithmetic, so it is tested
+// on synthetic intervals through sharePassTimes, where a loaded GPU cannot move
+// the numbers.
 //
 // Every frame here is an off-screen one through View::renderToImage, so there
 // is no window and this runs in CI. Off-screen frames block until the GPU has
@@ -216,12 +220,15 @@ auto tDurationsAreBounded = test("FrameTiming/durationsAreBounded") = []
     for (const auto& pass: timings.passes)
     {
         // A pass that ran took *some* time. Zero is what a sample the GPU never
-        // wrote reads as, so this is the case that fails if the two sample
-        // indices are swapped, point at one slot, or never reach the pass
-        // descriptor - each of which leaves every other case here passing
-        // happily against a column of zeroes.
-        check(pass.milliseconds > 0.0);
-        check(pass.milliseconds < 1000.0);
+        // wrote reads as, so this is the case that fails if the sample indices
+        // are swapped, point at one slot, or never reach the pass descriptor -
+        // each of which leaves every other case here passing happily against a
+        // column of zeroes.
+        check(pass.spanMilliseconds > 0.0);
+        check(pass.spanMilliseconds < 1000.0);
+
+        check(pass.milliseconds >= 0.0);
+        check(pass.milliseconds <= pass.spanMilliseconds + 1e-6);
 
         total += pass.milliseconds;
     }
@@ -238,3 +245,252 @@ auto tDurationsAreBounded = test("FrameTiming/durationsAreBounded") = []
     // one-millisecond tolerance waved it through.
     check(total <= timings.milliseconds + 0.05);
 };
+
+namespace FrameTimingTests
+{
+namespace
+{
+struct TimingVertex
+{
+    float position[2];
+};
+} // namespace
+} // namespace FrameTimingTests
+
+EACP_SHADER_VALUE(FrameTimingTests::TimingVertex, Float2)
+
+namespace FrameTimingTests
+{
+namespace
+{
+constexpr TimingVertex fullQuad[] = {
+    {{-1.f, -1.f}},
+    {{1.f, -1.f}},
+    {{1.f, 1.f}},
+    {{-1.f, -1.f}},
+    {{1.f, 1.f}},
+    {{-1.f, 1.f}},
+};
+
+constexpr auto lightIterations = 1.f;
+constexpr auto heavyIterations = 1000.f;
+
+// A fragment shader whose cost is a loop count, so a pass's weight is set by a
+// number rather than by how much it draws.
+struct LoopShader final : ShaderProgram
+{
+    LoopShader() { compile(); }
+
+    void define() override
+    {
+        auto position = vertexInput(&TimingVertex::position);
+        auto uv = varying(position);
+
+        setPosition(float4(position, 0.f, 1.f));
+
+        auto total = var(0.f);
+        auto i = var(0.f);
+
+        loop(i < iterations,
+             [&]
+             {
+                 total += sin(uv.x() * 13.f + i) * 0.001f;
+                 i += 1.f;
+             });
+
+        setFragment(float4(total, uv.y(), 0.f, 1.f)
+                    + sample(previous, uv * 0.5f + 0.5f) * 0.001f);
+    }
+
+    Uniform<Float> iterations;
+    Uniform<Texture2D> previous;
+
+    EACP_SHADER(iterations, previous)
+};
+
+Texture makeWorkTarget()
+{
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = 256;
+    descriptor.height = 256;
+    descriptor.format = TextureFormat::BGRA8Unorm;
+    descriptor.renderTarget = true;
+    return Device::shared().makeTexture(descriptor);
+}
+
+// Each pass samples what the one before it drew, so each has to wait for it:
+// the shape of a frame whose passes feed each other, which is where a pass used
+// to be charged for the ones it waited behind. Writing one target is not enough
+// - a GPU may shade two clears of the same texture side by side.
+struct WorkView final : GPUView
+{
+    explicit WorkView(std::initializer_list<float> costs)
+    {
+        setSampleCount(1);
+
+        for (auto cost: costs)
+        {
+            auto& shader = *shaders.add(std::make_unique<LoopShader>());
+            shader.iterations = cost;
+            shader.setVertices(fullQuad, 6);
+            shader.prepare(1);
+        }
+    }
+
+    void render(Frame& frame) override
+    {
+        for (auto index = 0; index < shaders.size(); ++index)
+        {
+            auto& shader = *shaders[index];
+            shader.previous = targets[(index + 1) % 2];
+
+            auto pass = frame.beginPass(targets[index % 2],
+                                        {.label = "pass" + std::to_string(index)});
+            pass.draw(shader);
+        }
+    }
+
+    Texture targets[2] = {makeWorkTarget(), makeWorkTarget()};
+    Vector<std::unique_ptr<LoopShader>> shaders;
+};
+
+} // namespace
+
+// Six real passes, one heavy, each sampling the last: on a tile-based GPU the
+// later passes' spans reach back over the heavy one, and the shares must still
+// fit inside the frame.
+auto tSharesStayInsideTheFrame = test("FrameTiming/sharesStayInsideTheFrame") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    constexpr auto passCount = 6;
+    constexpr auto frameTolerance = 0.05;
+
+    auto view = WorkView {{lightIterations,
+                           lightIterations,
+                           heavyIterations,
+                           lightIterations,
+                           lightIterations,
+                           lightIterations}};
+
+    view.setBounds({0.f, 0.f, 64.f, 64.f});
+    view.renderToImage(1.f);
+    view.renderToImage(1.f);
+
+    const auto& timings = Device::shared().lastFrameTimings();
+
+    if (!canTimePasses())
+        return;
+
+    check(timings.passes.size() == passCount);
+
+    auto total = 0.0;
+
+    for (const auto& pass: timings.passes)
+    {
+        check(pass.milliseconds >= 0.0);
+        check(pass.milliseconds <= timings.milliseconds + frameTolerance);
+        total += pass.milliseconds;
+    }
+
+    check(total <= timings.milliseconds + frameTolerance);
+};
+} // namespace FrameTimingTests
+
+namespace PassShareTests
+{
+namespace
+{
+constexpr auto maxPasses = 4;
+constexpr auto exactTolerance = 1e-9;
+
+struct SharedPassTimes
+{
+    double shares[maxPasses] = {};
+    double spans[maxPasses] = {};
+};
+
+SharedPassTimes sharePassTimesOf(const PassActivity* activity, int passCount)
+{
+    auto result = SharedPassTimes {};
+    sharePassTimes<maxPasses>(activity, passCount, result.shares, result.spans);
+    return result;
+}
+
+bool isNear(double actual, double expected)
+{
+    return std::abs(actual - expected) < exactTolerance;
+}
+} // namespace
+
+auto tPassesInTurnAreChargedTheirOwnTime =
+    test("PassShares/passesInTurnAreChargedTheirOwnTime") = []
+{
+    PassActivity activity[2] = {};
+    activity[0].add(0.0, 2.0);
+    activity[1].add(3.0, 7.0);
+
+    const auto times = sharePassTimesOf(activity, 2);
+
+    check(isNear(times.shares[0], 2.0));
+    check(isNear(times.shares[1], 4.0));
+    check(isNear(times.spans[0], 2.0));
+    check(isNear(times.spans[1], 4.0));
+};
+
+auto tLightPassesQueuedBehindAHeavyOneAreNotChargedForIt =
+    test("PassShares/lightPassesQueuedBehindAHeavyOneAreNotChargedForIt") = []
+{
+    constexpr auto heavyBegin = 1.0;
+    constexpr auto heavyEnd = 11.0;
+    constexpr auto lightVertexBegin = 2.0;
+    constexpr auto lightVertexEnd = 2.5;
+    constexpr auto lightFragmentLength = 0.5;
+
+    PassActivity activity[3] = {};
+    activity[0].add(0.0, heavyBegin);
+    activity[1].add(heavyBegin, heavyEnd);
+
+    activity[2].add(lightVertexBegin, lightVertexEnd);
+    activity[2].add(heavyEnd, heavyEnd + lightFragmentLength);
+
+    const auto times = sharePassTimesOf(activity, 3);
+    const auto overlap = lightVertexEnd - lightVertexBegin;
+
+    check(isNear(times.spans[2], heavyEnd + lightFragmentLength - lightVertexBegin));
+    check(isNear(times.shares[2], overlap / 2.0 + lightFragmentLength));
+    check(isNear(times.shares[1], heavyEnd - heavyBegin - overlap / 2.0));
+
+    const auto total = times.shares[0] + times.shares[1] + times.shares[2];
+    check(isNear(total, heavyEnd + lightFragmentLength));
+};
+
+auto tAPassOverlappingItselfIsOnePass =
+    test("PassShares/aPassOverlappingItselfIsOnePass") = []
+{
+    PassActivity activity[2] = {};
+    activity[0].add(0.0, 4.0);
+    activity[0].add(1.0, 3.0);
+    activity[1].add(2.0, 6.0);
+
+    const auto times = sharePassTimesOf(activity, 2);
+
+    check(isNear(times.shares[0], 3.0));
+    check(isNear(times.shares[1], 3.0));
+    check(isNear(times.spans[0], 4.0));
+};
+
+auto tAPassWithNoSamplesIsChargedNothing =
+    test("PassShares/aPassWithNoSamplesIsChargedNothing") = []
+{
+    PassActivity activity[2] = {};
+    activity[1].add(1.0, 2.0);
+
+    const auto times = sharePassTimesOf(activity, 2);
+
+    check(times.shares[0] == 0.0);
+    check(times.spans[0] == 0.0);
+    check(isNear(times.shares[1], 1.0));
+};
+} // namespace PassShareTests

@@ -53,6 +53,9 @@ public:
     static FilePath desktopDirectory();
     static FilePath tempDirectory();
 
+    // The process's working directory. Empty when it cannot be read.
+    static FilePath currentDirectory();
+
     // Per-user application data and cache roots: Application Support and
     // Caches on Apple platforms, Roaming and Local AppData on Windows, the
     // XDG data and cache homes on Linux.
@@ -91,12 +94,30 @@ public:
     // the same treatment the std::filesystem::path constructor above gets.
     static FilePath fromWide(std::wstring_view wide);
 
+    // Builds a path from UTF-8 text in the platform's own form — a string
+    // nativeString() wrote out, one a user typed, one read from a settings
+    // file. On Windows '\' becomes '/', so "C:\dir\file.wav" equals the
+    // FilePath of "C:/dir/file.wav"; elsewhere '\' is an ordinary file name
+    // character and the text is kept as-is, like the string constructors.
+    static FilePath fromNative(std::string_view nativeText);
+
+    // The text in eacp's own form: UTF-8 with '/' separators on every
+    // platform, Windows included.
     const std::string& str() const;
     const char* c_str() const;
     bool empty() const;
 
-    // The path as a wide string, for native APIs and std::filesystem on
-    // Windows. Never throws: bytes that are not valid UTF-8 decode to U+FFFD.
+    // The text the platform's own APIs and users expect, for display or for
+    // storing where other software reads it: on Windows every '/' becomes '\',
+    // so "C:/dir/file.wav" reads "C:\dir\file.wav", "//server/share" reads
+    // "\\server\share" and a "//?/" long-path prefix reads "\\?\" again — the
+    // inverse of what the wide constructors and fromWide do. Elsewhere it is
+    // str(). fromNative() parses it back.
+    std::string nativeString() const;
+
+    // nativeString() as a wide string, for native APIs and std::filesystem on
+    // Windows, so a "\\?\" long path reaches CreateFileW intact. Never
+    // throws: bytes that are not valid UTF-8 decode to U+FFFD.
     std::wstring wide() const;
 
     // ".png" for "dir/image.png"; empty for dotfiles and extension-less
@@ -125,6 +146,20 @@ public:
 
     // A path beside this one: parentDirectory() / name.
     FilePath sibling(std::string_view name) const;
+
+    // The same path with suffix added to the end of the file name, so
+    // "a/b.tar" with ".lock" is "a/b.tar.lock".
+    FilePath withSuffix(std::string_view suffix) const;
+
+    // This path with "." and ".." resolved and repeated separators collapsed,
+    // as std::filesystem::path::lexically_normal does. Pure text.
+    FilePath lexicallyNormal() const;
+
+    // This path written relative to base: "b/c" for "a/b/c" against "a",
+    // "../d" for "a/d" against "a/b". Pure text, like
+    // std::filesystem::path::lexically_relative; empty when no relative path
+    // joins them, such as two different roots.
+    FilePath relativeTo(const FilePath& base) const;
 
     // Rooted at '/', or on Windows at a drive letter ("C:") or a UNC share.
     bool isAbsolute() const;

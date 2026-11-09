@@ -161,6 +161,10 @@ struct ImageDraw
     Rect uv;
 
     float opacity = 1.f;
+
+    // The rounded rect the picture is cut to, in the same space as `bounds`;
+    // empty when nothing cuts it but the clip.
+    RoundedRect corners;
 };
 
 // The clip in force for everything issued after it, as an absolute state rather

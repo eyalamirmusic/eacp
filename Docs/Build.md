@@ -5,6 +5,12 @@ the two commands a build needs; this page is everything behind them: the
 dependencies, every option, the capability variables that decide which
 modules a platform gets, the pieces that build everywhere, and how CI runs.
 
+After cloning, run `git config core.hooksPath .githooks` once. It turns on
+the repository's two hooks: `pre-commit` refuses a commit whose author or
+committer names Claude or Anthropic, and `commit-msg` refuses a message with a
+`Co-Authored-By` trailer for either, an `@anthropic.com` address or a
+"Generated with Claude" line.
+
 ## Dependencies
 
 Dependencies are fetched by [CPM](https://github.com/cpm-cmake/CPM.cmake) at
@@ -16,7 +22,8 @@ own so other projects can take it without eacp; `CMake/FindESIMD.cmake`, the
 behind `EACP_BUILD_SPIRV` and so on Linux only by default, `glslang`. A Linux build
 adds `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator`
 (`CMake/FindVulkanBackend.cmake`, one `eacp-vulkan` target, fetched on no
-other platform), libcurl for the HTTP client, and three pkg-config groups
+other platform), `stb` for the PNG/JPEG codec (`CMake/FindStb.cmake`, headers
+only), libcurl for the HTTP client, and three pkg-config groups
 found against the machine's own libraries: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor
 (`CMake/FindWayland.cmake`); xcb with `xcb-xkb`, `xkbcommon-x11`,
@@ -29,12 +36,22 @@ false. The package names are in [Linux.md](Linux.md). An Android build
 fetches nothing more and needs no libcurl: its HTTP and WebSocket clients are
 Java's own, reached through JNI.
 
-One dependency is carried in the tree instead: `ThirdParty/miniz`, the
-amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
+Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
+the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
 target so it never joins a unity build and its warnings are silenced. Only
 `eacp-core` links it, PRIVATE, and only `Utils/Zip.cpp` includes its header,
 so the whole of it is reached through `eacp::Zip`. To update it, replace the
 files under `ThirdParty/miniz` and the version in its README.
+
+The other, `ThirdParty/fmt`, is carried the same way: fmt 12.2.0's
+`include/fmt` headers and `src/format.cc` alone, unmodified, beside its MIT
+license, built as its own static C++ target with its warnings silenced. Only
+`eacp-core` links it, PRIVATE, so no eacp header may include it, and only
+`Utils/Format.cpp` does, behind `eacp::Strings::format`. fmt's `base.h`
+requires `/utf-8` on MSVC of every translation unit that includes it, so the
+fmt target sets the flag PRIVATE on its own `format.cc` and `eacp-core` sets it
+on `Format.cpp` alone. To update it, replace those files and the version in
+its README.
 
 ## Options
 
@@ -79,8 +96,9 @@ files under `ThirdParty/miniz` and the version in its README.
 
 - `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's
   exact configuration locally. It forces `EACP_UNITY_BUILD`,
-  `EACP_UNITY_BUILD_TESTS` and `MIRO_UNITY_BUILD` on. Because it turns unity on, it is for reproducing CI,
-  not for LSP-backed development.
+  `EACP_UNITY_BUILD_TESTS`, `MIRO_UNITY_BUILD` and `ESIMD_UNITY_BUILD` on.
+  Because it turns unity on, it is for reproducing CI, not for LSP-backed
+  development.
 
   ```bash
   cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
@@ -116,6 +134,36 @@ files under `ThirdParty/miniz` and the version in its README.
   server instead (`npm run dev` in the app's `web/` dir); the runtime already
   prefers a reachable dev server (`Options::Embedded::preferDevServer`).
   Schema codegen still emits TS into `web/src/generated` on every app build.
+
+- `EACP_HOT_RELOAD` (default `OFF`) — dev or static mode for every app wired
+  with `eacp_add_hot_reload(<app> <library> [SOURCES <files...>]
+  [HOT_RELOAD <bool>])` that names no mode of its own (or an empty one). The
+  call creates
+  `<library>`, configured afterwards like any target: a static library linked
+  into the app in static mode, a module the app loads in dev mode. An app's
+  `HOT_RELOAD` wins over the option either way, and both in-tree examples
+  pass `ON`. iOS, Android and Windows are always static. A configure prints
+  `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
+  `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
+
+- `EACP_PRECOMPILE_SHADERS` (default `ON`) — compiles the shaders of every app
+  wired with `eacp_add_precompiled_shaders` (`CMake/PrecompiledShaders.cmake`)
+  at build time and embeds the blobs, which each `ShaderLibrary` loads instead
+  of compiling its source. `OFF` leaves those apps compiling at run time, as
+  does a cross-compile (iOS, Android) for now and a host that can compile none
+  of the requested backends. An app gets its platform's own backend — `metal`
+  on Apple, `dxbc` on Windows, `spirv` on Linux — unless its call names
+  `BACKENDS`, and `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides
+  every call, so `-DEACP_PRECOMPILE_SHADER_BACKENDS=spirv` with
+  `-DEACP_BUILD_SPIRV=ON` exercises the SPIR-V path on a Mac. A backend the
+  host cannot compile is dropped with a `STATUS` line: Metal needs Xcode's
+  Metal Toolchain component (`xcodebuild -downloadComponent MetalToolchain`),
+  probed once per build directory as the cached `EACP_METAL_TOOLCHAIN_FOUND`
+  (`-U` it after installing); DXBC needs a Windows host and SPIR-V
+  `eacp-spirv`. A configure prints `<app>: precompiled shaders (<backends>)`
+  or why there are none. The helper and the blob names are in
+  [Lib/eacp/GPU/README.md](../Lib/eacp/GPU/README.md), "Compiling shaders at
+  build time".
 
 - `EACP_VERBOSE_CONFIGURE` (default `OFF`) — prints the configure detail a
   clean configure leaves out: the FetchContent population of the
@@ -288,6 +336,16 @@ floor. `CMake/AppleSetup.cmake` claims `CMAKE_OSX_DEPLOYMENT_TARGET` only
 when nothing has filled it, so `-DCMAKE_OSX_DEPLOYMENT_TARGET=...` on the
 command line wins on both.
 
+iOS signing works the same way. `eacp_default_setup()` signs with
+`EACP_APPLE_DEVELOPMENT_TEAM` (a cache variable, eacp's own team by default,
+empty for none) and the `iPhone Developer` identity, but only where the project
+leaves `CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM` and
+`CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY` unset. The defaults are applied at
+the end of the top-level directory, so a project's own team wins however it
+sets it: on the command line, or as a normal variable or a cache entry, before
+or after eacp's setup runs, and an empty team included.
+`Tests/AppleSetup` checks each of those against the generated Xcode project.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables
@@ -308,7 +366,7 @@ and their tests build with it:
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |

@@ -263,4 +263,17 @@ BlendState resolvedBlend(const ColorTargetState& target)
 
     return target.blend ? *target.blend : blendStateFor(target.blendMode);
 }
+
+bool DepthBias::isNone() const
+{
+    return constant == 0.f && slopeScale == 0.f;
+}
+
+DepthBias appliedDepthBias(const RenderPipelineDescriptor& descriptor)
+{
+    if (!descriptor.depth || descriptor.depthBias.isNone())
+        return {};
+
+    return descriptor.depthBias;
+}
 } // namespace eacp::GPU

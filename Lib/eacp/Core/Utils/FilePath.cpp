@@ -2,6 +2,7 @@
 
 #include "../Platform/Platform.h"
 #include "Files.h"
+#include "FilesPlatform.h"
 #include "StdPath.h"
 #include "Strings.h"
 
@@ -49,6 +50,33 @@ const char* FilePath::c_str() const
 bool FilePath::empty() const
 {
     return text.empty();
+}
+
+std::string Detail::replaceSeparators(std::string_view text, char from, char to)
+{
+    auto result = std::string {text};
+
+    for (auto& character: result)
+        if (character == from)
+            character = to;
+
+    return result;
+}
+
+std::string FilePath::nativeString() const
+{
+    if constexpr (Platform::isWindows())
+        return Detail::replaceSeparators(text, '/', '\\');
+    else
+        return text;
+}
+
+FilePath FilePath::fromNative(std::string_view nativeText)
+{
+    if constexpr (Platform::isWindows())
+        return FilePath {Detail::replaceSeparators(nativeText, '\\', '/')};
+    else
+        return FilePath {nativeText};
 }
 
 std::string FilePath::extension() const
@@ -243,7 +271,33 @@ FilePath FilePath::appCacheDirectory(std::string_view company, std::string_view 
 
 std::wstring FilePath::wide() const
 {
-    return Strings::widen(text);
+    return Strings::widen(nativeString());
+}
+
+FilePath FilePath::currentDirectory()
+{
+    auto ec = std::error_code {};
+    auto current = std::filesystem::current_path(ec);
+
+    if (ec)
+        return {};
+
+    return FilePath {current};
+}
+
+FilePath FilePath::withSuffix(std::string_view suffix) const
+{
+    return FilePath {text + std::string {suffix}};
+}
+
+FilePath FilePath::lexicallyNormal() const
+{
+    return FilePath {toStdPath(*this).lexically_normal()};
+}
+
+FilePath FilePath::relativeTo(const FilePath& base) const
+{
+    return FilePath {toStdPath(*this).lexically_relative(toStdPath(base))};
 }
 
 FilePath FilePath::fromWide(std::wstring_view wide)
@@ -260,13 +314,9 @@ std::string FilePath::read() const
 
 void FilePath::assignFromWide(std::wstring_view wide)
 {
-    text = Strings::narrow(wide);
-
     // '\' is ASCII and no UTF-8 continuation byte can be 0x5C, so swapping the
     // byte hits exactly the separators and nothing inside a multi-byte sequence.
-    for (auto& character: text)
-        if (character == '\\')
-            character = '/';
+    text = Detail::replaceSeparators(Strings::narrow(wide), '\\', '/');
 }
 
 FilePath FilePath::operator/(std::string_view part) const

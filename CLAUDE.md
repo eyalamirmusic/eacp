@@ -7,6 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Claude must never commit or push without explicit permission from the user in
 the current conversation.
 
+Claude must never appear in commit metadata: not as author or committer, and
+not as a `Co-Authored-By` trailer or a "Generated with Claude" line in the
+message. The hooks under `.githooks/` refuse such a commit; activate them once
+per clone with `git config core.hooksPath .githooks`.
+
 ## Project Overview
 
 eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
@@ -14,7 +19,10 @@ eacp is a cross-platform GUI/graphics framework written in modern C++20 with Obj
 `README.md` is written for users of the library — interface, capabilities and
 usage — and stays free of build-system and implementation detail. In-depth
 docs live under `Docs/` (`Build.md` for options, dependencies, capability
-variables and CI; `Linux.md` for the Linux backend) and beside the modules
+variables and CI; `Linux.md` for the Linux backend; `Toolbox.md` for the
+Core reuse map; `HotReload.md` for
+`Plugins::Reloadable`, `eacp_add_hot_reload` and the reload machinery under
+them) and beside the modules
 they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`,
 `Lib/eacp/UI/README.md`). New
 implementation-level documentation goes there, not in the README.
@@ -87,7 +95,9 @@ take it without eacp, its tests live there, and
 behind `EACP_BUILD_SPIRV` and so on Linux only by default,
 `glslang`; a Linux build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
-one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
+one `eacp-vulkan` target, fetched on no other platform) and `stb`
+(`CMake/FindStb.cmake`, the header-only `eacp-stb` target behind the Linux
+image codec). Plus libcurl on Linux,
 which backs the HTTP client there, and — on Linux, where none of them are
 optional — three pkg-config groups: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor (`CMake/FindWayland.cmake`, one
@@ -100,12 +110,21 @@ glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). No
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
-One dependency is carried in the tree instead: `ThirdParty/miniz`, the
-amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C target
-so it never joins a unity build and its warnings are silenced. Only `eacp-core`
-links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
-of it is reached through `eacp::Zip`. To update it, replace the files under
-`ThirdParty/miniz` and the version in its README.
+Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
+the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
+target so it never joins a unity build and its warnings are silenced. Only
+`eacp-core` links it, PRIVATE, and only `Utils/Zip.cpp` includes its header,
+so the whole of it is reached through `eacp::Zip`. To update it, replace the
+files under `ThirdParty/miniz` and the version in its README. The other,
+`ThirdParty/fmt`, is carried the same way: fmt 12.2.0's `include/fmt` headers
+and `src/format.cc` alone, unmodified, beside its MIT license, built as its
+own static C++ target with its warnings silenced. `eacp-core` links it
+PRIVATE, so no eacp header may include it, and exactly one file does:
+`Utils/Format.cpp`, behind `Strings::format` (`Utils/Format.h`, a
+type-erased bridge every module — and `LOGF` — formats through). fmt's
+`base.h` requires `/utf-8` on MSVC of every translation unit that includes it,
+so the fmt target sets it PRIVATE and `eacp-core` sets it on `Format.cpp`
+alone. To update it, replace those files and the version in its README.
 
 Android (API `EACP_ANDROID_MIN_SDK`+, Vulkan 1.1) is Linux without Wayland: CMake's
 `ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
@@ -257,8 +276,8 @@ cmake -G Ninja -B build-unity -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 
 - `EACP_CI_BUILD` (default `OFF`): the single switch CI passes to reproduce the
   exact CI configuration locally. It force-enables the unity-build flag of every
-  project that exposes one — `EACP_UNITY_BUILD`, `EACP_UNITY_BUILD_TESTS` and
-  `MIRO_UNITY_BUILD`. Because
+  project that exposes one — `EACP_UNITY_BUILD`, `EACP_UNITY_BUILD_TESTS`,
+  `MIRO_UNITY_BUILD` and `ESIMD_UNITY_BUILD`. Because
   it turns unity on, it is for reproducing CI, not for LSP-backed development —
   Claude should keep using `-DEACP_UNITY_BUILD=OFF` for normal work.
 
@@ -322,6 +341,43 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_WEBVIEW_DEV=ON
 ```
+
+- `EACP_HOT_RELOAD` (default `OFF`): dev or static mode for every app wired
+  with `eacp_add_hot_reload` that passes no `HOT_RELOAD` of its own (both
+  in-tree examples pass `ON`; Windows, iOS and Android are always static).
+  `eacp_add_hot_reload(<app> <library> SOURCES ...)` creates the library: a
+  static one linked into the app in static mode, a module the app loads in
+  dev mode, whose own links are routed to the app and reach it compile-only.
+  An app lists its reloadable functions once with `EACP_RELOADABLE` and
+  reaches them by type through `Plugins::Reloadable` (`create<T>()`,
+  `function<F>()`; `Core/Plugins/Reloadable.h`, included directly, never
+  through `Core.h`); `Docs/HotReload.md` is the whole account — the CMake,
+  the module rules, ownership, failure handling and the layers underneath.
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+      -DEACP_HOT_RELOAD=ON
+```
+
+- `EACP_PRECOMPILE_SHADERS` (default `ON`): every app wired with
+  `eacp_add_precompiled_shaders(<app> SOURCES ...)`
+  (`CMake/PrecompiledShaders.cmake`) gets an `<app>-shaders` host tool built
+  from its sources, each listing shaders in a self-registering
+  `EACP_SHADER_SET() { visit<MyShader>(); }`, run at build time into
+  `<app>-PrecompiledShaders/` and embedded under `EacpShaders`, so its
+  `ShaderLibrary`s load blobs instead of compiling source. `OFF`, a
+  cross-compile (iOS, Android, for now) or a host with no compiler for any
+  backend leaves the app compiling at run time, with a `STATUS` line saying
+  so. The backend is the platform's own (`metal` on Apple, `dxbc` on Windows,
+  `spirv` on Linux) unless the call passes `BACKENDS`;
+  `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides every call, and
+  a requested backend the host cannot compile is dropped with a `STATUS` line.
+  Metal needs Xcode's Metal Toolchain component (`xcrun -sdk macosx metal
+  --version` must run; `xcodebuild -downloadComponent MetalToolchain`), probed
+  once per build directory into `EACP_METAL_TOOLCHAIN_FOUND`; SPIR-V needs
+  `eacp-spirv`. A successful run deletes the blobs its manifest no longer
+  lists. `Apps/GPU/RotatingTriangle` and `Apps/GPU/Compute` use it;
+  "Compiling shaders at build time" in `Lib/eacp/GPU/README.md` is the account.
 
 ### Local Miro source
 
@@ -399,8 +455,10 @@ for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
 into `Core`'s `Clipboard` through the backend hook in
 `Core/App/Clipboard-Linux.h` so `eacp-core` links no Wayland; a copy needs
 keyboard focus on one of our windows), a compositor disconnect that fires
-`onLost` on every view surface and leaves the process headless, and stubs for
-image codecs, menus, tray and system appearance.
+`onLost` on every view surface and leaves the process headless, the PNG/JPEG
+codec (`Image/Image-Linux.cpp` over stb_image and stb_image_write, linked
+PRIVATE and kept out of the unity batches), and stubs for menus, tray and
+system appearance.
 
 The X11 half is its twin, on xcb with no Xlib symbol anywhere.
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
@@ -631,7 +689,7 @@ libfontconfig-dev fonts-dejavu-core fonts-dejavu-extra fonts-droid-fallback
 fonts-noto-color-emoji`.
 
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
-`TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
+`TextMetrics`, `TextInput` and the retained layer classes are
 left out of the Linux source list rather than stubbed, and with them
 `Apps/Graphics` and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
@@ -729,6 +787,35 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   options, viewArgs...)` runs one as the app with no struct written at all; a
   struct that does more still pairs its view and window in one member,
   `Window window {view, options};`
+- Command-line tools: `runConsole(argc, argv, body)` (`App/App.h`; or
+  `runConsole(body)` after `setCommandLineArgs`), the
+  `Args::Parser` that binds options to the caller's variables (`App/Args.h`,
+  `Tests/Core/ArgsTests.cpp`; `parse()` reads the stored command line, so a
+  body needs no argc/argv), and `Console::print`/`printError`
+  (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
+- Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
+  message, `AlertIcon`, buttons, default and cancel button; returns at once
+  from any thread, queues the alert (per eacp copy) so they come up one at a
+  time in call order, the next let in before the callback runs, and answers
+  the pressed button's index on the main thread exactly once. `NSAlert`'s
+  `runModal` on macOS (a quit that ends the modal is put to the root loop
+  again, and alerts queued behind it are not shown while it is pending,
+  through `Threads/EventLoop-macOS.h`), `TaskDialogIndirect` on Windows
+  (comctl32 v6 through shell32's manifest as an activation context,
+  `MessageBoxW` only when the function cannot be found; the thread's other
+  top-level windows are disabled while it is up), `UIAlertController` on iOS
+  (retried on later turns while nothing can present it). Nobody choosing — a
+  quit, a failed or dismissed dialog, an answer dropped unanswered (the last
+  copy of the answer going answers it), headless, Linux and Android (which
+  never show one), a standalone app with no loop running (answered at once on
+  the calling thread; `isEventLoopRunning` answers for the whole process) —
+  answers `Detail::unansweredButton`: the cancel button, else the default.
+  The platforms' id-to-button mappings are `Detail::` functions in
+  `Alert.cpp` so every lane tests them. `setAlertPresenter` replaces the
+  dialog (and the headless answer) at each alert's turn, which is how
+  `Tests/Core/AlertTests.cpp` and an app's own tests see and answer alerts;
+  replacing it answers the alert the old one held as unanswered.
+  `Apps/Graphics/AlertDemo` is the hand check of the native dialogs.
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations, backed by Core Graphics on
@@ -737,7 +824,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   A `keyDown`/`keyUp` override keeps every key it is handed unless it calls
   `passKeyOn()` (`dispatchKeyEvent` returns which); on Android a passed-on
   `KeyCode::Back` — its own code, not `Escape` — leaves the activity, so a view
-  closes a popup on Back and passes every other press on
+  closes a popup on Back and passes every other press on. Keys go to the view
+  that last called `focus()` (the content view when none has) and up its
+  parents while each passes them on: AppKit's first responder on Apple, and on
+  Windows, Linux and Android one record on the root view that the window's
+  `dispatchKeyEvent` reads, dropped when the focused view leaves the tree
 - `Window`: the platform window (Cocoa, Win32, UIKit, Wayland or X11) with configurable flags
 - `Path`: Vector path drawing (rect, ellipse, curves)
 - `Font`: CoreText / DirectWrite typography, `EACP_HAS_CONTEXT` only
@@ -810,6 +901,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   thread serves every pending callback, so N deadlines cost one thread, not N;
   `Threads::delay` is built on it (`Threads/CallAfter.cpp`)
 - `Timer`: periodic callbacks, taking either `Time::MS` or an integer Hz
+- `Thread` (`Threads/Thread.h`): a joining thread whose header keeps
+  `<thread>` out of public headers; the only wrapper eacp has, so new worker
+  threads in headers use it
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
 - `FramePacer` (`Graphics/Helpers/FramePacer.h`): the frame-rate divider
   behind `DisplayLink::setMaxFps`, `ComponentHost::setAnimationMaxFps` and
@@ -965,9 +1059,37 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Process`: launch an executable with args/env/working dir; captures stdout and
   stderr, feeds stdin, and exposes `wait()`/`isRunning()`/`terminate()`/`kill()`
 - `run()`: blocking convenience returning a `ProcessResult`; `runAsync()` returns
-  a `Threads::Async<ProcessResult>` resolved on the main thread
+  a `Threads::Async<ProcessResult>` resolved on the main thread. `run()` closes
+  the child's stdin before waiting, so a child that reads it gets end-of-file
+- `ProcessOptions::commandLine` replaces `executable`/`arguments` when set. On
+  Windows it goes to `CreateProcessW` verbatim (null application name), as JUCE's
+  `ChildProcess::start(String)` does, so `cmd /c "vcvars.bat && cmake …"` reaches
+  cmd unescaped. POSIX has no such call and runs no shell: the line is split by
+  `tokeniseCommandLine` (JUCE's `StringArray::fromTokens(line, true)`: whitespace
+  breaks outside double quotes, quotes stay in the tokens, empty tokens dropped,
+  only the first token unquoted) and that token is spawned through `PATH`; a
+  blank line does not launch. Shell syntax (`&&`, pipes) therefore only works on
+  Windows, through an explicit `cmd /c`
+- `mergeErrorOutput` points the child's stderr at the stdout pipe (POSIX
+  `adddup2` onto `STDERR_FILENO`, Windows `hStdError = hStdOutput`): `output()`
+  is both streams interleaved, `errorOutput()` stays empty. `onOutput` sees each
+  stdout chunk on the reader thread as it is read, before it is appended; it is
+  not called for a separate stderr. Both need `captureOutput`
+- Tests: `ProcessTests.cpp` (POSIX commands), `ProcessTests-Windows.cpp` (the
+  same options through cmd.exe), `ProcessTokeniseTests.cpp` (everywhere)
 - POSIX impl (`Process-Posix.cpp`, fork/exec) shared by macOS+Linux; Windows uses
   `CreateProcessW` (`Process-Windows.cpp`)
+- `BuildRunner` (`Process/BuildRunner.h`): one command rerun on demand on a
+  background thread, stderr merged; `onOutput`/`onFinished` on the main thread;
+  `run()` mid-run coalesces into exactly one rerun; a cancelled run finishes
+  with `exited == false` (cancel kills the direct child only, not ninja under
+  cmake)
+- Hot reload (`Plugins/`): `Reloadable` with `EACP_RELOADABLE` is the
+  interface (`Apps/UI/HotReload` reloads a layout function, `Apps/GPU/HotReload`
+  a `GPUView` factory held in a `Graphics::OptionalView`, replaced inside
+  `onReloaded`); `HotReloadLoop`, `ReloadableLibrary` (with its
+  `requiredSymbol` and `validate` refusals) and `BuildFailure` are the layers
+  under it. `Docs/HotReload.md` documents all of them
 
 **ObjC/** - Memory management bridge
 - `Ptr<T>`: RAII smart pointer for Objective-C objects (handles retain/release)
@@ -1028,12 +1150,38 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   macOS `Files::enclosingBundle` of it (the bundle when the binary sits in
   `<bundle>/Contents/MacOS/`, a pure string check) when that is not empty.
   `FileWriter` is neither copyable nor movable
+- `Files::openWithSystem` / `revealInFileManager` (`Utils/Files.h`) are
+  JUCE's `File::startAsProcess()` and `revealToUser()`. `Files.cpp` refuses
+  an empty or missing path, makes it absolute and lexically normal
+  (`Detail::systemTarget`, `FilesPlatform.h`), catches everything, and calls
+  the platform half in `Utils/FilesOpen-<platform>`: macOS `NSWorkspace`
+  `openURL:` and `selectFile:inFileViewerRootedAtPath:`; Windows
+  `ShellExecuteW` with the default verb and `SHOpenFolderAndSelectItems`
+  (falling back to `explorer.exe /select,`), each under a `CoInitializeEx`
+  undone only if it was the one that set COM up; Linux spawns `xdg-open`
+  (never through a shell) and reaps it on a detached thread rather than as a
+  detached `Process`, which would leave a zombie per call, and reveals by
+  opening `Files::revealFallbackDirectory` (the parent, a pure string
+  function) since selection has no portable form; iOS and Android
+  (`FilesOpen-Default.cpp`) answer `false`. `true` means launched, which on
+  Linux is only that `xdg-open` started. Tests cover the refusals and the
+  computed targets only; nothing in CI opens a file manager
 - `TemporaryFile` (`Utils/TemporaryFile.h`): reserves
   `eacp-temp-<64-bit hex><suffix>` in the temp directory (or a given one),
   creates nothing, and `removeAll`s the path on destruction; move-only.
   `FileWriter` (`Utils/FileWriter.h`): `std::fstream` opened in+out — never
   `ios::app`, so `seek` can patch earlier bytes — with `truncate()` through
   `std::filesystem::resize_file`
+- `Files::FileWatcher` (`Utils/FileWatcher.h`): polls paths on the main thread
+  (`pollInterval`, recursive, a `matchesWildcard` `pattern`) and reports the
+  changed files once per burst after `settle`; `excludedDirectories` are
+  neither listed nor descended, a missing path is watched for appearing, and
+  the callback must not destroy the watcher
+- `Files::SourceWatcher` (`Utils/SourceWatcher.h`): a `FileWatcher` over one
+  source tree, always recursive, matching `Files::sourceFilePattern` (the C,
+  C++ and Objective-C source and header extensions) unless its `Options`
+  name another, with the rest of `FileWatcherOptions` in `Options::watcher`;
+  built from a directory alone or from `Options`
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)
@@ -1042,10 +1190,15 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Zip::Reader`/`Zip::Writer` (`Utils/Zip.h`): zip archives over the vendored
   miniz, read from a file (memory-mapped) or from bytes, written to either.
   `extractAll` refuses entries that would land outside the target directory.
+  `extract` (one entry to a file) and `extractAll` stream through
+  `mz_zip_reader_extract_iter_*` into a `FileWriter`, one
+  `Zip::extractChunkSize` (1 MiB) buffer per call, never the whole entry, and
+  take an optional `ExtractProgressFunc` called before, per chunk and per
+  entry, whose `false` cancels and removes the file being written.
   `Zip::compress`/`decompress` deflate a single blob as a zlib stream. It is
-  compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`
-  and `Files::writeFile`, so UTF-8 paths take the same route as everything
-  else. `Apps/Console/Zip` is the worked example.
+  compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`,
+  `FileWriter` and `Files::writeFile`, so UTF-8 paths take the same route as
+  everything else. `Apps/Console/Zip` is the worked example.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 
@@ -1091,6 +1244,26 @@ construction (`isValid()`/`reason()`), with `ComputePass`'s dispatch forms and
 allocates, locks, logs or makes a syscall. Semantics, the undefined-case table
 and the realtime contract: `Lib/eacp/GPU/README.md`, "Running a kernel on the
 CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
+
+### DXC at run time (`Lib/eacp/GPU/Shader/Dxc.h`)
+
+On D3D12, `GPU::Dxc::setOptions({.enabled = true, .locateLibrary = ...})` makes
+every run-time `ShaderLibrary` compile through `dxcompiler.dll` (SM 6.0 DXIL,
+`-O1` by default through `Options::arguments`) instead of FXC; the DLL is
+loaded by path through `Plugins::DynamicLibrary`, lazily on the first compile
+or by `Dxc::load()`, and nothing links it. An unloadable compiler or a device
+with no Shader Model 6.0 logs once and falls back to FXC (`Dxc::status()` says
+why); a shader DXC rejects leaves the library invalid, with no FXC retry.
+Precompiled blobs and the backend's internal shaders are untouched, and off
+Windows the options change nothing (`Dxc-Default.cpp`). The default locator is
+the separate `eacp-gpu-dxc` target (`GPU/Dxc/DxcResource.h`,
+`Dxc::enableFromOnlineResource()`), which fetches the official release through
+`OnlineResource` into `<cache root>/eacp/DXC` so `eacp-gpu` never links
+`eacp-network`; `Apps/GPU/Teapot` uses it. `Tests/GPU/DxcTests-Windows.cpp`
+needs `EACP_TEST_DXC=1` for its download cases, and `EACP_D3D12_DXC=1` runs all
+of `GPUTests` under DXC. "Compiling with DXC at run time" in
+`Lib/eacp/GPU/README.md` is the account, including the three WARP failures
+(DXIL `Htan`/`Hsin`/`Hcos`) and why `-O1`.
 
 ### ML (`Lib/eacp/ML`)
 
@@ -1153,6 +1326,8 @@ Android: android, log, jnigraphics, the Vulkan loader the same way, and
 `java.net`/`javax.net.ssl` through JNI for the network; no libcurl.
 
 ## Code Style
+
+Before writing a helper, read `Docs/Toolbox.md`.
 
 Always use the most modern C++ and RAII practices.
 Use auto for variables and whenever possible.

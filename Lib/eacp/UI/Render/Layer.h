@@ -28,8 +28,9 @@ class Graphics;
 // It is a member of the component that draws it, exactly as PathShape is, and
 // for the same reason: the content has to be rendered into the texture *before*
 // the frame's own pass opens, because a pass cannot begin inside another one. So
-// the host walks the tree, runs every layer's onPaint into its own pass, and the
-// tree's own paint() then draws the result as a quad.
+// the host walks the tree, records every layer's onPaint before that layer's own
+// pass opens, plays it into the pass, and the tree's own paint() then draws the
+// result as a quad.
 //
 //   struct Group final : Component
 //   {

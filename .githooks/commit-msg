@@ -1,0 +1,8 @@
+#!/bin/sh
+# Refuses a commit message that credits Claude or Anthropic.
+pattern='^[[:space:]]*co-authored-by:.*(claude|anthropic)|@anthropic\.com|generated with[[:space:]]*\[?[[:space:]]*claude'
+line=$(grep -v '^#' "$1" | grep -i -E -m 1 "$pattern")
+if [ -n "$line" ]; then
+    echo "commit-msg: refused, the message credits Claude: $line" >&2
+    exit 1
+fi

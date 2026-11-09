@@ -1,8 +1,8 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/UI/UI.h>
 
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 
 // The stock widgets, in one window, doing the things that are hard to see from
@@ -36,10 +36,6 @@ namespace
 {
 constexpr auto padding = 12.f;
 constexpr auto generatedRowCount = 10000;
-
-// Which page the window opens on, from the command line, so a picture of the
-// second one costs no click.
-int startupTab = 0;
 
 std::string percentText(float value)
 {
@@ -95,12 +91,12 @@ void paintRowBackground(UI::Graphics& g,
 
     if (selected)
     {
-        g.setColour(theme.accentDim);
+        g.setColour(theme.get(UI::ThemeKeys::accentDim));
         g.fillRect(bounds);
     }
     else if (row % 2 == 1)
     {
-        g.setColour(theme.panel);
+        g.setColour(theme.get(UI::ThemeKeys::panel));
         g.fillRect(bounds);
     }
 }
@@ -113,7 +109,7 @@ struct EventLog final
 {
     EventLog()
     {
-        title.setColour(UI::defaultTheme().dimText);
+        title.setThemeColour(UI::ThemeKeys::dimText);
 
         list.setModel(this);
         list.setRowHeight(18.f);
@@ -133,20 +129,20 @@ struct EventLog final
 
     void paintRow(UI::Graphics& g,
                   int row,
-                  const UI::Rect& bounds,
+                  const UI::Rect& rowBounds,
                   bool selected) override
     {
-        paintRowBackground(g, row, bounds, selected);
+        paintRowBackground(g, row, rowBounds, selected);
 
-        g.setColour(UI::defaultTheme().dimText);
-        g.drawText(lines[row], bounds.inset(8.f, 0.f));
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
+        g.drawText(lines[row], rowBounds.inset(8.f, 0.f));
     }
 
     // The list fills itself with the background colour, so an empty one is
     // invisible without a frame drawn over it.
     void paintOverChildren(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().outline);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::outline));
         g.drawRect(list.getBounds());
     }
 
@@ -179,7 +175,7 @@ struct LabelledControl final : UI::Component
         , control(std::forward<Args>(args)...)
         , caption(name)
     {
-        caption.setColour(UI::defaultTheme().dimText);
+        caption.setThemeColour(UI::ThemeKeys::dimText);
         caption.setJustification(UI::Justification::Centred);
         readout.setJustification(UI::Justification::Centred);
 
@@ -226,9 +222,9 @@ struct ControlsPage final : UI::Component
 {
     ControlsPage()
     {
-        presetCaption.setColour(UI::defaultTheme().dimText);
-        editorCaption.setColour(UI::defaultTheme().dimText);
-        programCaption.setColour(UI::defaultTheme().dimText);
+        presetCaption.setThemeColour(UI::ThemeKeys::dimText);
+        editorCaption.setThemeColour(UI::ThemeKeys::dimText);
+        programCaption.setThemeColour(UI::ThemeKeys::dimText);
 
         preset.addItems({"Init", "Warm", "Bright", "Hollow", "Bell"});
         preset.setSelectedIndex(0);
@@ -365,7 +361,8 @@ struct GeneratedRows final : UI::ListBoxModel
 
         paintRowBackground(g, row, bounds, selected);
 
-        g.setColour(selected ? theme.text : theme.dimText);
+        g.setColour(
+            theme.get(selected ? UI::ThemeKeys::text : UI::ThemeKeys::dimText));
         g.drawText(generatedRowText(row), bounds.inset(8.f, 0.f));
     }
 
@@ -396,7 +393,8 @@ struct NoteTable final : UI::ListBoxModel
     {
         const auto& theme = UI::defaultTheme();
 
-        g.setColour(selected ? theme.text : theme.dimText);
+        g.setColour(
+            theme.get(selected ? UI::ThemeKeys::text : UI::ThemeKeys::dimText));
         g.drawText(cellText(row, column), bounds.inset(6.f, 0.f));
     }
 
@@ -432,7 +430,7 @@ struct StatsBar final : UI::Component
                     + std::to_string(host->getLastPaintedComponentCount())
                     + " painted   " + std::to_string(generatedRowCount) + " rows";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
         if (text != lastPainted)
@@ -452,7 +450,7 @@ struct ListPage final : UI::Component
     {
         for (auto* label:
              {&rowsCaption, &notesCaption, &rowsSelection, &notesSelection})
-            label->setColour(UI::defaultTheme().dimText);
+            label->setThemeColour(UI::ThemeKeys::dimText);
 
         rows.onSelect = [this](int row)
         { rowsSelection.setText("selected row " + std::to_string(row)); };
@@ -512,7 +510,7 @@ struct ListPage final : UI::Component
 
 struct DemoRoot final : UI::Component
 {
-    DemoRoot()
+    explicit DemoRoot(int startupTab)
     {
         tabs.addTab("Controls", controls);
         tabs.addTab("List", lists);
@@ -523,7 +521,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override { tabs.setBounds(getLocalBounds()); }
@@ -535,7 +533,8 @@ struct DemoRoot final : UI::Component
 
 struct DemoHost final : UI::ComponentHost
 {
-    DemoHost()
+    explicit DemoHost(int startupTab)
+        : root(startupTab)
     {
         setFontPointSize(13.f);
         root.lists.stats.host = this;
@@ -561,8 +560,19 @@ Graphics::WindowOptions makeOptions()
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        startupTab = static_cast<int>(std::strtol(argv[1], nullptr, 10));
+    Apps::setCommandLineArgs(argc, argv);
 
-    return Graphics::runWindowedApp<DemoHost>(makeOptions());
+    // Which page the window opens on, so a picture of the second one costs no
+    // click. The pages are a fixed pair: 0 is Controls, 1 is List.
+    auto startupTab = 0;
+
+    auto cli = Args::Parser {"WidgetGallery", "The stock widgets, in one window."};
+    cli.positional(startupTab, "tab", "the page to open on: 0 Controls, 1 List")
+        .atLeast(0)
+        .atMost(1);
+
+    if (auto code = cli.exitCodeFor(cli.parse()))
+        return *code;
+
+    return Graphics::runWindowedApp<DemoHost>(makeOptions(), startupTab);
 }

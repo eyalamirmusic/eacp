@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/UI/UI.h>
 
 #include <algorithm>
@@ -114,7 +115,7 @@ struct Gallery final : UI::Component
             auto& cache = getHost()->getImageCache();
 
             photo = cache.get(makePhoto(photoSize));
-            icon = cache.get(makeIcon(iconSize, theme.accent));
+            icon = cache.get(makeIcon(iconSize, theme.get(UI::ThemeKeys::accent)));
         }
 
         auto x = 0.f;
@@ -126,7 +127,7 @@ struct Gallery final : UI::Component
             x += size + padding;
         }
 
-        g.setColour(theme.dimText);
+        g.setColour(theme.get(UI::ThemeKeys::dimText));
         g.drawText("one image, 512 to 8 points, through its mip chain",
                    {0.f, 512.f + padding, 600.f, 20.f});
 
@@ -144,7 +145,7 @@ struct Gallery final : UI::Component
             g.drawImage(photo, {0.f, row, 200.f, 140.f});
         }
 
-        g.setColour(theme.panel);
+        g.setColour(theme.get(UI::ThemeKeys::panel));
         g.fillRoundedRect({216.f, row, 200.f, 140.f}, 28.f);
 
         // A crop: the middle quarter, stretched.
@@ -154,7 +155,7 @@ struct Gallery final : UI::Component
         // above the images of its clip region whatever order it was issued in,
         // as it does above the shapes -- so this is the order to draw it in.
         g.drawImage(photo, {588.f, row, 300.f, 140.f}, 0.4f);
-        g.setColour(theme.text);
+        g.setColour(theme.get(UI::ThemeKeys::text));
         g.setFontSize(28.f);
         g.drawText("text over a faded image", {588.f, row, 300.f, 140.f});
     }
@@ -182,7 +183,7 @@ struct StatsBar final : UI::Component
             + " image draws   " + std::to_string(host->getCachedImageCount())
             + " textures";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
         if (text != lastPainted)
@@ -200,13 +201,13 @@ struct DemoRoot final : UI::Component
 {
     DemoRoot()
     {
-        title.setColour(UI::defaultTheme().text);
+        title.setThemeColour(UI::ThemeKeys::text);
         addChildren({title, gallery, stats});
     }
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override
@@ -255,7 +256,7 @@ Graphics::WindowOptions makeOptions()
 // looked at on a machine with nobody at the screen. Sized and told resized() by
 // hand, since a view in no window is never told and that is where the host
 // builds its renderers.
-int snapshot(const char* path)
+int snapshot(const FilePath& path)
 {
     auto host = DemoHost {};
     host.setBounds({0.f, 0.f, 1100.f, 820.f});
@@ -271,7 +272,7 @@ int snapshot(const char* path)
     if (!image.isValid())
         return 1;
 
-    image.save(FilePath {path});
+    image.save(path);
 
     return 0;
 }
@@ -279,8 +280,19 @@ int snapshot(const char* path)
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        return snapshot(argv[1]);
+    auto snapshotPath = FilePath {};
+
+    auto cli =
+        Args::Parser {"Images", "Pictures in the component tier, and their cost."};
+    cli.positional(snapshotPath,
+                   "snapshot",
+                   "render one frame to this PNG and exit, with no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (!snapshotPath.empty())
+        return snapshot(snapshotPath);
 
     return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

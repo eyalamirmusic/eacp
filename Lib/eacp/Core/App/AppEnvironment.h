@@ -32,6 +32,10 @@ AppEnvironment& getAppEnvironment();
 // before app construction.
 void setCommandLineArgs(int argc, char* argv[]);
 
+// getAppEnvironment().commandLineArgs: argv[0] first, empty until
+// setCommandLineArgs() (or runConsole / run<T>(argc, argv)) has stored them.
+const Vector<std::string>& commandLineArgs();
+
 // Sets headless for this eacp copy and exports EACP_HEADLESS, so eacp
 // copies inside plugins loaded afterwards inherit it.
 void setHeadless(bool headless);

@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/UI/UI.h>
 
 #include <string>
@@ -56,10 +57,10 @@ struct Card final : UI::Component
             g.drawShadow({box, radius, offset, blur, spread});
         }
 
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(box, radius);
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(caption, box, UI::Justification::Centred);
     }
 
@@ -86,10 +87,10 @@ struct StackedCard final : UI::Component
             g.drawShadow({box, 10.f, {0.f, depth * depth}, depth * depth * 1.5f});
         }
 
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(box, 10.f);
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText("stacked", box, UI::Justification::Centred);
     }
 };
@@ -102,13 +103,13 @@ struct InsetCard final : UI::Component
     {
         auto box = cardBox();
 
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(box, 10.f);
 
         g.setColour(shadowColour);
         g.drawShadow({box, 10.f, {0.f, 3.f}, 10.f, 0.f, true});
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText("inset", box, UI::Justification::Centred);
     }
 };
@@ -117,7 +118,7 @@ struct Label final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -135,7 +136,7 @@ struct Stats final : UI::Component
                     + std::to_string(host->getLastClipChangeCount())
                     + " clip changes";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -230,7 +231,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     Vector<OwningPointer<Label>> labels;
@@ -268,7 +269,7 @@ Graphics::WindowOptions makeOptions()
 
 // The same tree rendered to a file with no window, which is how the picture is
 // looked at on a machine with nobody at the screen.
-int snapshot(const char* path)
+int snapshot(const FilePath& path)
 {
     auto host = DemoHost {};
     host.setBounds({0.f, 0.f, 1250.f, 880.f});
@@ -284,7 +285,7 @@ int snapshot(const char* path)
     if (!image.isValid())
         return 1;
 
-    image.save(FilePath {path});
+    image.save(path);
 
     return 0;
 }
@@ -292,8 +293,18 @@ int snapshot(const char* path)
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        return snapshot(argv[1]);
+    auto snapshotPath = FilePath {};
+
+    auto cli = Args::Parser {"Shadows", "Shadows in the component tier."};
+    cli.positional(snapshotPath,
+                   "snapshot",
+                   "render one frame to this PNG and exit, with no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (!snapshotPath.empty())
+        return snapshot(snapshotPath);
 
     return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

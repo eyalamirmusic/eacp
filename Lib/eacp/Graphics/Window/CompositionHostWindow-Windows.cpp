@@ -31,6 +31,9 @@ void redrawAllCompositionHosts();
 uint16_t keyCodeFromVirtualKey(int vk);
 uint16_t keyCodeFromKeyMessage(int vk, LPARAM lParam);
 
+// Also Keyboard-Windows.cpp: KeyEvent::charactersIgnoringModifiers for a key.
+std::string charactersIgnoringModifiersForVirtualKey(int vk);
+
 namespace
 {
 // Immortal because ~CompositionHostWindow unregisters here, and a Window at
@@ -785,15 +788,15 @@ void CompositionHostWindow::registerFileDrops()
     if (!oleReady)
         return;
 
-    auto* target = new HostFileDropTarget(*this);
+    auto* dropTarget = new HostFileDropTarget(*this);
 
-    if (FAILED(RegisterDragDrop(hwnd, target)))
+    if (FAILED(RegisterDragDrop(hwnd, dropTarget)))
     {
-        target->Release();
+        dropTarget->Release();
         return;
     }
 
-    fileDropTarget = target;
+    fileDropTarget = dropTarget;
 }
 
 void CompositionHostWindow::revokeFileDrops()
@@ -1339,9 +1342,13 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     if (down)
     {
         event.characters = takePendingCharacters();
+        event.charactersIgnoringModifiers =
+            charactersIgnoringModifiersForVirtualKey(vk);
         event.isRepeat = (lParam & 0x40000000) != 0;
     }
 
+    // To the view holding key focus, and up through its parents while each
+    // passes the key on: what the responder chain does for a macOS window.
     contentView->dispatchKeyEvent(event);
 
     ensureAllLayersRendered(contentView);

@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Graphics.h>
 
@@ -6,7 +7,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <numeric>
 
 // GPU::StreamingBuffers under the load it was rebuilt for: a renderer that
@@ -644,7 +644,15 @@ int runCheck()
 
 int main(int argc, char** argv)
 {
-    if (argc > 1 && std::strcmp(argv[1], "--check") == 0)
+    auto check = false;
+    auto cli = Args::Parser {"StreamingStress",
+                             "GPU::StreamingBuffers under per-draw streaming load."};
+    cli.flag("--check", check, "render headlessly and print the checks, no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (check)
         return runCheck();
 
     return eacp::Apps::run<StreamingStressApp>();

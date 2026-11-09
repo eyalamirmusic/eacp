@@ -195,6 +195,26 @@ auto tStyleIsPartOfTheKey = test("GlyphAtlas/stylesAreCachedSeparately") = []
     check(italic.src.x != boldItalic.src.x || italic.src.y != boldItalic.src.y);
 };
 
+// An italic that may lean and one that may not are two faces, and the same
+// glyph of each two entries; upright, the flag keys nothing.
+auto tWithheldSynthesisIsPartOfTheKey =
+    test("GlyphAtlas/anItalicWithheldItsSynthesisIsCachedSeparately") = []
+{
+    auto harness = Harness {};
+    const auto key = GlyphKey {'A', 0};
+
+    const auto italic = harness.atlas->glyph(key, FontVariant {400, true});
+    const auto withheld = harness.atlas->glyph(key, FontVariant {400, true, false});
+
+    check(harness.source()->rasterCalls == 2);
+    check(italic.src.x != withheld.src.x || italic.src.y != withheld.src.y);
+
+    harness.atlas->glyph(key, FontVariant {400, false});
+    harness.atlas->glyph(key, FontVariant {400, false, false});
+
+    check(harness.source()->rasterCalls == 3);
+};
+
 auto tReportsInvalidGlyphs = test("GlyphAtlas/reportsGlyphsNoFaceCanDraw") = []
 {
     auto harness = Harness {};

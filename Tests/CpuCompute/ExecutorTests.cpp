@@ -1,3 +1,5 @@
+#include "CountingHeap.h"
+
 #include <NanoTest/NanoTest.h>
 
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
@@ -15,9 +17,7 @@
 #include <new>
 #include <span>
 
-#if defined(_WIN32)
-#include <malloc.h>
-#else
+#if !defined(_WIN32)
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -2614,6 +2614,30 @@ auto tOutOfTier = test("Executor/everyOutOfTierConstructIsRefusedByName") = []
     check(values[0] == sentinel);
 };
 
+auto tSamplerSlot = test("Executor/aSamplerSlotIsRefusedByName") = []
+{
+    for (auto comparison: {false, true})
+    {
+        auto builder = ShaderBuilder {};
+        auto output = builder.outputBuffer();
+        auto i = builder.threadId();
+        builder.samplerOf(comparison);
+        builder.write(output, i, toFloat(i));
+
+        check(refusedNaming(Executor {builder.graph()}, "sampler"));
+    }
+
+    auto builder = ShaderBuilder {};
+    auto output = builder.outputBuffer();
+    auto texture = builder.texture();
+    auto smooth = builder.sampler();
+    auto i = builder.threadId();
+    builder.write(
+        output, i, sampleLevel(texture, smooth, float2(toFloat(i), 0.5f), 0.f).x());
+
+    check(refusedNaming(Executor {builder.graph()}, "texture slot 1 is a sampler"));
+};
+
 // ---------------------------------------------------------------------------
 // Bare graphs the typed builder cannot produce, each refused with a reason.
 
@@ -3506,7 +3530,7 @@ auto tSharedAcrossStatements =
     check(executor.isValid(), executor.reason());
 
     const auto& plan = executor.plan();
-    auto atomic = firstStepOf(plan, StatementKind::AtomicAdd);
+    auto atomic = firstStepOf(plan, StatementKind::Atomic);
     auto store = firstStepOf(plan, StatementKind::Store);
     check(atomic >= 0 && store >= 0);
 
@@ -3760,16 +3784,12 @@ auto tNoPhantomWrite =
 
 // ---------------------------------------------------------------------------
 // The realtime contract: a dispatch after the first allocates nothing. Global
-// operator new and delete are replaced at the bottom of this file with forms
-// that count while `countingHeap` is set, which is why this must stay the only
+// operator new and delete are replaced in CountingHeap.cpp with forms that
+// count while `countingHeap` is set, which is why that must stay the only
 // translation unit in the binary that replaces them.
 
 namespace
 {
-std::atomic<bool> countingHeap {false};
-std::atomic<int> allocationsCounted {0};
-std::atomic<int> releasesCounted {0};
-
 struct RealtimeKernel final : ComputeKernel
 {
     RealtimeKernel() { compile(); }
@@ -4140,171 +4160,3 @@ auto tNoFragmentAllocation =
     check(matchesRealtimeFragments(input, output));
 };
 } // namespace ExecutorTests
-
-namespace
-{
-void noteAllocation()
-{
-    if (ExecutorTests::countingHeap.load(std::memory_order_relaxed))
-        ExecutorTests::allocationsCounted.fetch_add(1, std::memory_order_relaxed);
-}
-
-void noteRelease(void* pointer)
-{
-    if (pointer != nullptr
-        && ExecutorTests::countingHeap.load(std::memory_order_relaxed))
-        ExecutorTests::releasesCounted.fetch_add(1, std::memory_order_relaxed);
-}
-
-void* allocateBytes(std::size_t size)
-{
-    noteAllocation();
-    return std::malloc(size == 0 ? 1 : size);
-}
-
-void* allocateAligned(std::size_t size, std::align_val_t alignment)
-{
-    noteAllocation();
-
-    auto align = std::max((std::size_t) alignment, sizeof(void*));
-    auto bytes = size == 0 ? align : size;
-
-#if defined(_WIN32)
-    return _aligned_malloc(bytes, align);
-#else
-    void* pointer = nullptr;
-    return posix_memalign(&pointer, align, bytes) == 0 ? pointer : nullptr;
-#endif
-}
-
-void releaseBytes(void* pointer) noexcept
-{
-    noteRelease(pointer);
-    std::free(pointer);
-}
-
-void releaseAligned(void* pointer) noexcept
-{
-    noteRelease(pointer);
-
-#if defined(_WIN32)
-    _aligned_free(pointer);
-#else
-    std::free(pointer);
-#endif
-}
-
-void* allocateOrThrow(void* pointer)
-{
-    if (pointer == nullptr)
-        throw std::bad_alloc {};
-
-    return pointer;
-}
-} // namespace
-
-void* operator new(std::size_t size)
-{
-    return allocateOrThrow(allocateBytes(size));
-}
-
-void* operator new[](std::size_t size)
-{
-    return allocateOrThrow(allocateBytes(size));
-}
-
-void* operator new(std::size_t size, std::align_val_t alignment)
-{
-    return allocateOrThrow(allocateAligned(size, alignment));
-}
-
-void* operator new[](std::size_t size, std::align_val_t alignment)
-{
-    return allocateOrThrow(allocateAligned(size, alignment));
-}
-
-void* operator new(std::size_t size, const std::nothrow_t&) noexcept
-{
-    return allocateBytes(size);
-}
-
-void* operator new[](std::size_t size, const std::nothrow_t&) noexcept
-{
-    return allocateBytes(size);
-}
-
-void* operator new(std::size_t size,
-                   std::align_val_t alignment,
-                   const std::nothrow_t&) noexcept
-{
-    return allocateAligned(size, alignment);
-}
-
-void* operator new[](std::size_t size,
-                     std::align_val_t alignment,
-                     const std::nothrow_t&) noexcept
-{
-    return allocateAligned(size, alignment);
-}
-
-void operator delete(void* pointer) noexcept
-{
-    releaseBytes(pointer);
-}
-
-void operator delete[](void* pointer) noexcept
-{
-    releaseBytes(pointer);
-}
-
-void operator delete(void* pointer, std::size_t) noexcept
-{
-    releaseBytes(pointer);
-}
-
-void operator delete[](void* pointer, std::size_t) noexcept
-{
-    releaseBytes(pointer);
-}
-
-void operator delete(void* pointer, std::align_val_t) noexcept
-{
-    releaseAligned(pointer);
-}
-
-void operator delete[](void* pointer, std::align_val_t) noexcept
-{
-    releaseAligned(pointer);
-}
-
-void operator delete(void* pointer, std::size_t, std::align_val_t) noexcept
-{
-    releaseAligned(pointer);
-}
-
-void operator delete[](void* pointer, std::size_t, std::align_val_t) noexcept
-{
-    releaseAligned(pointer);
-}
-
-void operator delete(void* pointer, const std::nothrow_t&) noexcept
-{
-    releaseBytes(pointer);
-}
-
-void operator delete[](void* pointer, const std::nothrow_t&) noexcept
-{
-    releaseBytes(pointer);
-}
-
-void operator delete(void* pointer, std::align_val_t, const std::nothrow_t&) noexcept
-{
-    releaseAligned(pointer);
-}
-
-void operator delete[](void* pointer,
-                       std::align_val_t,
-                       const std::nothrow_t&) noexcept
-{
-    releaseAligned(pointer);
-}

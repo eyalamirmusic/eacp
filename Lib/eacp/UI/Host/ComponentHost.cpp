@@ -435,6 +435,7 @@ void ComponentHost::resized()
         meshes.emplace(
             *paths, gradientRamps(), Point {bounds.w, bounds.h}, sampleCount());
         images.emplace(*paths, Point {bounds.w, bounds.h}, sampleCount());
+        images->setPixelScale(backingScale());
         layers.emplace(Point {bounds.w, bounds.h}, sampleCount());
     }
 
@@ -453,6 +454,7 @@ void ComponentHost::setSurfaceSize(Point size)
     shapes->setPixelScale(backingScale());
     meshes->setLogicalSize(size);
     images->setLogicalSize(size);
+    images->setPixelScale(backingScale());
     layers->setLogicalSize(size);
 }
 
@@ -621,20 +623,21 @@ void ComponentHost::playSubtree(Component& component,
     // by everything its ancestors left of them -- or, for one painting
     // unclipped, everything they left whatever its bounds.
     auto own = Rect {position.x, position.y, bounds.w, bounds.h};
-    auto visible = component.isPaintingUnclipped() ? clip : clip.intersection(own);
+    auto visibleArea =
+        component.isPaintingUnclipped() ? clip : clip.intersection(own);
 
     // A component scrolled out of its parent, or entirely behind an opaque
     // ancestor's clip, costs nothing at all. The whole subtree goes with it,
     // since a child cannot escape this clip.
-    if (visible.isEmpty())
+    if (visibleArea.isEmpty())
         return;
 
-    player.play(component.paintList, position, visible);
+    player.play(component.paintList, position, visibleArea);
 
     for (auto* child: component.getChildren())
-        playComponent(*child, player, position, visible);
+        playComponent(*child, player, position, visibleArea);
 
-    player.play(component.overList, position, visible);
+    player.play(component.overList, position, visibleArea);
 }
 
 void ComponentHost::markAllPathsDirty(Component& component)
@@ -742,18 +745,19 @@ void ComponentHost::renderLayers(Component& component,
 
     auto reach = component.capturingLayer != nullptr ? everywhere() : clip;
 
-    auto visible = component.isPaintingUnclipped() ? reach : reach.intersection(own);
+    auto visibleArea =
+        component.isPaintingUnclipped() ? reach : reach.intersection(own);
 
     // Walked whether or not anything of it is visible: a culled GPUComponent
     // still has to hear that it is, and every other layer renders as it did.
     for (auto* child: component.getChildren())
-        renderLayers(*child, frame, position, visible);
+        renderLayers(*child, frame, position, visibleArea);
 
-    auto visibleLocal = visible.isEmpty() ? Rect {}
-                                          : Rect {visible.x - position.x,
-                                                  visible.y - position.y,
-                                                  visible.w,
-                                                  visible.h};
+    auto visibleLocal = visibleArea.isEmpty() ? Rect {}
+                                              : Rect {visibleArea.x - position.x,
+                                                      visibleArea.y - position.y,
+                                                      visibleArea.w,
+                                                      visibleArea.h};
 
     // An onRender layer samples whatever it likes, and what it is most likely
     // to sample is a layer registered before it -- so one rendering again is
@@ -813,6 +817,18 @@ bool ComponentHost::recordContent(Layer& layer)
     return paintedThisWalk != paintedBefore;
 }
 
+void ComponentHost::recordLayer(Layer& layer, DrawList& list)
+{
+    auto bounds = layer.getBounds();
+    auto g = Graphics {list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
+
+    // So the content draws in the coordinates it was authored in and the
+    // layer's own top-left lands on the texture's.
+    g.translate(-bounds.x, -bounds.y);
+
+    layer.onPaint(g);
+}
+
 void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
 {
     auto bounds = layer.getBounds();
@@ -825,6 +841,18 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
         renderOwnPass(layer, frame);
         return;
     }
+
+    // Recorded before the pass opens, as a component's band is: what the
+    // drawing asks for on the way - a picture rendered off-screen, which
+    // nests a frame and flushes this one - must not find an encoder open.
+    // Played straight away rather than kept: a layer already has a cache --
+    // its own texture, which is only rebuilt when the layer is dirty -- so a
+    // second one for the drawing that fills it would be a list that is
+    // written and read once.
+    auto list = std::optional<DrawList> {};
+
+    if (layer.getContent() == nullptr)
+        recordLayer(layer, list.emplace());
 
     // The renderers are the tree's own, pointed at this pass and told the
     // layer's size. One set rather than a second, because a pipeline is
@@ -859,31 +887,10 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
                                   {0.f, 0.f, bounds.w, bounds.h},
                                   backingScale()};
 
-        if (layer.getContent() != nullptr)
-        {
-            playContent(layer, player);
-        }
+        if (list)
+            player.play(*list, {}, {0.f, 0.f, bounds.w, bounds.h});
         else
-        {
-            // Recorded and played straight away rather than kept. A layer
-            // already has a cache -- its own texture, which is only rebuilt
-            // when the layer is dirty -- so a second one for the drawing that
-            // fills it would be a list that is written and read once.
-            auto list = DrawList {};
-
-            {
-                auto g = Graphics {
-                    list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
-
-                // So the content draws in the coordinates it was authored in and
-                // the layer's own top-left lands on the texture's.
-                g.translate(-bounds.x, -bounds.y);
-
-                layer.onPaint(g);
-            }
-
-            player.play(list, {}, {0.f, 0.f, bounds.w, bounds.h});
-        }
+            playContent(layer, player);
 
         player.flush();
     }
@@ -1741,6 +1748,32 @@ Component* ComponentHost::getRootComponent() const
 const Font& ComponentHost::getFont() const
 {
     return font;
+}
+
+void ComponentHost::setTheme(const Theme& themeToUse)
+{
+    theme = themeToUse;
+
+    // The two things the host draws with itself, taken only from a theme that
+    // holds them, so a theme of a few colours leaves the face and the backdrop
+    // as they were.
+    if (auto* face = theme.find(ThemeKeys::font))
+        setFont(*face);
+
+    if (auto* backdrop = theme.find(ThemeKeys::background))
+        background = *backdrop;
+
+    // Every widget recorded its colours from the theme it found, so all of them
+    // have to paint again, as for a change of face.
+    if (root != nullptr)
+        markTreeDirty(*root);
+
+    repaint();
+}
+
+const Theme& ComponentHost::getTheme() const
+{
+    return theme;
 }
 
 ImageCache& ComponentHost::getImageCache()

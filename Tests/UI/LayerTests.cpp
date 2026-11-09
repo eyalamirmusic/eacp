@@ -160,6 +160,51 @@ auto tUnturnedLayerLandsInItsBounds =
     check(isEmpty(image, 120, 75), "and nothing past its right edge");
 };
 
+// A layer's drawing may render something else off-screen on the way - a
+// picture made the first time it is drawn - which nests a frame and flushes
+// the one rendering the layer. The drawing is recorded before the layer's
+// pass opens, so that flush finds no encoder open.
+auto tLayerDrawingRendersOffScreen =
+    test("Layer/aLayerWhoseDrawingRendersOffScreenIsStillDrawn") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    struct Nesting final : Component
+    {
+        Nesting()
+            : layer(*this)
+        {
+            layer.onPaint = [this](UI::Graphics& g)
+            {
+                nested = renderSquare({0.f, 0.f, 10.f, 10.f}, {});
+                g.setColour(Color {1.f, 0.f, 0.f, 1.f});
+                g.fillRect(layer.getBounds());
+            };
+        }
+
+        void paint(UI::Graphics& g) override { g.drawLayer(layer); }
+
+        Layer layer;
+        eacp::Graphics::Image nested;
+    };
+
+    auto content = Nesting {};
+    content.layer.setBounds({50.f, 50.f, 50.f, 50.f});
+
+    auto host = ComponentHost {};
+
+    host.setBackgroundColour({0.f, 0.f, 0.f, 0.f});
+    host.setBounds({0.f, 0.f, 200.f, 200.f});
+    host.resized();
+    host.setRootComponent(content);
+
+    auto image = host.renderToImage(1.f);
+
+    check(isRed(content.nested, 5, 5), "the picture rendered inside");
+    check(isRed(image, 75, 75), "and the layer around it");
+};
+
 // A tree recorded by hand before its first frame - paintDirtyComponents,
 // which is what a headless snapshot and a test do - names a layer that has
 // no texture yet. The recording has to name it all the same: the frame

@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/UI/UI.h>
 
 #include <cmath>
@@ -51,13 +52,13 @@ GPUWidgets::AffineTransform about(const GPUWidgets::AffineTransform& transform,
 // thing, and the stripe is what shows it.
 void paintCard(UI::Graphics& g, const Rect& box, std::string_view caption)
 {
-    g.setColour(UI::defaultTheme().panel);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
     g.fillRoundedRect(box, 10.f);
 
     g.setColour(Color {0.31f, 0.27f, 0.9f, 1.f});
     g.fillRect({box.x, box.y, 8.f, box.h});
 
-    g.setColour(UI::defaultTheme().dimText);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
     g.drawText(caption, box, UI::Justification::Centred);
 }
 
@@ -147,7 +148,7 @@ struct Label final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -167,7 +168,7 @@ struct Stats final : UI::Component
             + std::to_string(host->getLastComponentCount()) + " components   "
             + std::to_string(host->getLastClipChangeCount()) + " clip changes";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -261,7 +262,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     Vector<OwningPointer<Label>> labels;
@@ -310,7 +311,7 @@ Graphics::WindowOptions makeOptions()
 
 // The same tree rendered to a file with no window, which is how the picture is
 // looked at on a machine with nobody at the screen.
-int snapshot(const char* path)
+int snapshot(const FilePath& path)
 {
     auto host = DemoHost {};
     host.setBounds({0.f, 0.f, 1250.f, 780.f});
@@ -326,7 +327,7 @@ int snapshot(const char* path)
     if (!image.isValid())
         return 1;
 
-    image.save(FilePath {path});
+    image.save(path);
 
     return 0;
 }
@@ -334,8 +335,20 @@ int snapshot(const char* path)
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        return snapshot(argv[1]);
+    auto snapshotPath = FilePath {};
+
+    auto cli = Args::Parser {"Transforms",
+                             "Transforms on a layer's composite, in the component "
+                             "tier."};
+    cli.positional(snapshotPath,
+                   "snapshot",
+                   "render one frame to this PNG and exit, with no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (!snapshotPath.empty())
+        return snapshot(snapshotPath);
 
     return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

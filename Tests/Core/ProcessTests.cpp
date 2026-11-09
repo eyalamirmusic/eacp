@@ -1,5 +1,6 @@
 #include "Common.h"
 #include <csignal>
+#include <mutex>
 
 #include <sys/types.h>
 #include <unistd.h>
@@ -110,4 +111,156 @@ auto tDetachedSurvivesDestruction = test("Process/detached/survivesDestruction")
     // Destroying the Process must leave a detached child running.
     check(::kill((pid_t) pid, 0) == 0);
     ::kill((pid_t) pid, SIGKILL);
+};
+
+namespace
+{
+Proc::ProcessOptions bothStreams()
+{
+    return {"/bin/sh", {"-c", "echo one; echo two 1>&2; echo three"}};
+}
+
+std::string withoutTrailingNewline(std::string text)
+{
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+        text.pop_back();
+
+    return text;
+}
+} // namespace
+
+auto tWorkingDirectory = test("Process/run/workingDirectory") = []
+{
+    auto dir = scratchDirectory("process-working-directory");
+
+    auto options = Proc::ProcessOptions {"pwd"};
+    options.workingDirectory = dir.string();
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.exitCode == 0);
+    check(std::filesystem::canonical(withoutTrailingNewline(result.output))
+          == std::filesystem::canonical(dir));
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tRunClosesInput = test("Process/run/closesInput") = []
+{
+    // cat waits on stdin until end-of-file; run() must not leave it open.
+    auto result = Proc::run("/bin/cat");
+
+    check(result.exited);
+    check(result.exitCode == 0);
+    check(result.output.empty());
+};
+
+auto tSeparateStreams = test("Process/run/separateStreams") = []
+{
+    auto result = Proc::run(bothStreams());
+
+    check(result.exitCode == 0);
+    check(result.output == "one\nthree\n");
+    check(result.errorOutput == "two\n");
+};
+
+auto tMergedStreams = test("Process/run/mergedStreams") = []
+{
+    auto options = bothStreams();
+    options.mergeErrorOutput = true;
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.exitCode == 0);
+    check(result.output == "one\ntwo\nthree\n");
+    check(result.errorOutput.empty());
+};
+
+auto tOnOutputSeesEveryChunk = test("Process/run/onOutputSeesEveryChunk") = []
+{
+    auto mutex = std::mutex {};
+    auto seen = std::string {};
+
+    auto options = bothStreams();
+    options.mergeErrorOutput = true;
+    options.onOutput = [&](std::string_view chunk)
+    {
+        auto lock = std::lock_guard {mutex};
+        seen.append(chunk);
+    };
+
+    auto result = Proc::run(std::move(options));
+
+    auto lock = std::lock_guard {mutex};
+    check(seen == "one\ntwo\nthree\n");
+    check(seen == result.output);
+};
+
+auto tOnOutputSkipsSeparateStderr =
+    test("Process/run/onOutputSkipsSeparateStderr") = []
+{
+    auto mutex = std::mutex {};
+    auto seen = std::string {};
+
+    auto options = bothStreams();
+    options.onOutput = [&](std::string_view chunk)
+    {
+        auto lock = std::lock_guard {mutex};
+        seen.append(chunk);
+    };
+
+    auto result = Proc::run(std::move(options));
+
+    auto lock = std::lock_guard {mutex};
+    check(seen == "one\nthree\n");
+    check(result.errorOutput == "two\n");
+};
+
+// No shell on POSIX: the line is split JUCE's way, so the quotes reach the
+// child as part of its arguments and only the executable is unquoted.
+auto tCommandLineKeepsQuotes =
+    test("Process/commandLine/keepsQuotesInArguments") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.commandLine = "\"/bin/echo\"  \"hello world\" plain";
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.launched);
+    check(result.exitCode == 0);
+    check(result.output == "\"hello world\" plain\n");
+};
+
+auto tCommandLineSearchesPath = test("Process/commandLine/searchesPath") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.commandLine = "echo from-path";
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.exitCode == 0);
+    check(result.output == "from-path\n");
+};
+
+auto tCommandLineIgnoresExecutable =
+    test("Process/commandLine/replacesExecutableAndArguments") = []
+{
+    auto options = Proc::ProcessOptions {"/bin/sh", {"-c", "exit 3"}};
+    options.commandLine = "/bin/echo replaced";
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.exitCode == 0);
+    check(result.output == "replaced\n");
+};
+
+auto tBlankCommandLineDoesNotLaunch =
+    test("Process/commandLine/blankDoesNotLaunch") = []
+{
+    auto options = Proc::ProcessOptions {"/bin/echo", {"unused"}};
+    options.commandLine = " \t ";
+
+    auto result = Proc::run(std::move(options));
+
+    check(!result.launched);
 };

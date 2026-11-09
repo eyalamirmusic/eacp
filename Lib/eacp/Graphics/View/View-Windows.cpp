@@ -518,9 +518,6 @@ struct View::Native
         return local;
     }
 
-    void focus() { hasFocusFlag = true; }
-    bool hasFocus() const { return hasFocusFlag; }
-
     // The DPI scale of the window hosting this view, so paint surfaces stay
     // crisp on a monitor whose scaling differs from the system DPI. Falls back
     // to the system DPI while the view is not yet parented into a window.
@@ -660,7 +657,6 @@ struct View::Native
 
     View* ownerView;
     Rect bounds;
-    bool hasFocusFlag = false;
 
     ComPtr<IDCompositionVisual2> visual;
     ComPtr<IDCompositionVisual3> visual3;
@@ -797,14 +793,17 @@ bool View::startFileDrag(const Vector<std::string>& paths,
     return true;
 }
 
+// A composition view is a visual, not a window, so there is no HWND for Win32
+// focus to land on. The host window has it, and CompositionHostWindow hands
+// every key to the content view, whose dispatchKeyEvent sends it here.
 void View::focus()
 {
-    impl->focus();
+    takeKeyFocus();
 }
 
 bool View::hasFocus() const
 {
-    return impl->hasFocus();
+    return holdsKeyFocus();
 }
 
 void* View::getNativeLayer()

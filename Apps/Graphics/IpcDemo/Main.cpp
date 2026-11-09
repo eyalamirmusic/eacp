@@ -149,10 +149,10 @@ struct DotField final : UI::Component
 
     void mouseDown(const UI::MouseEvent& event) override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
-        if (bounds.w > 0.f && bounds.h > 0.f)
-            onClick({event.position.x / bounds.w, event.position.y / bounds.h});
+        if (area.w > 0.f && area.h > 0.f)
+            onClick({event.position.x / area.w, event.position.y / area.h});
     }
 
     void addDot(UI::Point relative)
@@ -163,13 +163,13 @@ struct DotField final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
         g.setColour(dotColour);
 
         for (auto& dot: dots)
             g.fillRoundedRect(
-                {dot.x * bounds.w - 7.f, dot.y * bounds.h - 7.f, 14.f, 14.f}, 7.f);
+                {dot.x * area.w - 7.f, dot.y * area.h - 7.f, 14.f, 14.f}, 7.f);
     }
 
     std::function<void(UI::Point)> onClick = [](UI::Point) {};

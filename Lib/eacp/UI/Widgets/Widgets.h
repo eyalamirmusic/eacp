@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Component/Component.h"
+#include "ThemeKeys.h"
 #include "TouchScroller.h"
 
 #include <optional>
@@ -8,25 +9,9 @@
 
 namespace eacp::UI
 {
-// The colours the stock widgets draw with. One struct rather than a setter per
-// colour on each widget, so a theme is a value that can be shared, copied and
-// swapped rather than a hundred assignments -- the job JUCE gives LookAndFeel,
-// at the scale this prototype needs.
-struct Theme
-{
-    Color background {0.11f, 0.12f, 0.15f, 1.f};
-    Color panel {0.16f, 0.17f, 0.21f, 1.f};
-    Color outline {1.f, 1.f, 1.f, 0.10f};
-    Color text {0.92f, 0.93f, 0.96f, 1.f};
-    Color dimText {0.60f, 0.63f, 0.70f, 1.f};
-    Color accent {0.35f, 0.62f, 0.95f, 1.f};
-    Color accentDim {0.35f, 0.62f, 0.95f, 0.35f};
-    Color hover {1.f, 1.f, 1.f, 0.07f};
-    Color pressed {1.f, 1.f, 1.f, 0.14f};
-};
-
-const Theme& defaultTheme();
-
+// Every widget below draws in its host's theme (Component::getHostTheme) under
+// the keys in ThemeKeys.h, and a colour given to the widget itself, by
+// setColour or setAccentColour, wins over the theme's.
 class Label final : public Component
 {
 public:
@@ -35,7 +20,14 @@ public:
     void setText(std::string newText);
     const std::string& getText() const;
 
+    // A colour of its own, kept whatever the theme says.
     void setColour(const Color& colour);
+
+    // The theme's colour under another key than ThemeKeys::text -- a caption's
+    // dimText, say -- so the label follows a theme set after it was made.
+    // Whichever of the two was called last is the one drawn.
+    void setThemeColour(const ColourKey& key);
+
     void setJustification(Justification newJustification);
 
     // A face of its own, for a heading or a caption. Left unset, the label draws
@@ -52,7 +44,8 @@ public:
 
 private:
     std::string text;
-    Color colour = defaultTheme().text;
+    std::optional<Color> colour;
+    ColourKey colourKey = ThemeKeys::text;
     Justification justification = Justification::Left;
 
     // Empty until asked for. A label that never mentions a font has to draw in
@@ -89,7 +82,7 @@ public:
 
 private:
     std::string text;
-    Color accent = defaultTheme().accent;
+    std::optional<Color> accent;
     bool toggleable = false;
     bool toggledOn = false;
     bool down = false;
@@ -124,7 +117,7 @@ public:
 
 private:
     std::string text;
-    Color accent = defaultTheme().accent;
+    std::optional<Color> accent;
     bool checked = false;
 };
 
@@ -251,8 +244,8 @@ private:
     std::string placeholder;
     std::string passwordCharacter;
 
-    Color colour = defaultTheme().text;
-    Color accent = defaultTheme().accent;
+    std::optional<Color> colour;
+    std::optional<Color> accent;
     std::optional<Font> font;
 
     int caret = 0;
@@ -327,7 +320,7 @@ private:
     float value = 0.5f;
     float valueAtDragStart = 0.5f;
     std::optional<float> defaultValue;
-    Color accent = defaultTheme().accent;
+    std::optional<Color> accent;
     bool dragging = false;
 };
 
@@ -395,7 +388,7 @@ private:
     float value = 0.5f;
     float valueAtDragStart = 0.5f;
     std::optional<float> defaultValue;
-    Color accent = defaultTheme().accent;
+    std::optional<Color> accent;
     bool dragging = false;
 
     PathShape track {*this};

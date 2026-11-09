@@ -31,7 +31,13 @@ struct ThrowsOnDestruction
 {
     // The case the noexcept boundary exists for: the host calls stop from its
     // own teardown, so a throw escaping here would terminate the process.
-    ~ThrowsOnDestruction() noexcept(false) { throw std::runtime_error("no"); }
+    ~ThrowsOnDestruction() noexcept(false)
+    {
+        if (armed)
+            throw std::runtime_error("no");
+    }
+
+    bool armed = true;
 };
 } // namespace
 
