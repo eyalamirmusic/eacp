@@ -1,4 +1,5 @@
 #include "Common.h"
+#include "ProcessChildModes.h"
 #include <csignal>
 #include <mutex>
 
@@ -21,7 +22,8 @@ auto tCapturesStdout = test("Process/run/capturesStdout") = []
 
 auto tCapturesStderr = test("Process/run/capturesStderr") = []
 {
-    auto result = Proc::run("/bin/sh", {"-c", "echo oops 1>&2"});
+    auto result = Proc::run(ProcessChildModes::createChildOptions(
+        ProcessChildModes::writeError, {"oops"}));
 
     check(result.exitCode == 0);
     check(result.errorOutput == "oops\n");
@@ -30,7 +32,8 @@ auto tCapturesStderr = test("Process/run/capturesStderr") = []
 
 auto tNonZeroExit = test("Process/run/nonZeroExit") = []
 {
-    auto result = Proc::run("/bin/sh", {"-c", "exit 7"});
+    auto result = Proc::run(
+        ProcessChildModes::createChildOptions(ProcessChildModes::exitWith, {"7"}));
 
     check(result.launched);
     check(result.exitCode == 7);
@@ -46,10 +49,9 @@ auto tMissingExecutableExits127 = test("Process/run/missingExecutable") = []
 
 auto tEnvironmentOverride = test("Process/run/environmentOverride") = []
 {
-    auto options = Proc::ProcessOptions {"/bin/sh",
-                                         {"-c", "printf %s \"$EACP_TEST_VAR\""},
-                                         {},
-                                         {{"EACP_TEST_VAR", "42"}}};
+    auto options = ProcessChildModes::createChildOptions(
+        ProcessChildModes::printEnvironment, {"EACP_TEST_VAR"});
+    options.environment = {{"EACP_TEST_VAR", "42"}};
 
     auto result = Proc::run(std::move(options));
 
@@ -58,7 +60,8 @@ auto tEnvironmentOverride = test("Process/run/environmentOverride") = []
 
 auto tStdinRoundTrip = test("Process/stdin/roundTrip") = []
 {
-    auto process = Proc::Process {"/bin/cat", {}};
+    auto process = Proc::Process {
+        ProcessChildModes::createChildOptions(ProcessChildModes::echoInput)};
     check(process.launched());
 
     check(process.writeToInput("ping\n"));
@@ -72,7 +75,8 @@ auto tStdinRoundTrip = test("Process/stdin/roundTrip") = []
 
 auto tTerminateStopsChild = test("Process/terminate/stopsRunningChild") = []
 {
-    auto process = Proc::Process {"/bin/sleep", {"30"}};
+    auto process = Proc::Process {ProcessChildModes::createChildOptions(
+        ProcessChildModes::sleepSeconds, {"30"})};
     check(process.launched());
     check(process.isRunning());
 
@@ -99,7 +103,8 @@ auto tDetachedSurvivesDestruction = test("Process/detached/survivesDestruction")
     auto pid = long {-1};
 
     {
-        auto options = Proc::ProcessOptions {"/bin/sleep", {"30"}};
+        auto options = ProcessChildModes::createChildOptions(
+            ProcessChildModes::sleepSeconds, {"30"});
         options.detached = true;
 
         auto process = Proc::Process {std::move(options)};
@@ -117,7 +122,8 @@ namespace
 {
 Proc::ProcessOptions bothStreams()
 {
-    return {"/bin/sh", {"-c", "echo one; echo two 1>&2; echo three"}};
+    return ProcessChildModes::createChildOptions(
+        ProcessChildModes::writeBothStreams);
 }
 
 std::string withoutTrailingNewline(std::string text)
@@ -147,8 +153,8 @@ auto tWorkingDirectory = test("Process/run/workingDirectory") = []
 
 auto tRunClosesInput = test("Process/run/closesInput") = []
 {
-    // cat waits on stdin until end-of-file; run() must not leave it open.
-    auto result = Proc::run("/bin/cat");
+    auto result = Proc::run(
+        ProcessChildModes::createChildOptions(ProcessChildModes::echoInput));
 
     check(result.exited);
     check(result.exitCode == 0);

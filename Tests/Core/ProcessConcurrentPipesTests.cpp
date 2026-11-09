@@ -1,4 +1,5 @@
 #include "Common.h"
+#include "ProcessChildModes.h"
 
 #include <chrono>
 #include <future>
@@ -14,15 +15,6 @@ constexpr auto concurrentChildCount = 8;
 constexpr auto startRounds = 10;
 constexpr auto exitDeadline = std::chrono::seconds {5};
 
-// Reads stdin until end-of-file and prints nothing until then.
-std::string getStdinReadingCommandLine()
-{
-    if constexpr (eacp::Platform::isWindows())
-        return "sort";
-    else
-        return "cat";
-}
-
 using ProcessList = std::vector<std::unique_ptr<Proc::Process>>;
 
 ProcessList startChildrenConcurrently()
@@ -34,9 +26,9 @@ ProcessList startChildrenConcurrently()
         starters.emplace_back(
             [&child]
             {
-                auto options = Proc::ProcessOptions {};
-                options.commandLine = getStdinReadingCommandLine();
-                child = std::make_unique<Proc::Process>(std::move(options));
+                child = std::make_unique<Proc::Process>(
+                    ProcessChildModes::createChildOptions(
+                        ProcessChildModes::echoInput));
             });
 
     for (auto& starter: starters)

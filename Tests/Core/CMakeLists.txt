@@ -35,6 +35,8 @@ set(core_test_sources
         MemoryMappedFileTests.cpp
         PlatformTests.cpp
         PluginObjectTests.cpp
+        # Relaunches CoreTests in a child mode (ProcessChildModes, TestMain.cpp).
+        ProcessChildModes.cpp
         ProcessConcurrentPipesTests.cpp
         ProcessInheritStdioTests.cpp
         ProcessTokeniseTests.cpp
@@ -46,6 +48,7 @@ set(core_test_sources
         TemporaryFileTests.cpp
         ThreadTests.cpp
         TimerTests.cpp
+        TestMain.cpp
         TimeTests.cpp
         ZipTests.cpp)
 
@@ -58,7 +61,7 @@ else ()
     list(APPEND core_test_sources StdioCapture-Posix.cpp)
 endif ()
 
-# ProcessTests drive real POSIX commands (/bin/echo, /bin/cat, ...), so they
+# ProcessTests drive POSIX commands (/bin/echo, pwd, ...) and signals, so they
 # only run on macOS and Linux.
 if (NOT WIN32)
     list(APPEND core_test_sources
@@ -119,6 +122,7 @@ if (LINUX)
 endif ()
 
 nano_add_executable(CoreTests
+        NO_MAIN
         SOURCES ${core_test_sources}
         TARGETS eacp-core)
 
