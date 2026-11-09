@@ -3,7 +3,7 @@
 // command line that worked through juce::ChildProcess::start(String) reaches
 // the same argv.
 
-#include "Common.h"
+#include "../Common.h"
 
 using namespace nano;
 using eacp::Processes::tokeniseCommandLine;

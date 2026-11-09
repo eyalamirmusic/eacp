@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace eacp::Processes
 {
@@ -158,6 +159,84 @@ DWORD creationFlags(const ProcessOptions& options, const std::wstring& environme
 
     return flags;
 }
+
+struct ChildStdHandles
+{
+    HANDLE input = nullptr;
+    HANDLE output = nullptr;
+    HANDLE error = nullptr;
+};
+
+std::vector<HANDLE> getDistinctHandles(const ChildStdHandles& handles)
+{
+    auto distinct = std::vector<HANDLE> {};
+
+    for (auto handle: {handles.input, handles.output, handles.error})
+        if (handle != nullptr
+            && std::ranges::find(distinct, handle) == distinct.end())
+            distinct.push_back(handle);
+
+    return distinct;
+}
+
+// Passes exactly the child's std handles through PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+// so a Process started concurrently on another thread never inherits them.
+bool createProcessWithStdHandles(const ProcessOptions& options,
+                                 const ChildStdHandles& handles,
+                                 PROCESS_INFORMATION& info)
+{
+    auto inherited = getDistinctHandles(handles);
+
+    for (auto handle: inherited)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+
+    auto attributeListSize = SIZE_T {0};
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeListSize);
+    auto attributeListStorage = std::vector<char>(attributeListSize);
+    auto attributeList =
+        reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeListStorage.data());
+
+    if (!InitializeProcThreadAttributeList(attributeList, 1, 0, &attributeListSize))
+        return false;
+
+    const auto inheritsHandles = !inherited.empty();
+
+    if (inheritsHandles)
+        UpdateProcThreadAttribute(attributeList,
+                                  0,
+                                  PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                  inherited.data(),
+                                  inherited.size() * sizeof(HANDLE),
+                                  nullptr,
+                                  nullptr);
+
+    STARTUPINFOEXW startup {};
+    startup.StartupInfo.cb = sizeof startup;
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = handles.input;
+    startup.StartupInfo.hStdOutput = handles.output;
+    startup.StartupInfo.hStdError = handles.error;
+    startup.lpAttributeList = attributeList;
+
+    auto commandLine = commandLineFor(options);
+    auto workingDir = Strings::widen(options.workingDirectory);
+    auto environment = buildEnvironmentBlock(options.environment);
+
+    auto created = CreateProcessW(
+        nullptr,
+        commandLine.data(),
+        nullptr,
+        nullptr,
+        inheritsHandles ? TRUE : FALSE,
+        creationFlags(options, environment) | EXTENDED_STARTUPINFO_PRESENT,
+        environment.empty() ? nullptr : (LPVOID) environment.data(),
+        workingDir.empty() ? nullptr : workingDir.c_str(),
+        &startup.StartupInfo,
+        &info);
+
+    DeleteProcThreadAttributeList(attributeList);
+    return created != FALSE;
+}
 } // namespace
 
 struct Process::Native
@@ -267,18 +346,14 @@ private:
             return;
         }
 
-        SECURITY_ATTRIBUTES inherit {};
-        inherit.nLength = sizeof inherit;
-        inherit.bInheritHandle = TRUE;
-
         HANDLE inRead = nullptr, inWrite = nullptr;
         HANDLE outRead = nullptr, outWrite = nullptr;
         HANDLE errRead = nullptr, errWrite = nullptr;
 
-        if (!CreatePipe(&inRead, &inWrite, &inherit, 0))
+        if (!CreatePipe(&inRead, &inWrite, nullptr, 0))
             return;
 
-        if (!CreatePipe(&outRead, &outWrite, &inherit, 0))
+        if (!CreatePipe(&outRead, &outWrite, nullptr, 0))
         {
             CloseHandle(inRead);
             CloseHandle(inWrite);
@@ -288,7 +363,7 @@ private:
         // Merged stderr shares the stdout pipe, so there is no error pipe.
         const auto merge = options.mergeErrorOutput;
 
-        if (!merge && !CreatePipe(&errRead, &errWrite, &inherit, 0))
+        if (!merge && !CreatePipe(&errRead, &errWrite, nullptr, 0))
         {
             CloseHandle(inRead);
             CloseHandle(inWrite);
@@ -297,37 +372,9 @@ private:
             return;
         }
 
-        // The parent-side ends must not leak into the child.
-        SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0);
-        SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
-
-        if (!merge)
-            SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
-
-        STARTUPINFOW startup {};
-        startup.cb = sizeof startup;
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = inRead;
-        startup.hStdOutput = outWrite;
-        startup.hStdError = merge ? outWrite : errWrite;
-
-        auto commandLine = commandLineFor(options);
-
-        auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
-
         PROCESS_INFORMATION info {};
-        auto created = CreateProcessW(
-            nullptr,
-            commandLine.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            creationFlags(options, environment),
-            environment.empty() ? nullptr : (LPVOID) environment.data(),
-            workingDir.empty() ? nullptr : workingDir.c_str(),
-            &startup,
-            &info);
+        auto created = createProcessWithStdHandles(
+            options, {inRead, outWrite, merge ? outWrite : errWrite}, info);
 
         CloseHandle(inRead);
         CloseHandle(outWrite);
@@ -361,8 +408,8 @@ private:
 
     // No pipes: the child writes straight to the launcher's stdio, so a
     // long-running child's output streams instead of buffering unbounded.
-    // The launcher's std handles are duplicated inheritable first — the
-    // ones a harness hands us (pipes, files) often aren't.
+    // The launcher's std handles are duplicated first, so the inherit flag is
+    // set on our copies, not on the handles a harness handed us.
     void launchInheritingStdio(const ProcessOptions& options)
     {
         HANDLE handles[3] = {};
@@ -379,34 +426,13 @@ private:
                                 GetCurrentProcess(),
                                 &handles[i],
                                 0,
-                                TRUE,
+                                FALSE,
                                 DUPLICATE_SAME_ACCESS);
         }
 
-        STARTUPINFOW startup {};
-        startup.cb = sizeof startup;
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = handles[0];
-        startup.hStdOutput = handles[1];
-        startup.hStdError = handles[2];
-
-        auto commandLine = commandLineFor(options);
-
-        auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
-
         PROCESS_INFORMATION info {};
-        auto created = CreateProcessW(
-            nullptr,
-            commandLine.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            creationFlags(options, environment),
-            environment.empty() ? nullptr : (LPVOID) environment.data(),
-            workingDir.empty() ? nullptr : workingDir.c_str(),
-            &startup,
-            &info);
+        auto created = createProcessWithStdHandles(
+            options, {handles[0], handles[1], handles[2]}, info);
 
         for (auto handle: handles)
             if (handle != nullptr)

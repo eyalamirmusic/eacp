@@ -9,6 +9,7 @@
 #include <mutex>
 #include <thread>
 
+#include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -225,15 +226,6 @@ private:
             posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
             posix_spawn_file_actions_adddup2(
                 &actions, merge ? outPipe[1] : errPipe[1], STDERR_FILENO);
-
-            for (auto fd: {inPipe[0],
-                           inPipe[1],
-                           outPipe[0],
-                           outPipe[1],
-                           errPipe[0],
-                           errPipe[1]})
-                if (fd >= 0)
-                    posix_spawn_file_actions_addclose(&actions, fd);
         }
 
         if (!options.workingDirectory.empty()
@@ -251,12 +243,7 @@ private:
         auto attr = posix_spawnattr_t {};
         posix_spawnattr_init(&attr);
 
-#if defined(POSIX_SPAWN_SETSID)
-        // A detached child becomes its own session leader so it survives the
-        // launcher's terminal/session, not just the launcher process.
-        if (options.detached)
-            posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
-#endif
+        setSpawnFlags(attr, actions, options);
 
         auto result = posix_spawnp(
             &pid, executable.c_str(), &actions, &attr, argv.data(), envp.data());
@@ -279,21 +266,65 @@ private:
             adoptPipes(inPipe, outPipe, errPipe);
     }
 
+    static void setSpawnFlags(posix_spawnattr_t& attr,
+                              posix_spawn_file_actions_t& actions,
+                              const ProcessOptions& options)
+    {
+        auto spawnFlags = short {0};
+
+#if defined(__APPLE__)
+        // pipe() and fcntl() are two calls, so a sibling spawned between them
+        // inherits the pipe; this flag closes everything not dup2'd onto 0/1/2.
+        spawnFlags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+
+        if (!options.captureOutput)
+        {
+            for (auto fd: {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO})
+                posix_spawn_file_actions_addinherit_np(&actions, fd);
+        }
+#endif
+
+#if defined(POSIX_SPAWN_SETSID)
+        // A detached child becomes its own session leader so it survives the
+        // launcher's terminal/session, not just the launcher process.
+        if (options.detached)
+            spawnFlags |= POSIX_SPAWN_SETSID;
+#endif
+
+        posix_spawnattr_setflags(&attr, spawnFlags);
+    }
+
+    // Close-on-exec, so a child started concurrently by another Process never
+    // inherits these ends; dup2 onto 0/1/2 clears the flag on the copy.
+    static bool openCloseOnExecPipe(int (&fds)[2])
+    {
+#if defined(__APPLE__)
+        if (pipe(fds) != 0)
+            return false;
+
+        fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+        fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+        return true;
+#else
+        return pipe2(fds, O_CLOEXEC) == 0;
+#endif
+    }
+
     // Without a separate error pipe (merged stderr) err is left at {-1, -1}.
     static bool
         createPipes(int (&in)[2], int (&out)[2], int (&err)[2], bool separateErr)
     {
-        if (pipe(in) != 0)
+        if (!openCloseOnExecPipe(in))
             return false;
 
-        if (pipe(out) != 0)
+        if (!openCloseOnExecPipe(out))
         {
             ::close(in[0]);
             ::close(in[1]);
             return false;
         }
 
-        if (separateErr && pipe(err) != 0)
+        if (separateErr && !openCloseOnExecPipe(err))
         {
             ::close(in[0]);
             ::close(in[1]);
