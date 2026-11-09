@@ -47,6 +47,11 @@ float builtinSmoothstep(float edge0, float edge1, float x)
     return t * t * (3.f - 2.f * t);
 }
 
+float builtinFma(float a, float b, float c)
+{
+    return std::fma(a, b, c);
+}
+
 std::int32_t builtinIntFromFloat(float x)
 {
     if (x != x)
@@ -171,6 +176,15 @@ void builtinUnaryMath(const Context& context, const Plan::Node& node)
             return;
         case MathFunction::Tanh:
             builtinMap(context, node, [](float x) { return std::tanh(x); });
+            return;
+        case MathFunction::Asinh:
+            builtinMap(context, node, [](float x) { return std::asinh(x); });
+            return;
+        case MathFunction::Acosh:
+            builtinMap(context, node, [](float x) { return std::acosh(x); });
+            return;
+        case MathFunction::Atanh:
+            builtinMap(context, node, [](float x) { return std::atanh(x); });
             return;
         case MathFunction::Exp:
             builtinMap(context, node, [](float x) { return std::exp(x); });
@@ -428,14 +442,17 @@ void builtinGeometric(const Context& context, const Plan::Node& node)
     }
 }
 
+// The operand is columns x rows; the result rows x columns, its element
+// (column c, row r) the operand's (column r, row c).
 void builtinTranspose(const Context& context, const Plan::Node& node)
 {
-    auto order = static_cast<int>(node.order);
+    auto columns = static_cast<int>(node.columns);
+    auto rows = static_cast<int>(node.rows);
 
-    for (auto column = 0; column < order; ++column)
-        for (auto row = 0; row < order; ++row)
-            Lanes::copy(context.lanes(node, column * order + row),
-                        context.operand(node, 0, row * order + column),
+    for (auto column = 0; column < rows; ++column)
+        for (auto row = 0; row < columns; ++row)
+            Lanes::copy(context.lanes(node, column * columns + row),
+                        context.operand(node, 0, row * rows + column),
                         context.stride);
 }
 
@@ -563,6 +580,80 @@ void builtinPackFloat2(const Context& context,
                                            toFloat(values.component[1][lane])});
 }
 
+template <typename Function>
+void builtinPackFloat4(const Context& context,
+                       const Plan::Node& node,
+                       Function function)
+{
+    auto values = builtinVector(context, node, 0, 4);
+    auto* out = context.lanes(node, 0);
+    auto stride = context.stride;
+
+    for (auto lane = 0; lane < stride; ++lane)
+        out[lane] = function(HelperFloat4 {toFloat(values.component[0][lane]),
+                                           toFloat(values.component[1][lane]),
+                                           toFloat(values.component[2][lane]),
+                                           toFloat(values.component[3][lane])});
+}
+
+std::uint32_t builtinFirstLeadingBitSigned(Word value)
+{
+    return Lanes::fromSigned(firstLeadingBit(toSigned(value)));
+}
+
+std::uint32_t builtinFirstLeadingBitUnsigned(Word value)
+{
+    return firstLeadingBit(value);
+}
+
+std::uint32_t builtinExtractBitsSigned(Word value, Word offset, Word count)
+{
+    return Lanes::fromSigned(extractBits(toSigned(value), offset, count));
+}
+
+std::uint32_t builtinExtractBitsUnsigned(Word value, Word offset, Word count)
+{
+    return extractBits(value, offset, count);
+}
+
+// The value's component beside the scalar offset and count.
+template <typename Function>
+void builtinExtractField(const Context& context,
+                         const Plan::Node& node,
+                         Function function)
+{
+    const auto* offsets = context.operand(node, 1, 0);
+    const auto* counts = context.operand(node, 2, 0);
+    auto stride = context.stride;
+
+    for (auto component = 0; component < node.components; ++component)
+    {
+        auto* out = context.lanes(node, component);
+        const auto* values = context.operand(node, 0, component);
+
+        for (auto lane = 0; lane < stride; ++lane)
+            out[lane] = function(values[lane], offsets[lane], counts[lane]);
+    }
+}
+
+void builtinInsertField(const Context& context, const Plan::Node& node)
+{
+    const auto* offsets = context.operand(node, 2, 0);
+    const auto* counts = context.operand(node, 3, 0);
+    auto stride = context.stride;
+
+    for (auto component = 0; component < node.components; ++component)
+    {
+        auto* out = context.lanes(node, component);
+        const auto* values = context.operand(node, 0, component);
+        const auto* newBits = context.operand(node, 1, component);
+
+        for (auto lane = 0; lane < stride; ++lane)
+            out[lane] =
+                insertBits(values[lane], newBits[lane], offsets[lane], counts[lane]);
+    }
+}
+
 void builtinPackInt8x4(const Context& context, const Plan::Node& node)
 {
     auto values = builtinVector(context, node, 0, 4);
@@ -643,6 +734,63 @@ void builtinHelper(const Context& context, const Plan::Node& node)
             return;
         case HelperFunction::PackUInt8x4:
             builtinPackUInt8x4(context, node);
+            return;
+        case HelperFunction::QuantizeToF16:
+            builtinMap(context, node, quantizeToF16);
+            return;
+        case HelperFunction::PackUnorm8x4:
+            builtinPackFloat4(context, node, packUnorm8x4);
+            return;
+        case HelperFunction::PackSnorm8x4:
+            builtinPackFloat4(context, node, packSnorm8x4);
+            return;
+        case HelperFunction::PackUnorm16x2:
+            builtinPackFloat2(context, node, packUnorm16x2);
+            return;
+        case HelperFunction::PackSnorm16x2:
+            builtinPackFloat2(context, node, packSnorm16x2);
+            return;
+        case HelperFunction::UnpackUnorm8x4:
+            builtinUnpack(context, node, unpackUnorm8x4);
+            return;
+        case HelperFunction::UnpackSnorm8x4:
+            builtinUnpack(context, node, unpackSnorm8x4);
+            return;
+        case HelperFunction::UnpackUnorm16x2:
+            builtinUnpack(context, node, unpackUnorm16x2);
+            return;
+        case HelperFunction::UnpackSnorm16x2:
+            builtinUnpack(context, node, unpackSnorm16x2);
+            return;
+        case HelperFunction::CountOneBits:
+            builtinWords(context, node, countOneBits);
+            return;
+        case HelperFunction::ReverseBits:
+            builtinWords(context, node, reverseBits);
+            return;
+        case HelperFunction::CountLeadingZeros:
+            builtinWords(context, node, countLeadingZeros);
+            return;
+        case HelperFunction::CountTrailingZeros:
+            builtinWords(context, node, countTrailingZeros);
+            return;
+        case HelperFunction::FirstLeadingBitUnsigned:
+            builtinWords(context, node, builtinFirstLeadingBitUnsigned);
+            return;
+        case HelperFunction::FirstLeadingBitSigned:
+            builtinWords(context, node, builtinFirstLeadingBitSigned);
+            return;
+        case HelperFunction::FirstTrailingBit:
+            builtinWords(context, node, firstTrailingBit);
+            return;
+        case HelperFunction::ExtractBitsUnsigned:
+            builtinExtractField(context, node, builtinExtractBitsUnsigned);
+            return;
+        case HelperFunction::ExtractBitsSigned:
+            builtinExtractField(context, node, builtinExtractBitsSigned);
+            return;
+        case HelperFunction::InsertBits:
+            builtinInsertField(context, node);
             return;
     }
 }
@@ -746,6 +894,10 @@ void evaluateCall(const Context& context, const Plan::Node& node)
 
         case Op::Smoothstep:
             builtinZip3(context, node, builtinSmoothstep);
+            return;
+
+        case Op::Fma:
+            builtinZip3(context, node, builtinFma);
             return;
 
         case Op::Dot:

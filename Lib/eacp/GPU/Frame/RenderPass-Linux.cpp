@@ -9,6 +9,7 @@
 #include "../Vulkan/VulkanTypes.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <memory>
 
@@ -49,10 +50,11 @@ struct RenderPass::Native
 
         VkWriteDescriptorSet writes[maxBufferSlots + maxStageTextureSlots + 1] = {};
         auto writeCount = std::uint32_t {0};
+        const auto imageSlots = boundTextures | lendImagesToSamplers();
 
         for (auto slot = 0; slot < maxStageTextureSlots; ++slot)
         {
-            if ((boundTextures & (1u << slot)) == 0)
+            if ((imageSlots & (1u << slot)) == 0)
                 continue;
 
             auto& write = writes[writeCount++];
@@ -127,7 +129,47 @@ struct RenderPass::Native
     {
         textures[slot] = {sampler, view, layout};
         boundTextures |= 1u << slot;
+        samplerOnlySlots &= ~(1u << slot);
         descriptorsDirty = true;
+    }
+
+    // The sampler half of the slot's combined image sampler. On a slot with
+    // no texture the image half is lent at the draw by a texture bound
+    // elsewhere: a combined descriptor needs a valid view, and a shader that
+    // declares a lone `sampler` at the binding never reads it.
+    void bindSampler(int slot, VkSampler sampler)
+    {
+        if (!encoder || slot < 0 || slot >= maxStageTextureSlots
+            || sampler == VK_NULL_HANDLE)
+            return;
+
+        textures[slot].sampler = sampler;
+
+        if ((boundTextures & (1u << slot)) == 0)
+            samplerOnlySlots |= 1u << slot;
+
+        descriptorsDirty = true;
+    }
+
+    // The sampler-only slots that got an image, as a mask; none without a
+    // texture bound anywhere in the pass, which leaves them unwritten.
+    std::uint32_t lendImagesToSamplers()
+    {
+        if (boundTextures == 0u || samplerOnlySlots == 0u)
+            return 0u;
+
+        const auto& lender = textures[std::countr_zero(boundTextures)];
+
+        for (auto slot = 0; slot < maxStageTextureSlots; ++slot)
+        {
+            if ((samplerOnlySlots & (1u << slot)) == 0)
+                continue;
+
+            textures[slot].imageView = lender.imageView;
+            textures[slot].imageLayout = lender.imageLayout;
+        }
+
+        return samplerOnlySlots;
     }
 
     void bindColorTexture(const Texture& texture, int slot, VkSampler sampler)
@@ -266,6 +308,7 @@ struct RenderPass::Native
 
     VkDescriptorImageInfo textures[maxStageTextureSlots] = {};
     std::uint32_t boundTextures = 0;
+    std::uint32_t samplerOnlySlots = 0;
 
     ConstantRange uniforms;
 
@@ -501,6 +544,16 @@ void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
                                        const Sampler& sampler)
 {
     setFragmentDepthTexture(renderTarget, slot, sampler);
+}
+
+void RenderPass::setFragmentSampler(const Sampler& sampler, int slot)
+{
+    impl->bindSampler(slot, toVkSampler(sampler));
+}
+
+void RenderPass::setVertexSampler(const Sampler& sampler, int slot)
+{
+    setFragmentSampler(sampler, slot);
 }
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)

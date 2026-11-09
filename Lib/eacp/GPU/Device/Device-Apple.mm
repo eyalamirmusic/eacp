@@ -362,6 +362,16 @@ bool readWritesAtTierTwo(TextureFormat format)
 }
 } // namespace
 
+bool Device::supportsShaderFloat16() const
+{
+    return isValid();
+}
+
+bool Device::supportsSampleRateShading() const
+{
+    return isValid();
+}
+
 bool Device::supportsComputeReadWrite(TextureFormat format) const
 {
     auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();

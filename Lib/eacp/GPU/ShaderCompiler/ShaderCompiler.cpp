@@ -182,14 +182,14 @@ public:
     // succeeded: a failed one has no list to mirror.
     void removeSupersededBlobs()
     {
-        auto current = Vector<std::string> {};
+        auto listed = Vector<std::string> {};
 
         for (const auto& blob: report.blobs)
-            current.add(blob.fileName());
+            listed.add(blob.fileName());
 
         for (const auto& file: Files::listFiles(outputDirectory))
         {
-            if (!isBlobName(file.fileName()) || current.contains(file.fileName()))
+            if (!isBlobName(file.fileName()) || listed.contains(file.fileName()))
                 continue;
 
             if (Files::removeFile(file))

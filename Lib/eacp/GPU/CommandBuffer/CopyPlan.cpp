@@ -278,8 +278,8 @@ std::optional<BufferTextureCopyPlan> planBufferTextureCopy(
 
     if (!isFlat(layout.origin, layout.size))
     {
-        LOG("eacp: a buffer-texture copy with depth needs 3D textures, which eacp "
-            "lacks");
+        LOG("eacp: a buffer-texture copy with depth is refused, a ThreeD "
+            "texture's included");
         return {};
     }
 

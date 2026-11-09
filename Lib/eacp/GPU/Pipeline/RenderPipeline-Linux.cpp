@@ -3,6 +3,7 @@
 #include "../Device/Device.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Vulkan/VulkanTypes.h"
+#include "VulkanSpecialization-Linux.h"
 
 namespace eacp::GPU
 {
@@ -502,17 +503,21 @@ struct RenderPipeline::Native
                const PipelineLayouts& layouts,
                const RenderPipelineDescriptor& descriptor)
     {
+        const auto specialization = VulkanSpecialization {descriptor.constants};
+
         VkPipelineShaderStageCreateInfo stages[2] = {};
 
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
         stages[0].module = program.vertex;
         stages[0].pName = "main";
+        stages[0].pSpecializationInfo = specialization.get();
 
         stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         stages[1].module = program.fragment;
         stages[1].pName = "main";
+        stages[1].pSpecializationInfo = specialization.get();
 
         auto attributes = makeAttributes(descriptor.vertexLayout);
         auto bindings = makeBindings(descriptor.vertexLayout, state);
