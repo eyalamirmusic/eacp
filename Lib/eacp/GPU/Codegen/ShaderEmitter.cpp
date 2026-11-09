@@ -1,2948 +1,92 @@
 #include "ShaderEmitter.h"
 
-#include "../Frame/ComputePass.h"
 #include "../Frame/RenderPass.h"
 #include "ShaderBindings.h"
-#include "ShaderGraph.h"
-#include "UniformLayout.h"
+#include "ShaderComputeEmitter.h"
+#include "ShaderDeclarations.h"
+#include "ShaderFunctionEmission.h"
+#include "ShaderHelpers.h"
+#include "ShaderStageEmitter.h"
 
 #include <eacp/Core/Utils/Format.h>
 
 #include <cassert>
-
-// The single source-of-truth walker. MSL and HLSL spell most of an expression
-// identically; GLSL differs in a countable list, each with one arm here.
+#include <initializer_list>
 
 namespace eacp::GPU
 {
 namespace
 {
-enum class Backend
+using namespace ShaderEmission;
+
+constexpr auto stageIndent = std::string_view {"    "};
+
+// Attributes the fragment stage reads, carried as varyings after the declared ones.
+struct PromotedAttributes
 {
-    Metal,
-    DirectX,
-    Vulkan
+    Vector<int> varyingOf; // attribute slot -> varying index, -1 = not read
+    Vector<int> carried; // implicit varying order -> attribute slot
 };
 
-const char* typeName(Backend backend, ValueType type)
+struct StageVarying
 {
-    return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
-}
-
-std::string floatLiteral(float value)
-{
-    auto text = Strings::shortestRoundTrip(value);
-
-    if (text.find('.') == std::string::npos && text.find('e') == std::string::npos
-        && text.find('n') == std::string::npos)
-        text += ".0";
-
-    return text;
-}
-
-// GLSL rejects a non-flat integer stage input outright, HLSL wants
-// nointerpolation and MSL [[flat]]; a float varying takes none of the three.
-bool isFlatVarying(ValueType type)
-{
-    return isSignedInteger(type) || isUnsignedInteger(type);
-}
-
-std::string attributeSemantic(Backend backend, int index)
-{
-    if (backend == Backend::Vulkan)
-        return {};
-
-    if (backend == Backend::Metal)
-        return " [[attribute(" + std::to_string(index) + ")]]";
-
-    return " : TEXCOORD" + std::to_string(index);
-}
-
-// Metal hangs the flat qualifier off the member rather than putting it in front
-// of the type, so it rides here beside the semantic.
-std::string varyingSemantic(Backend backend, int index, ValueType type)
-{
-    if (backend == Backend::Metal)
-        return isFlatVarying(type) ? " [[flat]]" : std::string {};
-
-    if (backend != Backend::DirectX)
-        return {};
-
-    return " : TEXCOORD" + std::to_string(index);
-}
-
-std::string positionSemantic(Backend backend)
-{
-    if (backend == Backend::Vulkan)
-        return {};
-
-    if (backend == Backend::Metal)
-        return " [[position]]";
-
-    return " : SV_Position";
-}
-
-std::string flatQualifier(Backend backend, ValueType type)
-{
-    if (backend == Backend::Metal || !isFlatVarying(type))
-        return {};
-
-    return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
-}
-
-// Attribute i and varying i take location i, which is what the Vulkan
-// vertex-input state and the vertex/fragment interface match on.
-std::string locationLayout(int index)
-{
-    return "layout(location = " + std::to_string(index) + ") ";
-}
-
-// GLSL reads a stage's I/O out of globals, spelled attrN and varyN because aN
-// and vN are taken there by a constant array and a mutable local.
-std::string attributeName(Backend backend, int slot)
-{
-    if (backend == Backend::Vulkan)
-        return "attr" + std::to_string(slot);
-
-    return "input.a" + std::to_string(slot);
-}
-
-std::string varyingName(Backend backend, int index)
-{
-    if (backend == Backend::Vulkan)
-        return "vary" + std::to_string(index);
-
-    return "input.v" + std::to_string(index);
-}
-
-// Call nodes carry the canonical (MSL) builtin name; renamed here per dialect.
-std::string callName(Backend backend, const std::string& name)
-{
-    if (backend == Backend::DirectX)
-    {
-        if (name == "fract")
-            return "frac";
-
-        if (name == "mix")
-            return "lerp";
-
-        if (name == "dfdx")
-            return "ddx";
-
-        if (name == "dfdy")
-            return "ddy";
-
-        // One HLSL name per direction, whatever the width MSL named.
-        if (name.starts_with("as_type<uint"))
-            return "asuint";
-
-        if (name.starts_with("as_type<float"))
-            return "asfloat";
-    }
-
-    if (backend == Backend::Vulkan)
-    {
-        // A constructor-style cast is recorded as a call under the target's
-        // canonical type name, so float2(v) leaves as vec2(v).
-        if (const auto* spelling = glslTypeNameFor(name))
-            return spelling;
-
-        if (name == "atan2")
-            return "atan";
-
-        if (name == "rsqrt")
-            return "inversesqrt";
-
-        if (name == "dfdx")
-            return "dFdx";
-
-        if (name == "dfdy")
-            return "dFdy";
-
-        // Both are genType in GLSL, so one name per direction covers every
-        // width MSL named.
-        if (name.starts_with("as_type<uint"))
-            return "floatBitsToUint";
-
-        if (name.starts_with("as_type<float"))
-            return "uintBitsToFloat";
-
-        // GLSL has no log10; the helper table carries the definition.
-        if (name == "log10")
-            return "eacpLog10";
-    }
-
-    return name;
-}
-
-// The builtins GLSL overloads per width: it takes a scalar beside a vector only
-// in a few trailing positions, where MSL converts and HLSL promotes it.
-bool isGenTypeCall(const std::string& name)
-{
-    return name == "min" || name == "max" || name == "clamp" || name == "mix"
-           || name == "step" || name == "smoothstep" || name == "pow"
-           || name == "atan2";
-}
-
-// GLSL reserves the relational and equality operators for scalars, so a
-// componentwise mask is a function there. Asked only for a boolean vector.
-const char* glslComparison(const std::string& op)
-{
-    if (op == "<")
-        return "lessThan";
-
-    if (op == "<=")
-        return "lessThanEqual";
-
-    if (op == ">")
-        return "greaterThan";
-
-    if (op == ">=")
-        return "greaterThanEqual";
-
-    if (op == "==")
-        return "equal";
-
-    if (op == "!=")
-        return "notEqual";
-
-    return nullptr;
-}
-
-// The builtins whose two spellings are not one name apart, emitted as a
-// function definition ahead of the shader body and called like any other.
-//
-// callName above handles the ordinary case - one name, one argument list, a
-// different word. This is for the rest: unpacking two halves out of a word is
-// a bitcast and a vector conversion on MSL, and two f16tof32 calls against a
-// shift on HLSL, and no renaming reconciles those. A helper does, and it keeps
-// the graph backend-agnostic - one call node with one argument, both sides.
-//
-// Each definition stands alone and calls no other helper, because what is
-// emitted is decided per helper by whether the graph names it: one that leaned
-// on another would compile only when the graph happened to call both.
-struct ShaderHelper
-{
-    const char* name;
-
-    // Null where the dialect has the function natively and emits nothing for it.
-    const char* metal;
-    const char* directX;
-    const char* glsl;
+    ValueType type = ValueType::Float;
+    int sourceNode = -1;
+    int attribute = -1;
+    Interpolation interpolation;
 };
 
-// The error function, as Abramowitz & Stegun 7.1.26.
-//
-// Neither language has one. HLSL under FXC never did, and MSL - despite being
-// the side that usually has the richer math library - rejects a call to erf as
-// an undeclared identifier, so this is the definition on both backends rather
-// than the Windows half of a pair.
-//
-// That is why one string serves both: what the approximation is written out of
-// - abs, exp, a divide, a Horner chain and the scalar conditionals - is spelled
-// identically in MSL and HLSL, so there is nothing here for a per-backend form
-// to differ about. The vector widths are overloads rather than a genType
-// because HLSL resolves a user function by overload and has no template before
-// shader model 6; MSL is C++ and accepts the overloads unchanged.
-//
-// Measured against std::erf over the whole real line: worst absolute error
-// under 6e-7 for both, and 1.7e-7 for what Metal's own arithmetic makes of it.
-// Tests/GPU/IntrinsicTests pins both. The approximation itself is good to
-// 1.5e-7 and the rest is what evaluating it in float32 costs - which lands
-// under the resolution a float has near one either way, so the shader is a
-// float32 error function and not a rounded copy of the CPU's.
-//
-// The polynomial is not odd, and both signs of zero take its positive branch,
-// so the origin returns the argument: erf(0) is exactly zero with the sign it
-// was handed, and erf(-x) is bitwise the negation of erf(x).
-constexpr auto erfHelper =
-    "float eacpErf(float x)\n"
-    "{\n"
-    "    float a = abs(x);\n"
-    "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
-    "    float e = 1.0 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
-    "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return a == 0.0 ? x : (x < 0.0 ? -e : e);\n"
-    "}\n\n"
-    "float2 eacpErf(float2 x)\n"
-    "{\n"
-    "    return float2(eacpErf(x.x), eacpErf(x.y));\n"
-    "}\n\n"
-    "float3 eacpErf(float3 x)\n"
-    "{\n"
-    "    return float3(eacpErf(x.x), eacpErf(x.y), eacpErf(x.z));\n"
-    "}\n\n"
-    "float4 eacpErf(float4 x)\n"
-    "{\n"
-    "    return float4(eacpErf(x.x), eacpErf(x.y), eacpErf(x.z), eacpErf(x.w));\n"
-    "}\n\n";
-
-// Its complement, as poly(t) * exp(-x*x) rather than as 1 - eacpErf(x): erf has
-// saturated at 1.0f by x = 4 while erfc there is still 1.5e-8, so the
-// subtraction would return zero for the whole tail - which is the half of erfc
-// that anything asks for it by name. What the direct form cannot fix is the
-// approximation's own relative error out there, around 1% by x = 3, so this
-// answers "how much probability is left" and not "to how many digits".
-//
-// The origin is answered outright for the same reason: erfc(0) is exactly 1,
-// whichever sign of zero it was handed, so erf(x) + erfc(x) is exactly 1 there.
-constexpr auto erfcHelper =
-    "float eacpErfc(float x)\n"
-    "{\n"
-    "    float a = abs(x);\n"
-    "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
-    "    float e = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
-    "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return a == 0.0 ? 1.0 : (x < 0.0 ? 2.0 - e : e);\n"
-    "}\n\n"
-    "float2 eacpErfc(float2 x)\n"
-    "{\n"
-    "    return float2(eacpErfc(x.x), eacpErfc(x.y));\n"
-    "}\n\n"
-    "float3 eacpErfc(float3 x)\n"
-    "{\n"
-    "    return float3(eacpErfc(x.x), eacpErfc(x.y), eacpErfc(x.z));\n"
-    "}\n\n"
-    "float4 eacpErfc(float4 x)\n"
-    "{\n"
-    "    return float4(eacpErfc(x.x), eacpErfc(x.y), eacpErfc(x.z), "
-    "eacpErfc(x.w));\n"
-    "}\n\n";
-
-constexpr auto erfHelperGlsl =
-    "float eacpErf(float x)\n"
-    "{\n"
-    "    float a = abs(x);\n"
-    "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
-    "    float e = 1.0 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
-    "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return a == 0.0 ? x : (x < 0.0 ? -e : e);\n"
-    "}\n\n"
-    "vec2 eacpErf(vec2 x)\n"
-    "{\n"
-    "    return vec2(eacpErf(x.x), eacpErf(x.y));\n"
-    "}\n\n"
-    "vec3 eacpErf(vec3 x)\n"
-    "{\n"
-    "    return vec3(eacpErf(x.x), eacpErf(x.y), eacpErf(x.z));\n"
-    "}\n\n"
-    "vec4 eacpErf(vec4 x)\n"
-    "{\n"
-    "    return vec4(eacpErf(x.x), eacpErf(x.y), eacpErf(x.z), eacpErf(x.w));\n"
-    "}\n\n";
-
-constexpr auto erfcHelperGlsl =
-    "float eacpErfc(float x)\n"
-    "{\n"
-    "    float a = abs(x);\n"
-    "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
-    "    float e = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
-    "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return a == 0.0 ? 1.0 : (x < 0.0 ? 2.0 - e : e);\n"
-    "}\n\n"
-    "vec2 eacpErfc(vec2 x)\n"
-    "{\n"
-    "    return vec2(eacpErfc(x.x), eacpErfc(x.y));\n"
-    "}\n\n"
-    "vec3 eacpErfc(vec3 x)\n"
-    "{\n"
-    "    return vec3(eacpErfc(x.x), eacpErfc(x.y), eacpErfc(x.z));\n"
-    "}\n\n"
-    "vec4 eacpErfc(vec4 x)\n"
-    "{\n"
-    "    return vec4(eacpErfc(x.x), eacpErfc(x.y), eacpErfc(x.z), "
-    "eacpErfc(x.w));\n"
-    "}\n\n";
-
-// tanh with its two tails answered outright.
-//
-// The native one is there in all three languages, and in none of them is what
-// it does to a large argument something a caller can rely on. Metal is the case
-// that forced this: eacp compiles its library with no MTLCompileOptions, so
-// fast math is on, and under it tanh is evaluated through exp - which overflows
-// somewhere past an argument of 44 and hands back inf/inf, a NaN, where the
-// function saturated at one long before. HLSL and GLSL leave the same freedom
-// to the driver. A tanh GELU's argument is cubic in its input, so an activation
-// of thirty is an argument of nine hundred, and one NaN in a residual stream is
-// the rest of the sequence.
-//
-// Ten is the threshold because float32 resolves nothing between tanh(9.011) and
-// one: 1 - tanh(x) falls below half an ulp of one there, so every argument this
-// answers with a constant is an argument whose correctly rounded tanh is that
-// same constant. The branch therefore changes no representable value of the
-// function - it only keeps the intrinsic inside the range where a driver's
-// version of it is worth calling.
-constexpr auto saturatingTanhHelper =
-    "float eacpSaturatingTanh(float x)\n"
-    "{\n"
-    "    return x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x));\n"
-    "}\n\n"
-    "float2 eacpSaturatingTanh(float2 x)\n"
-    "{\n"
-    "    return float2(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y));\n"
-    "}\n\n"
-    "float3 eacpSaturatingTanh(float3 x)\n"
-    "{\n"
-    "    return float3(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
-    "                  eacpSaturatingTanh(x.z));\n"
-    "}\n\n"
-    "float4 eacpSaturatingTanh(float4 x)\n"
-    "{\n"
-    "    return float4(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
-    "                  eacpSaturatingTanh(x.z), eacpSaturatingTanh(x.w));\n"
-    "}\n\n";
-
-constexpr auto saturatingTanhHelperGlsl =
-    "float eacpSaturatingTanh(float x)\n"
-    "{\n"
-    "    return x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x));\n"
-    "}\n\n"
-    "vec2 eacpSaturatingTanh(vec2 x)\n"
-    "{\n"
-    "    return vec2(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y));\n"
-    "}\n\n"
-    "vec3 eacpSaturatingTanh(vec3 x)\n"
-    "{\n"
-    "    return vec3(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
-    "                eacpSaturatingTanh(x.z));\n"
-    "}\n\n"
-    "vec4 eacpSaturatingTanh(vec4 x)\n"
-    "{\n"
-    "    return vec4(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
-    "                eacpSaturatingTanh(x.z), eacpSaturatingTanh(x.w));\n"
-    "}\n\n";
-
-// log2 scaled by log10(2), which is what a driver's own log10 lowers to.
-constexpr auto log10HelperGlsl = "float eacpLog10(float x)\n"
-                                 "{\n"
-                                 "    return log2(x) * 0.30102999566;\n"
-                                 "}\n\n"
-                                 "vec2 eacpLog10(vec2 x)\n"
-                                 "{\n"
-                                 "    return log2(x) * 0.30102999566;\n"
-                                 "}\n\n"
-                                 "vec3 eacpLog10(vec3 x)\n"
-                                 "{\n"
-                                 "    return log2(x) * 0.30102999566;\n"
-                                 "}\n\n"
-                                 "vec4 eacpLog10(vec4 x)\n"
-                                 "{\n"
-                                 "    return log2(x) * 0.30102999566;\n"
-                                 "}\n\n";
-
-// The bf16 narrowing, written in integer arithmetic on purpose.
-//
-// packHalf2 hands the rounding to the dialect's own narrowing instruction and
-// so cannot be bit-identical across the three. Here there is no instruction to
-// hand it to - no language has bf16 - and doing it by hand costs nothing and
-// buys an answer that is the same on every backend: add half an ulp plus the
-// low bit of what survives, which is round-to-nearest-even, then keep the top
-// sixteen bits.
-//
-// A NaN is quieted rather than rounded. Adding to one whose mantissa is all
-// ones carries into the exponent and lands on an infinity, which is a different
-// value rather than a coarser one, so the two are told apart first: a magnitude
-// above the infinity pattern is exactly a NaN.
-constexpr auto packBFloat16HelperMetal =
-    "inline uint eacpPackBFloat16x2(float2 values)\n"
-    "{\n"
-    "    uint low = as_type<uint>(values.x);\n"
-    "    uint high = as_type<uint>(values.y);\n"
-    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
-    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
-    "    low = lowIsNaN ? (low | 0x400000u)\n"
-    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
-    "    high = highIsNaN ? (high | 0x400000u)\n"
-    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
-    "    return (low >> 16u) | (high & 0xffff0000u);\n"
-    "}\n\n";
-
-constexpr auto packBFloat16HelperHlsl =
-    "uint eacpPackBFloat16x2(float2 values)\n"
-    "{\n"
-    "    uint low = asuint(values.x);\n"
-    "    uint high = asuint(values.y);\n"
-    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
-    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
-    "    low = lowIsNaN ? (low | 0x400000u)\n"
-    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
-    "    high = highIsNaN ? (high | 0x400000u)\n"
-    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
-    "    return (low >> 16u) | (high & 0xffff0000u);\n"
-    "}\n\n";
-
-constexpr auto packBFloat16HelperGlsl =
-    "uint eacpPackBFloat16x2(vec2 values)\n"
-    "{\n"
-    "    uint low = floatBitsToUint(values.x);\n"
-    "    uint high = floatBitsToUint(values.y);\n"
-    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
-    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
-    "    low = lowIsNaN ? (low | 0x400000u)\n"
-    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
-    "    high = highIsNaN ? (high | 0x400000u)\n"
-    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
-    "    return (low >> 16u) | (high & 0xffff0000u);\n"
-    "}\n\n";
-
-// The quantized widenings, and the sign extension inside them, which is why
-// these are helpers rather than arithmetic at the call site.
-//
-// A byte lifted out of a word is an unsigned 0..255, and the signed value it
-// stands for is (b ^ 0x80) - 128; a nibble's is (n ^ 0x8) - 8. That spelling is
-// arithmetic on values no wider than the word, moving no bit into or out of a
-// sign position, so MSL, HLSL and GLSL define it identically - which is why one
-// string serves Metal and DirectX here, as it does for erf. The alternatives do
-// not: as_type<char4> is Metal's answer alone, and shifting a byte up into the
-// sign bit and arithmetically back asks each language what its own sign bit
-// does under a shift, which is three rules spelled three ways for a widening
-// that has to agree to the bit.
-constexpr auto unpackInt8x4Helper =
-    "float4 eacpUnpackInt8x4(uint bits)\n"
-    "{\n"
-    "    return float4(float((bits & 0xffu) ^ 0x80u) - 128.0,\n"
-    "                  float(((bits >> 8u) & 0xffu) ^ 0x80u) - 128.0,\n"
-    "                  float(((bits >> 16u) & 0xffu) ^ 0x80u) - 128.0,\n"
-    "                  float(((bits >> 24u) & 0xffu) ^ 0x80u) - 128.0);\n"
-    "}\n\n";
-
-constexpr auto unpackInt8x4HelperGlsl =
-    "vec4 eacpUnpackInt8x4(uint bits)\n"
-    "{\n"
-    "    return vec4(float((bits & 0xffu) ^ 0x80u) - 128.0,\n"
-    "                float(((bits >> 8u) & 0xffu) ^ 0x80u) - 128.0,\n"
-    "                float(((bits >> 16u) & 0xffu) ^ 0x80u) - 128.0,\n"
-    "                float(((bits >> 24u) & 0xffu) ^ 0x80u) - 128.0);\n"
-    "}\n\n";
-
-constexpr auto unpackUInt8x4Helper =
-    "float4 eacpUnpackUInt8x4(uint bits)\n"
-    "{\n"
-    "    return float4(float(bits & 0xffu),\n"
-    "                  float((bits >> 8u) & 0xffu),\n"
-    "                  float((bits >> 16u) & 0xffu),\n"
-    "                  float((bits >> 24u) & 0xffu));\n"
-    "}\n\n";
-
-constexpr auto unpackUInt8x4HelperGlsl =
-    "vec4 eacpUnpackUInt8x4(uint bits)\n"
-    "{\n"
-    "    return vec4(float(bits & 0xffu),\n"
-    "                float((bits >> 8u) & 0xffu),\n"
-    "                float((bits >> 16u) & 0xffu),\n"
-    "                float((bits >> 24u) & 0xffu));\n"
-    "}\n\n";
-
-// Four nibbles out of the low sixteen bits of a word. The high four are the
-// same function of the word shifted down sixteen, which unpackInt4x8 records as
-// a shift node rather than a second helper - so one definition covers both
-// halves and the shift is visible in the emitted source.
-constexpr auto unpackInt4x4Helper =
-    "float4 eacpUnpackInt4x4(uint bits)\n"
-    "{\n"
-    "    return float4(float((bits & 0xfu) ^ 0x8u) - 8.0,\n"
-    "                  float(((bits >> 4u) & 0xfu) ^ 0x8u) - 8.0,\n"
-    "                  float(((bits >> 8u) & 0xfu) ^ 0x8u) - 8.0,\n"
-    "                  float(((bits >> 12u) & 0xfu) ^ 0x8u) - 8.0);\n"
-    "}\n\n";
-
-constexpr auto unpackInt4x4HelperGlsl =
-    "vec4 eacpUnpackInt4x4(uint bits)\n"
-    "{\n"
-    "    return vec4(float((bits & 0xfu) ^ 0x8u) - 8.0,\n"
-    "                float(((bits >> 4u) & 0xfu) ^ 0x8u) - 8.0,\n"
-    "                float(((bits >> 8u) & 0xfu) ^ 0x8u) - 8.0,\n"
-    "                float(((bits >> 12u) & 0xfu) ^ 0x8u) - 8.0);\n"
-    "}\n\n";
-
-constexpr auto unpackUInt4x4Helper =
-    "float4 eacpUnpackUInt4x4(uint bits)\n"
-    "{\n"
-    "    return float4(float(bits & 0xfu),\n"
-    "                  float((bits >> 4u) & 0xfu),\n"
-    "                  float((bits >> 8u) & 0xfu),\n"
-    "                  float((bits >> 12u) & 0xfu));\n"
-    "}\n\n";
-
-constexpr auto unpackUInt4x4HelperGlsl =
-    "vec4 eacpUnpackUInt4x4(uint bits)\n"
-    "{\n"
-    "    return vec4(float(bits & 0xfu),\n"
-    "                float((bits >> 4u) & 0xfu),\n"
-    "                float((bits >> 8u) & 0xfu),\n"
-    "                float((bits >> 12u) & 0xfu));\n"
-    "}\n\n";
-
-// The inverse. Each component is masked to its low eight bits in the *signed*
-// domain first, which every one of the three defines as the two's-complement
-// pattern and which leaves a value in 0..255 - so the conversion to uint that
-// follows is of a non-negative number and has nothing left to disagree about.
-// Casting a negative int straight to uint would be the shorter spelling and the
-// one whose result each language words differently.
-constexpr auto packInt8x4Helper =
-    "uint eacpPackInt8x4(int4 values)\n"
-    "{\n"
-    "    return uint(values.x & 0xff) | (uint(values.y & 0xff) << 8u)\n"
-    "           | (uint(values.z & 0xff) << 16u)\n"
-    "           | (uint(values.w & 0xff) << 24u);\n"
-    "}\n\n";
-
-constexpr auto packInt8x4HelperGlsl =
-    "uint eacpPackInt8x4(ivec4 values)\n"
-    "{\n"
-    "    return uint(values.x & 0xff) | (uint(values.y & 0xff) << 8u)\n"
-    "           | (uint(values.z & 0xff) << 16u)\n"
-    "           | (uint(values.w & 0xff) << 24u);\n"
-    "}\n\n";
-
-constexpr auto packUInt8x4Helper =
-    "uint eacpPackUInt8x4(uint4 values)\n"
-    "{\n"
-    "    return (values.x & 0xffu) | ((values.y & 0xffu) << 8u)\n"
-    "           | ((values.z & 0xffu) << 16u)\n"
-    "           | ((values.w & 0xffu) << 24u);\n"
-    "}\n\n";
-
-constexpr auto packUInt8x4HelperGlsl =
-    "uint eacpPackUInt8x4(uvec4 values)\n"
-    "{\n"
-    "    return (values.x & 0xffu) | ((values.y & 0xffu) << 8u)\n"
-    "           | ((values.z & 0xffu) << 16u)\n"
-    "           | ((values.w & 0xffu) << 24u);\n"
-    "}\n\n";
-
-const auto shaderHelpers = Array<ShaderHelper, 18> {
-    ShaderHelper {"eacpUnpackHalf2",
-                  "inline float2 eacpUnpackHalf2(uint bits)\n"
-                  "{\n"
-                  "    return float2(as_type<half2>(bits));\n"
-                  "}\n\n",
-                  "float2 eacpUnpackHalf2(uint bits)\n"
-                  "{\n"
-                  "    return float2(f16tof32(bits), f16tof32(bits >> 16));\n"
-                  "}\n\n",
-                  "vec2 eacpUnpackHalf2(uint bits)\n"
-                  "{\n"
-                  "    return unpackHalf2x16(bits);\n"
-                  "}\n\n"},
-    ShaderHelper {"eacpErf", erfHelper, erfHelper, erfHelperGlsl},
-    ShaderHelper {"eacpErfc", erfcHelper, erfcHelper, erfcHelperGlsl},
-    ShaderHelper {"eacpSaturatingTanh",
-                  saturatingTanhHelper,
-                  saturatingTanhHelper,
-                  saturatingTanhHelperGlsl},
-    // One half chosen by a parity rather than both unpacked and one dropped:
-    // shifting the wanted half down is a single instruction in every language.
-    // as_type<half2>, f16tof32 and unpackHalf2x16 all read the low sixteen bits.
-    ShaderHelper {"eacpReadHalf",
-                  "inline float eacpReadHalf(uint bits, uint parity)\n"
-                  "{\n"
-                  "    return float(as_type<half2>(bits >> (16u * parity)).x);\n"
-                  "}\n\n",
-                  "float eacpReadHalf(uint bits, uint parity)\n"
-                  "{\n"
-                  "    return f16tof32(bits >> (16u * parity));\n"
-                  "}\n\n",
-                  "float eacpReadHalf(uint bits, uint parity)\n"
-                  "{\n"
-                  "    return unpackHalf2x16(bits >> (16u * parity)).x;\n"
-                  "}\n\n"},
-
-    // The narrowing. No mask on the low half: f32tof16 is specified to set the
-    // upper sixteen bits of its result to zero, and the D3D11.1 spec says so
-    // again as a clarification that it holds on all hardware supporting the
-    // instruction.
-    //
-    // Not bit-identical across the three for a value fp16 cannot hold.
-    ShaderHelper {"eacpPackHalf2",
-                  "inline uint eacpPackHalf2(float2 values)\n"
-                  "{\n"
-                  "    return as_type<uint>(half2(values));\n"
-                  "}\n\n",
-                  "uint eacpPackHalf2(float2 values)\n"
-                  "{\n"
-                  "    return f32tof16(values.x) | (f32tof16(values.y) << 16u);\n"
-                  "}\n\n",
-                  "uint eacpPackHalf2(vec2 values)\n"
-                  "{\n"
-                  "    return packHalf2x16(values);\n"
-                  "}\n\n"},
-
-    // bf16 is fp32 with the low sixteen mantissa bits dropped, so widening one
-    // is those bits put back at the top of a word - a shift and a bitcast, with
-    // nothing to rebias and no subnormal case. The three dialects differ only
-    // in how they spell the bitcast, and the result is bit-identical on all of
-    // them. Deliberately not routed through fp16: five exponent bits against
-    // bf16's eight would flush a small weight to zero and take a large one to
-    // infinity.
-    ShaderHelper {"eacpUnpackBFloat16x2",
-                  "inline float2 eacpUnpackBFloat16x2(uint bits)\n"
-                  "{\n"
-                  "    return float2(as_type<float>(bits << 16u),\n"
-                  "                  as_type<float>(bits & 0xffff0000u));\n"
-                  "}\n\n",
-                  "float2 eacpUnpackBFloat16x2(uint bits)\n"
-                  "{\n"
-                  "    return float2(asfloat(bits << 16u),\n"
-                  "                  asfloat(bits & 0xffff0000u));\n"
-                  "}\n\n",
-                  "vec2 eacpUnpackBFloat16x2(uint bits)\n"
-                  "{\n"
-                  "    return vec2(uintBitsToFloat(bits << 16u),\n"
-                  "                uintBitsToFloat(bits & 0xffff0000u));\n"
-                  "}\n\n"},
-
-    // One element chosen by a parity, as eacpReadHalf does: shifting the wanted
-    // half down and back up leaves it at the top of the word with zeroes under
-    // it, which is the widened float already.
-    ShaderHelper {"eacpReadBFloat16",
-                  "inline float eacpReadBFloat16(uint bits, uint parity)\n"
-                  "{\n"
-                  "    return as_type<float>((bits >> (16u * parity)) << 16u);\n"
-                  "}\n\n",
-                  "float eacpReadBFloat16(uint bits, uint parity)\n"
-                  "{\n"
-                  "    return asfloat((bits >> (16u * parity)) << 16u);\n"
-                  "}\n\n",
-                  "float eacpReadBFloat16(uint bits, uint parity)\n"
-                  "{\n"
-                  "    return uintBitsToFloat((bits >> (16u * parity)) << 16u);\n"
-                  "}\n\n"},
-
-    ShaderHelper {"eacpPackBFloat16x2",
-                  packBFloat16HelperMetal,
-                  packBFloat16HelperHlsl,
-                  packBFloat16HelperGlsl},
-
-    // One byte chosen by its position in the word, as eacpReadHalf and
-    // eacpReadBFloat16 choose a half: shifting the wanted byte down is one
-    // instruction everywhere, where selecting between four unpacked values
-    // computes four and keeps one.
-    ShaderHelper {"eacpReadInt8",
-                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
-                  "{\n"
-                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
-                  "    return float(value ^ 0x80u) - 128.0;\n"
-                  "}\n\n",
-                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
-                  "{\n"
-                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
-                  "    return float(value ^ 0x80u) - 128.0;\n"
-                  "}\n\n",
-                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
-                  "{\n"
-                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
-                  "    return float(value ^ 0x80u) - 128.0;\n"
-                  "}\n\n"},
-
-    ShaderHelper {"eacpReadUInt8",
-                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
-                  "{\n"
-                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
-                  "}\n\n",
-                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
-                  "{\n"
-                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
-                  "}\n\n",
-                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
-                  "{\n"
-                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
-                  "}\n\n"},
-
-    ShaderHelper {"eacpUnpackInt8x4",
-                  unpackInt8x4Helper,
-                  unpackInt8x4Helper,
-                  unpackInt8x4HelperGlsl},
-
-    ShaderHelper {"eacpUnpackUInt8x4",
-                  unpackUInt8x4Helper,
-                  unpackUInt8x4Helper,
-                  unpackUInt8x4HelperGlsl},
-
-    ShaderHelper {"eacpUnpackInt4x4",
-                  unpackInt4x4Helper,
-                  unpackInt4x4Helper,
-                  unpackInt4x4HelperGlsl},
-
-    ShaderHelper {"eacpUnpackUInt4x4",
-                  unpackUInt4x4Helper,
-                  unpackUInt4x4Helper,
-                  unpackUInt4x4HelperGlsl},
-
-    ShaderHelper {
-        "eacpPackInt8x4", packInt8x4Helper, packInt8x4Helper, packInt8x4HelperGlsl},
-
-    ShaderHelper {"eacpPackUInt8x4",
-                  packUInt8x4Helper,
-                  packUInt8x4Helper,
-                  packUInt8x4HelperGlsl},
-
-    ShaderHelper {"log10", nullptr, nullptr, log10HelperGlsl}};
-
-const char* helperDefinition(const ShaderHelper& helper, Backend backend)
+Vector<int> getVertexStageRoots(const ShaderGraph& graph)
 {
-    switch (backend)
-    {
-        case Backend::Metal:
-            return helper.metal;
-        case Backend::DirectX:
-            return helper.directX;
-        case Backend::Vulkan:
-            return helper.glsl;
-    }
+    auto roots = Vector<int> {};
+    roots.add(graph.position());
 
-    return helper.metal;
+    for (const auto& varying: graph.varyings())
+        roots.add(varying.sourceNode);
+
+    return roots;
 }
 
-// The one helper a graph needs that no expression node names: the fallback's
-// packed fragment load is a statement, and it widens each of a lane's two
-// elements through the same helper a scalar packed read goes through. Metal
-// loads such a patch as a packed fragment and calls nothing.
-bool helperWidensPackedSimdMatrix(const ShaderGraph& graph,
-                                  std::string_view name,
-                                  Backend backend)
+// The vertex outputs and every expression the vertex stage's statements read,
+// the functions it calls included.
+Vector<int> getVertexStatementRoots(const ShaderGraph& graph)
 {
-    if (backend == Backend::Metal)
-        return false;
+    auto roots = getVertexStageRoots(graph);
 
-    if (name == "eacpReadHalf")
-        return graph.usesPackedSimdMatrix(SimdMatrixElement::Half);
+    if (graph.vertexBlock() >= 0)
+        collectStatementExpressions(
+            graph, graph.vertexBlock(), LoopConditions::Included, roots);
 
-    return name == "eacpReadBFloat16"
-           && graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16);
+    appendFunctionBodyRoots(graph, roots);
+    return roots;
 }
 
-// Only the helpers a graph actually calls, so a shader that unpacks nothing
-// carries no definition for one.
-std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
+// The colour, the alpha test and the two optional outputs: what the fragment
+// body plans its locals for after the statements have run.
+Vector<int> getFragmentOutputRoots(const ShaderGraph& graph)
 {
-    auto definitions = std::string {};
+    auto roots = Vector<int> {graph.fragment()};
 
-    for (const auto& helper: shaderHelpers)
-    {
-        auto used = helperWidensPackedSimdMatrix(graph, helper.name, backend);
+    for (auto optional: {graph.discard(), graph.fragmentDepth(), graph.sampleMask()})
+        if (optional >= 0)
+            roots.add(optional);
 
-        for (auto node = 0; node < graph.nodeCount() && !used; ++node)
-        {
-            const auto& expr = graph.expr(node);
-            used = expr.kind == ExprKind::Call && expr.text == helper.name;
-        }
-
-        if (!used)
-            continue;
-
-        if (const auto* definition = helperDefinition(helper, backend))
-            definitions += definition;
-    }
-
-    return definitions;
+    return roots;
 }
 
-// The HLSL sampler a texture with this sampling reads through. Named for the
-// configuration rather than for the texture, because that is what it is: the
-// root signature declares samplingConfigurations static samplers and every
-// texture sampled that way shares one. See TextureSampling.
-std::string hlslSamplerName(const TextureSampling& sampling)
+Vector<int> getFragmentStageRoots(const ShaderGraph& graph)
 {
-    return "samplerConfig" + std::to_string(samplingIndex(sampling));
+    auto roots = getFragmentOutputRoots(graph);
+
+    collectStatementExpressions(
+        graph, ShaderGraph::rootBlock, LoopConditions::Included, roots);
+    appendFunctionBodyRoots(graph, roots);
+    return roots;
 }
 
-// The component a 2D or 3D kernel's thread index node asked for, and the
-// uniform its matching grid extent is declared under.
-const char* componentSuffix(int component)
-{
-    if (component == 0)
-        return ".x";
-
-    return component == 1 ? ".y" : ".z";
-}
-
-// The lane of a vector value, which is a different question: a thread index
-// reaches three components and a vector reaches four, so the one above stops
-// where it does and this one names .w. Nothing in the EDSL is wider than four,
-// so a fifth component is a caller's mistake rather than a lane to name.
-const char* vectorComponentSuffix(int component)
-{
-    assert(component >= 0 && component < 4
-           && "eacp: a vector has no component past .w");
-
-    constexpr const char* lanes[] = {".x", ".y", ".z", ".w"};
-    return lanes[component];
-}
-
-// The MSL type a run of consecutive buffer elements is loaded through.
-//
-// The packed one and not float4, because the alignment is not ours to promise.
-// A plain float4 wants a sixteen-byte-aligned address, and eacp binds a
-// BufferRange at any four-byte offset - Device::storageBufferOffsetAlignment
-// answers four on this backend - so a range starting one float into a buffer
-// would make every such load undefined. packed_float4 is the same sixteen bytes
-// with an alignment of four, which is exactly what the binding guarantees, and
-// it converts to float4 on the way out.
-const char* metalPackedVectorType(ValueType type)
-{
-    auto integers = isUnsignedInteger(type);
-
-    switch (componentCount(type))
-    {
-        case 2:
-            return integers ? "packed_uint2" : "packed_float2";
-        case 3:
-            return integers ? "packed_uint3" : "packed_float3";
-        default:
-            return integers ? "packed_uint4" : "packed_float4";
-    }
-}
-
-// A thread index under the name both kernel scaffoldings bind it to: the whole
-// value where the node took the position as one, one lane otherwise.
-std::string indexReference(const char* name, DispatchRank rank, int component)
-{
-    if (rank == DispatchRank::OneD || component == allComponents)
-        return name;
-
-    return name + std::string(componentSuffix(component));
-}
-
-const char* gridExtentName(int component)
-{
-    if (component == 0)
-        return "width";
-
-    return component == 1 ? "height" : "depth";
-}
-
-int gridExtentCount(DispatchRank rank)
-{
-    if (rank == DispatchRank::OneD)
-        return 1;
-
-    return rank == DispatchRank::TwoD ? 2 : 3;
-}
-
-// The type the entry point declares its indices as, and the swizzle HLSL and
-// GLSL take them out of their three-component builtins with.
-const char* indexTypeName(DispatchRank rank)
-{
-    if (rank == DispatchRank::OneD)
-        return "uint";
-
-    return rank == DispatchRank::TwoD ? "uint2" : "uint3";
-}
-
-const char* glslIndexTypeName(DispatchRank rank)
-{
-    if (rank == DispatchRank::OneD)
-        return "uint";
-
-    return rank == DispatchRank::TwoD ? "uvec2" : "uvec3";
-}
-
-const char* indexSwizzle(DispatchRank rank)
-{
-    if (rank == DispatchRank::OneD)
-        return ".x";
-
-    return rank == DispatchRank::TwoD ? ".xy" : ".xyz";
-}
-
-// How many threads one group holds, whatever its rank - what a group reduction
-// folds over and what its scratch is sized for.
-int threadsPerGroup(const ShaderGraph& graph)
-{
-    return graph.threadGroupShape().threadCount();
-}
-
-// The first halving step of a tree over that many threads: the largest power of
-// two below the count, so a count that is not one still folds its tail in first.
-int reductionStride(int threads)
-{
-    auto stride = 1;
-
-    while (stride * 2 < threads)
-        stride *= 2;
-
-    return stride;
-}
-
-// How many threads one fold spans: the whole group, or one SIMD group of it -
-// and a group smaller than a SIMD group is its own SIMD group, so the narrow
-// scope never reaches past what was dispatched.
-int reductionWidth(const ShaderGraph& graph, ReductionScope scope)
-{
-    auto threads = threadsPerGroup(graph);
-
-    if (scope == ReductionScope::Group)
-        return threads;
-
-    return threads < simdGroupWidth ? threads : simdGroupWidth;
-}
-
-// Whether a fold spans the whole group either because that is its scope or
-// because the group is one SIMD group and the two are the same set of threads.
-bool spansWholeGroup(const ShaderGraph& graph, ReductionScope scope)
-{
-    return reductionWidth(graph, scope) == threadsPerGroup(graph);
-}
-
-// Whether Metal answers a fold with the SIMD-group intrinsic alone, which is
-// the narrow scope and only the narrow scope.
-//
-// Not a whole-group fold in a group of simdGroupWidth threads or fewer, however
-// much it looks like the same thing: that argument holds only where the
-// hardware SIMD group is at least as wide as the group, and the hardware's
-// width is a property of the compiled pipeline (threadExecutionWidth) rather
-// than a constant. An Intel Mac dispatches a kernel at eight or sixteen lanes,
-// so a 32-thread group there is two or four SIMD groups and simd_sum alone
-// would fold a quarter of it. The wide fold keeps the combine at every width -
-// simdCount is whatever the hardware gave - which is what it was always for.
-bool metalFoldsInOneInstruction(ReductionScope scope)
-{
-    return scope == ReductionScope::Simd;
-}
-
-// So a kernel whose folds are all SIMD-scoped on Metal declares neither the
-// scratch nor the three SIMD-group builtins the combine walks.
-bool metalCombinesPartials(const ShaderGraph& graph)
-{
-    return !graph.wholeGroupReductionTypes().empty();
-}
-
-// The scratch a reduction stages its partials in, one array per element type
-// folded. Named rather than slotted because it is the emitter's own and not
-// something the kernel declared.
-const char* groupScratchName(ValueType elementType)
-{
-    return elementType == ValueType::UInt ? "groupScratchU" : "groupScratch";
-}
-
-// The MSL SIMD-group reduction each fold starts from.
-const char* metalSimdReduction(GroupReduction operation)
-{
-    switch (operation)
-    {
-        case GroupReduction::Sum:
-            return "simd_sum";
-        case GroupReduction::Max:
-            return "simd_max";
-        case GroupReduction::Min:
-            return "simd_min";
-    }
-
-    return "simd_sum";
-}
-
-// Two partials combined, spelled identically in all three dialects.
-std::string foldedPair(GroupReduction operation,
-                       const std::string& left,
-                       const std::string& right)
-{
-    switch (operation)
-    {
-        case GroupReduction::Sum:
-            return left + " + " + right;
-        case GroupReduction::Max:
-            return "max(" + left + ", " + right + ")";
-        case GroupReduction::Min:
-            return "min(" + left + ", " + right + ")";
-    }
-
-    return left + " + " + right;
-}
-
-// The barrier itself, shared by the barrier statement and by the reductions
-// that bracket their scratch with one.
-std::string barrierStatement(Backend backend, const std::string& indent)
-{
-    if (backend == Backend::Vulkan)
-        return indent + "memoryBarrierShared();\n" + indent + "barrier();\n";
-
-    return indent
-           + std::string(backend == Backend::Metal
-                             ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
-                             : "GroupMemoryBarrierWithGroupSync();\n");
-}
-
-// The flat position of a thread within its group, which the tree indexes its
-// scratch by. Both dialects that take the tree have a builtin for it, so
-// neither derives one from the three-component local id.
-const char* groupLaneName(Backend backend)
-{
-    return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";
-}
-
-// A SIMD-group matrix fragment's name. Its own numbering, so it collides with
-// neither the variables nor the shared arrays.
-std::string simdMatrixName(int slot)
-{
-    return "sgm" + std::to_string(slot);
-}
-
-// Where a fragment's patch lives, spelled as the emitted source names it.
-std::string simdMatrixMemoryName(const Statement& statement)
-{
-    return (statement.memory == SimdMatrixMemory::Shared ? "s" : "buffer")
-           + std::to_string(statement.bufferSlot);
-}
-
-// A whole expression parenthesised, since an offset or a stride is printed
-// into the middle of an index computation.
-std::string bracketed(const std::string& expression)
-{
-    return "(" + expression + ")";
-}
-
-// The MSL type a fragment of each element is, and the element type its load
-// reinterprets the buffer's pointer as. A packed fragment stays packed right
-// through the product: MSL's simdgroup_multiply_accumulate takes mixed operand
-// types into a float accumulator, which is the instruction the hardware has and
-// the reason there is no widening step to emit between the two.
-const char* metalSimdMatrixType(SimdMatrixElement element)
-{
-    switch (element)
-    {
-        case SimdMatrixElement::Half:
-            return "simdgroup_half8x8";
-        case SimdMatrixElement::BFloat16:
-            return "simdgroup_bfloat8x8";
-        case SimdMatrixElement::Float:
-            break;
-    }
-
-    return "simdgroup_float8x8";
-}
-
-const char* metalPackedElementType(SimdMatrixElement element)
-{
-    return element == SimdMatrixElement::Half ? "half" : "bfloat";
-}
-
-// What the fallback widens one packed element with - the same helper a scalar
-// InputBuffer::readHalf or readBFloat16 goes through, so the arithmetic that
-// produces a lane's pair here is the arithmetic every other packed read in the
-// shader uses.
-const char* packedSimdMatrixHelper(SimdMatrixElement element)
-{
-    return element == SimdMatrixElement::Half ? "eacpReadHalf" : "eacpReadBFloat16";
-}
-
-// How the two fallback dialects read a buffer's float element as the word its
-// bits are. The buffer is declared float whatever it holds, which is what the
-// packed scalar reads already assume. Metal never asks: a packed patch is a
-// fragment of its own type there, loaded through a reinterpreted pointer.
-const char* bitsOfFloat(Backend backend)
-{
-    return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
-}
-
-// How the fallback backends hold a fragment: spread over the lanes of what
-// would have been the SIMD group the way Metal spreads it, each lane owning
-// the pair of elements at row lane / 4, columns (lane % 4) * 2 and the next -
-// which is elements 2 * lane and 2 * lane + 1 of the row-major patch. A pair
-// rather than the whole 8x8, because FXC counts every per-thread array against
-// one budget of 4096 registers for the kernel, and a blocked product holding a
-// few dozen fragments as 64 floats each went over it.
-constexpr int simdMatrixLaneElements =
-    simdMatrixSize * simdMatrixSize / simdGroupWidth;
-constexpr int simdMatrixLanesPerRow = simdMatrixSize / simdMatrixLaneElements;
-
-static_assert(simdMatrixLaneElements == 2,
-              "the fallback holds a lane's share of a fragment as a two-vector");
-
-// The two-component type a lane's share is declared as.
-const char* simdMatrixLaneType(Backend backend)
-{
-    return typeName(backend, ValueType::Float2);
-}
-
-// The scratch a product stages its two operands in, whole, so each lane can
-// read the row and the columns other lanes hold: two fragments per SIMD group,
-// one slice per SIMD group of the threadgroup. Named rather than slotted, like
-// the reduction's, because it is the emitter's own.
-constexpr auto simdMatrixScratchName = "sgmScratch";
-constexpr int simdMatrixScratchPerGroup = 2 * simdMatrixSize * simdMatrixSize;
-
-int simdMatrixScratchElements(const ShaderGraph& graph)
-{
-    return graph.threadGroupShape().threadCount() / simdGroupWidth
-           * simdMatrixScratchPerGroup;
-}
-
-// The scratch declared, under the storage qualifier the dialect gives
-// threadgroup memory, in a kernel that holds any fragment at all.
-std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
-                                         const std::string& qualifier)
-{
-    if (graph.simdMatrixCount() == 0)
-        return {};
-
-    return qualifier + " float " + simdMatrixScratchName + "["
-           + std::to_string(simdMatrixScratchElements(graph)) + "];\n";
-}
-
-// Whether a kernel declares any threadgroup memory of its own or the
-// emitter's - what the blank line after those declarations is for.
-bool declaresGroupMemory(const ShaderGraph& graph)
-{
-    return graph.sharedArrays().size() > 0 || graph.usesGroupReduction()
-           || graph.simdMatrixCount() > 0;
-}
-
-// What the fallback addresses a fragment by, declared once at the top of any
-// kernel that holds one: the lane within its notional SIMD group, the row and
-// the first column of the pair that lane holds, and where that group's slice
-// of the scratch starts.
-std::string simdMatrixPreamble(Backend backend)
-{
-    auto lane = std::string(groupLaneName(backend));
-    auto width = std::to_string(simdGroupWidth);
-    auto perRow = std::to_string(simdMatrixLanesPerRow);
-
-    auto source = "    uint sgmLane = " + lane + " % " + width + "u;\n";
-    source += "    uint sgmRow = sgmLane / " + perRow + "u;\n";
-    source += "    uint sgmColumn = (sgmLane % " + perRow + "u) * "
-              + std::to_string(simdMatrixLaneElements) + "u;\n";
-    source += "    uint sgmBase = (" + lane + " / " + width + "u) * "
-              + std::to_string(simdMatrixScratchPerGroup) + "u;\n";
-    return source;
-}
-
-// Prints one stage's expressions. Nodes the stage plan named as locals print
-// as tN references; everything else prints inline. print() spells out a node's
-// own expression (used for both inline nodes and local definitions), ref() is
-// what children and outputs go through, so shared subtrees collapse to a name.
-struct ExprPrinter
-{
-    // -1 when the stage reads the attribute itself; empty outside the fragment
-    // stage.
-    int carryingVarying(int slot) const
-    {
-        return slot < attributeVaryings.size() ? attributeVaryings[slot] : -1;
-    }
-
-    std::string ref(int node) const
-    {
-        if (locals[node] >= 0)
-            return "t" + std::to_string(locals[node]);
-
-        return print(node);
-    }
-
-    // Float, whose width is one, when nothing is to be broadcast.
-    ValueType broadcastType(const Expr& call) const
-    {
-        if (backend != Backend::Vulkan || !isGenTypeCall(call.text))
-            return ValueType::Float;
-
-        auto widest = ValueType::Float;
-
-        for (auto argument: call.args)
-        {
-            auto type = graph.expr(argument).type;
-
-            if (componentCount(type) > componentCount(widest))
-                widest = type;
-        }
-
-        return widest;
-    }
-
-    // Metal takes the layer as an index and rounds nothing, so a Float layer is
-    // rounded to nearest even first - the rule Vulkan and D3D apply to the
-    // coordinate's third component, which is how the other two take it.
-    std::string metalLayer(int node) const
-    {
-        if (graph.expr(node).type == ValueType::Int)
-            return "uint(" + ref(node) + ")";
-
-        return "uint(rint(" + ref(node) + "))";
-    }
-
-    std::string floatLayer(int layer) const
-    {
-        if (graph.expr(layer).type == ValueType::Int)
-            return "float(" + ref(layer) + ")";
-
-        return ref(layer);
-    }
-
-    std::string layeredCoordinate(int uv, int layer) const
-    {
-        return std::string(typeName(backend, ValueType::Float3)) + "(" + ref(uv)
-               + ", " + floatLayer(layer) + ")";
-    }
-
-    std::string layerSample(const Expr& expr,
-                            const std::string& name,
-                            const std::string& sampler) const
-    {
-        auto uv = expr.args[0];
-        auto layer = expr.args[1];
-
-        if (backend == Backend::Metal)
-            return name + ".sample(" + sampler + ", " + ref(uv) + ", "
-                   + metalLayer(layer) + ")";
-
-        if (backend == Backend::DirectX)
-            return name + ".Sample(" + sampler + ", " + layeredCoordinate(uv, layer)
-                   + ")";
-
-        auto call = "texture(" + name + ", " + layeredCoordinate(uv, layer) + ")";
-
-        return isDepth(graph.textureKind(expr.index)) ? call + ".r" : call;
-    }
-
-    // HLSL takes the level-zero form because a depth plane has one level and
-    // because SampleCmp needs derivatives, which a PCF loop does not have.
-    // GLSL folds the reference into the coordinate's last component.
-    std::string compareSample(const Expr& expr,
-                              const std::string& name,
-                              const std::string& sampler) const
-    {
-        auto layered = expr.args.size() == 3;
-        auto uv = expr.args[0];
-        auto reference = ref(expr.args.back());
-
-        if (backend == Backend::Metal)
-            return name + ".sample_compare(" + sampler + ", " + ref(uv) + ", "
-                   + (layered ? metalLayer(expr.args[1]) + ", " : std::string {})
-                   + reference + ")";
-
-        if (backend == Backend::DirectX)
-        {
-            auto coordinate =
-                layered ? layeredCoordinate(uv, expr.args[1]) : ref(uv);
-
-            return name + ".SampleCmpLevelZero(" + sampler + ", " + coordinate + ", "
-                   + reference + ")";
-        }
-
-        if (layered)
-            return "texture(" + name + ", vec4(" + ref(uv) + ", "
-                   + floatLayer(expr.args[1]) + ", " + reference + "))";
-
-        return "texture(" + name + ", vec3(" + ref(uv) + ", " + reference + "))";
-    }
-
-    std::string widened(int node, ValueType wide) const
-    {
-        auto argument = ref(node);
-
-        if (componentCount(wide) == 1 || componentCount(graph.expr(node).type) > 1)
-            return argument;
-
-        return std::string(typeName(backend, wide)) + "(" + argument + ")";
-    }
-
-    std::string print(int node) const
-    {
-        const auto& expr = graph.expr(node);
-
-        switch (expr.kind)
-        {
-            // Only the vertex stage is handed the attributes, so a
-            // fragment-stage read of one reads the varying carrying it across.
-            case ExprKind::Input:
-            {
-                auto carrier = carryingVarying(expr.index);
-
-                if (carrier >= 0)
-                    return varyingName(backend, carrier);
-
-                return attributeName(backend, expr.index);
-            }
-
-            case ExprKind::Varying:
-                return varyingName(backend, expr.index);
-
-            case ExprKind::Uniform:
-                return "uniforms.u" + std::to_string(expr.index);
-
-            case ExprKind::Constant:
-                // The uint, int and bool spellings are shared by MSL and HLSL,
-                // like floatN. A signed literal needs no suffix at all: an
-                // integer literal is already an int in both languages.
-                //
-                // Expr::index is the int the three of them share, so a uint
-                // above INT_MAX is held there as a negative and has to be read
-                // back as what it was: 4294967295u, never -1u.
-                if (expr.type == ValueType::UInt)
-                    return std::to_string((unsigned) expr.index) + "u";
-
-                if (expr.type == ValueType::Int)
-                    return std::to_string(expr.index);
-
-                if (expr.type == ValueType::Bool)
-                    return expr.index != 0 ? "true" : "false";
-
-                return floatLiteral(expr.value);
-
-            case ExprKind::Construct:
-            {
-                auto text = std::string(typeName(backend, expr.type)) + "(";
-
-                for (auto i = 0; i < expr.args.size(); ++i)
-                {
-                    if (i > 0)
-                        text += ", ";
-
-                    text += ref(expr.args[i]);
-                }
-
-                text += ")";
-
-                // MSL and GLSL fill a matrix from columns, HLSL from rows, so
-                // transpose() is what restores the column-major value there.
-                if (backend == Backend::DirectX && isMatrix(expr.type))
-                    return "transpose(" + text + ")";
-
-                return text;
-            }
-
-            case ExprKind::Swizzle:
-                return "(" + ref(expr.args[0]) + ")." + expr.text;
-
-            case ExprKind::Call:
-            {
-                auto text = callName(backend, expr.text) + "(";
-                auto wide = broadcastType(expr);
-
-                for (auto i = 0; i < expr.args.size(); ++i)
-                {
-                    if (i > 0)
-                        text += ", ";
-
-                    text += widened(expr.args[i], wide);
-                }
-
-                return text + ")";
-            }
-
-            case ExprKind::Unary:
-                // GLSL gives ! to a scalar bool only; the componentwise
-                // negation of a mask is not().
-                if (backend == Backend::Vulkan && expr.op == '!'
-                    && componentCount(expr.type) > 1)
-                    return "not(" + ref(expr.args[0]) + ")";
-
-                // The operand gets its own parentheses: negating a negative
-                // constant must print (-(-1.0)), never the pre-decrement
-                // (--1.0).
-                return "(" + std::string(1, expr.op) + "(" + ref(expr.args[0])
-                       + "))";
-
-            case ExprKind::Binary:
-            {
-                // The operator is a char unless it did not fit in one, which is
-                // only the two shifts.
-                auto op = expr.text.empty() ? std::string(1, expr.op) : expr.text;
-                auto isShift = op == "<<" || op == ">>";
-
-                // GLSL refuses a scalar on the left of a shift whose right
-                // operand is a vector; MSL and HLSL broadcast it themselves.
-                auto left = backend == Backend::Vulkan && isShift
-                                ? widened(expr.args[0], expr.type)
-                                : ref(expr.args[0]);
-                auto right = ref(expr.args[1]);
-
-                // GLSL leaves % undefined on a negative operand, so the
-                // truncating remainder is written out of the division.
-                if (backend == Backend::Vulkan && op == "%"
-                    && isSignedInteger(expr.type))
-                    return "(" + left + " - ((" + left + " / " + right + ") * "
-                           + right + "))";
-
-                return "(" + left + " " + op + " " + right + ")";
-            }
-
-            case ExprKind::Compare:
-            {
-                // A mask is the operator in two dialects, a function in GLSL.
-                if (backend == Backend::Vulkan && componentCount(expr.type) > 1)
-                    if (const auto* name = glslComparison(expr.text))
-                        return std::string(name) + "(" + ref(expr.args[0]) + ", "
-                               + ref(expr.args[1]) + ")";
-
-                return "(" + ref(expr.args[0]) + " " + expr.text + " "
-                       + ref(expr.args[1]) + ")";
-            }
-
-            case ExprKind::Select:
-                // Both languages spell the conditional operator the same way,
-                // and both evaluate it without branching for scalar operands.
-                return "(" + ref(expr.args[0]) + " ? " + ref(expr.args[1]) + " : "
-                       + ref(expr.args[2]) + ")";
-
-            case ExprKind::VarRead:
-                return "v" + std::to_string(expr.index);
-
-            case ExprKind::Mul:
-            {
-                // MSL and GLSL spell a matrix product with *; HLSL uses mul().
-                // All three read a vector on the left of one as a row.
-                auto left = ref(expr.args[0]);
-                auto right = ref(expr.args[1]);
-
-                if (backend != Backend::DirectX)
-                    return "(" + left + " * " + right + ")";
-
-                return "mul(" + left + ", " + right + ")";
-            }
-
-            case ExprKind::Sample:
-            {
-                // Texture sample at a float2 coordinate. A second argument is
-                // the mip level the shader picked, which each backend spells
-                // its own way: Metal as an extra argument to the same call,
-                // HLSL as a different method.
-                //
-                // The two backends also name the sampler differently, and that
-                // is the one place their declarations genuinely differ. MSL
-                // passes a sampler as a function argument, so there is one per
-                // texture and it carries the texture's index; HLSL binds one to
-                // a register, and there is one per sampling configuration that
-                // every texture declaring that sampling shares. See
-                // TextureSampling.
-                auto name = "texture" + std::to_string(expr.index);
-                auto sampler =
-                    backend == Backend::Metal
-                        ? "sampler" + std::to_string(expr.index)
-                        : hlslSamplerName(graph.textureSampling(expr.index));
-                if (expr.text == "compare")
-                    return compareSample(expr, name, sampler);
-
-                if (isLayered(graph.textureKind(expr.index)))
-                    return layerSample(expr, name, sampler);
-
-                auto uv = ref(expr.args[0]);
-
-                // GLSL's sampler2D over a depth image hands back four
-                // channels, so the .r is the one float the node's type says.
-                if (backend == Backend::Vulkan)
-                {
-                    auto call = expr.args.size() < 2
-                                    ? "texture(" + name + ", " + uv + ")"
-                                    : "textureLod(" + name + ", " + uv + ", "
-                                          + ref(expr.args[1]) + ")";
-
-                    if (graph.textureKind(expr.index) == TextureKind::Depth2D)
-                        return call + ".r";
-
-                    return call;
-                }
-
-                if (expr.args.size() < 2)
-                {
-                    auto method =
-                        backend == Backend::Metal ? ".sample(" : ".Sample(";
-
-                    return name + method + sampler + ", " + uv + ")";
-                }
-
-                auto level = ref(expr.args[1]);
-
-                if (backend == Backend::Metal)
-                    return name + ".sample(" + sampler + ", " + uv + ", level("
-                           + level + "))";
-
-                return name + ".SampleLevel(" + sampler + ", " + uv + ", " + level
-                       + ")";
-            }
-
-            case ExprKind::Fetch:
-            {
-                // A texel read at integer coordinates. Metal takes them
-                // unsigned, so anything not already signed-integer goes through
-                // int2 first: a negative coordinate then wraps to a large
-                // unsigned one and reads as zero, which is what HLSL's Load does
-                // with it directly. The level is 0 - GPU::Texture has no mips -
-                // and D3D carries it in the coordinate's third component.
-                auto name = "texture" + std::to_string(expr.index);
-                auto given = ref(expr.args[0]);
-                auto signedPair = std::string(typeName(backend, ValueType::Int2));
-                auto coordinates = graph.expr(expr.args[0]).type == ValueType::Int2
-                                       ? given
-                                       : signedPair + "(" + given + ")";
-
-                if (backend == Backend::Metal)
-                    return name + ".read(uint2(" + coordinates + "))";
-
-                // GLSL takes the coordinate signed and the level explicitly -
-                // there are no derivatives to pick one from in a fetch.
-                if (backend == Backend::Vulkan)
-                    return "texelFetch(" + name + ", " + coordinates + ", 0)";
-
-                return name + ".Load(int3(" + coordinates + ", 0))";
-            }
-
-            case ExprKind::ThreadId:
-                // Both kernel scaffoldings declare the work-item id as gid: a
-                // uint over the flat count in a 1D kernel, a uint2 or uint3
-                // over the grid otherwise, where the node carries which
-                // component it asked for - or the whole of it.
-                return indexReference("gid", graph.dispatchRank(), expr.index);
-
-            case ExprKind::BufferRead:
-                return "buffer" + std::to_string(expr.index) + "["
-                       + ref(expr.args[0]) + "]";
-
-            // One load where the dialect has a spelling for one, and the
-            // componentwise construct it stands in for where it has not. See
-            // metalPackedVectorType for why the Metal form reinterprets the
-            // pointer as a packed type rather than as a plain float4.
-            case ExprKind::BufferVectorRead:
-            {
-                auto name = "buffer" + std::to_string(expr.index);
-                auto base = ref(expr.args[0]);
-
-                if (backend == Backend::Metal)
-                    return std::string(typeName(backend, expr.type))
-                           + "(*((device const " + metalPackedVectorType(expr.type)
-                           + "*) (" + name + " + " + base + ")))";
-
-                auto text = std::string(typeName(backend, expr.type)) + "(";
-
-                for (auto component = 0; component < componentCount(expr.type);
-                     ++component)
-                {
-                    if (component > 0)
-                        text += ", ";
-
-                    text += name + "[" + base;
-
-                    if (component > 0)
-                        text += " + " + std::to_string(component) + "u";
-
-                    text += "]";
-                }
-
-                return text + ")";
-            }
-
-            case ExprKind::AtomicLoad:
-            {
-                // HLSL has nothing to spell: a UAV element of an
-                // RWStructuredBuffer<uint> is already the thing an interlocked
-                // operation acts on, and reading one is a subscript. MSL wraps
-                // its atomic_uint, so the value has to be taken out of it.
-                auto element = "buffer" + std::to_string(expr.index) + "["
-                               + ref(expr.args[0]) + "]";
-
-                if (backend == Backend::Metal)
-                    return "atomic_load_explicit(&" + element
-                           + ", memory_order_relaxed)";
-
-                return element;
-            }
-
-            case ExprKind::ArrayRead:
-                return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
-                       + "]";
-
-            // The threadgroup indices ride the same scaffolding as gid: both
-            // backends' entry points bind them to these names, a scalar in a
-            // 1D kernel and a vector of the rank's width otherwise.
-            case ExprKind::LocalId:
-                return indexReference("lid", graph.dispatchRank(), expr.index);
-
-            case ExprKind::GroupId:
-                return indexReference("tgid", graph.dispatchRank(), expr.index);
-
-            // The implicit bound the dispatch appended to the uniform block,
-            // under the names the block declares it with.
-            case ExprKind::GridExtent:
-                if (graph.dispatchRank() == DispatchRank::OneD)
-                    return "uniforms.count";
-
-                return std::string("uniforms.") + gridExtentName(expr.index);
-
-            case ExprKind::SharedRead:
-                return "s" + std::to_string(expr.index) + "[" + ref(expr.args[0])
-                       + "]";
-
-            // Metal has the builtin; the other two divide the flat local index
-            // by the width, which is the same numbering and the one the
-            // fallback's own arithmetic is written against.
-            case ExprKind::SimdGroupIndex:
-                if (backend == Backend::Metal)
-                    return "simdIndex";
-
-                return "(" + std::string(groupLaneName(backend)) + " / "
-                       + std::to_string(simdGroupWidth) + "u)";
-
-            case ExprKind::BuiltIn:
-                return builtIn((ShaderBuiltIn) expr.index);
-        }
-
-        return {};
-    }
-
-    // HLSL's SV_Position hands the fragment stage clip w where the other two
-    // hand 1 / w, so it is turned round to agree. All three put the origin at
-    // the top left, y down, in pixels with centres at .5: Vulkan has no other
-    // origin, and eacp's flipped viewport moves clip space, not the framebuffer.
-    std::string builtIn(ShaderBuiltIn which) const
-    {
-        if (which == ShaderBuiltIn::FragmentCoordinate)
-        {
-            if (backend == Backend::Vulkan)
-                return "gl_FragCoord";
-
-            if (backend == Backend::DirectX)
-                return "float4(input.position.xyz, 1.0 / input.position.w)";
-
-            return "input.position";
-        }
-
-        if (backend == Backend::Vulkan)
-            return which == ShaderBuiltIn::VertexId ? "uint(gl_VertexIndex)"
-                                                    : "uint(gl_InstanceIndex)";
-
-        return which == ShaderBuiltIn::VertexId ? "vertexId" : "instanceId";
-    }
-
-    const ShaderGraph& graph;
-    Backend backend;
-    const Vector<int>& locals; // node id -> local index, -1 = inline
-    Vector<int> attributeVaryings; // attribute slot -> varying, -1 = read direct
-};
-
-// Operation nodes are worth naming when evaluated more than once; leaf reads
-// and swizzles stay inline - naming them saves nothing and hurts readability.
-// The one thing named whatever its kind is a record write's value, which its
-// element stores all have to be handed rather than evaluate one at a time.
-bool wantsLocal(ExprKind kind)
-{
-    switch (kind)
-    {
-        case ExprKind::Construct:
-        case ExprKind::Call:
-        case ExprKind::Unary:
-        case ExprKind::Binary:
-        case ExprKind::Compare:
-        case ExprKind::Select:
-        case ExprKind::Mul:
-        case ExprKind::Sample:
-        case ExprKind::Fetch:
-        case ExprKind::BufferRead:
-        case ExprKind::BufferVectorRead:
-        case ExprKind::AtomicLoad:
-        case ExprKind::ArrayRead:
-        case ExprKind::SharedRead:
-            return true;
-
-        case ExprKind::Input:
-        case ExprKind::Varying:
-        case ExprKind::Uniform:
-        case ExprKind::Constant:
-        case ExprKind::Swizzle:
-        case ExprKind::VarRead:
-        case ExprKind::ThreadId:
-        case ExprKind::LocalId:
-        case ExprKind::GroupId:
-        case ExprKind::GridExtent:
-        case ExprKind::SimdGroupIndex:
-        case ExprKind::BuiltIn:
-            return false;
-    }
-
-    return false;
-}
-
-// Counts how many references each node receives across the stage's roots: one
-// per root plus one per parent edge, visiting each node's children only once.
-void countUses(const ShaderGraph& graph,
-               int node,
-               Vector<int>& uses,
-               Vector<char>& seen)
-{
-    if (node < 0)
-        return;
-
-    ++uses[node];
-
-    if (seen[node])
-        return;
-
-    seen[node] = 1;
-
-    const auto& expr = graph.expr(node);
-
-    // A vector load's index is printed once per component by the backends that
-    // expand it into subscripts, so it earns a name there the way any
-    // subexpression evaluated more than once does - and Metal, which prints it
-    // once, reads the same name and is no worse for it.
-    auto perArgument =
-        expr.kind == ExprKind::BufferVectorRead ? componentCount(expr.type) : 1;
-
-    for (auto argument: expr.args)
-        for (auto i = 0; i < perArgument; ++i)
-            countUses(graph, argument, uses, seen);
-}
-
-// Which nodes a run of expressions evaluates more than once, in dependency
-// (post) order so every definition precedes its uses. A node that already holds
-// a name is left alone, and so is everything under it: it is already computed.
-void orderLocals(const ShaderGraph& graph,
-                 int node,
-                 const Vector<int>& uses,
-                 const Vector<int>& locals,
-                 Vector<char>& seen,
-                 Vector<int>& order)
-{
-    if (node < 0 || seen[node] || locals[node] >= 0)
-        return;
-
-    seen[node] = 1;
-
-    for (auto argument: graph.expr(node).args)
-        orderLocals(graph, argument, uses, locals, seen, order);
-
-    if (uses[node] > 1 && wantsLocal(graph.expr(node).kind))
-        order.add(node);
-}
-
-// Which constant arrays a run of expressions subscripts, following the elements
-// of one that is used in case an element subscripts another.
-void collectArrays(const ShaderGraph& graph,
-                   int node,
-                   Vector<char>& used,
-                   Vector<char>& seen)
-{
-    if (node < 0 || seen[node])
-        return;
-
-    seen[node] = 1;
-
-    const auto& expr = graph.expr(node);
-
-    if (expr.kind == ExprKind::ArrayRead && used[expr.index] == 0)
-    {
-        used[expr.index] = 1;
-
-        for (auto element: graph.arrays()[expr.index].elements)
-            collectArrays(graph, element, used, seen);
-    }
-
-    for (auto argument: expr.args)
-        collectArrays(graph, argument, used, seen);
-}
-
-// Which variables running a statement can leave holding something else -
-// following the bodies of an if or a loop, since what they write is written
-// just the same.
-void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written);
-
-void collectWrites(const ShaderGraph& graph,
-                   const Statement& statement,
-                   Vector<char>& written)
-{
-    switch (statement.kind)
-    {
-        case StatementKind::Declare:
-        case StatementKind::Assign:
-        case StatementKind::AtomicAdd:
-        case StatementKind::GroupReduce:
-            written[statement.slot] = 1;
-            return;
-
-        case StatementKind::If:
-            collectWrites(graph, statement.body, written);
-
-            if (statement.elseBody >= 0)
-                collectWrites(graph, statement.elseBody, written);
-
-            return;
-
-        case StatementKind::Loop:
-            collectWrites(graph, statement.body, written);
-            return;
-
-        case StatementKind::Break:
-        case StatementKind::Continue:
-        case StatementKind::Store:
-        case StatementKind::VectorStore:
-        case StatementKind::TextureStore:
-        case StatementKind::SharedStore:
-        case StatementKind::Barrier:
-        case StatementKind::SimdMatrixFill:
-        case StatementKind::SimdMatrixLoad:
-        case StatementKind::SimdMatrixStore:
-        case StatementKind::SimdMatrixMultiplyAdd:
-            return;
-    }
-}
-
-// Whether running a statement can change what threadgroup memory holds: a
-// store to it, or the barrier that publishes what other threads stored -
-// following nested bodies the way collectWrites does. What this feeds is the
-// same rule variables get: a name computed from shared memory is given up the
-// moment shared memory may have moved on.
-bool touchesShared(const ShaderGraph& graph, int block);
-
-bool touchesShared(const ShaderGraph& graph, const Statement& statement)
-{
-    switch (statement.kind)
-    {
-        case StatementKind::SharedStore:
-        case StatementKind::Barrier:
-        case StatementKind::GroupReduce:
-            return true;
-
-        // A fragment stored back into a threadgroup tile moves that tile, so
-        // any name read out of it beforehand is given up here; one stored into
-        // a buffer moves no shared memory at all.
-        case StatementKind::SimdMatrixStore:
-            return statement.memory == SimdMatrixMemory::Shared;
-
-        case StatementKind::If:
-            if (touchesShared(graph, statement.body))
-                return true;
-
-            return statement.elseBody >= 0
-                   && touchesShared(graph, statement.elseBody);
-
-        case StatementKind::Loop:
-            return touchesShared(graph, statement.body);
-
-        case StatementKind::Declare:
-        case StatementKind::Assign:
-        case StatementKind::Break:
-        case StatementKind::Continue:
-        case StatementKind::Store:
-        case StatementKind::VectorStore:
-        case StatementKind::TextureStore:
-        case StatementKind::AtomicAdd:
-        case StatementKind::SimdMatrixFill:
-        case StatementKind::SimdMatrixLoad:
-        case StatementKind::SimdMatrixMultiplyAdd:
-            return false;
-    }
-
-    return false;
-}
-
-bool touchesShared(const ShaderGraph& graph, int block)
-{
-    for (auto index: graph.block(block).statements)
-        if (touchesShared(graph, graph.statement(index)))
-            return true;
-
-    return false;
-}
-
-void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written)
-{
-    for (auto index: graph.block(block).statements)
-        collectWrites(graph, graph.statement(index), written);
-}
-
-// Its storage-buffer sibling: which buffer slots running a statement can leave
-// holding something else. What it feeds is the rule variables and shared memory
-// already get - a name computed from an element is given up the moment that
-// buffer may have moved on - and it is what makes an output a kernel reads back
-// answer with what the kernel stored rather than with what was there before.
-void collectBufferWrites(const ShaderGraph& graph, int block, Vector<char>& written);
-
-void collectBufferWrites(const ShaderGraph& graph,
-                         const Statement& statement,
-                         Vector<char>& written)
-{
-    switch (statement.kind)
-    {
-        case StatementKind::Store:
-        case StatementKind::VectorStore:
-            written[statement.slot] = 1;
-            return;
-
-        // The one statement whose buffer is not in `slot`: that field names the
-        // variable the value from before the add lands in.
-        case StatementKind::AtomicAdd:
-            written[statement.bufferSlot] = 1;
-            return;
-
-        // Nor is a fragment store's, `slot` there naming the fragment. It
-        // writes a buffer only when that is where its patch is.
-        case StatementKind::SimdMatrixStore:
-            if (statement.memory == SimdMatrixMemory::Buffer)
-                written[statement.bufferSlot] = 1;
-
-            return;
-
-        case StatementKind::If:
-            collectBufferWrites(graph, statement.body, written);
-
-            if (statement.elseBody >= 0)
-                collectBufferWrites(graph, statement.elseBody, written);
-
-            return;
-
-        case StatementKind::Loop:
-            collectBufferWrites(graph, statement.body, written);
-            return;
-
-        case StatementKind::Declare:
-        case StatementKind::Assign:
-        case StatementKind::Break:
-        case StatementKind::Continue:
-        case StatementKind::TextureStore:
-        case StatementKind::SharedStore:
-        case StatementKind::Barrier:
-        case StatementKind::GroupReduce:
-        case StatementKind::SimdMatrixFill:
-        case StatementKind::SimdMatrixLoad:
-        case StatementKind::SimdMatrixMultiplyAdd:
-            return;
-    }
-}
-
-void collectBufferWrites(const ShaderGraph& graph, int block, Vector<char>& written)
-{
-    for (auto index: graph.block(block).statements)
-        collectBufferWrites(graph, graph.statement(index), written);
-}
-
-// A visited set a walk can have a fresh one of without paying for one. Marking
-// is a stamp rather than a flag, so starting over is a counter increment
-// instead of clearing a buffer the size of the graph.
-//
-// It exists because the walk below runs per open name per statement, and a
-// buffer allocated and zeroed each time costs the whole graph however small the
-// subtree walked turns out to be. On an ordinary shader that is invisible; on a
-// large one it is the difference between a shader that compiles and an app that
-// hangs.
-struct VisitSet
-{
-    explicit VisitSet(int nodeCount) { stamps.resize(nodeCount, 0); }
-
-    void restart() { ++generation; }
-
-    bool visit(int node)
-    {
-        if (stamps[node] == generation)
-            return false;
-
-        stamps[node] = generation;
-        return true;
-    }
-
-    Vector<int> stamps;
-
-    // Ahead of the stamps a fresh buffer holds, so nothing counts as visited
-    // until something visits it. Starting level with them makes every node of a
-    // new set look already seen - which is not a walk that gives the wrong
-    // answer slowly, it is one that gives it immediately.
-    int generation = 1;
-};
-
-// Whether the value under node no longer stands for itself after a statement:
-// it read a variable that statement wrote, an element of a storage buffer the
-// statement stored to, or threadgroup memory the statement may have moved.
-bool readsStale(const ShaderGraph& graph,
-                int node,
-                const Vector<char>& written,
-                const Vector<char>& buffersWritten,
-                bool sharedMoved,
-                VisitSet& seen)
-{
-    if (node < 0 || !seen.visit(node))
-        return false;
-
-    const auto& expr = graph.expr(node);
-
-    if (expr.kind == ExprKind::VarRead && written[expr.index] != 0)
-        return true;
-
-    if (sharedMoved && expr.kind == ExprKind::SharedRead)
-        return true;
-
-    // Whichever way the buffer was declared: an output a kernel reads back and
-    // an atomic counter it loads are both elements a store can have changed.
-    if ((expr.kind == ExprKind::BufferRead || expr.kind == ExprKind::BufferVectorRead
-         || expr.kind == ExprKind::AtomicLoad)
-        && buffersWritten[expr.index] != 0)
-        return true;
-
-    for (auto argument: expr.args)
-        if (readsStale(graph, argument, written, buffersWritten, sharedMoved, seen))
-            return true;
-
-    return false;
-}
-
-// Every expression the statements of a block reach, its nested bodies included.
-// A loop's condition is left out: the header takes no name of its own.
-void collectUseRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
-{
-    for (auto index: graph.block(block).statements)
-    {
-        const auto& statement = graph.statement(index);
-
-        if (statement.kind != StatementKind::Loop)
-            roots.add(statement.value);
-
-        roots.add(statement.index);
-        roots.add(statement.indexY);
-        roots.add(statement.stride);
-
-        if (statement.body >= 0)
-            collectUseRoots(graph, statement.body, roots);
-
-        if (statement.elseBody >= 0)
-            collectUseRoots(graph, statement.elseBody, roots);
-    }
-}
-
-// Emits one stage: its statements, then the expressions its outputs are.
-//
-// Any operation evaluated more than once becomes a tN local, so a shared
-// subtree is computed - and printed - once instead of being inlined at every
-// use. Control flow is what bounds that sharing, and the two rules it imposes
-// are the whole of what makes this different from printing an expression tree:
-//
-// A name is given up the moment a statement writes a variable the value behind
-// it read - which is what stops `d` computed before an `if` from standing for
-// the same thing after a body that moved what it was computed from. A name
-// neither body moves stays usable inside them both.
-//
-// A loop condition takes no name at all. It is printed into the while header,
-// so binding it to a local ahead of the loop would test a value that never
-// changes again; the names the body can invalidate are given up there too,
-// since the header is re-evaluated after the body has run.
-//
-// A record write is what the rules answer to rather than bound by: its N
-// element stores are one write, so its value takes a name whatever its use
-// count and keeps it until the last of them has run.
-struct StageEmitter
-{
-    StageEmitter(const ShaderGraph& graphToUse,
-                 Backend backend,
-                 Vector<int> attributeVaryings = {})
-        : printer {graphToUse, backend, locals, std::move(attributeVaryings)}
-        , visited(graphToUse.nodeCount())
-    {
-        locals.resize(graphToUse.nodeCount(), -1);
-    }
-
-    const ShaderGraph& graph() const { return printer.graph; }
-
-    // The locals a standalone run of expressions needs - a stage's outputs,
-    // which no statement follows - counted over just those expressions.
-    std::string defineFor(const Vector<int>& roots, const std::string& indent)
-    {
-        auto open = Vector<int> {};
-        return define(roots, indent, countUsesOver(roots), open);
-    }
-
-    // The constant arrays a stage subscripts, declared at the top of its
-    // function, before any name has been handed out - so an element may read a
-    // uniform or a varying but not a mutable local.
-    //
-    // The GLSL form drops the const: an element read from a uniform is not a
-    // constant expression, which is all GLSL lets one initialise a const with.
-    //
-    // Emitted in slot order, so an array whose elements read another one finds
-    // it already there.
-    std::string declareArrays(const Vector<int>& roots, const std::string& indent)
-    {
-        const auto& arrays = graph().arrays();
-
-        if (arrays.empty())
-            return {};
-
-        auto used = Vector<char> {};
-        used.resize(arrays.size(), 0);
-        auto seen = Vector<char> {};
-        seen.resize(graph().nodeCount(), 0);
-
-        for (auto root: roots)
-            collectArrays(graph(), root, used, seen);
-
-        auto source = std::string {};
-
-        for (auto slot = 0; slot < arrays.size(); ++slot)
-        {
-            if (used[slot] == 0)
-                continue;
-
-            const auto& array = arrays[slot];
-
-            auto qualifier =
-                std::string(printer.backend == Backend::Vulkan ? "" : "const ");
-
-            source += indent + qualifier
-                      + typeName(printer.backend, array.elementType) + " a"
-                      + std::to_string(slot) + "["
-                      + std::to_string(array.elements.size()) + "] = {";
-
-            for (auto i = 0; i < array.elements.size(); ++i)
-            {
-                if (i > 0)
-                    source += ", ";
-
-                source += printer.ref(array.elements[i]);
-            }
-
-            source += "};\n";
-        }
-
-        return source;
-    }
-
-    std::string emitBlock(int block, const std::string& indent)
-    {
-        auto uses = blockUses(block);
-        auto open = Vector<int> {};
-        auto source = std::string {};
-
-        for (auto index: graph().block(block).statements)
-            source += emitStatement(graph().statement(index), indent, uses, open);
-
-        retire(open);
-        return source;
-    }
-
-    std::string emitStatement(const Statement& statement,
-                              const std::string& indent,
-                              const Vector<int>& uses,
-                              Vector<int>& open)
-    {
-        auto inner = indent + "    ";
-
-        if (statement.kind == StatementKind::Loop)
-        {
-            dropStale(statement, open);
-
-            return indent + "while (" + printer.ref(statement.value) + ")\n" + indent
-                   + "{\n" + emitBlock(statement.body, inner) + indent + "}\n";
-        }
-
-        auto source = std::string {};
-
-        switch (statement.kind)
-        {
-            case StatementKind::Declare:
-            case StatementKind::Assign:
-            {
-                auto declares = statement.kind == StatementKind::Declare;
-                auto type =
-                    declares
-                        ? std::string(typeName(printer.backend,
-                                               graph().variables()[statement.slot]))
-                              + " "
-                        : std::string {};
-
-                source = define({statement.value}, indent, uses, open);
-                source += indent + type + "v" + std::to_string(statement.slot)
-                          + " = " + printer.ref(statement.value) + ";\n";
-                break;
-            }
-
-            // The condition is evaluated before either body runs, so it is
-            // printed while every name still stands; the ones a body moves on
-            // from are given up between it and them. An assignment needs no
-            // such pass first: its right-hand side is what the variable held
-            // before it, which is what the open names still stand for.
-            case StatementKind::If:
-            {
-                source = define({statement.value}, indent, uses, open);
-
-                auto condition = printer.ref(statement.value);
-                dropStale(statement, open);
-
-                source += indent + "if (" + condition + ")\n" + indent + "{\n"
-                          + emitBlock(statement.body, inner) + indent + "}\n";
-
-                if (statement.elseBody >= 0)
-                    source += indent + "else\n" + indent + "{\n"
-                              + emitBlock(statement.elseBody, inner) + indent
-                              + "}\n";
-
-                break;
-            }
-
-            case StatementKind::Break:
-                source = indent + "break;\n";
-                break;
-
-            case StatementKind::Continue:
-                source = indent + "continue;\n";
-                break;
-
-            case StatementKind::Store:
-            {
-                source =
-                    define({statement.index, statement.value}, indent, uses, open);
-                source += holdTheRecord(statement, indent, open);
-
-                auto element = "buffer" + std::to_string(statement.slot) + "["
-                               + printer.ref(statement.index) + "]";
-                auto stored = printer.ref(statement.value);
-
-                // An atomic buffer's element is an atomic_uint on Metal and has
-                // to be stored through rather than assigned. HLSL's UAV element
-                // is an ordinary uint, so the plain assignment is already right
-                // there.
-                auto atomic =
-                    graph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
-
-                if (atomic && printer.backend == Backend::Metal)
-                    source += indent + "atomic_store_explicit(&" + element + ", "
-                              + stored + ", memory_order_relaxed);\n";
-                else
-                    source += indent + element + " = " + stored + ";\n";
-
-                break;
-            }
-
-            // The write mirror of a vector read: one store where the dialect
-            // has a spelling for one, and the N subscripts it stands in for
-            // where it has not. Metal reinterprets the address being stored to
-            // rather than the binding, so an output stays a run of floats and
-            // nothing it was bindable as is given up.
-            //
-            // Both operands are named first - see holdTheVector - so each is
-            // evaluated once and in full before any part of the record reaches
-            // memory. That is what lets write4(out, i, f(out.read4(i))) mean
-            // what it says, and what keeps an index computed from the buffer
-            // being written - write4(out, toUInt(out[i]), v) - addressing the
-            // element it was aimed at rather than the one the first component
-            // just landed on.
-            case StatementKind::VectorStore:
-            {
-                source =
-                    define({statement.index, statement.value}, indent, uses, open);
-                source += holdTheVector(statement, indent, open);
-
-                auto name = "buffer" + std::to_string(statement.slot);
-                auto base = printer.ref(statement.index);
-                auto stored = printer.ref(statement.value);
-                auto type = graph().expr(statement.value).type;
-
-                if (printer.backend == Backend::Metal)
-                {
-                    source += indent + "*((device " + metalPackedVectorType(type)
-                              + "*) (" + name + " + " + base + ")) = " + stored
-                              + ";\n";
-                    break;
-                }
-
-                for (auto component = 0; component < componentCount(type);
-                     ++component)
-                {
-                    source += indent + name + "[" + base;
-
-                    if (component > 0)
-                        source += " + " + std::to_string(component) + "u";
-
-                    source += "] = (" + stored + ")"
-                              + vectorComponentSuffix(component) + ";\n";
-                }
-
-                break;
-            }
-
-            case StatementKind::AtomicAdd:
-            {
-                source =
-                    define({statement.index, statement.value}, indent, uses, open);
-
-                auto name = "v" + std::to_string(statement.slot);
-                auto element = "buffer" + std::to_string(statement.bufferSlot) + "["
-                               + printer.ref(statement.index) + "]";
-                auto addend = printer.ref(statement.value);
-
-                if (printer.backend == Backend::Metal)
-                {
-                    source += indent + "uint " + name
-                              + " = atomic_fetch_add_explicit(&" + element + ", "
-                              + addend + ", memory_order_relaxed);\n";
-                    break;
-                }
-
-                // GLSL's atomicAdd returns the old value, like MSL's.
-                if (printer.backend == Backend::Vulkan)
-                {
-                    source += indent + "uint " + name + " = atomicAdd(" + element
-                              + ", " + addend + ");\n";
-                    break;
-                }
-
-                // Two lines here rather than one: InterlockedAdd hands the old
-                // value back through an out parameter, so the name has to exist
-                // before the call that fills it.
-                source += indent + "uint " + name + ";\n";
-                source += indent + "InterlockedAdd(" + element + ", " + addend + ", "
-                          + name + ");\n";
-                break;
-            }
-
-            case StatementKind::SharedStore:
-                source =
-                    define({statement.index, statement.value}, indent, uses, open);
-                source += indent + "s" + std::to_string(statement.slot) + "["
-                          + printer.ref(statement.index)
-                          + "] = " + printer.ref(statement.value) + ";\n";
-                break;
-
-            // The synchronisation point itself. The names it invalidates -
-            // anything computed from shared memory - are given up by the
-            // dropStale below, the same pass an assignment retires its
-            // variable's readers through.
-            // GLSL says it in two calls: the memory barrier publishes what
-            // was written, the execution barrier is where the group meets.
-            case StatementKind::Barrier:
-                source = barrierStatement(printer.backend, indent);
-                break;
-
-            // Several statements on every backend, laid down where the
-            // reduction was written so the barriers inside it keep their place
-            // among the stores around them.
-            case StatementKind::GroupReduce:
-                source = define({statement.value}, indent, uses, open);
-                source += groupReduction(statement, indent);
-                break;
-
-            // The SIMD-group matrix statements, each one intrinsic on Metal and
-            // a lane's two elements of the fragment everywhere else, the
-            // product staging its operands through the threadgroup scratch.
-            case StatementKind::SimdMatrixFill:
-                source = define({statement.value}, indent, uses, open);
-                source += simdMatrixFill(statement, indent);
-                break;
-
-            case StatementKind::SimdMatrixLoad:
-            case StatementKind::SimdMatrixStore:
-                source =
-                    define({statement.index, statement.stride}, indent, uses, open);
-                source += simdMatrixTransfer(statement, indent);
-                break;
-
-            case StatementKind::SimdMatrixMultiplyAdd:
-                source = simdMatrixMultiplyAdd(statement, indent);
-                break;
-
-            // GLSL's imageStore takes a *signed* coordinate; MSL takes the
-            // colour first, HLSL subscripts the texture like an array.
-            case StatementKind::TextureStore:
-            {
-                source = define({statement.index, statement.indexY, statement.value},
-                                indent,
-                                uses,
-                                open);
-
-                auto name = "texture" + std::to_string(statement.slot);
-                auto pair = std::string(
-                    printer.backend == Backend::Vulkan ? "ivec2(" : "uint2(");
-                auto coordinates = pair + printer.ref(statement.index) + ", "
-                                   + printer.ref(statement.indexY) + ")";
-                auto color = printer.ref(statement.value);
-
-                if (printer.backend == Backend::Metal)
-                    source += indent + name + ".write(" + color + ", " + coordinates
-                              + ");\n";
-                else if (printer.backend == Backend::Vulkan)
-                    source += indent + "imageStore(" + name + ", " + coordinates
-                              + ", " + color + ");\n";
-                else
-                    source +=
-                        indent + name + "[" + coordinates + "] = " + color + ";\n";
-
-                break;
-            }
-
-            case StatementKind::Loop:
-                break;
-        }
-
-        // Afterwards either way, for the names this statement's own expressions
-        // introduced: a value read out of the variable it then wrote.
-        dropStale(statement, open);
-        return source;
-    }
-
-private:
-    // MSL has the SIMD-group intrinsics, so a fold scoped to one is a single
-    // instruction and a fold over a wider group is those partials combined
-    // through the scratch. HLSL under FXC has no wave intrinsic at cs_5_0, and
-    // GLSL's subgroup extension is both unassumable and the wrong width - a
-    // subgroup is whatever the device says it is, where eacp's simdWidth is 32
-    // everywhere by construction - so both take the scratch tree, narrowed to
-    // the folding thread's own block of lanes where the scope is the SIMD
-    // group. Either way the result lands in the reduction's variable on every
-    // thread, and a trailing barrier leaves the scratch free for the next one.
-    std::string groupReduction(const Statement& statement, const std::string& indent)
-    {
-        auto elementType = graph().variables()[statement.slot];
-        auto type = std::string(typeName(printer.backend, elementType));
-        auto name = "v" + std::to_string(statement.slot);
-        auto scratch = std::string(groupScratchName(elementType));
-        auto step = "gr" + std::to_string(statement.slot);
-        auto contributed = printer.ref(statement.value);
-        auto barrier = barrierStatement(printer.backend, indent);
-
-        if (printer.backend == Backend::Metal)
-        {
-            auto source = indent + type + " " + name + " = "
-                          + metalSimdReduction(statement.reduction) + "("
-                          + contributed + ");\n";
-
-            if (metalFoldsInOneInstruction(statement.scope))
-                return source;
-
-            source += indent + "if (simdLane == 0u)\n" + indent + "    " + scratch
-                      + "[simdIndex] = " + name + ";\n";
-            source += barrier;
-            source += indent + name + " = " + scratch + "[0];\n";
-            source += indent + "for (uint " + step + " = 1u; " + step
-                      + " < simdCount; ++" + step + ")\n";
-            source +=
-                indent + "    " + name + " = "
-                + foldedPair(statement.reduction, name, scratch + "[" + step + "]")
-                + ";\n";
-
-            return source + barrier;
-        }
-
-        auto lane = std::string(groupLaneName(printer.backend));
-        auto width = reductionWidth(graph(), statement.scope);
-        auto whole = spansWholeGroup(graph(), statement.scope);
-        auto widthText = std::to_string(width) + "u";
-
-        // Within the fold, a lane counts from the start of its own block; the
-        // answer is read from that block's first slot. Both collapse to the
-        // plain lane and slot zero where the block is the whole group, which is
-        // what keeps the wide fold spelled exactly as it always was.
-        auto within = whole ? lane : bracketed(lane + " % " + widthText);
-        auto first = whole ? std::string("0")
-                           : bracketed(lane + " / " + widthText) + " * " + widthText;
-
-        auto element = scratch + "[" + lane + "]";
-        auto partner = scratch + "[" + lane + " + " + step + "]";
-
-        auto source = indent + element + " = " + contributed + ";\n";
-        source += barrier;
-        source += indent + "for (uint " + step + " = "
-                  + std::to_string(reductionStride(width)) + "u; " + step + " > 0u; "
-                  + step + " >>= 1u)\n" + indent + "{\n";
-        // The third conjunct is the scratch's own bound, and it is not implied
-        // by the second: a narrow fold indexes with the global lane while it
-        // counts with the lane within its block, so a group that is not a whole
-        // number of SIMD groups - which the assert in emitCompute refuses, and
-        // which a release build does not - would otherwise read past the array.
-        auto bounded = whole ? std::string {}
-                             : " && " + lane + " + " + step + " < "
-                                   + std::to_string(threadsPerGroup(graph())) + "u";
-
-        source += indent + "    if (" + within + " < " + step + " && " + within
-                  + " + " + step + " < " + widthText + bounded + ")\n";
-        source += indent + "        " + element + " = "
-                  + foldedPair(statement.reduction, element, partner) + ";\n";
-        source += barrierStatement(printer.backend, indent + "    ");
-        source += indent + "}\n";
-        source +=
-            indent + type + " " + name + " = " + scratch + "[" + first + "];\n";
-
-        return source + barrier;
-    }
-
-    bool metal() const { return printer.backend == Backend::Metal; }
-
-    // The four matrix statements below. An 8x8 fragment on Metal is a type MSL
-    // has, and each operation on one is a single intrinsic. On the two backends
-    // with no wave matrix operation it is spread over the lanes the way Metal
-    // spreads it - see simdMatrixLaneElements - so a fill, a load and a store
-    // are two scalars of each lane's own, and only the product needs what
-    // other lanes hold, which it fetches through the threadgroup scratch
-    // between two barriers: the exchange a wave intrinsic does in registers.
-    //
-    // Correctness at whatever it costs, as the reduction's tree is where there
-    // is no wave intrinsic - and unlike that tree, this is not the fastest form
-    // the hardware would allow, which is why the README says so.
-    std::string simdMatrixDeclaration(int slot) const
-    {
-        if (metal())
-            return std::string(metalSimdMatrixType(graph().simdMatrixElement(slot)))
-                   + " " + simdMatrixName(slot);
-
-        // The fallback holds every fragment as a lane's pair of floats,
-        // whatever the memory it came out of: what a packed load changes there
-        // is the arithmetic that produces the pair, not the fragment.
-        return std::string(simdMatrixLaneType(printer.backend)) + " "
-               + simdMatrixName(slot);
-    }
-
-    std::string simdMatrixFill(const Statement& statement, const std::string& indent)
-    {
-        auto value = printer.ref(statement.value);
-
-        if (metal())
-            return indent + simdMatrixDeclaration(statement.slot)
-                   + " = make_filled_simdgroup_matrix<float, "
-                   + std::to_string(simdMatrixSize) + ", "
-                   + std::to_string(simdMatrixSize) + ">(" + value + ");\n";
-
-        return indent + simdMatrixDeclaration(statement.slot) + " = "
-               + simdMatrixLaneType(printer.backend) + "(" + value + ", " + value
-               + ");\n";
-    }
-
-    // One of the two elements of a patch a lane holds, as the memory names it:
-    // the lane's row at the first of its pair of columns or the one after.
-    static std::string simdMatrixLaneElement(const std::string& memory,
-                                             const std::string& offset,
-                                             const std::string& stride,
-                                             int which)
-    {
-        auto column = which == 0 ? std::string("sgmColumn")
-                                 : "sgmColumn + " + std::to_string(which) + "u";
-
-        return memory + "[" + offset + " + sgmRow * " + stride + " + " + column
-               + "]";
-    }
-
-    // The same element where the patch is packed: the index counts sixteen-bit
-    // elements, so the word holding one is at half that index and which half of
-    // it is the parity - exactly the arithmetic InputBuffer::readHalf and
-    // readBFloat16 do, through the same helper.
-    //
-    // Each element is fetched on its own rather than a lane's pair taken out of
-    // one word. The pair is two adjacent columns, but the patch's offset and
-    // row stride are the caller's and neither has to be even, so the pair is
-    // not reliably inside one word and a walk that assumed it was would read
-    // the wrong element on every odd row.
-    static std::string simdMatrixPackedLaneElement(Backend backend,
-                                                   SimdMatrixElement element,
-                                                   const std::string& memory,
-                                                   const std::string& offset,
-                                                   const std::string& stride,
-                                                   int which)
-    {
-        auto column = which == 0 ? std::string("sgmColumn")
-                                 : "sgmColumn + " + std::to_string(which) + "u";
-
-        auto index = "(" + offset + " + sgmRow * " + stride + " + " + column + ")";
-
-        return std::string(packedSimdMatrixHelper(element)) + "("
-               + bitsOfFloat(backend) + "(" + memory + "[" + index + " / 2u]), "
-               + index + " % 2u)";
-    }
-
-    // The load and the store are the same patch walked in the two directions,
-    // so they are one function: what changes is which side of the assignment
-    // each is on. Every lane moves the pair it holds, so the store needs no
-    // guard to make it once - no lane's share is another's.
-    std::string simdMatrixTransfer(const Statement& statement,
-                                   const std::string& indent)
-    {
-        auto loading = statement.kind == StatementKind::SimdMatrixLoad;
-        auto name = simdMatrixName(statement.slot);
-        auto memory = simdMatrixMemoryName(statement);
-        auto offset = bracketed(printer.ref(statement.index));
-        auto stride = bracketed(printer.ref(statement.stride));
-        auto element = graph().simdMatrixElement(statement.slot);
-        auto packed = element != SimdMatrixElement::Float;
-
-        if (metal())
-        {
-            // The buffer is declared float whatever it holds, so a packed load
-            // reinterprets its pointer the way the wide packed reads
-            // reinterpret one - and then counts in the packed element, which is
-            // what makes the offset the caller's own row arithmetic.
-            auto pointer = packed
-                               ? "(device const "
-                                     + std::string(metalPackedElementType(element))
-                                     + "*) (" + memory + ") + " + offset
-                               : memory + " + " + offset;
-
-            if (loading)
-                return indent + simdMatrixDeclaration(statement.slot) + ";\n"
-                       + indent + "simdgroup_load(" + name + ", " + pointer + ", "
-                       + stride + ");\n";
-
-            return indent + "simdgroup_store(" + name + ", " + pointer + ", "
-                   + stride + ");\n";
-        }
-
-        auto backend = printer.backend;
-
-        auto first = packed ? simdMatrixPackedLaneElement(
-                                  backend, element, memory, offset, stride, 0)
-                            : simdMatrixLaneElement(memory, offset, stride, 0);
-
-        auto second = packed ? simdMatrixPackedLaneElement(
-                                   backend, element, memory, offset, stride, 1)
-                             : simdMatrixLaneElement(memory, offset, stride, 1);
-
-        if (loading)
-            return indent + simdMatrixDeclaration(statement.slot) + " = "
-                   + simdMatrixLaneType(printer.backend) + "(" + first + ", "
-                   + second + ");\n";
-
-        return indent + first + " = " + name + ".x;\n" + indent + second + " = "
-               + name + ".y;\n";
-    }
-
-    // An element of an operand a product staged in the scratch: the left
-    // fragment at the start of this SIMD group's slice, the right one a
-    // fragment further on.
-    static std::string simdMatrixStaged(bool right, const std::string& element)
-    {
-        auto base = std::string("sgmBase + ");
-
-        if (right)
-            base += std::to_string(simdMatrixSize * simdMatrixSize) + "u + ";
-
-        return std::string(simdMatrixScratchName) + "[" + base + element + "]";
-    }
-
-    std::string simdMatrixMultiplyAdd(const Statement& statement,
-                                      const std::string& indent)
-    {
-        auto accumulator = simdMatrixName(statement.slot);
-        auto left = simdMatrixName(statement.left);
-        auto right = simdMatrixName(statement.right);
-
-        if (metal())
-            return indent + "simdgroup_multiply_accumulate(" + accumulator + ", "
-                   + left + ", " + right + ", " + accumulator + ");\n";
-
-        // Both operands staged whole, each lane putting down the pair it
-        // holds; then, once every pair is there, each lane takes its row of
-        // the left against its two columns of the right. The accumulator is
-        // allowed to be an operand, and the staging is what makes that safe:
-        // what is multiplied is the copy in the scratch, complete before
-        // anything is added. The trailing barrier is what lets the next
-        // product stage over this one.
-        auto step = accumulator + "k";
-        auto term = accumulator + "l";
-        auto side = std::to_string(simdMatrixSize);
-        auto barrier = barrierStatement(printer.backend, indent);
-        auto held = "sgmRow * " + side + "u + sgmColumn";
-
-        auto source =
-            indent + simdMatrixStaged(false, held) + " = " + left + ".x;\n";
-        source += indent + simdMatrixStaged(false, held + " + 1u") + " = " + left
-                  + ".y;\n";
-        source += indent + simdMatrixStaged(true, held) + " = " + right + ".x;\n";
-        source += indent + simdMatrixStaged(true, held + " + 1u") + " = " + right
-                  + ".y;\n";
-        source += barrier;
-        source += indent + "for (uint " + step + " = 0u; " + step + " < " + side
-                  + "u; ++" + step + ")\n";
-        source += indent + "{\n";
-        source += indent + "    float " + term + " = "
-                  + simdMatrixStaged(false, "sgmRow * " + side + "u + " + step)
-                  + ";\n";
-        source += indent + "    " + accumulator + ".x += " + term + " * "
-                  + simdMatrixStaged(true, step + " * " + side + "u + sgmColumn")
-                  + ";\n";
-        source +=
-            indent + "    " + accumulator + ".y += " + term + " * "
-            + simdMatrixStaged(true, step + " * " + side + "u + sgmColumn + 1u")
-            + ";\n";
-        source += indent + "}\n";
-        return source + barrier;
-    }
-
-    Vector<int> countUsesOver(const Vector<int>& roots) const
-    {
-        auto count = graph().nodeCount();
-        auto uses = Vector<int> {};
-        auto seen = Vector<char> {};
-
-        uses.resize(count, 0);
-        seen.resize(count, 0);
-
-        for (auto root: roots)
-            countUses(graph(), root, uses, seen);
-
-        return uses;
-    }
-
-    // How often the statements of one block reach each node, its nested bodies
-    // counted in: a name is handed out only where the statement being emitted
-    // evaluates the node anyway, so a body's use of one costs that body nothing.
-    Vector<int> blockUses(int block) const
-    {
-        auto roots = Vector<int> {};
-        collectUseRoots(graph(), block, roots);
-        return countUsesOver(roots);
-    }
-
-    std::string define(const Vector<int>& roots,
-                       const std::string& indent,
-                       const Vector<int>& uses,
-                       Vector<int>& open)
-    {
-        auto count = graph().nodeCount();
-        auto ordered = Vector<char> {};
-        ordered.resize(count, 0);
-        auto order = Vector<int> {};
-
-        for (auto root: roots)
-            orderLocals(graph(), root, uses, locals, ordered, order);
-
-        auto source = std::string {};
-
-        for (auto node: order)
-            source += bind(node, indent, open);
-
-        return source;
-    }
-
-    std::string bind(int node, const std::string& indent, Vector<int>& open)
-    {
-        locals[node] = localCount++;
-        open.add(node);
-
-        return indent
-               + std::string(typeName(printer.backend, graph().expr(node).type))
-               + " t" + std::to_string(locals[node]) + " = " + printer.print(node)
-               + ";\n";
-    }
-
-    std::string holdTheRecord(const Statement& statement,
-                              const std::string& indent,
-                              Vector<int>& open)
-    {
-        if (statement.recordComponentsLeft <= 0 || locals[statement.record] >= 0
-            || !readsSlot(statement.record, statement.slot))
-            return {};
-
-        return bind(statement.record, indent, open);
-    }
-
-    // A wide store's operands, named before the store rather than printed into
-    // it.
-    //
-    // The index is the one the backends disagree about. Metal stores the whole
-    // vector through one pointer and prints the address once; HLSL and GLSL
-    // print it into every subscript, so an index inlined there is evaluated N
-    // times - and if it reads the buffer being written, every evaluation after
-    // the first reads back what this very store has already put there.
-    // write4(out, toUInt(out[i]), v) is exactly that shape, and inlined it would
-    // mean one thing on Metal and another on the other two.
-    //
-    // The value is named on every backend all the same, for the reason
-    // holdTheRecord names a record's: a wide store is one write of one record,
-    // and the record is worth a name wherever it is an operation rather than a
-    // leaf.
-    std::string holdTheVector(const Statement& statement,
-                              const std::string& indent,
-                              Vector<int>& open)
-    {
-        auto source = std::string {};
-
-        if (printer.backend != Backend::Metal)
-            source += holdOperand(statement.index, statement.slot, indent, open);
-
-        return source + holdOperand(statement.value, statement.slot, indent, open);
-    }
-
-    // One of them, unless naming it would buy nothing: something already named
-    // is already computed, and a leaf costs nothing however often it is
-    // repeated - unless it is a read of the buffer being written, which is not
-    // a matter of cost.
-    std::string
-        holdOperand(int node, int slot, const std::string& indent, Vector<int>& open)
-    {
-        if (node < 0 || locals[node] >= 0)
-            return {};
-
-        if (!wantsLocal(graph().expr(node).kind) && !readsSlot(node, slot))
-            return {};
-
-        return bind(node, indent, open);
-    }
-
-    bool readsSlot(int node, int slot)
-    {
-        written.assign(graph().variables().size(), 0);
-        buffersWritten.assign(graph().storageBuffers().size(), 0);
-        buffersWritten[slot] = 1;
-        visited.restart();
-
-        return readsStale(graph(), node, written, buffersWritten, false, visited);
-    }
-
-    void retire(Vector<int>& open)
-    {
-        for (auto node: open)
-            locals[node] = -1;
-
-        open.clear();
-    }
-
-    void dropStale(const Statement& statement, Vector<int>& open)
-    {
-        if (open.empty())
-            return;
-
-        auto sharedMoved = touchesShared(graph(), statement);
-
-        written.assign(graph().variables().size(), 0);
-        collectWrites(graph(), statement, written);
-
-        buffersWritten.assign(graph().storageBuffers().size(), 0);
-        collectBufferWrites(graph(), statement, buffersWritten);
-
-        // A statement that leaves no variable and no buffer holding something
-        // else and moves no shared memory cannot have staled a name, and most
-        // do not: a break, a continue, and an if whose bodies only compute.
-        // Asking each open name about an empty set is the same walk for a
-        // guaranteed no.
-        if (!written.contains(1) && !buffersWritten.contains(1) && !sharedMoved)
-            return;
-
-        auto heldRecord = statement.recordComponentsLeft > 0 ? statement.record : -1;
-
-        auto kept = Vector<int> {};
-
-        for (auto node: open)
-        {
-            visited.restart();
-
-            if (node != heldRecord
-                && readsStale(
-                    graph(), node, written, buffersWritten, sharedMoved, visited))
-                locals[node] = -1;
-            else
-                kept.add(node);
-        }
-
-        open = std::move(kept);
-    }
-
-public:
-    Vector<int> locals; // node id -> local index, -1 = inline
-    ExprPrinter printer;
-    int localCount = 0;
-
-private:
-    // Held by the emitter rather than by the walk, so that naming a stage costs
-    // one buffer instead of one per name per statement.
-    VisitSet visited;
-    Vector<char> written;
-    Vector<char> buffersWritten;
-};
-
-// Whether the expression tree under node reads a uniform. A Varying read is the
-// fragment-stage boundary: its vertex-stage source tree is walked separately as
-// part of the vertex stage, so the walk stops there.
-//
-// The visited set is not an optimisation here, it is what makes the walk
-// finite in practice. What this walks is a graph rather than a tree - the
-// emitter's whole reason for existing is that a shared subtree is stored once -
-// and a walk that revisits a shared node once per path through it is
-// exponential in the sharing, not quadratic. It went unnoticed for as long as
-// every shader was small enough that the exponent did not matter.
-//
-// A node reached twice is a node whose answer is already in the result: either
-// the walk that reached it first found a uniform, in which case it returned
-// true and this one is unreachable, or it did not, in which case there is none
-// under there to find.
-bool referencesUniform(const ShaderGraph& graph, int node, VisitSet& seen)
+// A Varying read is the stage boundary. The visited set keeps the walk linear:
+// shared subtrees would otherwise make it exponential.
+bool doesReferenceUniform(const ShaderGraph& graph, int node, VisitSet& seen)
 {
     if (node < 0 || !seen.visit(node))
         return false;
@@ -2955,79 +99,18 @@ bool referencesUniform(const ShaderGraph& graph, int node, VisitSet& seen)
     if (expr.kind == ExprKind::Varying)
         return false;
 
+    if (expr.kind == ExprKind::ArrayRead)
+        for (auto element: graph.arrays()[expr.index].elements)
+            if (doesReferenceUniform(graph, element, seen))
+                return true;
+
     for (auto argument: expr.args)
-        if (referencesUniform(graph, argument, seen))
+        if (doesReferenceUniform(graph, argument, seen))
             return true;
 
     return false;
 }
 
-// Every expression a block's statements evaluate, gathered so a stage sees what
-// its statements read and not only what its output expression does. Without
-// this a uniform read only from inside a loop would go undeclared: the
-// expression walk starts at the fragment colour and never reaches it.
-void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
-{
-    for (auto index: graph.block(block).statements)
-    {
-        const auto& statement = graph.statement(index);
-        roots.add(statement.value);
-        roots.add(statement.index);
-        roots.add(statement.indexY);
-        roots.add(statement.stride);
-
-        if (statement.body >= 0)
-            collectStatementRoots(graph, statement.body, roots);
-
-        if (statement.elseBody >= 0)
-            collectStatementRoots(graph, statement.elseBody, roots);
-    }
-}
-
-// One visited set across every root, not one per root: a stage's roots share
-// most of their graph, and a node already known to hold no uniform holds none
-// whichever root reached it.
-bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots)
-{
-    auto seen = VisitSet {graph.nodeCount()};
-
-    for (auto root: roots)
-        if (referencesUniform(graph, root, seen))
-            return true;
-
-    return false;
-}
-
-// Every expression the vertex stage evaluates: the clip position and each
-// varying it hands the fragment stage.
-Vector<int> vertexStageRoots(const ShaderGraph& graph)
-{
-    auto roots = Vector<int> {};
-    roots.add(graph.position());
-
-    for (const auto& varying: graph.varyings())
-        roots.add(varying.sourceNode);
-
-    return roots;
-}
-
-// Its fragment sibling: the colour, the alpha test when there is one, and what
-// the statements evaluate. Wider than the roots the colour's locals are planned
-// from, which is why emit() keeps both - a value a statement reads is declared
-// by the stage but named where the statement is emitted.
-Vector<int> fragmentStageRoots(const ShaderGraph& graph)
-{
-    auto roots = Vector<int> {graph.fragment()};
-
-    if (graph.discard() >= 0)
-        roots.add(graph.discard());
-
-    collectStatementRoots(graph, ShaderGraph::rootBlock, roots);
-    return roots;
-}
-
-// A Varying is the stage boundary; an array element is followed, the array
-// being declared inside the stage that subscripts it.
 void collectAttributeReads(const ShaderGraph& graph,
                            int node,
                            Vector<char>& reached,
@@ -3052,8 +135,51 @@ void collectAttributeReads(const ShaderGraph& graph,
         collectAttributeReads(graph, argument, reached, seen);
 }
 
-// -1 when no declared varying carries `source`.
-int varyingCarrying(const ShaderGraph& graph, int source)
+bool doesReachForeignBuiltIn(const ShaderGraph& graph,
+                             int node,
+                             ShaderStage stage,
+                             VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return false;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::Varying)
+        return false;
+
+    if (expr.kind == ExprKind::BuiltIn
+        && stageOf(static_cast<ShaderBuiltIn>(expr.index)) != stage)
+        return true;
+
+    if (expr.kind == ExprKind::ArrayRead)
+        for (auto element: graph.arrays()[expr.index].elements)
+            if (doesReachForeignBuiltIn(graph, element, stage, seen))
+                return true;
+
+    for (auto argument: expr.args)
+        if (doesReachForeignBuiltIn(graph, argument, stage, seen))
+            return true;
+
+    return false;
+}
+
+// Whether every built-in the stage's roots reach is one that stage is handed.
+// A Varying read is the boundary: what feeds it is the vertex stage's.
+[[maybe_unused]] bool readsOnlyItsOwnBuiltIns(const ShaderGraph& graph,
+                                              const Vector<int>& roots,
+                                              ShaderStage stage)
+{
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: roots)
+        if (doesReachForeignBuiltIn(graph, root, stage, seen))
+            return false;
+
+    return true;
+}
+
+int findVaryingCarrying(const ShaderGraph& graph, int source)
 {
     for (auto i = 0; i < graph.varyings().size(); ++i)
         if (graph.varyings()[i].sourceNode == source)
@@ -3062,26 +188,115 @@ int varyingCarrying(const ShaderGraph& graph, int source)
     return -1;
 }
 
-// A fragment-stage read of a vertex attribute names an identifier no dialect
-// gives that stage, so each is promoted to a varying after the declared ones.
-struct PromotedAttributes
+Vector<char> collectFragmentAttributeReads(const ShaderGraph& graph)
 {
-    Vector<int> varyingOf; // attribute slot -> varying index, -1 = not read
-    Vector<int> carried; // implicit varying order -> attribute slot
-};
-
-PromotedAttributes promotedAttributes(const ShaderGraph& graph)
-{
-    auto promoted = PromotedAttributes {};
-    promoted.varyingOf.resize(graph.inputs().size(), -1);
-
     auto reached = Vector<char> {};
     reached.resize(graph.nodeCount(), 0);
 
     auto seen = VisitSet {graph.nodeCount()};
 
-    for (auto root: fragmentStageRoots(graph))
+    for (auto root: getFragmentStageRoots(graph))
         collectAttributeReads(graph, root, reached, seen);
+
+    return reached;
+}
+
+void collectBufferSlots(const ShaderGraph& graph,
+                        int node,
+                        Vector<char>& used,
+                        VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return;
+
+    const auto& expr = graph.expr(node);
+
+    auto readsSlot =
+        expr.kind == ExprKind::BufferRead || expr.kind == ExprKind::BufferVectorRead;
+
+    if (readsSlot && expr.index < used.size())
+        used[expr.index] = 1;
+
+    if (expr.kind == ExprKind::ArrayRead)
+        for (auto element: graph.arrays()[expr.index].elements)
+            collectBufferSlots(graph, element, used, seen);
+
+    for (auto argument: expr.args)
+        collectBufferSlots(graph, argument, used, seen);
+}
+bool doesAnyReferenceUniform(const ShaderGraph& graph, const Vector<int>& roots)
+{
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: roots)
+        if (doesReferenceUniform(graph, root, seen))
+            return true;
+
+    return false;
+}
+
+// Every node one stage evaluates from its roots: arguments and the elements of
+// the constant arrays it subscripts, stopping at a Varying, past which the
+// value is the vertex stage's.
+Vector<int> collectReachedNodes(const ShaderGraph& graph, const Vector<int>& roots)
+{
+    auto seen = VisitSet {graph.nodeCount()};
+    auto pending = roots;
+    auto reached = Vector<int> {};
+
+    while (!pending.empty())
+    {
+        auto node = pending.back();
+        pending.pop_back();
+
+        if (node < 0 || !seen.visit(node))
+            continue;
+
+        reached.add(node);
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::Varying)
+            continue;
+
+        if (expr.kind == ExprKind::ArrayRead)
+            for (auto element: graph.arrays()[expr.index].elements)
+                pending.add(element);
+
+        for (auto argument: expr.args)
+            pending.add(argument);
+    }
+
+    return reached;
+}
+
+bool readsTextureSlot(ExprKind kind)
+{
+    return kind == ExprKind::Sample || kind == ExprKind::Fetch
+           || kind == ExprKind::TextureFunction || kind == ExprKind::TextureQuery;
+}
+
+bool readsOnlyVariablesOf(const ShaderGraph& graph,
+                          const Vector<int>& roots,
+                          bool vertexStage)
+{
+    for (auto node: collectReachedNodes(graph, roots))
+    {
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::VarRead && graph.variableFunction(expr.index) < 0
+            && graph.isVertexVariable(expr.index) != vertexStage)
+            return false;
+    }
+
+    return true;
+}
+
+PromotedAttributes findPromotedAttributes(const ShaderGraph& graph)
+{
+    auto promoted = PromotedAttributes {};
+    promoted.varyingOf.resize(graph.inputs().size(), -1);
+
+    auto reached = collectFragmentAttributeReads(graph);
 
     // Ascending node order, so the implicit varyings follow declaration order.
     for (auto node = 0; node < graph.nodeCount(); ++node)
@@ -3090,7 +305,7 @@ PromotedAttributes promotedAttributes(const ShaderGraph& graph)
             continue;
 
         auto slot = graph.expr(node).index;
-        auto carrier = varyingCarrying(graph, node);
+        auto carrier = findVaryingCarrying(graph, node);
 
         if (carrier < 0)
         {
@@ -3104,90 +319,26 @@ PromotedAttributes promotedAttributes(const ShaderGraph& graph)
     return promoted;
 }
 
-struct StageVarying
-{
-    ValueType type = ValueType::Float;
-    int sourceNode = -1;
-    int attribute = -1;
-};
-
-Vector<StageVarying> stageVaryings(const ShaderGraph& graph,
-                                   const PromotedAttributes& promoted)
+Vector<StageVarying> getStageVaryings(const ShaderGraph& graph,
+                                      const PromotedAttributes& promoted)
 {
     auto slots = Vector<StageVarying> {};
 
     for (const auto& varying: graph.varyings())
-        slots.add(StageVarying {varying.type, varying.sourceNode, -1});
+        slots.add(StageVarying {
+            varying.type, varying.sourceNode, -1, varying.interpolation});
 
     for (auto attribute: promoted.carried)
-        slots.add(StageVarying {graph.inputs()[attribute], -1, attribute});
+    {
+        auto type = graph.inputs()[attribute];
+        slots.add(StageVarying {type, -1, attribute, defaultInterpolation(type)});
+    }
 
     return slots;
 }
 
-// How a buffer slot spells itself: the access decides the qualifier, the
-// element type what is qualified. An atomic slot answers to neither - its
-// elements are the type each language requires an interlocked operation to act
-// through.
-const char* metalBufferType(BufferAccess access, ValueType elementType)
-{
-    auto integers = elementType == ValueType::UInt;
-
-    switch (access)
-    {
-        case BufferAccess::Read:
-            return integers ? "device const uint*" : "device const float*";
-        case BufferAccess::Write:
-            return integers ? "device uint*" : "device float*";
-        case BufferAccess::Atomic:
-            return "device atomic_uint*";
-    }
-
-    return "device const float*";
-}
-
-const char* hlslBufferType(BufferAccess access, ValueType elementType)
-{
-    auto integers = elementType == ValueType::UInt;
-
-    switch (access)
-    {
-        case BufferAccess::Read:
-            return integers ? "StructuredBuffer<uint>" : "StructuredBuffer<float>";
-        case BufferAccess::Write:
-            return integers ? "RWStructuredBuffer<uint>"
-                            : "RWStructuredBuffer<float>";
-        case BufferAccess::Atomic:
-            return "RWStructuredBuffer<uint>";
-    }
-
-    return "StructuredBuffer<float>";
-}
-
-// Which storage-buffer slots a run of expressions subscripts. A render stage
-// declares only the buffers it reads - unlike a kernel, where every slot is a
-// parameter of the one entry point - so the vertex and fragment functions each
-// need their own answer.
-void collectBufferSlots(const ShaderGraph& graph,
-                        int node,
-                        Vector<char>& used,
-                        VisitSet& seen)
-{
-    if (node < 0 || !seen.visit(node))
-        return;
-
-    const auto& expr = graph.expr(node);
-
-    if ((expr.kind == ExprKind::BufferRead
-         || expr.kind == ExprKind::BufferVectorRead)
-        && expr.index < used.size())
-        used[expr.index] = 1;
-
-    for (auto argument: expr.args)
-        collectBufferSlots(graph, argument, used, seen);
-}
-
-Vector<char> bufferSlotsUsedBy(const ShaderGraph& graph, const Vector<int>& roots)
+Vector<char> findBufferSlotsUsedBy(const ShaderGraph& graph,
+                                   const Vector<int>& roots)
 {
     auto used = Vector<char> {};
     used.resize(graph.storageBuffers().size(), 0);
@@ -3199,715 +350,317 @@ Vector<char> bufferSlotsUsedBy(const ShaderGraph& graph, const Vector<int>& root
 
     return used;
 }
-
-// The MSL parameters for the storage buffers a render stage reads, always read
-// only: a vertex or fragment function has no writable buffer here, which is the
-// whole of what separates this from the kernel signature above.
-std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
+std::string formatBufferParameters(const ShaderGraph& graph,
+                                   const Vector<int>& roots)
 {
-    auto used = bufferSlotsUsedBy(graph, roots);
+    auto used = findBufferSlotsUsedBy(graph, roots);
     auto source = std::string {};
 
     for (auto i = 0; i < used.size(); ++i)
         if (used[i] != 0)
-            source += ",\n    "
-                      + std::string(metalBufferType(BufferAccess::Read,
-                                                    graph.storageElementType(i)))
-                      + " buffer" + std::to_string(i) + " [[buffer("
-                      + std::to_string(RenderPass::bufferBase + i) + ")]]";
-
-    return source;
-}
-
-// The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
-// The CPU block is packed with MSL struct alignment (UniformLayout.h); HLSL
-// cbuffer packing only forbids straddling a 16-byte register, so a vector after
-// a scalar would land lower than the CPU wrote it - explicit pad scalars are
-// emitted wherever the two rule sets disagree.
-//
-// std140 disagrees the other way: a vec3 is twelve bytes there, so a scalar
-// after one needs a pad too.
-std::string uniformBlock(Backend backend,
-                         const Vector<ValueType>& types,
-                         const Vector<std::string>& names,
-                         int binding = vulkanUniformBinding)
-{
-    auto glsl = backend == Backend::Vulkan;
-
-    auto source = glsl ? "layout(std140, set = 0, binding = "
-                             + std::to_string(binding) + ") uniform Uniforms\n{\n"
-                       : std::string {"struct Uniforms\n{\n"};
-
-    auto offsets = uniformOffsets(types);
-    auto cursor = 0;
-    auto padCount = 0;
-
-    for (auto i = 0; i < types.size(); ++i)
-    {
-        auto type = types[i];
-
-        if (backend != Backend::Metal)
-        {
-            auto packedOffset = [&](int at)
-            {
-                return glsl ? std140PackedOffset(at, type)
-                            : hlslPackedOffset(at, type);
-            };
-
-            while (packedOffset(cursor) < offsets[i])
-            {
-                source += "    float pad" + std::to_string(padCount++) + ";\n";
-                cursor += 4;
-            }
-
-            cursor = offsets[i] + byteSize(type);
-        }
-
-        source +=
-            "    " + std::string(typeName(backend, type)) + " " + names[i] + ";\n";
-    }
-
-    // The instance name is what keeps uniforms.uN the one spelling in all three.
-    source += glsl ? "} uniforms;\n\n" : "};\n\n";
-
-    if (backend == Backend::DirectX)
-        source += "cbuffer UniformsCB : register(b0)\n{\n"
-                  "    Uniforms uniforms;\n};\n\n";
-
-    return source;
-}
-
-// A GLSL storage block is read-write by default; a read one says so.
-const char* glslBufferQualifier(BufferAccess access)
-{
-    return access == BufferAccess::Read ? "readonly " : "";
-}
-
-// The element type on the same terms metalBufferType and hlslBufferType take
-// it: an atomic slot is unsigned integers whatever it was declared with, since
-// atomicAdd acts through nothing else.
-const char* glslBufferElement(BufferAccess access, ValueType elementType)
-{
-    if (access == BufferAccess::Atomic || elementType == ValueType::UInt)
-        return "uint";
-
-    return "float";
-}
-
-// The instance name is left off so the run of elements is a global named
-// buffer<slot>, which prints byte-identically to the other two dialects.
-std::string glslBufferBlock(BufferAccess access,
-                            ValueType elementType,
-                            int slot,
-                            int binding)
-{
-    auto index = std::to_string(slot);
-
-    return "layout(std430, set = 0, binding = " + std::to_string(binding) + ") "
-           + glslBufferQualifier(access) + "buffer Buffer" + index + "\n{\n    "
-           + glslBufferElement(access, elementType) + " buffer" + index
-           + "[];\n};\n";
-}
-
-// What a sampled texture slot is declared as, which is the whole of what a cube
-// changes: every declaration goes through these, so no two can disagree.
-//
-// GLSL is the exception: its sampler2D over a depth image returns four
-// channels, so ExprKind::Sample takes the .r there.
-const char* metalTextureType(TextureKind kind)
-{
-    switch (kind)
-    {
-        case TextureKind::Cube:
-            return "texturecube<float>";
-        case TextureKind::Depth2D:
-            return "depth2d<float>";
-        case TextureKind::Texture2DArray:
-            return "texture2d_array<float>";
-        case TextureKind::Depth2DArray:
-            return "depth2d_array<float>";
-        default:
-            return "texture2d<float>";
-    }
-}
-
-// `Texture2D<float>` rather than the bare `Texture2D` a colour slot gets: the
-// SRV over the depth resource is a single-channel R32_FLOAT view (see
-// depthShaderResourceFormat), and the typed declaration is what makes Sample
-// return the one float MSL's depth2d does.
-const char* hlslTextureType(TextureKind kind)
-{
-    switch (kind)
-    {
-        case TextureKind::Cube:
-            return "TextureCube";
-        case TextureKind::Depth2D:
-            return "Texture2D<float>";
-        case TextureKind::Texture2DArray:
-            return "Texture2DArray";
-        case TextureKind::Depth2DArray:
-            return "Texture2DArray<float>";
-        default:
-            return "Texture2D";
-    }
-}
-
-// A combined image sampler: the sampler travels in the descriptor write, so the
-// sampling configuration never reaches the source - except a comparison, which
-// GLSL spells in the type and which the bound VkSampler must then enable.
-const char* glslTextureType(TextureKind kind, const TextureSampling& sampling)
-{
-    const auto compare = sampling.compare != TextureCompare::None;
-
-    switch (kind)
-    {
-        case TextureKind::Cube:
-            return "samplerCube";
-        case TextureKind::Texture2DArray:
-            return "sampler2DArray";
-        case TextureKind::Depth2DArray:
-            return compare ? "sampler2DArrayShadow" : "sampler2DArray";
-        case TextureKind::Depth2D:
-            return compare ? "sampler2DShadow" : "sampler2D";
-        default:
-            return "sampler2D";
-    }
-}
-
-// imageStore is all a kernel does with one, so the image needs no format layout
-// qualifier - which keeps it agnostic of the format it was created in.
-std::string glslWritableTexture(int slot, int binding)
-{
-    return "layout(set = 0, binding = " + std::to_string(binding)
-           + ") uniform writeonly image2D texture" + std::to_string(slot) + ";\n";
-}
-
-std::string glslSampledTexture(const ShaderGraph& graph, int slot, int binding)
-{
-    return "layout(set = 0, binding = " + std::to_string(binding) + ") uniform "
-           + glslTextureType(graph.textureKind(slot), graph.textureSampling(slot))
-           + " texture" + std::to_string(slot) + ";\n";
-}
-
-// The SamplerState globals an HLSL stage needs: one per sampling configuration
-// any of its readable textures asked for, at the register the root signature
-// put that configuration's static sampler on.
-//
-// Declaring them per configuration rather than per texture is what stops the
-// sampler registers from capping maxTextureSlots. HLSL has 16 of them
-// (s0..s15), so one sampler per (slot, configuration) pair - which is what this
-// emitted until a shader needed a fifth texture - ran out at four slots. Metal
-// never had the question, because MSL passes a sampler as a function argument
-// rather than binding it to a register, so the Metal path below still declares
-// one per texture.
-//
-// A write-access texture is skipped for the same reason it is declared as an
-// RWTexture2D: there is nothing to sample it with.
-std::string hlslSamplerDeclarations(const ShaderGraph& graph)
-{
-    bool used[samplingConfigurations] = {};
-
-    for (auto i = 0; i < graph.textureCount(); ++i)
-        if (graph.textureAccess(i) != TextureAccess::Write)
-            used[samplingIndex(graph.textureSampling(i))] = true;
-
-    auto source = std::string {};
-
-    for (auto configuration = 0; configuration < samplingConfigurations;
-         ++configuration)
-    {
-        if (!used[configuration])
-            continue;
-
-        const auto compares =
-            samplingConfiguration(configuration).compare != TextureCompare::None;
-
-        source += std::string(compares ? "SamplerComparisonState" : "SamplerState")
-                  + " samplerConfig" + std::to_string(configuration)
-                  + " : register(s" + std::to_string(configuration) + ");\n";
-    }
-
-    return source;
-}
-
-// The early return the rounded-up dispatch needs, over as many extents as the
-// rank has.
-std::string boundsGuard(DispatchRank rank)
-{
-    if (rank == DispatchRank::OneD)
-        return "    if (gid >= uniforms.count)\n        return;\n";
-
-    auto condition = std::string {};
-
-    for (auto i = 0; i < gridExtentCount(rank); ++i)
-        condition += (i == 0 ? "" : " || ")
-                     + ("gid" + std::string(componentSuffix(i))) + " >= uniforms."
-                     + gridExtentName(i);
-
-    return "    if (" + condition + ")\n        return;\n";
-}
-
-// Compute kernel emission. The expression printer is the render one; only the
-// scaffolding differs: storage buffers and the uniform block are MSL kernel
-// parameters but HLSL globals, and the work-item id arrives as a builtin
-// parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
-// with the implicit grid extents the bounds guard reads - one count for a 1D
-// kernel, a width and a height for a 2D one, a depth as well for a 3D one - and
-// the kernel opens with the guard the rounded-up dispatch needs; ComputeProgram
-// appends the matching CPU values.
-//
-// GLSL takes the HLSL shape, with gl_GlobalInvocationID for the id and no stage
-// macro: a kernel has one entry point, so its main() is unguarded.
-std::string emitCompute(const ShaderGraph& graph, Backend backend)
-{
-    auto source = std::string {};
-    auto rank = graph.dispatchRank();
-
-    assert((!graph.usesSimdGroups()
-            || graph.threadGroupShape().threadCount() % simdGroupWidth == 0)
-           && "eacp: a kernel using SIMD groups has to be dispatched in a "
-              "threadgroup of a whole number of them - a multiple of "
-              "ComputeProgram::simdWidth threads. A group that is not leaves a "
-              "partial SIMD group, whose matrix operations are undefined.");
-
-    // A SIMD-scoped fold takes the same rule with one allowance: a group
-    // narrower than a SIMD group *is* its own SIMD group, and folding it is
-    // well defined. What is not is a group that leaves a partial one at its
-    // end, where two threads a lane apart would fold over different sets.
-    assert((!graph.usesSimdReduction()
-            || graph.threadGroupShape().threadCount() <= simdGroupWidth
-            || graph.threadGroupShape().threadCount() % simdGroupWidth == 0)
-           && "eacp: a kernel using simdSum/simdMax/simdMin has to be "
-              "dispatched in a threadgroup that is a whole number of SIMD "
-              "groups - a multiple of ComputeProgram::simdWidth threads - or "
-              "in one narrower than a single SIMD group.");
-
-    if (backend == Backend::Metal)
-        source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
-
-    if (backend == Backend::Vulkan)
-        source += "#version 450\n\n";
-
-    source += helperDefinitions(graph, backend);
-
-    auto uniformTypes = graph.uniforms();
-    auto uniformNames = Vector<std::string> {};
-
-    for (auto i = 0; i < uniformTypes.size(); ++i)
-        uniformNames.add("u" + std::to_string(i));
-
-    if (rank == DispatchRank::OneD)
-    {
-        uniformTypes.add(ValueType::UInt);
-        uniformNames.add("count");
-    }
-    else
-    {
-        for (auto i = 0; i < gridExtentCount(rank); ++i)
-        {
-            uniformTypes.add(ValueType::UInt);
-            uniformNames.add(gridExtentName(i));
-        }
-    }
-
-    source += uniformBlock(
-        backend, uniformTypes, uniformNames, vulkanComputeUniformBinding);
-
-    const auto& buffers = graph.storageBuffers();
-
-    assert(buffers.size() <= ComputePass::portableBufferSlots
-           && "eacp: a kernel may bind ComputePass::portableBufferSlots storage "
-              "buffers. A slot past that has no register the root signature "
-              "declares, so it binds nowhere and reads zeroes.");
-
-    if (backend == Backend::Metal)
-    {
-        source += "kernel void computeMain(";
-
-        for (auto i = 0; i < buffers.size(); ++i)
-        {
             source +=
-                std::string(metalBufferType(buffers[i], graph.storageElementType(i)))
-                + " buffer" + std::to_string(i) + " [[buffer(" + std::to_string(i)
-                + ")]],\n    ";
-        }
+                Strings::format(",\n    {} buffer{} [[buffer({})]]",
+                                getMetalSlotBufferType(graph, BufferAccess::Read, i),
+                                i,
+                                RenderPass::bufferBase + i);
 
-        // Textures are kernel parameters like the buffers, on an index space of
-        // their own. A written one takes the write access qualifier and no
-        // sampler: there is nothing to sample it with and nothing to read.
+    return source;
+}
+
+class RenderShaderEmitter
+{
+public:
+    RenderShaderEmitter(const ShaderGraph& graphToUse, Backend backendToUse)
+        : graph(graphToUse)
+        , backend(backendToUse)
+        , promoted(findPromotedAttributes(graphToUse))
+        , varyings(getStageVaryings(graphToUse, promoted))
+        , vertexRoots(getVertexStageRoots(graphToUse))
+        , vertexStatementRoots(getVertexStatementRoots(graphToUse))
+        , fragmentStatementRoots(getFragmentStageRoots(graphToUse))
+    {
+    }
+
+    std::string emit() const
+    {
+        assert(
+            readsOnlyItsOwnBuiltIns(graph, vertexStatementRoots, ShaderStage::Vertex)
+            && "eacp: the vertex stage read a built-in it is not handed - a "
+               "fragment one such as fragmentCoordinate or frontFacing, or a "
+               "kernel's.");
+
+        assert(!vertexUsesImplicitDerivatives(graph)
+               && "eacp: the vertex stage used sample, sampleBias, "
+                  "sampleCompare, a layered sample or dfdx/dfdy/fwidth. They "
+                  "take the level from the fragment's derivatives, which a "
+                  "vertex has none of - use sampleLevel, sampleGrad, gather, "
+                  "load or sampleCompareLevel.");
+
+        assert(stagesReadOnlyTheirOwnVariables(graph)
+               && "eacp: a stage read a variable the other stage declared. A "
+                  "vertexStage variable reaches the fragment through "
+                  "varying(); a fragment one never feeds the position or a "
+                  "varying.");
+
+        assert(readsOnlyItsOwnBuiltIns(
+                   graph, fragmentStatementRoots, ShaderStage::Fragment)
+               && "eacp: the fragment stage read a built-in it is not handed. "
+                  "vertexId and instanceId reach it through varying().");
+
+        assert(declaresNoWritableTexture()
+               && "eacp: a render program declared a Write or ReadWrite "
+                  "texture. Only a kernel writes one; a fragment shader reads a "
+                  "storage texture declared StorageAccess::Read.");
+
+        auto source = getSourcePreamble(graph, backend);
+
+        if (!isGlsl())
+            source += printStageStructs();
+
+        source += printUniformBlock();
+
+        if (isGlsl())
+            source += printGlslBindings();
+
+        if (backend == Backend::DirectX)
+            source += printHlslBindings();
+
+        if (!isGlsl())
+            source += printFunctions(getBothStagesRoots());
+
+        source += printVertexOpening();
+        source += printVertexBody();
+        source += printFragmentOpening();
+        source += printFragmentBody();
+        return source;
+    }
+
+private:
+    bool isGlsl() const { return backend == Backend::Vulkan; }
+
+    bool hasUniforms() const { return !graph.uniforms().empty(); }
+
+    Vector<int> getBothStagesRoots() const
+    {
+        auto roots = vertexStatementRoots;
+
+        for (auto root: fragmentStatementRoots)
+            roots.add(root);
+
+        return roots;
+    }
+
+    // The functions the roots call, defined ahead of the stage that calls them.
+    std::string printFunctions(const Vector<int>& roots) const
+    {
+        return printFunctionDefinitions(
+            graph, backend, findCalledFunctions(graph, roots));
+    }
+
+    bool declaresNoWritableTexture() const
+    {
         for (auto i = 0; i < graph.textureCount(); ++i)
-        {
-            auto slot = std::to_string(i);
+            if (graph.textureAccess(i) == TextureAccess::Write
+                || graph.textureAccess(i) == TextureAccess::ReadWrite)
+                return false;
 
-            if (graph.textureAccess(i) == TextureAccess::Write)
-            {
-                source += "texture2d<float, access::write> texture" + slot
-                          + " [[texture(" + slot + ")]],\n    ";
-                continue;
-            }
-
-            source += std::string(metalTextureType(graph.textureKind(i)))
-                      + " texture" + slot + " [[texture(" + slot
-                      + ")]],\n    sampler sampler" + slot + " [[sampler(" + slot
-                      + ")]],\n    ";
-        }
-
-        source += "constant Uniforms& uniforms [[buffer("
-                  + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
-        source +=
-            std::string(indexTypeName(rank)) + " gid [[thread_position_in_grid]]";
-
-        auto indexType = std::string(indexTypeName(rank));
-
-        if (graph.usesLocalId())
-            source +=
-                ",\n    " + indexType + " lid [[thread_position_in_threadgroup]]";
-
-        if (graph.usesGroupId())
-            source +=
-                ",\n    " + indexType + " tgid [[threadgroup_position_in_grid]]";
-
-        // What a group reduction folds through: the SIMD-group intrinsics run
-        // per SIMD group, so combining their partials takes the lane, the SIMD
-        // group's index and how many of them the threadgroup was given. A
-        // kernel holding SIMD-group matrices takes the same three, the index
-        // being what places the block of the output each SIMD group owns.
-        if (metalCombinesPartials(graph) || graph.usesSimdGroups())
-            source += ",\n    uint simdLane [[thread_index_in_simdgroup]],\n    "
-                      "uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
-                      "uint simdCount [[simdgroups_per_threadgroup]]";
-
-        source += ")\n{\n";
-
-        // Threadgroup arrays are body-scope declarations on Metal, ahead of
-        // everything that subscripts them.
-        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
-        {
-            const auto& shared = graph.sharedArrays()[i];
-
-            source += "    threadgroup "
-                      + std::string(typeName(backend, shared.elementType)) + " s"
-                      + std::to_string(i) + "[" + std::to_string(shared.elements)
-                      + "];\n";
-        }
-
-        // Only the wide folds stage anything here, and only where the group is
-        // more than one SIMD group: everything else is the intrinsic alone.
-        if (metalCombinesPartials(graph))
-            for (auto elementType: graph.wholeGroupReductionTypes())
-                source += "    threadgroup "
-                          + std::string(typeName(backend, elementType)) + " "
-                          + groupScratchName(elementType) + "["
-                          + std::to_string(threadsPerGroup(graph)) + "];\n";
-    }
-    else if (backend == Backend::Vulkan)
-    {
-        // One descriptor set carries the lot, at the Metal indices.
-        for (auto i = 0; i < buffers.size(); ++i)
-            source += glslBufferBlock(buffers[i],
-                                      graph.storageElementType(i),
-                                      i,
-                                      vulkanComputeBufferBinding(i));
-
-        if (buffers.size() > 0)
-            source += "\n";
-
-        for (auto i = 0; i < graph.textureCount(); ++i)
-        {
-            auto binding = vulkanComputeTextureBinding(i);
-
-            source += graph.textureAccess(i) == TextureAccess::Write
-                          ? glslWritableTexture(i, binding)
-                          : glslSampledTexture(graph, i, binding);
-        }
-
-        if (graph.textureCount() > 0)
-            source += "\n";
-
-        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
-        {
-            const auto& shared = graph.sharedArrays()[i];
-
-            source += "shared " + std::string(typeName(backend, shared.elementType))
-                      + " s" + std::to_string(i) + "["
-                      + std::to_string(shared.elements) + "];\n";
-        }
-
-        for (auto elementType: graph.groupReductionTypes())
-            source += "shared " + std::string(typeName(backend, elementType)) + " "
-                      + groupScratchName(elementType) + "["
-                      + std::to_string(threadsPerGroup(graph)) + "];\n";
-
-        source += simdMatrixScratchDeclaration(graph, "shared");
-
-        if (declaresGroupMemory(graph))
-            source += "\n";
-
-        const auto group = graph.threadGroupShape();
-
-        source += "layout(local_size_x = " + std::to_string(group.x)
-                  + ", local_size_y = " + std::to_string(group.y)
-                  + ", local_size_z = " + std::to_string(group.z) + ") in;\n\n";
-
-        source += "void main()\n{\n";
-
-        // The three builtins are uvec3 whatever the rank, so each index is the
-        // swizzle of its own, exactly as the HLSL semantics are below.
-        auto indexType = std::string(glslIndexTypeName(rank));
-        auto swizzle = std::string(indexSwizzle(rank));
-
-        source +=
-            "    " + indexType + " gid = gl_GlobalInvocationID" + swizzle + ";\n";
-
-        if (graph.usesLocalId())
-            source +=
-                "    " + indexType + " lid = gl_LocalInvocationID" + swizzle + ";\n";
-
-        if (graph.usesGroupId())
-            source +=
-                "    " + indexType + " tgid = gl_WorkGroupID" + swizzle + ";\n";
-    }
-    else
-    {
-        // SRV t<slot> / UAV u<slot> with one shared slot counter, matching the
-        // flat Metal indices ComputePass binds both backends with.
-        for (auto i = 0; i < buffers.size(); ++i)
-        {
-            auto slot = std::to_string(i);
-            auto readOnly = buffers[i] == BufferAccess::Read;
-
-            source += hlslBufferType(buffers[i], graph.storageElementType(i));
-            source += " buffer";
-            source += slot;
-            source += readOnly ? " : register(t" : " : register(u";
-            source += slot + ");\n";
-        }
-
-        if (buffers.size() > 0)
-            source += "\n";
-
-        // Textures are globals here, and their registers start above every
-        // buffer slot's: a texture and a storage buffer share the t and u
-        // spaces on this backend, while their slots are counted separately. See
-        // ComputePass::textureRegisterBase.
-        for (auto i = 0; i < graph.textureCount(); ++i)
-        {
-            auto slot = std::to_string(i);
-            auto reg = std::to_string(ComputePass::textureRegisterBase + i);
-
-            if (graph.textureAccess(i) == TextureAccess::Write)
-            {
-                source += "RWTexture2D<float4> texture" + slot + " : register(u"
-                          + reg + ");\n";
-                continue;
-            }
-
-            source += std::string(hlslTextureType(graph.textureKind(i))) + " texture"
-                      + slot + " : register(t" + reg + ");\n";
-        }
-
-        source += hlslSamplerDeclarations(graph);
-
-        if (graph.textureCount() > 0)
-            source += "\n";
-
-        // Threadgroup arrays are globals on HLSL, like the buffers above.
-        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
-        {
-            const auto& shared = graph.sharedArrays()[i];
-
-            source += "groupshared " + std::string(typeName(shared.elementType))
-                      + " s" + std::to_string(i) + "["
-                      + std::to_string(shared.elements) + "];\n";
-        }
-
-        for (auto elementType: graph.groupReductionTypes())
-            source += "groupshared " + std::string(typeName(elementType)) + " "
-                      + groupScratchName(elementType) + "["
-                      + std::to_string(threadsPerGroup(graph)) + "];\n";
-
-        source += simdMatrixScratchDeclaration(graph, "groupshared");
-
-        if (declaresGroupMemory(graph))
-            source += "\n";
-
-        const auto group = graph.threadGroupShape();
-
-        source += "[numthreads(" + std::to_string(group.x) + ", "
-                  + std::to_string(group.y) + ", " + std::to_string(group.z)
-                  + ")]\n";
-        source += "void computeMain(uint3 threadId : SV_DispatchThreadID";
-
-        if (graph.usesLocalId())
-            source += ", uint3 localThread : SV_GroupThreadID";
-
-        if (graph.usesGroupId())
-            source += ", uint3 groupIndex : SV_GroupID";
-
-        // The flattened local index the scratch tree walks, which cs_5_0 hands
-        // over as a semantic of its own rather than leaving it to be derived.
-        // A kernel holding SIMD-group matrices needs it too: with no wave
-        // matrix operation to lower to, it is what stands in for the SIMD
-        // group's index and what picks the lane that makes a fragment's store.
-        if (graph.usesGroupReduction() || graph.usesSimdGroups())
-            source += ", uint groupLane : SV_GroupIndex";
-
-        source += ")\n{\n";
-
-        auto indexType = std::string(indexTypeName(rank));
-        auto swizzle = std::string(indexSwizzle(rank));
-
-        source += "    " + indexType + " gid = threadId" + swizzle + ";\n";
-
-        if (graph.usesLocalId())
-            source += "    " + indexType + " lid = localThread" + swizzle + ";\n";
-
-        if (graph.usesGroupId())
-            source += "    " + indexType + " tgid = groupIndex" + swizzle + ";\n";
+        return true;
     }
 
-    // Where the fallback keeps a fragment is fixed by the lane, so the two
-    // backends that take it work that out once, ahead of the body.
-    if (backend != Backend::Metal && graph.simdMatrixCount() > 0)
-        source += simdMatrixPreamble(backend);
-
-    // The early-return bounds guard the rounded-up dispatch needs - except in
-    // a kernel that barriers, where a return some threads take ahead of a
-    // barrier the rest sit at is undefined on both backends. There every
-    // thread runs the whole body, and the kernel bounds its own stores
-    // against gridCount()/gridWidth()/gridHeight()/gridDepth() instead.
-    if (!graph.usesBarrier())
-        source += boundsGuard(rank);
-
-    // Stores ride the statement stream like everything else, so the body is
-    // one block walk: a write records where it was made, inside whatever
-    // loop or branch was open, and the emitter has no end-of-kernel step.
-    auto stageRoots = Vector<int> {};
-    collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
-
-    auto stage = StageEmitter {graph, backend};
-
-    source += stage.declareArrays(stageRoots, "    ");
-    source += stage.emitBlock(ShaderGraph::rootBlock, "    ");
-
-    source += "}\n";
-    return source;
-}
-
-std::string emit(const ShaderGraph& graph, Backend backend)
-{
-    if (graph.isCompute())
-        return emitCompute(graph, backend);
-
-    auto source = std::string {};
-    auto glsl = backend == Backend::Vulkan;
-
-    auto promoted = promotedAttributes(graph);
-    auto varyings = stageVaryings(graph, promoted);
-
-    if (backend == Backend::Metal)
-        source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
-
-    if (glsl)
-        source += "#version 450\n\n";
-
-    source += helperDefinitions(graph, backend);
-
-    if (!glsl)
+    std::string printStageStructs() const
     {
-        source += "struct VertexIn\n{\n";
+        auto source = std::string {"struct VertexIn\n{\n"};
 
         for (auto i = 0; i < graph.inputs().size(); ++i)
-            source += "    " + std::string(typeName(backend, graph.inputs()[i]))
-                      + " a" + std::to_string(i) + attributeSemantic(backend, i)
-                      + ";\n";
+            source += Strings::format("    {} a{}{};\n",
+                                      getDialectTypeName(backend, graph.inputs()[i]),
+                                      i,
+                                      getAttributeSemantic(backend, i));
 
         source += "};\n\nstruct VertexOut\n{\n";
-        source += "    float4 position" + positionSemantic(backend) + ";\n";
+        source += Strings::format("    float4 position{};\n",
+                                  getPositionSemantic(backend));
 
         for (auto i = 0; i < varyings.size(); ++i)
-            source += "    " + flatQualifier(backend, varyings[i].type)
-                      + std::string(typeName(backend, varyings[i].type)) + " v"
-                      + std::to_string(i)
-                      + varyingSemantic(backend, i, varyings[i].type) + ";\n";
+        {
+            const auto& varying = varyings[i];
+
+            source += Strings::format(
+                "    {}{} v{}{};\n",
+                getInterpolationQualifier(backend, varying.interpolation),
+                getDialectTypeName(backend, varying.type),
+                i,
+                getVaryingSemantic(backend, i, varying.interpolation));
+        }
 
         source += "};\n\n";
+        return source + printFragmentOutStruct();
     }
 
-    auto hasUniforms = !graph.uniforms().empty();
-
-    if (hasUniforms)
+    bool hasFragmentOutStruct() const
     {
+        return graph.fragmentDepth() >= 0 || graph.sampleMask() >= 0;
+    }
+
+    std::string printFragmentOutStruct() const
+    {
+        if (!hasFragmentOutStruct())
+            return {};
+
+        auto isMetal = backend == Backend::Metal;
+        auto source = std::string {"struct FragmentOut\n{\n"};
+        source += isMetal ? "    float4 color [[color(0)]];\n"
+                          : "    float4 color : SV_Target;\n";
+
+        if (graph.fragmentDepth() >= 0)
+            source += isMetal ? "    float depth [[depth(any)]];\n"
+                              : "    float depth : SV_Depth;\n";
+
+        if (graph.sampleMask() >= 0)
+            source += isMetal ? "    uint sampleMask [[sample_mask]];\n"
+                              : "    uint sampleMask : SV_Coverage;\n";
+
+        return source + "};\n\n";
+    }
+
+    // The fragment inputs past the stage_in struct, each a parameter of its
+    // own on Metal and HLSL. GLSL reads its gl_ variables instead.
+    std::string printFragmentBuiltInParameters(std::string_view separator) const
+    {
+        struct Parameter
+        {
+            ShaderBuiltIn which;
+            std::string_view declaration;
+            std::string_view metal;
+            std::string_view hlsl;
+        };
+
+        static constexpr auto parameters = Array<Parameter, 3> {{
+            {ShaderBuiltIn::FrontFacing,
+             "bool frontFacing",
+             "[[front_facing]]",
+             ": SV_IsFrontFace"},
+            {ShaderBuiltIn::SampleIndex,
+             "uint sampleIndex",
+             "[[sample_id]]",
+             ": SV_SampleIndex"},
+            {ShaderBuiltIn::SampleMask,
+             "uint sampleMaskIn",
+             "[[sample_mask]]",
+             ": SV_Coverage"},
+        }};
+
+        auto source = std::string {};
+
+        for (const auto& parameter: parameters)
+            if (graph.usesBuiltIn(parameter.which))
+                source += Strings::format(
+                    "{}{} {}",
+                    separator,
+                    parameter.declaration,
+                    backend == Backend::Metal ? parameter.metal : parameter.hlsl);
+
+        return source;
+    }
+
+    std::string printUniformBlock() const
+    {
+        if (!hasUniforms())
+            return {};
+
         auto names = Vector<std::string> {};
 
         for (auto i = 0; i < graph.uniforms().size(); ++i)
-            names.add("u" + std::to_string(i));
+            names.add(Strings::format("u{}", i));
 
-        source += uniformBlock(backend, graph.uniforms(), names);
+        return formatUniformBlock(backend, graph.uniforms(), names);
     }
 
-    if (glsl)
+    std::string printGlslBindings() const
     {
+        auto source = std::string {};
+
         for (auto i = 0; i < graph.textureCount(); ++i)
-            source += glslSampledTexture(graph, i, vulkanTextureBinding(i));
+            source += formatGlslTexture(graph, i, vulkanTextureBinding(i));
 
         if (graph.textureCount() > 0)
             source += "\n";
 
-        // Read-only whatever the slot recorded: a render stage never writes.
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
-            source += glslBufferBlock(BufferAccess::Read,
-                                      graph.storageElementType(i),
-                                      i,
-                                      vulkanBufferBinding(i));
+            source += formatGlslSlotBufferBlock(
+                graph, BufferAccess::Read, i, vulkanBufferBinding(i));
 
         if (graph.storageBuffers().size() > 0)
             source += "\n";
+
+        return source;
     }
 
-    if (backend == Backend::DirectX)
+    // Storage buffers sit at registers above every texture slot.
+    std::string printHlslBindings() const
     {
-        // The texture lands on t<slot>. Its sampler does not land beside it:
-        // the root signature declares one static sampler per sampling
-        // configuration and every texture that declared that sampling reads the
-        // same one, which is what keeps a slot count from costing sampler
-        // registers. See TextureSampling, and hlslSamplerDeclarations.
-        for (auto i = 0; i < graph.textureCount(); ++i)
-            source += std::string(hlslTextureType(graph.textureKind(i))) + " texture"
-                      + std::to_string(i) + " : register(t" + std::to_string(i)
-                      + ");\n";
+        auto source = std::string {};
 
-        source += hlslSamplerDeclarations(graph);
+        for (auto i = 0; i < graph.textureCount(); ++i)
+        {
+            if (graph.textureAccess(i) == TextureAccess::Sampler)
+                source += formatHlslSampler(graph, i);
+            else
+                source += Strings::format("{} texture{} : register(t{});\n",
+                                          getHlslTextureDeclarationType(graph, i),
+                                          i,
+                                          i);
+        }
+
+        source += formatHlslSamplerDeclarations(graph);
 
         if (graph.textureCount() > 0)
             source += "\n";
 
-        // Storage buffers are globals here like the textures, at registers
-        // above every texture slot - the render signature's mirror of the way
-        // a kernel's textures sit above its buffers. See
-        // RenderPass::bufferRegisterBase.
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
-            source += std::string(hlslBufferType(BufferAccess::Read,
-                                                 graph.storageElementType(i)))
-                      + " buffer" + std::to_string(i) + " : register(t"
-                      + std::to_string(RenderPass::bufferRegisterBase + i) + ");\n";
+            source +=
+                Strings::format("{} buffer{} : register(t{});\n",
+                                getHlslSlotBufferType(graph, BufferAccess::Read, i),
+                                i,
+                                RenderPass::bufferRegisterBase + i);
 
         if (graph.storageBuffers().size() > 0)
             source += "\n";
+
+        return source;
     }
 
-    // On Metal each stage declares the uniform block as a function parameter,
-    // and only when that stage's expressions read one; the HLSL cbuffer is a
-    // global both functions already see. Slot 0 maps to buffer(uniformBase)
-    // in both stages, matching what RenderPass::setVertexBytes /
-    // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
-    // vertex layout with multiple per-instance slots (0..N) never collides
-    // with them.
-    auto vertexRoots = vertexStageRoots(graph);
-
-    if (backend == Backend::Metal)
+    std::string printGlslVaryings(std::string_view direction) const
     {
-        source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
+        auto source = std::string {};
+
+        for (auto i = 0; i < varyings.size(); ++i)
+        {
+            const auto& varying = varyings[i];
+
+            source += Strings::format(
+                "{}{}{} {} vary{};\n",
+                getLocationLayout(i),
+                getInterpolationQualifier(backend, varying.interpolation),
+                direction,
+                getDialectTypeName(backend, varying.type),
+                i);
+        }
+
+        return source;
+    }
+
+    std::string printMetalUniformParameter(std::string_view separator) const
+    {
+        return Strings::format("{}constant Uniforms& uniforms [[buffer({})]]",
+                               separator,
+                               RenderPass::uniformBase);
+    }
+
+    std::string printMetalVertexOpening() const
+    {
+        auto source =
+            std::string {"vertex VertexOut vertexMain(VertexIn input [[stage_in]]"};
 
         if (graph.usesVertexId())
             source += ", uint vertexId [[vertex_id]]";
@@ -3915,32 +668,56 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         if (graph.usesInstanceId())
             source += ", uint instanceId [[instance_id]]";
 
-        if (hasUniforms && vertexReadsUniforms(graph))
-            source += ", constant Uniforms& uniforms [[buffer("
-                      + std::to_string(RenderPass::uniformBase) + ")]]";
+        if (hasUniforms() && vertexReadsUniforms(graph))
+            source += printMetalUniformParameter(", ");
 
-        source += bufferParameters(graph, vertexRoots);
-        source += ")\n{\n";
+        const auto vertexTextures = vertexTextureSlots(graph);
+
+        for (auto i = 0; i < graph.textureCount(); ++i)
+            if (((vertexTextures >> i) & 1u) != 0u)
+                source += printMetalTextureParameter(i);
+
+        source += formatBufferParameters(graph, vertexStatementRoots);
+        return source + ")\n{\n";
     }
-    else if (glsl)
+
+    std::string printMetalTextureParameter(int slot) const
     {
-        source += "#ifdef EACP_VERTEX\n";
+        constexpr auto samplerParameter =
+            std::string_view {",\n    sampler sampler{} [[sampler({})]]"};
+
+        if (graph.textureAccess(slot) == TextureAccess::Sampler)
+            return Strings::format(samplerParameter, slot, slot);
+
+        auto source = Strings::format(",\n    {} texture{} [[texture({})]]",
+                                      getMetalTextureParameterType(graph, slot),
+                                      slot,
+                                      slot);
+
+        if (graph.textureAccess(slot) == TextureAccess::Sample)
+            source += Strings::format(samplerParameter, slot, slot);
+
+        return source;
+    }
+
+    std::string printGlslVertexOpening() const
+    {
+        auto source = std::string {"#ifdef EACP_VERTEX\n"};
 
         for (auto i = 0; i < graph.inputs().size(); ++i)
-            source += locationLayout(i) + "in "
-                      + std::string(typeName(backend, graph.inputs()[i])) + " attr"
-                      + std::to_string(i) + ";\n";
+            source += Strings::format("{}in {} attr{};\n",
+                                      getLocationLayout(i),
+                                      getDialectTypeName(backend, graph.inputs()[i]),
+                                      i);
 
-        for (auto i = 0; i < varyings.size(); ++i)
-            source += locationLayout(i) + flatQualifier(backend, varyings[i].type)
-                      + "out " + std::string(typeName(backend, varyings[i].type))
-                      + " vary" + std::to_string(i) + ";\n";
-
-        source += "\nvoid main()\n{\n";
+        source += printGlslVaryings("out");
+        return source + "\n" + printFunctions(vertexStatementRoots)
+               + "void main()\n{\n";
     }
-    else
+
+    std::string printHlslVertexOpening() const
     {
-        source += "VertexOut vertexMain(VertexIn input";
+        auto source = std::string {"VertexOut vertexMain(VertexIn input"};
 
         if (graph.usesVertexId())
             source += ", uint vertexId : SV_VertexID";
@@ -3948,138 +725,352 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         if (graph.usesInstanceId())
             source += ", uint instanceId : SV_InstanceID";
 
-        source += ")\n{\n";
+        return source + ")\n{\n";
     }
 
-    // The vertex stage takes no statements: a mutable local and the control flow
-    // driving it belong to the fragment expression, the way sampling does. See
-    // ShaderBuilder::var.
-    auto vertexStage = StageEmitter {graph, backend};
-
-    source += vertexStage.declareArrays(vertexRoots, "    ");
-    source += vertexStage.defineFor(vertexRoots, "    ");
-
-    auto varyingValue = [&](const StageVarying& varying)
+    std::string printVertexOpening() const
     {
-        if (varying.sourceNode >= 0)
-            return vertexStage.printer.ref(varying.sourceNode);
+        if (backend == Backend::Metal)
+            return printMetalVertexOpening();
 
-        return attributeName(backend, varying.attribute);
-    };
+        if (isGlsl())
+            return printGlslVertexOpening();
 
-    // Clip y is left as the graph computed it: Vulkan's flipped NDC is a negative
-    // viewport height in RenderPass, not a negation here, which flips winding.
-    if (glsl)
+        return printHlslVertexOpening();
+    }
+
+    // Clip y is left as computed: Vulkan's flip is a negative viewport height.
+    // The statements run first, as the fragment's do, so the position and the
+    // varyings read the variables they leave behind.
+    std::string printVertexBody() const
     {
-        source +=
-            "    gl_Position = " + vertexStage.printer.ref(graph.position()) + ";\n";
+        auto stage = StageEmitter {graph, backend};
+        stage.returnRoots = vertexRoots;
+
+        auto printEarlyReturn =
+            [this](const StageEmitter& emitter, const std::string& indent)
+        { return printVertexReturn(emitter, indent); };
+        stage.printReturn = printEarlyReturn;
+
+        auto source = stage.declareArrays(vertexStatementRoots, stageIndent);
+
+        if (graph.vertexBlock() >= 0)
+            source += stage.emitBlock(graph.vertexBlock(), stageIndent);
+
+        source += stage.defineLocalsFor(vertexRoots, stageIndent);
+
+        if (isGlsl())
+            return source + printVertexOutputs(stage, stageIndent) + "}\n#endif\n\n";
+
+        return source + printVertexOutputs(stage, stageIndent)
+               + "    return output;\n}\n\n";
+    }
+
+    // The position and the varyings, and on Metal and HLSL the struct holding
+    // them; the function's last lines, and an early return's.
+    std::string printVertexOutputs(const StageEmitter& stage,
+                                   std::string_view indent) const
+    {
+        auto position = stage.printer.printReference(graph.position());
+
+        if (isGlsl())
+            return Strings::format("{}gl_Position = {};\n", indent, position)
+                   + printVaryingAssignments(stage, "vary", indent);
+
+        return Strings::format("{}VertexOut output;\n{}output.position = {};\n",
+                               indent,
+                               indent,
+                               position)
+               + printVaryingAssignments(stage, "output.v", indent);
+    }
+
+    // Braced on Metal and HLSL, so the struct it declares is its own.
+    std::string printVertexReturn(const StageEmitter& stage,
+                                  const std::string& indent) const
+    {
+        if (isGlsl())
+            return printVertexOutputs(stage, indent) + indent + "return;\n";
+
+        auto inner = indent + std::string(stageIndent);
+        return indent + "{\n" + printVertexOutputs(stage, inner) + inner
+               + "return output;\n" + indent + "}\n";
+    }
+
+    std::string printVaryingAssignments(const StageEmitter& stage,
+                                        std::string_view prefix,
+                                        std::string_view indent) const
+    {
+        auto source = std::string {};
 
         for (auto i = 0; i < varyings.size(); ++i)
-            source += "    vary" + std::to_string(i) + " = "
-                      + varyingValue(varyings[i]) + ";\n";
-
-        source += "}\n#endif\n\n";
-    }
-    else
-    {
-        source += "    VertexOut output;\n";
-        source += "    output.position = "
-                  + vertexStage.printer.ref(graph.position()) + ";\n";
-
-        for (auto i = 0; i < varyings.size(); ++i)
-            source += "    output.v" + std::to_string(i) + " = "
-                      + varyingValue(varyings[i]) + ";\n";
-
-        source += "    return output;\n}\n\n";
-    }
-
-    // The alpha test is a fragment root like the colour is: its subtree is
-    // planned with the colour's, so a value both of them read (the texture
-    // sample, typically) is computed once and shared.
-    auto fragmentRoots = Vector<int> {graph.fragment()};
-
-    if (graph.discard() >= 0)
-        fragmentRoots.add(graph.discard());
-
-    // What the statements read counts towards the stage's uniform declaration,
-    // but not towards the colour's locals: a statement's own expressions are
-    // named where that statement is emitted, above.
-    auto stageRoots = fragmentStageRoots(graph);
-
-    if (backend == Backend::Metal)
-    {
-        source += "fragment float4 fragmentMain(VertexOut input [[stage_in]]";
-
-        if (hasUniforms && fragmentReadsUniforms(graph))
-            source += ",\n    constant Uniforms& uniforms [[buffer("
-                      + std::to_string(RenderPass::uniformBase) + ")]]";
-
-        for (auto i = 0; i < graph.textureCount(); ++i)
-            source += ",\n    " + std::string(metalTextureType(graph.textureKind(i)))
-                      + " texture" + std::to_string(i) + " [[texture("
-                      + std::to_string(i) + ")]],\n    sampler sampler"
-                      + std::to_string(i) + " [[sampler(" + std::to_string(i)
-                      + ")]]";
-
-        source += bufferParameters(graph, stageRoots);
-        source += ")\n{\n";
-    }
-    else if (glsl)
-    {
-        source += "#ifdef EACP_FRAGMENT\n";
-
-        for (auto i = 0; i < varyings.size(); ++i)
-            source += locationLayout(i) + flatQualifier(backend, varyings[i].type)
-                      + "in " + std::string(typeName(backend, varyings[i].type))
-                      + " vary" + std::to_string(i) + ";\n";
-
-        source += locationLayout(0) + "out vec4 fragColor;\n";
-        source += "\nvoid main()\n{\n";
-    }
-    else
-    {
-        source += "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
-    }
-
-    // The shader's statements run first - they are what the fragment expression
-    // then reads a mutable local out of - and the colour is planned after them.
-    auto fragmentStage = StageEmitter {graph, backend, promoted.varyingOf};
-
-    source += fragmentStage.declareArrays(stageRoots, "    ");
-    source += fragmentStage.emitBlock(ShaderGraph::rootBlock, "    ");
-    source += fragmentStage.defineFor(fragmentRoots, "    ");
-
-    if (graph.discard() >= 0)
-    {
-        auto kill = backend == Backend::Metal ? "discard_fragment();" : "discard;";
-
-        source += "    if (" + fragmentStage.printer.ref(graph.discard()) + " < "
-                  + floatLiteral(graph.discardThreshold()) + ")\n        " + kill
-                  + "\n";
-    }
-
-    if (glsl)
-    {
-        source += "    fragColor = " + fragmentStage.printer.ref(graph.fragment())
-                  + ";\n}\n#endif\n";
+            source += Strings::format("{}{}{} = {};\n",
+                                      indent,
+                                      prefix,
+                                      i,
+                                      printVaryingValue(stage, varyings[i]));
 
         return source;
     }
 
-    source += "    return " + fragmentStage.printer.ref(graph.fragment()) + ";\n}\n";
+    std::string printVaryingValue(const StageEmitter& stage,
+                                  const StageVarying& varying) const
+    {
+        if (varying.sourceNode >= 0)
+            return stage.printer.printReference(varying.sourceNode);
 
-    return source;
+        return getAttributeName(backend, varying.attribute);
+    }
+
+    std::string printMetalFragmentOpening() const
+    {
+        auto source =
+            Strings::format("fragment {} fragmentMain(VertexOut input [[stage_in]]",
+                            getFragmentReturnType());
+
+        source += printFragmentBuiltInParameters(",\n    ");
+
+        if (hasUniforms() && fragmentReadsUniforms(graph))
+            source += printMetalUniformParameter(",\n    ");
+
+        for (auto i = 0; i < graph.textureCount(); ++i)
+            source += printMetalTextureParameter(i);
+
+        source += formatBufferParameters(graph, fragmentStatementRoots);
+        return source + ")\n{\n";
+    }
+
+    std::string_view getFragmentReturnType() const
+    {
+        return hasFragmentOutStruct() ? "FragmentOut" : "float4";
+    }
+
+    std::string printHlslFragmentOpening() const
+    {
+        auto source = Strings::format("{} fragmentMain(VertexOut input",
+                                      getFragmentReturnType());
+        source += printFragmentBuiltInParameters(", ");
+        source += ")";
+
+        if (!hasFragmentOutStruct())
+            source += " : SV_Target";
+
+        return source + "\n{\n";
+    }
+
+    std::string printGlslFragmentOpening() const
+    {
+        auto source = std::string {"#ifdef EACP_FRAGMENT\n"};
+        source += printGlslVaryings("in");
+        source += getLocationLayout(0) + "out vec4 fragColor;\n";
+        return source + "\n" + printFunctions(fragmentStatementRoots)
+               + "void main()\n{\n";
+    }
+
+    std::string printFragmentOpening() const
+    {
+        if (backend == Backend::Metal)
+            return printMetalFragmentOpening();
+
+        if (isGlsl())
+            return printGlslFragmentOpening();
+
+        return printHlslFragmentOpening();
+    }
+
+    // The alpha test and the optional outputs are planned with the colour, so
+    // a value more than one of them reads is shared.
+    std::string printFragmentBody() const
+    {
+        auto stage = StageEmitter {graph, backend, promoted.varyingOf};
+        stage.returnRoots = getFragmentOutputRoots(graph);
+
+        auto printEarlyReturn =
+            [this](const StageEmitter& emitter, const std::string& indent)
+        { return printFragmentReturn(emitter, indent); };
+        stage.printReturn = printEarlyReturn;
+
+        auto source = stage.declareArrays(fragmentStatementRoots, stageIndent);
+        source += stage.emitBlock(ShaderGraph::rootBlock, stageIndent);
+        source += stage.defineLocalsFor(getFragmentOutputRoots(graph), stageIndent);
+        source += printAlphaTest(stage, stageIndent);
+
+        auto colour = stage.printer.printReference(graph.fragment());
+
+        if (isGlsl())
+            return source + printGlslFragmentOutputs(stage, colour, stageIndent)
+                   + "}\n#endif\n";
+
+        if (!hasFragmentOutStruct())
+            return source + Strings::format("    return {};\n}}\n", colour);
+
+        return source + printFragmentOutAssignments(stage, colour, stageIndent)
+               + "    return output;\n}\n";
+    }
+
+    // The alpha test and the outputs where an early return stands; braced
+    // where it declares the FragmentOut struct, so the struct is its own.
+    std::string printFragmentReturn(const StageEmitter& stage,
+                                    const std::string& indent) const
+    {
+        auto source = printAlphaTest(stage, indent);
+        auto colour = stage.printer.printReference(graph.fragment());
+
+        if (isGlsl())
+            return source + printGlslFragmentOutputs(stage, colour, indent) + indent
+                   + "return;\n";
+
+        if (!hasFragmentOutStruct())
+            return source + Strings::format("{}return {};\n", indent, colour);
+
+        auto inner = indent + std::string(stageIndent);
+        return source + indent + "{\n"
+               + printFragmentOutAssignments(stage, colour, inner) + inner
+               + "return output;\n" + indent + "}\n";
+    }
+
+    std::string printFragmentOutAssignments(const StageEmitter& stage,
+                                            const std::string& colour,
+                                            std::string_view indent) const
+    {
+        auto source = Strings::format(
+            "{}FragmentOut output;\n{}output.color = {};\n", indent, indent, colour);
+
+        if (graph.fragmentDepth() >= 0)
+            source +=
+                Strings::format("{}output.depth = {};\n",
+                                indent,
+                                stage.printer.printReference(graph.fragmentDepth()));
+
+        if (graph.sampleMask() >= 0)
+            source +=
+                Strings::format("{}output.sampleMask = {};\n",
+                                indent,
+                                stage.printer.printReference(graph.sampleMask()));
+
+        return source;
+    }
+
+    std::string printGlslFragmentOutputs(const StageEmitter& stage,
+                                         const std::string& colour,
+                                         std::string_view indent) const
+    {
+        auto source = Strings::format("{}fragColor = {};\n", indent, colour);
+
+        if (graph.fragmentDepth() >= 0)
+            source +=
+                Strings::format("{}gl_FragDepth = {};\n",
+                                indent,
+                                stage.printer.printReference(graph.fragmentDepth()));
+
+        if (graph.sampleMask() >= 0)
+            source +=
+                Strings::format("{}gl_SampleMask[0] = int({});\n",
+                                indent,
+                                stage.printer.printReference(graph.sampleMask()));
+
+        return source;
+    }
+
+    std::string printAlphaTest(const StageEmitter& stage,
+                               std::string_view indent) const
+    {
+        if (graph.discard() < 0)
+            return {};
+
+        auto kill = backend == Backend::Metal ? "discard_fragment();" : "discard;";
+
+        return Strings::format("{}if ({} < {})\n{}{}{}\n",
+                               indent,
+                               stage.printer.printReference(graph.discard()),
+                               formatShaderFloatLiteral(graph.discardThreshold()),
+                               indent,
+                               stageIndent,
+                               kill);
+    }
+
+    const ShaderGraph& graph;
+    Backend backend;
+    PromotedAttributes promoted;
+    Vector<StageVarying> varyings;
+    Vector<int> vertexRoots;
+    Vector<int> vertexStatementRoots;
+    Vector<int> fragmentStatementRoots;
+};
+
+std::string emit(const ShaderGraph& graph, Backend backend)
+{
+    if (graph.isCompute())
+        return emitCompute(graph, backend);
+
+    return RenderShaderEmitter {graph, backend}.emit();
 }
 } // namespace
 
 bool vertexReadsUniforms(const ShaderGraph& graph)
 {
-    return anyReferencesUniform(graph, vertexStageRoots(graph));
+    return doesAnyReferenceUniform(graph, getVertexStatementRoots(graph));
 }
 
 bool fragmentReadsUniforms(const ShaderGraph& graph)
 {
-    return anyReferencesUniform(graph, fragmentStageRoots(graph));
+    return doesAnyReferenceUniform(graph, getFragmentStageRoots(graph));
+}
+
+std::uint32_t vertexTextureSlots(const ShaderGraph& graph)
+{
+    if (graph.isCompute())
+        return 0u;
+
+    auto slots = std::uint32_t {0u};
+    const auto bitOf = [](int slot) { return std::uint32_t {1u} << slot; };
+
+    for (auto node: vertexStageNodes(graph))
+    {
+        const auto& expr = graph.expr(node);
+
+        if (readsTextureSlot(expr.kind))
+            slots |= bitOf(expr.index);
+
+        if (expr.kind == ExprKind::TextureFunction && expr.sampler >= 0)
+            slots |= bitOf(expr.sampler);
+    }
+
+    return slots;
+}
+
+Vector<int> vertexStageNodes(const ShaderGraph& graph)
+{
+    return collectReachedNodes(graph, getVertexStatementRoots(graph));
+}
+
+Vector<int> fragmentStageNodes(const ShaderGraph& graph)
+{
+    return collectReachedNodes(graph, getFragmentStageRoots(graph));
+}
+
+Vector<EmittedVarying> emittedVaryings(const ShaderGraph& graph)
+{
+    auto result = Vector<EmittedVarying> {};
+
+    for (const auto& varying: getStageVaryings(graph, findPromotedAttributes(graph)))
+        result.add({varying.type, varying.interpolation, varying.attribute});
+
+    return result;
+}
+
+bool vertexUsesImplicitDerivatives(const ShaderGraph& graph)
+{
+    for (auto node: vertexStageNodes(graph))
+        if (takesDerivedLevel(graph, graph.expr(node)))
+            return true;
+
+    return false;
+}
+
+bool stagesReadOnlyTheirOwnVariables(const ShaderGraph& graph)
+{
+    return readsOnlyVariablesOf(graph, getVertexStatementRoots(graph), true)
+           && readsOnlyVariablesOf(graph, getFragmentStageRoots(graph), false);
 }
 
 std::string emitMetal(const ShaderGraph& graph)

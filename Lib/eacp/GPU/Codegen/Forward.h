@@ -32,6 +32,30 @@ struct Bool4;
 struct Float2x2;
 struct Float3x3;
 struct Float4x4;
+struct Float2x3;
+struct Float2x4;
+struct Float3x2;
+struct Float3x4;
+struct Float4x2;
+struct Float4x3;
+struct Half;
+struct Half2;
+struct Half3;
+struct Half4;
+struct Half2x2;
+struct Half3x3;
+struct Half4x4;
+struct Half2x3;
+struct Half2x4;
+struct Half3x2;
+struct Half3x4;
+struct Half4x2;
+struct Half4x3;
+struct HalfInputBuffer;
+struct HalfOutputBuffer;
+
+template <typename Signature>
+struct ShaderFunction;
 
 // How a module hands over a shader whose program type is nested in a .cpp.
 using ShaderGraphVisitor = std::function<void(const ShaderGraph&)>;

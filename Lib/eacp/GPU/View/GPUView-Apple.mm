@@ -3,10 +3,12 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include "ContinuousRenderSwitch.h"
 #include "GPUView.h"
 #include "GPUViewBacking-Apple.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Frame/Frame.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -30,12 +32,33 @@ Class getImmediateMetalLayerClass()
         "EacpImmediateMetalLayer");
     return cls;
 }
+
+// Holds a view's rendering latch for one frame and lets it go however the frame
+// ends, so a draw that throws (the Frame still commits and presents as it
+// unwinds) leaves the view able to render the next one.
+struct RenderingLatch
+{
+    explicit RenderingLatch(bool& latchToUse)
+        : latch(latchToUse)
+    {
+        latch = true;
+    }
+
+    ~RenderingLatch() { latch = false; }
+
+    RenderingLatch(const RenderingLatch&) = delete;
+    RenderingLatch& operator=(const RenderingLatch&) = delete;
+
+    bool& latch;
+};
 } // namespace
 
 struct GPUView::Native
 {
     explicit Native(GPUView& viewToUse)
         : view(viewToUse)
+        , continuousSwitch([this] { startDisplayLink(); },
+                           [this] { stopDisplayLink(); })
     {
         metalLayer = [[getImmediateMetalLayerClass() alloc] init];
 
@@ -43,19 +66,21 @@ struct GPUView::Native
         metalLayer.get().device = metalDevice;
         metalLayer.get().pixelFormat = MTLPixelFormatBGRA8Unorm;
         metalLayer.get().framebufferOnly = YES;
-
-        // Present the drawable inside the current CATransaction so new content
-        // lands atomically with the layer's new size during live resize, rather
-        // than the old drawable being stretched until the next async present.
-        metalLayer.get().presentsWithTransaction = YES;
-
         metalLayer.get().maximumDrawableCount = framesInFlight;
+
+        // Bounds the wait for a free drawable to one second, so a layer the
+        // compositor stopped taking frames from cannot hold the main thread.
+        metalLayer.get().allowsNextDrawableTimeout = YES;
 
         auto base = (__bridge CALayer*) view.getNativeLayer();
         [base addSublayer:metalLayer.get()];
     }
 
-    ~Native() { [metalLayer.get() removeFromSuperlayer]; }
+    ~Native()
+    {
+        stopObservingWindowVisibility();
+        [metalLayer.get() removeFromSuperlayer];
+    }
 
     void updateSize()
     {
@@ -150,21 +175,85 @@ struct GPUView::Native
         depthTexture = [metalDevice newTextureWithDescriptor:textureDescriptor];
     }
 
-    void startContinuous()
+    void setContinuous(bool shouldRun)
     {
-        if (displayLink == nullptr)
+        if (shouldRun)
         {
-            displayLink = makeOwned<Threads::DisplayLink>(
-                [this](Threads::FrameTime time)
-                {
-                    view.update(time);
-                    view.renderNow();
-                });
-            displayLink->setMaxFps(maxFps);
+            startObservingWindowVisibility();
+            refreshWindowVisibility();
         }
+
+        if (!shouldRun)
+            stopObservingWindowVisibility();
+
+        continuousSwitch.setRequested(shouldRun);
     }
 
-    void stopContinuous() { displayLink = nullptr; }
+    void startDisplayLink()
+    {
+        if (displayLink != nullptr)
+            return;
+
+        displayLink = makeOwned<Threads::DisplayLink>(
+            [this](Threads::FrameTime time) { displayLinkTicked(time); });
+        displayLink->setMaxFps(maxFps);
+    }
+
+    void stopDisplayLink() { displayLink = nullptr; }
+
+    void displayLinkTicked(Threads::FrameTime time)
+    {
+        const auto visibility = platformViewVisibility(view);
+
+        if (visibility == ViewVisibility::WindowNotVisible)
+        {
+            continuousSwitch.setWindowVisible(false);
+            return;
+        }
+
+        if (visibility == ViewVisibility::NotInVisibleWindow)
+            return;
+
+        view.update(time);
+
+        renderingFromDisplayLink = true;
+        view.renderNow();
+        renderingFromDisplayLink = false;
+    }
+
+    void refreshWindowVisibility()
+    {
+        const auto visibility = platformViewVisibility(view);
+        continuousSwitch.setWindowVisible(visibility
+                                          != ViewVisibility::WindowNotVisible);
+    }
+
+    void startObservingWindowVisibility()
+    {
+        if (visibilityObserver != nullptr)
+            return;
+
+        visibilityObserver =
+            platformObserveWindowVisibility([this] { refreshWindowVisibility(); });
+    }
+
+    void stopObservingWindowVisibility()
+    {
+        if (visibilityObserver == nullptr)
+            return;
+
+        platformStopObservingWindowVisibility(visibilityObserver);
+        visibilityObserver = nullptr;
+    }
+
+    // A display-link frame presents asynchronously, so a window the compositor
+    // is not scheduling cannot block the main thread on it. Every other frame,
+    // and every frame of a live resize, presents inside the CATransaction so
+    // new content lands with the layer's new size.
+    bool shouldPresentWithTransaction()
+    {
+        return !renderingFromDisplayLink || platformIsInLiveResize(view);
+    }
 
     GPUView& view;
     int sampleCount = 4;
@@ -176,6 +265,7 @@ struct GPUView::Native
     int framesInFlight = 3;
     bool continuous = false;
     bool transparent = false;
+    bool renderingFromDisplayLink = false;
 
     // Set while a frame of this view is open, so one nested in it on the same
     // view is refused rather than taking a second drawable of the layer.
@@ -191,6 +281,8 @@ struct GPUView::Native
     ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
     ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
     OwningPointer<Threads::DisplayLink> displayLink;
+    ContinuousRenderSwitch continuousSwitch;
+    void* visibilityObserver = nullptr;
 };
 
 GPUView::GPUView()
@@ -246,11 +338,7 @@ bool GPUView::hasStencil() const
 void GPUView::setContinuous(bool continuous)
 {
     impl->continuous = continuous;
-
-    if (continuous)
-        impl->startContinuous();
-    else
-        impl->stopContinuous();
+    impl->setContinuous(continuous);
 }
 
 bool GPUView::isContinuous() const
@@ -311,6 +399,7 @@ bool GPUView::isTransparent() const
 void GPUView::resizeStarted()
 {
     impl->updateSize();
+    impl->refreshWindowVisibility();
 }
 
 void GPUView::resizeFinished()
@@ -341,6 +430,7 @@ void GPUView::paint(Graphics::Context& context)
     if (context.isSnapshot())
         return;
 
+    impl->refreshWindowVisibility();
     renderNow();
 }
 
@@ -356,6 +446,8 @@ bool GPUView::renderFrame(const std::function<void(Frame&)>& draw)
     if (impl->rendering || layer.drawableSize.width <= 0)
         return false;
 
+    layer.presentsWithTransaction = impl->shouldPresentWithTransaction();
+
     @autoreleasepool
     {
         id<CAMetalDrawable> drawable = [layer nextDrawable];
@@ -363,18 +455,14 @@ bool GPUView::renderFrame(const std::function<void(Frame&)>& draw)
         if (drawable == nil)
             return false;
 
-        impl->rendering = true;
+        auto latch = RenderingLatch {impl->rendering};
 
-        {
-            auto frame = Frame(Device::shared(),
-                               (__bridge void*) drawable,
-                               (__bridge void*) impl->msaaTexture.get(),
-                               (__bridge void*) impl->depthTexture.get(),
-                               backingScale());
-            draw(frame);
-        }
-
-        impl->rendering = false;
+        auto frame = Frame(Device::shared(),
+                           (__bridge void*) drawable,
+                           (__bridge void*) impl->msaaTexture.get(),
+                           (__bridge void*) impl->depthTexture.get(),
+                           backingScale());
+        draw(frame);
     }
 
     return true;
@@ -446,6 +534,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
         auto queue = (__bridge id<MTLCommandQueue>) Device::shared().nativeQueue();
         auto commandBuffer = [queue commandBuffer];
+        Detail::reportFailureOf(commandBuffer);
         auto blit = [commandBuffer blitCommandEncoder];
         [blit copyFromTexture:colorTexture
                      sourceSlice:0

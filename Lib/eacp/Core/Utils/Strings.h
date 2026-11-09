@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Containers.h"
+
 #include <charconv>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -20,6 +23,7 @@ std::string lineContaining(std::string_view text, std::string_view needle);
 
 // ASCII-only lowercasing, for matching extensions, header names and the like.
 std::string toLower(std::string_view s);
+std::string toUpper(std::string_view s);
 
 // Changes the case of the first character only, leaving the rest as written -
 // for identifiers and labels, where lowercasing the whole string would destroy
@@ -30,7 +34,23 @@ std::string uncapitalize(std::string_view s);
 
 bool equalsCaseInsensitive(std::string_view a, std::string_view b);
 
+// The pieces between each delimiter, empty ones included. With maximumParts
+// above zero the last piece is the unsplit rest, so "a b c" split on ' ' into
+// two is {"a", "b c"}.
+Vector<std::string>
+    split(std::string_view text, char delimiter, int maximumParts = 0);
+
+// The parts with separator between each, empty parts included.
+std::string join(const Vector<std::string>& parts, std::string_view separator);
+
 int hexCharToInt(char c);
+
+// A hexadecimal number, with or without a leading "0x" or "0X", the whole of
+// text: nullopt for empty text, any other character, or a value past 64 bits.
+std::optional<std::uint64_t> parseHex(std::string_view text);
+
+// Two lowercase hex digits per byte, in order: {0x0a, 0xff} is "0aff".
+std::string toHex(Span<const std::uint8_t> bytes);
 
 // UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
 // (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the

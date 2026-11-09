@@ -20,7 +20,6 @@ struct ShapeLayer::Native : NativeLayerBase
         if (bounds.w <= 0 || bounds.h <= 0)
             return;
 
-        auto dpiScale = getDpiScale();
         auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
         auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 

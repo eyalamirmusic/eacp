@@ -3,6 +3,8 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
 
+#include <optional>
+
 using namespace nano;
 
 namespace ReloadableLibraryTests
@@ -178,22 +180,55 @@ auto tReloadWhileLooping = test("ReloadableLibrary/reloadDefersTheOldUnmap") = [
     check(answerOf(library) == 2);
 };
 
+auto tValidatorRefuses =
+    test("ReloadableLibrary/aValidatorRefusalKeepsTheImage") = []
+{
+    auto sandbox = Sandbox {};
+    auto library =
+        ReloadableLibrary {sandbox.builtPath(), sandbox.stagingDirectory()};
+
+    auto refuseB = [](const eacp::Plugins::DynamicLibrary& image)
+    {
+        auto name = image.findFunction<NameFunction>("eacpReloadFixtureName");
+        auto isB = name != nullptr && std::string {name()} == "B";
+        return isB ? std::string {"B is refused"} : std::string {};
+    };
+
+    library.validate = refuseB;
+
+    sandbox.build(fixtureA);
+    check(library.reload());
+    check(library.lastError().empty());
+
+    sandbox.build(fixtureB);
+    check(!library.reload());
+    check(library.lastError() == "B is refused");
+    check(library.getGeneration() == 1);
+    check(nameOf(library) == "A");
+    check(sandbox.stagedFileCount() == 1);
+};
+
 auto tDestructorCleans = test("ReloadableLibrary/destructorEmptiesStaging") = []
 {
     auto sandbox = Sandbox {};
+    auto library = std::optional<ReloadableLibrary> {};
+    library.emplace(sandbox.builtPath(), sandbox.stagingDirectory());
 
+    sandbox.build(fixtureA);
+    check(library->reload());
+    sandbox.build(fixtureB);
+    check(library->reload());
+    sandbox.build(fixtureA);
+    check(library->reload());
+    check(sandbox.stagedFileCount() >= 1);
+
+    auto destroyInsideTurn = [&library]
     {
-        auto library =
-            ReloadableLibrary {sandbox.builtPath(), sandbox.stagingDirectory()};
+        check(eacp::Threads::isEventLoopRunning());
+        library.reset();
+    };
 
-        sandbox.build(fixtureA);
-        check(library.reload());
-        sandbox.build(fixtureB);
-        check(library.reload());
-        sandbox.build(fixtureA);
-        check(library.reload());
-        check(sandbox.stagedFileCount() >= 1);
-    }
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {20}, destroyInsideTurn);
 
     check(sandbox.stagedFileCount() == 0);
 };

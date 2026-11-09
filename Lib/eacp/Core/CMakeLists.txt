@@ -1,11 +1,8 @@
 add_library(eacp-core STATIC)
 target_include_directories(eacp-core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../../)
 
-find_package(EADataStructures REQUIRED)
 target_link_libraries(eacp-core PUBLIC ea_data_structures)
 
-find_package(ResEmbed REQUIRED)
-find_package(Miro REQUIRED)
 target_link_libraries(eacp-core PUBLIC ResEmbed Miro)
 
 # PRIVATE: Zip.cpp is the only thing that includes miniz.h.
@@ -24,6 +21,7 @@ if (MSVC)
 endif ()
 
 target_sources(eacp-core PRIVATE
+        App/Alert.cpp
         App/App.cpp
         App/Args.cpp
         Maths/Mat4.cpp
@@ -31,6 +29,7 @@ target_sources(eacp-core PRIVATE
         Platform/Platform.cpp
         Plugins/DynamicLibrary.cpp
         Plugins/HotReloadLoop.cpp
+        Plugins/Reloadable.cpp
         Plugins/ReloadableLibrary.cpp
         Process/BuildRunner.cpp
         Process/Process.cpp
@@ -49,10 +48,12 @@ target_sources(eacp-core PRIVATE
         Utils/FileWriter.cpp
         Utils/Files.cpp
         Utils/Format.cpp
+        Utils/Hash.cpp
         Utils/Logging.cpp
         Utils/MemoryMappedFile.cpp
         Utils/Random.cpp
         Utils/SourceWatcher.cpp
+        Utils/Sha256.cpp
         Utils/Strings.cpp
         Utils/TemporaryFile.cpp
         Utils/Time.cpp
@@ -80,6 +81,7 @@ if (APPLE)
             "-framework Foundation")
     if (IOS)
         target_sources(eacp-core PRIVATE
+                App/Alert-iOS.mm
                 App/App-iOS.mm
                 App/Clipboard-iOS.mm
                 App/FilePickerAsync-Default.cpp
@@ -90,6 +92,7 @@ if (APPLE)
         target_link_libraries(eacp-core PRIVATE "-framework UIKit")
     else ()
         target_sources(eacp-core PRIVATE
+                App/Alert-macOS.mm
                 App/App-macOS.mm
                 App/Clipboard-macOS.mm
                 App/LoginItem-macOS.mm
@@ -105,6 +108,7 @@ if (APPLE)
     endif ()
 elseif (WIN32)
     target_sources(eacp-core PRIVATE
+            App/Alert-Windows.cpp
             App/App-Windows.cpp
             App/Clipboard-Windows.cpp
             App/FilePickerAsync-Default.cpp
@@ -126,6 +130,7 @@ elseif (WIN32)
             windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
+            App/Alert-Default.cpp
             App/FilePickerAsync-Default.cpp
             App/LoginItem-Linux.cpp
             Platform/ScopedAutoReleasePool-Default.cpp

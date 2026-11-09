@@ -71,6 +71,11 @@ struct Mat4
     // the result stays usable rather than turning into a block of NaNs.
     constexpr Mat4 inverted() const;
 
+    // The determinant of the upper-left 3x3: how the transform scales volume,
+    // translation and projection left out. Negative for a mirroring transform,
+    // which is what flips a triangle's winding and so the face to cull.
+    constexpr float linearDeterminant() const;
+
     constexpr const float* data() const { return values.data(); }
 
     bool operator==(const Mat4&) const = default;
@@ -190,6 +195,11 @@ constexpr Mat4 Mat4::inverted() const
     }
 
     return result;
+}
+
+constexpr float Mat4::linearDeterminant() const
+{
+    return dot(column(0).xyz(), cross(column(1).xyz(), column(2).xyz()));
 }
 
 constexpr Mat4 operator*(const Mat4& a, const Mat4& b)

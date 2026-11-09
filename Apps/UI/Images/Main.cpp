@@ -115,7 +115,7 @@ struct Gallery final : UI::Component
             auto& cache = getHost()->getImageCache();
 
             photo = cache.get(makePhoto(photoSize));
-            icon = cache.get(makeIcon(iconSize, theme.accent));
+            icon = cache.get(makeIcon(iconSize, theme.get(UI::ThemeKeys::accent)));
         }
 
         auto x = 0.f;
@@ -127,7 +127,7 @@ struct Gallery final : UI::Component
             x += size + padding;
         }
 
-        g.setColour(theme.dimText);
+        g.setColour(theme.get(UI::ThemeKeys::dimText));
         g.drawText("one image, 512 to 8 points, through its mip chain",
                    {0.f, 512.f + padding, 600.f, 20.f});
 
@@ -145,7 +145,7 @@ struct Gallery final : UI::Component
             g.drawImage(photo, {0.f, row, 200.f, 140.f});
         }
 
-        g.setColour(theme.panel);
+        g.setColour(theme.get(UI::ThemeKeys::panel));
         g.fillRoundedRect({216.f, row, 200.f, 140.f}, 28.f);
 
         // A crop: the middle quarter, stretched.
@@ -155,7 +155,7 @@ struct Gallery final : UI::Component
         // above the images of its clip region whatever order it was issued in,
         // as it does above the shapes -- so this is the order to draw it in.
         g.drawImage(photo, {588.f, row, 300.f, 140.f}, 0.4f);
-        g.setColour(theme.text);
+        g.setColour(theme.get(UI::ThemeKeys::text));
         g.setFontSize(28.f);
         g.drawText("text over a faded image", {588.f, row, 300.f, 140.f});
     }
@@ -183,7 +183,7 @@ struct StatsBar final : UI::Component
             + " image draws   " + std::to_string(host->getCachedImageCount())
             + " textures";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
         if (text != lastPainted)
@@ -201,13 +201,13 @@ struct DemoRoot final : UI::Component
 {
     DemoRoot()
     {
-        title.setColour(UI::defaultTheme().text);
+        title.setThemeColour(UI::ThemeKeys::text);
         addChildren({title, gallery, stats});
     }
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override

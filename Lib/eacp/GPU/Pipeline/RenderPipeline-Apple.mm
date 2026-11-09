@@ -3,7 +3,9 @@
 #include "RenderPipeline.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Shader/ShaderLibrary.h"
+#include "MetalFunctions-Apple.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 
@@ -367,12 +369,14 @@ struct RenderPipeline::Native
             return;
 
         const auto hasFragment = descriptor.library->hasFragment();
-        auto vertexName = @(descriptor.library->vertexEntry().c_str());
-        auto fragmentName = @(descriptor.library->fragmentEntry().c_str());
 
-        id<MTLFunction> vertexFunction = [library newFunctionWithName:vertexName];
+        id<MTLFunction> vertexFunction = Detail::makeMetalFunction(
+            *descriptor.library, descriptor.library->vertexEntry(), descriptor.constants);
         id<MTLFunction> fragmentFunction =
-            hasFragment ? [library newFunctionWithName:fragmentName] : nil;
+            hasFragment ? Detail::makeMetalFunction(*descriptor.library,
+                                                    descriptor.library->fragmentEntry(),
+                                                    descriptor.constants)
+                        : nil;
 
         if (hasFragment && fragmentFunction == nil)
         {
@@ -457,12 +461,14 @@ struct RenderPipeline::Native
             describeColorTarget(pipelineDescriptor.colorAttachments[(NSUInteger) index],
                                 writtenColorTarget(descriptor, index, hasFragment));
 
-        NSError* error = nil;
-        state = [metalDevice newRenderPipelineStateWithDescriptor:pipelineDescriptor
-                                                            error:&error];
+        auto build = [metalDevice, pipelineDescriptor](NSError** error)
+        {
+            return [metalDevice newRenderPipelineStateWithDescriptor:pipelineDescriptor
+                                                               error:error];
+        };
 
-        if (state.get() == nil && error != nil)
-            LOG(error.localizedDescription.UTF8String);
+        state = Detail::buildRetryingTransientFailures<id<MTLRenderPipelineState>>(
+            "building a Metal render pipeline", build);
 
         [vertexFunction release];
         [fragmentFunction release];

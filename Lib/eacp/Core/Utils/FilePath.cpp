@@ -67,16 +67,16 @@ std::string FilePath::nativeString() const
 {
     if constexpr (Platform::isWindows())
         return Detail::replaceSeparators(text, '/', '\\');
-
-    return text;
+    else
+        return text;
 }
 
 FilePath FilePath::fromNative(std::string_view nativeText)
 {
     if constexpr (Platform::isWindows())
         return FilePath {Detail::replaceSeparators(nativeText, '\\', '/')};
-
-    return FilePath {nativeText};
+    else
+        return FilePath {nativeText};
 }
 
 std::string FilePath::extension() const
@@ -271,7 +271,33 @@ FilePath FilePath::appCacheDirectory(std::string_view company, std::string_view 
 
 std::wstring FilePath::wide() const
 {
-    return Strings::widen(text);
+    return Strings::widen(nativeString());
+}
+
+FilePath FilePath::currentDirectory()
+{
+    auto ec = std::error_code {};
+    auto current = std::filesystem::current_path(ec);
+
+    if (ec)
+        return {};
+
+    return FilePath {current};
+}
+
+FilePath FilePath::withSuffix(std::string_view suffix) const
+{
+    return FilePath {text + std::string {suffix}};
+}
+
+FilePath FilePath::lexicallyNormal() const
+{
+    return FilePath {toStdPath(*this).lexically_normal()};
+}
+
+FilePath FilePath::relativeTo(const FilePath& base) const
+{
+    return FilePath {toStdPath(*this).lexically_relative(toStdPath(base))};
 }
 
 FilePath FilePath::fromWide(std::wstring_view wide)

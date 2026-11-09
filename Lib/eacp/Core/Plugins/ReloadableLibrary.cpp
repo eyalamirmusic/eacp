@@ -1,8 +1,10 @@
 #include "ReloadableLibrary.h"
 #include "DynamicLibraryPlatform.h"
+#include "../Threads/EventLoop.h"
 #include "../Utils/Files.h"
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -14,6 +16,35 @@ int nextStagingSerial()
 {
     static auto serial = std::atomic<int> {0};
     return ++serial;
+}
+
+void keepMappedUntilExit(DynamicLibrary image)
+{
+    static auto* kept = new Vector<DynamicLibrary> {};
+    kept->add(std::move(image));
+}
+
+void unmapAfterThisTurn(DynamicLibrary image, const Vector<FilePath>& stagedCopies)
+{
+    if (!Threads::isEventLoopRunning())
+    {
+        if (image.isOpen())
+            keepMappedUntilExit(std::move(image));
+
+        return;
+    }
+
+    auto shared = std::make_shared<DynamicLibrary>(std::move(image));
+
+    auto closeAndRemoveLater = [shared, stagedCopies]
+    {
+        shared->close();
+
+        for (const auto& copy: stagedCopies)
+            Files::removeFile(copy);
+    };
+
+    Threads::callAsync(closeAndRemoveLater);
 }
 } // namespace
 
@@ -28,9 +59,9 @@ ReloadableLibrary::ReloadableLibrary(const FilePath& builtPathToUse,
 
 ReloadableLibrary::~ReloadableLibrary()
 {
-    library.close();
     loadedPath = {};
     removeStaleCopies();
+    unmapAfterThisTurn(std::move(library), stagedCopies);
 }
 
 FilePath ReloadableLibrary::nextStagedPath() const
@@ -73,6 +104,14 @@ bool ReloadableLibrary::reload()
     if (!requiredSymbol.empty() && fresh.findSymbol(requiredSymbol) == nullptr)
     {
         error = "no " + requiredSymbol;
+        fresh.close();
+        Files::removeFile(staged);
+        return false;
+    }
+
+    if (auto refusal = validate(fresh); !refusal.empty())
+    {
+        error = refusal;
         fresh.close();
         Files::removeFile(staged);
         return false;

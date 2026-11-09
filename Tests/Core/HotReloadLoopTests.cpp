@@ -1,6 +1,5 @@
 #include "Common.h"
-#include <eacp/Core/Plugins/HotReloadLoop.h>
-#include <eacp/Core/Utils/TemporaryFile.h>
+#include "HotReloadSandbox.h"
 
 #include <optional>
 
@@ -15,7 +14,6 @@ using eacp::Plugins::ReloadableLibrary;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Time::MS;
 using State = HotReloadLoop::State;
-namespace Files = eacp::Files;
 
 using AnswerFunction = int (*)();
 
@@ -23,11 +21,6 @@ const auto fixtureA = FilePath {EACP_RELOAD_FIXTURE_A};
 const auto fixtureB = FilePath {EACP_RELOAD_FIXTURE_B};
 const auto fixtureC = FilePath {EACP_RELOAD_FIXTURE_C};
 constexpr auto answerSymbol = "eacpReloadFixtureAnswer";
-
-std::string quoted(const FilePath& path)
-{
-    return "'" + path.str() + "'";
-}
 
 int answerOf(ReloadableLibrary& library)
 {
@@ -41,47 +34,14 @@ void pumpFor(MS duration)
     runEventLoopUntil(never, duration);
 }
 
-struct Sandbox
+struct Sandbox : HotReloadSandbox
 {
-    Sandbox() { check(Files::createDirectories(root.path())); }
-
-    FilePath sources() const { return root.path() / "Sources"; }
-
-    FilePath modulePath() const
-    {
-        return root.path() / ("Module" + fixtureA.extension());
-    }
-
     HotReloadLoop::Options options(const std::string& buildScript) const
     {
-        auto loopOptions = HotReloadLoop::Options {};
-        loopOptions.sources.directory = sources();
-        loopOptions.sources.watcher.pollInterval = MS {20};
-        loopOptions.sources.watcher.settle = MS {50};
-        loopOptions.buildCommand = shellCommand(buildScript);
-        loopOptions.modulePath = modulePath();
-        loopOptions.stagingDirectory = root.path() / "Staging";
-        loopOptions.requiredSymbol = answerSymbol;
-        return loopOptions;
+        auto answerOptions = loopOptions(buildScript);
+        answerOptions.requiredSymbol = answerSymbol;
+        return answerOptions;
     }
-
-    std::string copyScript(const FilePath& fixture) const
-    {
-        return "cp " + quoted(fixture) + " " + quoted(modulePath());
-    }
-
-    std::string copyInTurnScript(const FilePath& first, const FilePath& then) const
-    {
-        return "if [ -f " + quoted(modulePath()) + " ]; then " + copyScript(then)
-               + "; else " + copyScript(first) + "; fi";
-    }
-
-    void touchSource(std::string_view contents) const
-    {
-        writeTestFile(eacp::toStdPath(sources() / "nested/Layout.cpp"), contents);
-    }
-
-    eacp::TemporaryFile root;
 };
 
 struct Events
@@ -240,7 +200,7 @@ auto tFailedBuild = test("HotReloadLoop/aFailedBuildKeepsTheGeneration") = []
 auto tFailedLoad = test("HotReloadLoop/anUnloadableModuleKeepsTheGeneration") = []
 {
     auto sandbox = Sandbox {};
-    auto script = "echo junk > " + quoted(sandbox.modulePath());
+    auto script = "echo junk > " + quotedPath(sandbox.modulePath());
 
     auto loop = HotReloadLoop {sandbox.options(script)};
     auto events = Events {loop};
@@ -390,5 +350,22 @@ auto tNoOutputSummary = test("HotReloadLoop/summaryWithoutOutputNamesTheCause") 
     check(!failure.launched);
     check(failure.exitCode == -1);
     check(eacp::Plugins::buildFailureFrom(cancelled).summary == "build cancelled");
+};
+
+auto tTargetSources = test("HotReloadLoop/aTargetsSourcesAreTheWatchedFiles") = []
+{
+    auto target = eacp::Plugins::HotReloadTarget {};
+    target.sourceDirectory = "/src/app";
+    target.sources = "/src/app/Views.cpp|/src/app/Views.h";
+
+    auto options = eacp::Plugins::hotReloadOptions(target);
+
+    check(options.sources.directory == FilePath {"/src/app"});
+    check(options.sources.files.size() == 2);
+    check(options.sources.files[0] == FilePath {"/src/app/Views.cpp"});
+    check(options.sources.files[1] == FilePath {"/src/app/Views.h"});
+
+    target.sources = "";
+    check(eacp::Plugins::hotReloadOptions(target).sources.files.empty());
 };
 } // namespace HotReloadLoopTests

@@ -484,9 +484,9 @@ struct StencilShadowsView final : GPUView
 
             // Taken in the light-facing face's own direction, so the wall's
             // outward side faces out of the volume.
-            auto lit = faceFacesLight[edge.faceA];
-            auto start = corners[lit ? edge.startA : edge.startB];
-            auto end = corners[lit ? edge.endA : edge.endB];
+            auto faceALit = faceFacesLight[edge.faceA];
+            auto start = corners[faceALit ? edge.startA : edge.startB];
+            auto end = corners[faceALit ? edge.endA : edge.endB];
 
             auto startFar = extrude(start);
             auto endFar = extrude(end);

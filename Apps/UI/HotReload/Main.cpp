@@ -1,19 +1,13 @@
 #include "LayoutABI.h"
 
+#include <eacp/Core/Plugins/Reloadable.h>
 #include <eacp/UI/UI.h>
-#include <eacp/Core/Plugins/HotReload.h>
-#include <eacp/Core/Plugins/HotReloadLoop.h>
-
-#include <optional>
-#include <string>
 
 // A window whose layout is one eacp-ui function in Layout.cpp beside this file.
 // The app owns every widget; the function is handed them and the window's
-// bounds and calls setBounds on each. It is always compiled into the app, and
-// under EACP_HOT_RELOAD it is also built as a module, HotReloadLayout, bound at
-// load time to this app's own eacp: edit a constant in Layout.cpp and save, a
-// Plugins::HotReloadLoop rebuilds and reloads the module, and the fresh image
-// is applied over the compiled-in copy.
+// bounds and calls setBounds on each. Under EACP_HOT_RELOAD, edit a constant in
+// Layout.cpp and save: Plugins::Reloadable rebuilds the module and swaps the
+// function in. See Docs/HotReload.md.
 
 using namespace eacp;
 
@@ -28,7 +22,7 @@ struct Sidebar final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(getLocalBounds(), 8.f);
     }
 
@@ -47,19 +41,13 @@ struct Sidebar final : UI::Component
     UI::Button randomise {"Randomise"};
 };
 
-std::string describe(const UI::Rect& rect)
-{
-    return std::to_string(int(rect.x)) + "," + std::to_string(int(rect.y)) + " "
-           + std::to_string(int(rect.w)) + "x" + std::to_string(int(rect.h));
-}
-
 struct DemoRoot final : UI::Component
 {
     DemoRoot()
     {
         title.setFontSize(20.f);
-        footer.setColour(UI::defaultTheme().dimText);
-        status.setColour(UI::defaultTheme().dimText);
+        footer.setThemeColour(UI::ThemeKeys::dimText);
+        status.setThemeColour(UI::ThemeKeys::dimText);
         notes.setPlaceholder("Notes");
 
         auto resetGain = [this] { gain.setValue(0.5f); };
@@ -69,45 +57,28 @@ struct DemoRoot final : UI::Component
         sidebar.randomise.onClick = randomiseGain;
 
         addChildren({title, sidebar, gain, mute, notes, footer, status});
-
-        if constexpr (Plugins::isHotReload())
-            startReloadLoop();
+        showStatus();
     }
 
-    void startReloadLoop()
+    Plugins::ReloadableOptions reloadOptions()
     {
-        auto& loop =
-            reloader.emplace(Plugins::hotReloadTarget(), layoutFunctionName);
-
+        auto options = Plugins::ReloadableOptions {};
+        auto relayout = [this] { applyLayout(); };
         auto showState = [this] { showStatus(); };
-        auto useImage = [this](Plugins::ReloadableLibrary& library)
-        { useLayoutFrom(library); };
-        auto printFailure = [this](const auto&)
-        { Console::print(reloader->describeState()); };
-
-        loop.onStateChanged = showState;
-        loop.onReloaded = useImage;
-        loop.onBuildFailed = printFailure;
-        loop.onLoadFailed = printFailure;
+        options.onReloaded = relayout;
+        options.onStateChanged = showState;
+        return options;
     }
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override
     {
         placeStatus();
         applyLayout();
-    }
-
-    void useLayoutFrom(Plugins::ReloadableLibrary& library)
-    {
-        layout = library.findFunction<LayoutFunction>(layoutFunctionName);
-        applyLayout();
-        Console::print("generation " + std::to_string(library.getGeneration())
-                       + ": gain at " + describe(gain.getBounds()));
     }
 
     void placeStatus()
@@ -118,14 +89,10 @@ struct DemoRoot final : UI::Component
 
     void applyLayout()
     {
-        layout(targets, getLocalBounds());
-        showStatus();
+        reloadable.call<LayoutFunction>(targets, getLocalBounds());
     }
 
-    void showStatus()
-    {
-        status.setText(reloader ? reloader->describeState() : "static layout");
-    }
+    void showStatus() { status.setText("layout: " + reloadable.describeState()); }
 
     UI::Label title {"Hot-reloaded layout"};
     Sidebar sidebar;
@@ -136,8 +103,7 @@ struct DemoRoot final : UI::Component
     UI::Label status;
 
     LayoutTargets targets {title, sidebar, gain, mute, notes, footer};
-    LayoutFunction layout = &demoLayout;
-    std::optional<Plugins::HotReloadLoop> reloader;
+    Plugins::Reloadable reloadable {reloadOptions()};
 };
 
 struct DemoHost final : UI::ComponentHost

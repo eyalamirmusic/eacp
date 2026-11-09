@@ -30,14 +30,12 @@ constexpr const char* defaultUIFontFamily()
 {
     if constexpr (Platform::isWindows())
         return "Segoe UI";
-
-    if constexpr (Platform::isLinux())
+    else if constexpr (Platform::isLinux())
         return "DejaVu Sans";
-
-    if constexpr (Platform::isAndroid())
+    else if constexpr (Platform::isAndroid())
         return "sans-serif";
-
-    return "Helvetica Neue";
+    else
+        return "Helvetica Neue";
 }
 
 // True when `outer` covers every point of `inner`. The clip logic asks this of

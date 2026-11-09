@@ -22,7 +22,8 @@ own so other projects can take it without eacp; `CMake/FindESIMD.cmake`, the
 behind `EACP_BUILD_SPIRV` and so on Linux only by default, `glslang`. A Linux build
 adds `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator`
 (`CMake/FindVulkanBackend.cmake`, one `eacp-vulkan` target, fetched on no
-other platform), libcurl for the HTTP client, and three pkg-config groups
+other platform), `stb` for the PNG/JPEG codec (`CMake/FindStb.cmake`, headers
+only), libcurl for the HTTP client, and three pkg-config groups
 found against the machine's own libraries: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor
 (`CMake/FindWayland.cmake`); xcb with `xcb-xkb`, `xkbcommon-x11`,
@@ -135,46 +136,34 @@ its README.
   Schema codegen still emits TS into `web/src/generated` on every app build.
 
 - `EACP_HOT_RELOAD` (default `OFF`) — dev or static mode for every app wired
-  with `eacp_add_hot_reload(<app> MODULE <module> SOURCES <files...>
-  [HOT_RELOAD ON|OFF])` that names no mode of its own. An app's `HOT_RELOAD`
-  wins over the option either way; `Apps/UI/HotReload` names none, so it is
-  in dev mode exactly when `-DEACP_HOT_RELOAD=ON` is given. iOS, Android and
-  Windows are always off, whatever either says. The sources are
-  compiled into the app either way, as generation 0; dev mode adds the
-  reloadable module and a `Plugins::HotReloadLoop` (a `Files::SourceWatcher`
-  on the source directory, a build runner and the reloadable library, with
-  the build-failure summary and status text; an image without the app's
-  `requiredSymbol` is refused and the previous generation kept), static mode
-  adds nothing, so the example is that loop plus one layout function.
-  `Apps/GPU/HotReload` (`HotReloadGPU`) is the other half: its module
-  exports a factory that makes a `GPUView` defined in the module, the host
-  owns it, and each reload destroys it inside `onReloaded` (the previous
-  image is still mapped then, its unmap being deferred a loop turn) and asks
-  the fresh image for a new one, so an object whose code lives in the module
-  is created and dropped once per generation. The module links
-  nothing: its eacp references stay undefined
-  (`-undefined dynamic_lookup` on Apple, the default for a Linux module) and
-  bind at load time to the eacp the app exports, so both share one eacp and
-  the module's one `extern "C"` entry point (`EACP_HOT_RELOAD_EXPORT`, empty
-  on Windows) takes and calls C++ types. Dev
-  mode builds the app with `ENABLE_EXPORTS` (`-export_dynamic` on Apple,
-  `--export-dynamic` on Linux, which is what keeps the exports alive under
-  the libraries' Release IPO) and links every static library in its link
-  closure whole-archive, so the module can call eacp code the app itself
-  never does. It also compiles every eacp library in that closure at default
-  visibility, a property of those library targets and so of the whole build
-  directory: `eacp_add_plugin` modules built there re-export eacp and lose
-  their isolation, so the two should not be mixed in one build directory.
-  A save rebuilds the module alone, never the running app. Windows is not
-  supported: `WINDOWS_EXPORT_ALL_SYMBOLS` never exports a static library's
-  symbols, and a module linking the exe would relink a locked exe on every
-  save. The module owns nothing: it installs no callbacks and keeps no state,
-  and anything it creates is handed to the host, which destroys it no later
-  than the `onReloaded` of the next generation, since the image is unmapped
-  one loop turn after that reload.
-  The host branches on `Plugins::isHotReload()` (`Core/Plugins/HotReload.h`,
-  included directly rather than through the `Core.h` umbrella, since its
-  contents depend on the app's compile definitions), and a configure prints `<app>: hot reload ON/OFF`.
+  with `eacp_add_hot_reload(<app> <library> [SOURCES <files...>]
+  [HOT_RELOAD <bool>])` that names no mode of its own (or an empty one). The
+  call creates
+  `<library>`, configured afterwards like any target: a static library linked
+  into the app in static mode, a module the app loads in dev mode. An app's
+  `HOT_RELOAD` wins over the option either way, and both in-tree examples
+  pass `ON`. iOS, Android and Windows are always static. A configure prints
+  `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
+  `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
+
+- `EACP_PRECOMPILE_SHADERS` (default `ON`) — compiles the shaders of every app
+  wired with `eacp_add_precompiled_shaders` (`CMake/PrecompiledShaders.cmake`)
+  at build time and embeds the blobs, which each `ShaderLibrary` loads instead
+  of compiling its source. `OFF` leaves those apps compiling at run time, as
+  does a cross-compile (iOS, Android) for now and a host that can compile none
+  of the requested backends. An app gets its platform's own backend — `metal`
+  on Apple, `dxbc` on Windows, `spirv` on Linux — unless its call names
+  `BACKENDS`, and `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides
+  every call, so `-DEACP_PRECOMPILE_SHADER_BACKENDS=spirv` with
+  `-DEACP_BUILD_SPIRV=ON` exercises the SPIR-V path on a Mac. A backend the
+  host cannot compile is dropped with a `STATUS` line: Metal needs Xcode's
+  Metal Toolchain component (`xcodebuild -downloadComponent MetalToolchain`),
+  probed once per build directory as the cached `EACP_METAL_TOOLCHAIN_FOUND`
+  (`-U` it after installing); DXBC needs a Windows host and SPIR-V
+  `eacp-spirv`. A configure prints `<app>: precompiled shaders (<backends>)`
+  or why there are none. The helper and the blob names are in
+  [Lib/eacp/GPU/README.md](../Lib/eacp/GPU/README.md), "Compiling shaders at
+  build time".
 
 - `EACP_VERBOSE_CONFIGURE` (default `OFF`) — prints the configure detail a
   clean configure leaves out: the FetchContent population of the
@@ -347,6 +336,16 @@ floor. `CMake/AppleSetup.cmake` claims `CMAKE_OSX_DEPLOYMENT_TARGET` only
 when nothing has filled it, so `-DCMAKE_OSX_DEPLOYMENT_TARGET=...` on the
 command line wins on both.
 
+iOS signing works the same way. `eacp_default_setup()` signs with
+`EACP_APPLE_DEVELOPMENT_TEAM` (a cache variable, eacp's own team by default,
+empty for none) and the `iPhone Developer` identity, but only where the project
+leaves `CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM` and
+`CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY` unset. The defaults are applied at
+the end of the top-level directory, so a project's own team wins however it
+sets it: on the command line, or as a normal variable or a cache entry, before
+or after eacp's setup runs, and an empty team included.
+`Tests/AppleSetup` checks each of those against the generated Xcode project.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables
@@ -367,7 +366,7 @@ and their tests build with it:
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |

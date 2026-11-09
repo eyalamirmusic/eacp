@@ -5,6 +5,7 @@
 #include "../Render/DrawPlayer.h"
 #include "../Render/ImageCache.h"
 #include "../Render/MaskCache.h"
+#include "../Widgets/ThemeKeys.h"
 
 #include <memory>
 #include <optional>
@@ -64,6 +65,16 @@ public:
 
     void setFontPointSize(float points);
     void setFontFamily(const std::string& family);
+
+    // What every component in the tree reads its colours, corners and other
+    // keyed values from (Component::getHostTheme): a product's look for one
+    // tree, without touching another tree in the same process -- a plugin's
+    // editor and its host's window, say. Empty until set, which reads as
+    // defaultTheme(). A theme that holds ThemeKeys::font or
+    // ThemeKeys::background also gives the host its face or its backdrop, as
+    // setFont and setBackgroundColour would. Repaints the whole tree.
+    void setTheme(const Theme& theme);
+    const Theme& getTheme() const;
 
     // Measurement without a paint in progress -- see Component::measureText,
     // which is where a component should ask. Builds the renderer if the host has
@@ -402,9 +413,11 @@ private:
 
     Component* root = nullptr;
 
-    Color background {0.11f, 0.12f, 0.15f, 1.f};
+    Color background = defaultTheme().get(ThemeKeys::background);
 
-    Font font {defaultUIFontFamily(), 13.f};
+    Font font = defaultTheme().get(ThemeKeys::font);
+
+    Theme theme;
 
     // Built on the first resize, once there is a size to build them against.
     // The atlas comes first and outlives the batch that reads it.

@@ -1,5 +1,7 @@
 #include "LayoutABI.h"
 
+#include <eacp/Core/Plugins/ReloadableEntry.h>
+
 using eacp::UI::Rect;
 
 namespace
@@ -13,10 +15,8 @@ constexpr auto sidebarWidth = 180.f;
 constexpr auto sidebarMinimumWindowWidth = 600.f;
 constexpr auto rowHeight = 32.f;
 constexpr auto muteWidth = 120.f;
-} // namespace
 
-EACP_HOT_RELOAD_EXPORT void demoLayout(const LayoutTargets& targets,
-                                       const Rect& bounds)
+void demoLayout(const LayoutTargets& targets, const Rect& bounds)
 {
     auto area = bounds.inset(padding);
     area.removeFromBottom(statusHeight + gap);
@@ -44,3 +44,6 @@ EACP_HOT_RELOAD_EXPORT void demoLayout(const LayoutTargets& targets,
 
     targets.notes.setBounds(area.removeFromTop(rowHeight));
 }
+} // namespace
+
+EACP_RELOADABLE(demoLayout)

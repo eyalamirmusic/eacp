@@ -10,6 +10,7 @@ set(network_test_sources
         HttpResumeTests.cpp
         HttpRpcTests.cpp
         HttpServerTests.cpp
+        HttpStreamingBodyTests.cpp
         HttpTimeoutTests.cpp
         HttpUrlTests.cpp
         HttpUserAgentTests.cpp

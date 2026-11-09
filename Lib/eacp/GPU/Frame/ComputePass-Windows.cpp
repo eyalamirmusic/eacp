@@ -180,6 +180,20 @@ void ComputePass::setInputTexture(const Texture& texture,
         computeSamplerParam(slot), descriptor);
 }
 
+void ComputePass::setSampler(const Sampler& sampler, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    const auto descriptor = perBindSamplerDescriptor(sampler);
+
+    if (descriptor.ptr == 0)
+        return;
+
+    impl->encoder->commands->list->SetComputeRootDescriptorTable(
+        computeSamplerParam(slot), descriptor);
+}
+
 void ComputePass::setOutputTexture(const Texture& texture, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)

@@ -74,16 +74,16 @@ PopupMenuStyle PopupMenuStyle::fromTheme(const Theme& theme)
 {
     auto style = PopupMenuStyle {};
 
-    style.background = theme.panel;
-    style.outline = theme.outline;
-    style.text = theme.text;
-    style.disabledText = theme.dimText.withAlpha(0.55f);
-    style.highlight = theme.accentDim;
-    style.highlightedText = theme.text;
-    style.separator = theme.outline;
-    style.tick = theme.accent;
-    style.headerText = theme.dimText;
-    style.arrow = theme.dimText;
+    style.background = theme.get(ThemeKeys::panel);
+    style.outline = theme.get(ThemeKeys::outline);
+    style.text = theme.get(ThemeKeys::text);
+    style.disabledText = theme.get(ThemeKeys::dimText).withAlpha(0.55f);
+    style.highlight = theme.get(ThemeKeys::accentDim);
+    style.highlightedText = theme.get(ThemeKeys::text);
+    style.separator = theme.get(ThemeKeys::outline);
+    style.tick = theme.get(ThemeKeys::accent);
+    style.headerText = theme.get(ThemeKeys::dimText);
+    style.arrow = theme.get(ThemeKeys::dimText);
 
     return style;
 }
@@ -107,14 +107,14 @@ public:
 
     void open(const Rect& anchorInRoot)
     {
-        auto* parent = getParentComponent();
+        auto* container = getParentComponent();
 
-        if (parent == nullptr)
+        if (container == nullptr)
             return;
 
         // The whole root, so a click anywhere outside the panels is still a click
         // on this component.
-        setBounds(parent->getLocalBounds());
+        setBounds(container->getLocalBounds());
 
         auto panel = Panel {};
         panel.menu = &owner;
@@ -429,10 +429,10 @@ private:
     float itemTop(int depth, int index) const
     {
         auto top = 0.f;
-        const auto& items = itemsOf(depth);
+        const auto& panelItems = itemsOf(depth);
 
         for (auto i = 0; i < index; ++i)
-            top += itemHeight(items[i]);
+            top += itemHeight(panelItems[i]);
 
         return top;
     }
@@ -630,11 +630,11 @@ private:
 
         auto y = position.y - rows.y + panels[depth].scroll;
         auto top = 0.f;
-        const auto& items = itemsOf(depth);
+        const auto& panelItems = itemsOf(depth);
 
-        for (auto index = 0; index < items.size(); ++index)
+        for (auto index = 0; index < panelItems.size(); ++index)
         {
-            top += itemHeight(items[index]);
+            top += itemHeight(panelItems[index]);
 
             if (y < top)
                 return index;
@@ -671,12 +671,12 @@ private:
     // on, or -1.
     int nextHighlightable(int depth, int from, int direction) const
     {
-        const auto& items = itemsOf(depth);
+        const auto& panelItems = itemsOf(depth);
 
-        for (auto index = from + direction; index >= 0 && index < items.size();
+        for (auto index = from + direction; index >= 0 && index < panelItems.size();
              index += direction)
         {
-            if (items[index].canHighlight())
+            if (panelItems[index].canHighlight())
                 return index;
         }
 
@@ -819,8 +819,8 @@ private:
 
         // Back inside a submenu: the rows that lead to it light up again, and a
         // close the pointer set off on its way here is called off.
-        for (auto parent = 0; parent < depth; ++parent)
-            setHighlighted(parent, panels[parent + 1].openerRow, false);
+        for (auto ancestor = 0; ancestor < depth; ++ancestor)
+            setHighlighted(ancestor, panels[ancestor + 1].openerRow, false);
 
         if (pending.depth >= 0 && pending.depth < depth)
             pending = {};
@@ -857,7 +857,7 @@ private:
         g.paintOver();
 
         const auto& panel = panels[depth];
-        const auto& items = itemsOf(depth);
+        const auto& panelItems = itemsOf(depth);
         const auto& look = style();
 
         g.setColour(look.background);
@@ -878,9 +878,9 @@ private:
 
             auto top = rows.y - panel.scroll;
 
-            for (auto index = 0; index < items.size(); ++index)
+            for (auto index = 0; index < panelItems.size(); ++index)
             {
-                const auto& item = items[index];
+                const auto& item = panelItems[index];
                 auto row = Rect {rows.x, top, rows.w, itemHeight(item)};
 
                 top += row.h;

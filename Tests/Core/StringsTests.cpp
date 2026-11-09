@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Strings.h>
 
+#include <array>
 #include <clocale>
 
 using namespace nano;
@@ -331,4 +332,77 @@ auto tLineContainingEmptyNeedle =
     check(lineContaining("first\nsecond", "") == "first");
     check(lineContaining("\nsecond", "").empty());
     check(lineContaining("", "").empty());
+};
+
+auto tParseHexWithAndWithoutPrefix =
+    test("Strings/parseHex with and without 0x") = []
+{
+    using eacp::Strings::parseHex;
+    check(parseHex("0x64dc") == std::uint64_t {0x64dc});
+    check(parseHex("0X64DC") == std::uint64_t {0x64dc});
+    check(parseHex("ffffffffffffffff") == std::uint64_t {0xffffffffffffffff});
+    check(parseHex("0") == std::uint64_t {0});
+};
+
+auto tParseHexRejects = test("Strings/parseHex rejects what is not hex") = []
+{
+    using eacp::Strings::parseHex;
+    check(!parseHex("").has_value());
+    check(!parseHex("0x").has_value());
+    check(!parseHex("12g4").has_value());
+    check(!parseHex(" 12").has_value());
+    check(!parseHex("10000000000000000").has_value());
+};
+
+auto tToUpper = test("Strings/toUpper is ASCII only") = []
+{
+    using eacp::Strings::toUpper;
+    check(toUpper("0ea5e0bc-c597") == "0EA5E0BC-C597");
+    check(toUpper("") == "");
+    check(toUpper("caf\xC3\xA9") == "CAF\xC3\xA9");
+};
+
+auto tSplitKeepsEmptyPieces = test("Strings/split keeps empty pieces") = []
+{
+    using eacp::Strings::split;
+    using Pieces = eacp::Vector<std::string>;
+    check(split("a,b,,c", ',') == Pieces {"a", "b", "", "c"});
+    check(split("", ',') == Pieces {""});
+    check(split("abc", ',') == Pieces {"abc"});
+    check(split(",", ',') == Pieces {"", ""});
+};
+
+auto tSplitStopsAtMaximumParts = test("Strings/split leaves the rest whole") = []
+{
+    using eacp::Strings::split;
+    using Pieces = eacp::Vector<std::string>;
+    check(split("FUNC 64cc 1c 0 Ns::f(int a, int b)", ' ', 5)
+          == Pieces {"FUNC", "64cc", "1c", "0", "Ns::f(int a, int b)"});
+    check(split("a b", ' ', 5) == Pieces {"a", "b"});
+    check(split("a b c", ' ', 1) == Pieces {"a b c"});
+};
+
+auto tJoin = test("Strings/join puts the separator between parts") = []
+{
+    using eacp::Strings::join;
+    check(join({"Tamber", "2.1.0-1a2b3c4", "macOS"}, "  ")
+          == "Tamber  2.1.0-1a2b3c4  macOS");
+    check(join({}, ", ").empty());
+    check(join({"a", "", "b"}, ",") == "a,,b");
+};
+
+auto tFormatPadsToAWidthGivenAtRunTime =
+    test("Strings/format pads to a width given at run time") = []
+{
+    constexpr auto columnWidth = 6;
+    check(eacp::Strings::format("{:<{}}|", "#1", columnWidth) == "#1    |");
+};
+
+auto tToHexWritesLowercasePairs = test("Strings/toHex writes two digits a byte") = []
+{
+    const auto bytes = std::array<std::uint8_t, 4> {0x00, 0x0a, 0xab, 0xff};
+
+    check(eacp::Strings::toHex(bytes) == "000aabff");
+    check(eacp::Strings::toHex({}).empty());
+    check(eacp::Strings::parseHex(eacp::Strings::toHex(bytes)) == 0x000aabffu);
 };

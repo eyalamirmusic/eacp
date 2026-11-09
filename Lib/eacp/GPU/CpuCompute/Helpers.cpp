@@ -53,6 +53,42 @@ float helperSignedNibble(std::uint32_t nibble)
 {
     return static_cast<float>(nibble ^ 0x8u) - 8.0f;
 }
+
+std::uint32_t helperUnorm(float value, float scale)
+{
+    auto clamped = std::fmin(std::fmax(value, 0.0f), 1.0f);
+    return static_cast<std::uint32_t>(std::floor(0.5f + scale * clamped));
+}
+
+std::uint32_t helperSnorm(float value, float scale, std::uint32_t mask)
+{
+    auto clamped = std::fmin(std::fmax(value, -1.0f), 1.0f);
+    auto code = static_cast<std::int32_t>(std::floor(0.5f + scale * clamped));
+    return static_cast<std::uint32_t>(code) & mask;
+}
+
+float helperSignedHalfWord(std::uint32_t field)
+{
+    return static_cast<float>(field ^ 0x8000u) - 32768.0f;
+}
+
+float helperSnormValue(float code, float scale)
+{
+    return std::fmax(code / scale, -1.0f);
+}
+
+struct HelperBitField
+{
+    std::uint32_t offset = 0;
+    std::uint32_t count = 0;
+};
+
+HelperBitField helperClampedField(std::uint32_t offset, std::uint32_t count)
+{
+    auto clampedOffset = offset < 32u ? offset : 32u;
+    auto room = 32u - clampedOffset;
+    return {clampedOffset, count < room ? count : room};
+}
 } // namespace
 
 float widenHalf(std::uint16_t bits)
@@ -215,5 +251,143 @@ std::uint32_t packUInt8x4(HelperUInt4 values)
 {
     return (values[0] & 0xffu) | ((values[1] & 0xffu) << 8u)
            | ((values[2] & 0xffu) << 16u) | ((values[3] & 0xffu) << 24u);
+}
+
+float quantizeToF16(float value)
+{
+    return widenHalf(narrowToHalf(value));
+}
+
+std::uint32_t packUnorm8x4(HelperFloat4 values)
+{
+    return helperUnorm(values[0], 255.0f) | (helperUnorm(values[1], 255.0f) << 8u)
+           | (helperUnorm(values[2], 255.0f) << 16u)
+           | (helperUnorm(values[3], 255.0f) << 24u);
+}
+
+std::uint32_t packSnorm8x4(HelperFloat4 values)
+{
+    return helperSnorm(values[0], 127.0f, 0xffu)
+           | (helperSnorm(values[1], 127.0f, 0xffu) << 8u)
+           | (helperSnorm(values[2], 127.0f, 0xffu) << 16u)
+           | (helperSnorm(values[3], 127.0f, 0xffu) << 24u);
+}
+
+std::uint32_t packUnorm16x2(HelperFloat2 values)
+{
+    return helperUnorm(values[0], 65535.0f)
+           | (helperUnorm(values[1], 65535.0f) << 16u);
+}
+
+std::uint32_t packSnorm16x2(HelperFloat2 values)
+{
+    return helperSnorm(values[0], 32767.0f, 0xffffu)
+           | (helperSnorm(values[1], 32767.0f, 0xffffu) << 16u);
+}
+
+HelperFloat4 unpackUnorm8x4(std::uint32_t bits)
+{
+    return {static_cast<float>(bits & 0xffu) / 255.0f,
+            static_cast<float>((bits >> 8u) & 0xffu) / 255.0f,
+            static_cast<float>((bits >> 16u) & 0xffu) / 255.0f,
+            static_cast<float>(bits >> 24u) / 255.0f};
+}
+
+HelperFloat4 unpackSnorm8x4(std::uint32_t bits)
+{
+    return {helperSnormValue(helperSignedByte(bits & 0xffu), 127.0f),
+            helperSnormValue(helperSignedByte((bits >> 8u) & 0xffu), 127.0f),
+            helperSnormValue(helperSignedByte((bits >> 16u) & 0xffu), 127.0f),
+            helperSnormValue(helperSignedByte(bits >> 24u), 127.0f)};
+}
+
+HelperFloat2 unpackUnorm16x2(std::uint32_t bits)
+{
+    return {static_cast<float>(bits & 0xffffu) / 65535.0f,
+            static_cast<float>(bits >> 16u) / 65535.0f};
+}
+
+HelperFloat2 unpackSnorm16x2(std::uint32_t bits)
+{
+    return {helperSnormValue(helperSignedHalfWord(bits & 0xffffu), 32767.0f),
+            helperSnormValue(helperSignedHalfWord(bits >> 16u), 32767.0f)};
+}
+
+std::uint32_t countOneBits(std::uint32_t value)
+{
+    return static_cast<std::uint32_t>(std::popcount(value));
+}
+
+std::uint32_t reverseBits(std::uint32_t value)
+{
+    value = ((value >> 1u) & 0x55555555u) | ((value & 0x55555555u) << 1u);
+    value = ((value >> 2u) & 0x33333333u) | ((value & 0x33333333u) << 2u);
+    value = ((value >> 4u) & 0x0f0f0f0fu) | ((value & 0x0f0f0f0fu) << 4u);
+    value = ((value >> 8u) & 0x00ff00ffu) | ((value & 0x00ff00ffu) << 8u);
+    return (value >> 16u) | (value << 16u);
+}
+
+std::uint32_t countLeadingZeros(std::uint32_t value)
+{
+    return static_cast<std::uint32_t>(std::countl_zero(value));
+}
+
+std::uint32_t countTrailingZeros(std::uint32_t value)
+{
+    return static_cast<std::uint32_t>(std::countr_zero(value));
+}
+
+std::uint32_t firstLeadingBit(std::uint32_t value)
+{
+    return value == 0u ? 0xffffffffu : 31u - countLeadingZeros(value);
+}
+
+std::int32_t firstLeadingBit(std::int32_t value)
+{
+    auto magnitude = std::bit_cast<std::uint32_t>(value < 0 ? ~value : value);
+    return std::bit_cast<std::int32_t>(firstLeadingBit(magnitude));
+}
+
+std::uint32_t firstTrailingBit(std::uint32_t value)
+{
+    return value == 0u ? 0xffffffffu : countTrailingZeros(value);
+}
+
+std::uint32_t
+    extractBits(std::uint32_t value, std::uint32_t offset, std::uint32_t count)
+{
+    auto field = helperClampedField(offset, count);
+
+    if (field.count == 0u)
+        return 0u;
+
+    return (value >> field.offset) & (0xffffffffu >> (32u - field.count));
+}
+
+std::int32_t
+    extractBits(std::int32_t value, std::uint32_t offset, std::uint32_t count)
+{
+    auto field = helperClampedField(offset, count);
+
+    if (field.count == 0u)
+        return 0;
+
+    auto raised = std::bit_cast<std::uint32_t>(value)
+                  << (32u - field.offset - field.count);
+    return std::bit_cast<std::int32_t>(raised) >> (32u - field.count);
+}
+
+std::uint32_t insertBits(std::uint32_t value,
+                         std::uint32_t newBits,
+                         std::uint32_t offset,
+                         std::uint32_t count)
+{
+    auto field = helperClampedField(offset, count);
+
+    if (field.count == 0u)
+        return value;
+
+    auto mask = (0xffffffffu >> (32u - field.count)) << field.offset;
+    return (value & ~mask) | ((newBits << field.offset) & mask);
 }
 } // namespace eacp::GPU::CpuCompute

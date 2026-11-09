@@ -168,4 +168,33 @@ auto tLateDirectory = test("SourceWatcher/watchesADirectoryCreatedLater") = []
     check(log.calls[0].size() == 1);
     check(log.calls[0][0] == source);
 };
+
+auto tListedFiles = test("SourceWatcher/watchesOnlyTheListedFiles") = []
+{
+    auto dir = TemporaryFile {};
+    auto listed = dir.path() / "Views.cpp";
+    auto sibling = dir.path() / "Main.cpp";
+    writeFile(listed, "a");
+    writeFile(sibling, "a");
+
+    auto options = fastOptions(dir.path());
+    options.files = {listed};
+
+    auto log = ChangeLog {};
+    auto watcher = SourceWatcher {options, log.recorder()};
+
+    check(watcher.getDirectory() == dir.path());
+    check(watcher.getWatchedPaths().size() == 1);
+    check(watcher.getWatchedPaths()[0] == listed);
+
+    writeFile(sibling, "abc");
+    pumpFor(MS {300});
+    check(log.calls.empty());
+
+    writeFile(listed, "abc");
+
+    check(log.waitForCalls(1));
+    check(log.calls[0].size() == 1);
+    check(log.calls[0][0] == listed);
+};
 } // namespace SourceWatcherTests

@@ -11,6 +11,7 @@ std::string readFile(const FilePath& path);
 // Writes bytes to path, creating parent directories first. Throws
 // std::runtime_error when the file can't be opened or fully written.
 void writeFile(const FilePath& path, Span<const std::uint8_t> bytes);
+void writeFile(const FilePath& path, std::string_view text);
 
 // Writes bytes so a concurrent reader sees either the whole old file or the
 // whole new one, never a half-written mix: the data goes to a temporary
@@ -29,6 +30,7 @@ void writeFile(const FilePath& path, Span<const std::uint8_t> bytes);
 //
 // Throws std::runtime_error, like writeFile, if the write or the rename fails.
 void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes);
+void writeFileAtomically(const FilePath& path, std::string_view text);
 
 // The directory and every missing parent. True when it exists afterwards.
 bool createDirectories(const FilePath& directory);
@@ -41,6 +43,18 @@ bool removeAll(const FilePath& path);
 bool exists(const FilePath& path);
 bool isFile(const FilePath& path);
 bool isDirectory(const FilePath& path);
+
+// Whether a and b name the same file or directory, following symlinks. False
+// when either is missing.
+bool isSameFile(const FilePath& a, const FilePath& b);
+
+// Adds execute permission for owner, group and others, as chmod +x does.
+// True on Windows, which has no execute bit.
+bool setExecutable(const FilePath& path);
+
+// Where the symlink at path points, as written in the link. Empty when path
+// is not a symlink.
+FilePath readSymlink(const FilePath& path);
 
 // One regular file to `to`, replacing what is there and creating its parent
 // directories. False when `from` is missing or is a directory.

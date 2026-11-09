@@ -17,10 +17,21 @@ namespace eacp::Plugins
 // reload(): copy out what you need first. Main thread only.
 //
 // With a requiredSymbol, an image that does not export it is refused before
-// it replaces the current one, so the previous generation stays loaded.
+// it replaces the current one, so the previous generation stays loaded. So is
+// an image `validate` answers with a non-empty reason, which becomes
+// lastError().
+//
+// Destruction never unmaps the current image there and then: it goes on a
+// later loop turn, or, with no loop running, stays mapped until the process
+// exits. Objects the image made may therefore outlive this library for the
+// rest of the current turn, as members destroyed after its owner do. A staged
+// copy Windows will not delete while it is loaded goes on that later turn too,
+// and with no loop running stays in the staging directory.
 class ReloadableLibrary
 {
 public:
+    using ValidateFunc = std::function<std::string(const DynamicLibrary& image)>;
+
     ReloadableLibrary(const FilePath& builtPathToUse,
                       const FilePath& stagingDirectoryToUse,
                       const std::string& requiredSymbolToUse = {});
@@ -56,6 +67,8 @@ public:
     }
 
     [[nodiscard]] void* findSymbol(const std::string& name) const;
+
+    ValidateFunc validate = [](const DynamicLibrary&) { return std::string {}; };
 
 private:
     FilePath nextStagedPath() const;

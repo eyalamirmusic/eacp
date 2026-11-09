@@ -115,7 +115,8 @@ explains how a frame is built.
 ## Everything else
 
 - **Application lifecycle** — a struct is the app; one view in one window
-  needs no struct at all.
+  needs no struct at all. Native alerts with your own buttons, answered
+  asynchronously.
 - **Command-line tools** — a console runner, an argument parser that binds
   options to your variables and writes the help, and plain stdout lines.
 - **Event loop and threads** — the loop, timers, deferred and delayed calls,
@@ -126,7 +127,8 @@ explains how a frame is built.
 - **Processes** — a child with args, env, stdin and captured output, and a
   build runner that reruns one command on demand.
 - **Plugins and hot reload** — shared libraries loaded at runtime, and a
-  source tree watched, rebuilt on save and reloaded into the running app.
+  function or object rebuilt on save and swapped into the running app
+  ([`Docs/HotReload.md`](Docs/HotReload.md)).
 - **Networking** — an HTTP client with redirects, timeouts and resumable
   downloads, an HTTP server, WebSocket client and server, TCP, IPC and RPC,
   and a resource fetched once and revalidated on later runs.
@@ -165,8 +167,8 @@ Vulkan, and Wayland or X11 with Vulkan.
 | ML through Core ML | ✅ | — | ✅ | — | — |
 
 Where there is no 2D tier, everything drawn through the GPU — the component
-tier, its text and images, and SVG — works in full, and Android keeps its own
-image codecs. Gamepads come from GameController on Apple platforms and XInput
+tier, its text and images, and SVG — works in full, and Android and Linux keep
+the image codecs. Gamepads come from GameController on Apple platforms and XInput
 on Windows; elsewhere game input is the window's own keys and mouse.
 
 Android is a NativeActivity app on Vulkan 1.1 with touch and soft-keyboard
@@ -458,6 +460,8 @@ CMake/        Build helpers
   capability variables and the CI matrix.
 - [`Docs/Linux.md`](Docs/Linux.md) — the Linux backend: Wayland, X11, Vulkan
   and FreeType.
+- [`Docs/Toolbox.md`](Docs/Toolbox.md) — what Core, Network and the bundled
+  libraries already provide, one line per function.
 - [`Apps/Android/README.md`](Apps/Android/README.md) — building, running and
   shipping on Android.
 - [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) — the GPU module and the

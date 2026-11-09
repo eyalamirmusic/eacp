@@ -216,8 +216,19 @@ auto tParallelReportsIntermediateProgress =
     auto body = makePayload(4 * 1024 * 1024 + 31);
     auto stats = RangeStats();
     auto chunkBytes = (std::int64_t) (body.size() / 4);
+    auto highestSeen = std::atomic<std::int64_t>(0);
 
-    auto staggeredHandler = [&](const Request& req)
+    auto waitUntilObserved = [&](std::int64_t bytes)
+    {
+        auto deadline = eacp::Time::Deadline {eacp::Time::MS {10000}};
+        while (highestSeen.load() < bytes && !deadline.expired())
+            eacp::Time::sleepMS(1);
+    };
+
+    // Each chunk is held back until the sampler has seen the aggregate
+    // include every chunk before it, so the progress climbs in steps the
+    // sampler is guaranteed to observe however the threads are scheduled.
+    auto steppedHandler = [&](const Request& req)
     {
         auto res = handleRangeRequest(req, body, stats, true);
         if (req.type != "HEAD" && res.statusCode == 206)
@@ -226,19 +237,13 @@ auto tParallelReportsIntermediateProgress =
             auto rest = rangeHeader.substr(std::string("bytes=").size());
             auto start = std::stoll(rest.substr(0, rest.find('-')));
             auto chunkIndex = start / chunkBytes;
-            // Stagger each chunk's completion so the aggregate progress
-            // climbs in visible steps. The plateau between steps must
-            // outlast the progress aggregator's publish interval (25ms, see
-            // launchProgressAggregator) twice over, or a loaded CI runner
-            // can collapse several steps into one sample and starve the
-            // >=3 distinct-values check below.
-            eacp::Time::sleepMS(50 * (int) chunkIndex);
+            waitUntilObserved(chunkIndex * chunkBytes);
         }
         return res;
     };
 
     auto server = makePoolServer();
-    check(server.listen(0, staggeredHandler));
+    check(server.listen(0, steppedHandler));
     auto port = server.boundPort();
 
     auto progress = DownloadProgress();
@@ -262,6 +267,8 @@ auto tParallelReportsIntermediateProgress =
                     lastSeen = received;
                     distinctValues.fetch_add(1);
                 }
+                if (received > highestSeen.load())
+                    highestSeen.store(received);
                 if (total > 0 && received > 0 && received < total)
                     sawIntermediate.store(true);
                 eacp::Time::sleepMS(1);

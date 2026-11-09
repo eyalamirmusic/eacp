@@ -83,6 +83,36 @@ struct ComputePass::Native
         storageTextures &= ~(1u << slot);
     }
 
+    // A sampler descriptor at the slot's binding, for a kernel declaring a
+    // lone `sampler` there; the image the slot may also hold is untouched.
+    void bindSampler(int slot, VkSampler sampler)
+    {
+        if (!encoder || slot < 0 || slot >= maxTextureSlots
+            || sampler == VK_NULL_HANDLE)
+            return;
+
+        textures[slot].sampler = sampler;
+        samplers |= 1u << slot;
+    }
+
+    // Which binds a write of `type` may take. A separate image reads the
+    // sampled bind's view and ignores its sampler.
+    std::uint32_t boundSlotsOf(VkDescriptorType type) const
+    {
+        switch (type)
+        {
+            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+            case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+                return sampledTextures;
+            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                return storageTextures;
+            case VK_DESCRIPTOR_TYPE_SAMPLER:
+                return samplers;
+            default:
+                return 0u;
+        }
+    }
+
     void orderAfterDispatch(VkCommandBuffer buffer) const
     {
         if (!isConcurrent())
@@ -134,10 +164,7 @@ struct ComputePass::Native
                 continue;
 
             const auto type = pipeline->textures.typeAt(slot);
-            const auto bound =
-                type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ? sampledTextures
-                : type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE        ? storageTextures
-                                                                  : 0u;
+            const auto bound = boundSlotsOf(type);
 
             if ((bound & (1u << slot)) == 0)
                 continue;
@@ -202,6 +229,7 @@ struct ComputePass::Native
     VkDescriptorImageInfo textures[maxTextureSlots] = {};
     std::uint32_t sampledTextures = 0;
     std::uint32_t storageTextures = 0;
+    std::uint32_t samplers = 0;
 
     ConstantRange uniforms;
 };
@@ -293,6 +321,11 @@ void ComputePass::setInputTexture(const Texture& texture,
                                   const Sampler& sampler)
 {
     impl->bindInputTexture(texture, slot, toVkSampler(sampler));
+}
+
+void ComputePass::setSampler(const Sampler& sampler, int slot)
+{
+    impl->bindSampler(slot, toVkSampler(sampler));
 }
 
 void ComputePass::setOutputTexture(const Texture& texture, int slot)

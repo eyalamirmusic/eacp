@@ -1,5 +1,6 @@
 #pragma once
 
+#include "App/Alert.h"
 #include "App/App.h"
 #include "App/Clipboard.h"
 #include "App/LoginItem.h"
@@ -24,6 +25,7 @@
 #include "Utils/Random.h"
 #include "Utils/SourceWatcher.h"
 #include "Utils/Range.h"
+#include "Utils/Sha256.h"
 #include "Utils/Singleton.h"
 #include "Utils/TemporaryFile.h"
 #include "Utils/Zip.h"

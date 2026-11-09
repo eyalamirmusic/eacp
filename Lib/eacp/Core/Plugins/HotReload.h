@@ -33,6 +33,10 @@
 #define EACP_HOT_RELOAD_SOURCE_DIR ""
 #endif
 
+#ifndef EACP_HOT_RELOAD_SOURCES
+#define EACP_HOT_RELOAD_SOURCES ""
+#endif
+
 namespace eacp::Plugins
 {
 constexpr bool isHotReload()
@@ -47,6 +51,7 @@ constexpr HotReloadTarget hotReloadTarget()
             EACP_HOT_RELOAD_BUILD_DIR,
             EACP_HOT_RELOAD_CONFIG,
             EACP_HOT_RELOAD_TARGET,
-            EACP_HOT_RELOAD_SOURCE_DIR};
+            EACP_HOT_RELOAD_SOURCE_DIR,
+            EACP_HOT_RELOAD_SOURCES};
 }
 } // namespace eacp::Plugins

@@ -17,6 +17,8 @@ namespace eacp::Strings
 namespace
 {
 constexpr auto replacementChar = char32_t {0xFFFD};
+constexpr auto hexPrefixes = Array<std::string_view, 2> {"0x", "0X"};
+constexpr auto hexBase = 16;
 
 // D800..DBFF and DC00..DFFF are the two halves of a UTF-16 surrogate pair.
 // Neither is a scalar value on its own, so a UTF-8 sequence decoding to one is
@@ -293,6 +295,15 @@ std::string toLower(std::string_view s)
     return result;
 }
 
+std::string toUpper(std::string_view s)
+{
+    auto result = std::string {};
+    result.reserve(s.size());
+    for (auto c: s)
+        result.push_back((char) std::toupper((unsigned char) c));
+    return result;
+}
+
 std::string capitalize(std::string_view s)
 {
     auto result = std::string {s};
@@ -321,6 +332,40 @@ bool equalsCaseInsensitive(std::string_view a, std::string_view b)
     return toLower(a) == toLower(b);
 }
 
+Vector<std::string> split(std::string_view text, char delimiter, int maximumParts)
+{
+    auto parts = Vector<std::string> {};
+
+    while (maximumParts <= 0 || parts.size() + 1 < maximumParts)
+    {
+        const auto end = text.find(delimiter);
+
+        if (end == std::string_view::npos)
+            break;
+
+        parts.emplace_back(text.substr(0, end));
+        text.remove_prefix(end + 1);
+    }
+
+    parts.emplace_back(text);
+    return parts;
+}
+
+std::string join(const Vector<std::string>& parts, std::string_view separator)
+{
+    auto joined = std::string {};
+
+    for (auto index = 0; index < parts.size(); ++index)
+    {
+        if (index > 0)
+            joined += separator;
+
+        joined += parts[index];
+    }
+
+    return joined;
+}
+
 int hexCharToInt(char c)
 {
     if (c >= '0' && c <= '9')
@@ -330,6 +375,45 @@ int hexCharToInt(char c)
     if (c >= 'A' && c <= 'F')
         return c - 'A' + 10;
     return -1;
+}
+
+std::optional<std::uint64_t> parseHex(std::string_view text)
+{
+    for (const auto prefix: hexPrefixes)
+    {
+        if (text.starts_with(prefix))
+        {
+            text.remove_prefix(prefix.size());
+            break;
+        }
+    }
+
+    auto value = std::uint64_t {0};
+    const auto* last = text.data() + text.size();
+    const auto [stop, error] = std::from_chars(text.data(), last, value, hexBase);
+
+    if (text.empty() || error != std::errc {} || stop != last)
+        return std::nullopt;
+
+    return value;
+}
+
+std::string toHex(Span<const std::uint8_t> bytes)
+{
+    constexpr auto hexDigits = std::string_view {"0123456789abcdef"};
+    constexpr auto nibbleBits = 4;
+    constexpr auto nibbleMask = 0xf;
+
+    auto hex = std::string {};
+    hex.reserve(bytes.getSize() * 2);
+
+    for (auto byte: bytes)
+    {
+        hex.push_back(hexDigits[byte >> nibbleBits]);
+        hex.push_back(hexDigits[byte & nibbleMask]);
+    }
+
+    return hex;
 }
 
 std::optional<float> tryParseFloat(const std::string& s)

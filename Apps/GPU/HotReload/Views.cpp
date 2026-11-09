@@ -1,5 +1,4 @@
-#include "ViewABI.h"
-
+#include <eacp/Core/Plugins/ReloadableEntry.h>
 #include <eacp/GPU/GPU.h>
 
 using namespace eacp;
@@ -168,10 +167,12 @@ struct FullScreenView final : GPUView
 
 using PlasmaView = FullScreenView<PlasmaShader>;
 using TunnelView = FullScreenView<TunnelShader>;
+
+Graphics::View* makeDemoView()
+{
+    // return new TunnelView;
+    return new PlasmaView;
+}
 } // namespace
 
-EACP_HOT_RELOAD_EXPORT ViewPointer makeDemoView()
-{
-    // return makeOwned<TunnelView>();
-    return makeOwned<PlasmaView>();
-}
+EACP_RELOADABLE(makeDemoView)

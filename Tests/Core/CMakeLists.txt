@@ -1,4 +1,6 @@
 set(core_test_sources
+        # Never shows a dialog: every case installs a presenter or is headless.
+        AlertTests.cpp
         AllocationCount.cpp
         AppAffordanceTests.cpp
         AppTests.cpp
@@ -11,6 +13,7 @@ set(core_test_sources
         # Runs ConsoleHarness as a child: runConsole's exit codes and streams.
         ConsoleTests.cpp
         DynamicLibraryTests.cpp
+        EnvironmentTests.cpp
         EventLoopTests.cpp
         FileLocationsTests.cpp
         FilePathNamesTests.cpp
@@ -20,24 +23,29 @@ set(core_test_sources
         FileWriterTests.cpp
         FilesAppendTests.cpp
         FilesCopyMoveTests.cpp
+        FilesQueryTests.cpp
         # Only the paths refused before anything is launched, and the targets
         # computed for the launch; nothing here starts a file manager.
         FilesOpenTests.cpp
         FilesTests.cpp
         FilesWildcardTests.cpp
         FormatTests.cpp
+        HashTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
+        PlatformTests.cpp
         PluginObjectTests.cpp
         ProcessInheritStdioTests.cpp
         ProcessTokeniseTests.cpp
         RangeTests.cpp
         ReloadableLibraryTests.cpp
+        Sha256Tests.cpp
         SourceWatcherTests.cpp
         StringsTests.cpp
         TemporaryFileTests.cpp
         ThreadTests.cpp
         TimerTests.cpp
+        TimeTests.cpp
         ZipTests.cpp)
 
 # Cross-platform proof for captureOutput=false: redirect the test's own
@@ -53,7 +61,8 @@ endif ()
 # only run on macOS and Linux.
 if (NOT WIN32)
     list(APPEND core_test_sources
-            BuildRunnerTests.cpp HotReloadLoopTests.cpp ProcessTests.cpp)
+            BuildRunnerTests.cpp HotReloadLoopTests.cpp ReloadableTests.cpp
+            ProcessTests.cpp)
 endif ()
 
 # The same options (verbatim commandLine, merged stderr, live output, working
@@ -72,8 +81,12 @@ endif ()
 
 # A hosted copy under a foreign host's own Win32 pump: attach, detach, attach
 # again. The message-only window and its class are Windows' hosted machinery.
+# EventLoopTests-Windows.cpp is the other direction: eacp's own pump under
+# another copy's message-only window.
 if (WIN32)
-    list(APPEND core_test_sources HostedLoopTests-Windows.cpp)
+    list(APPEND core_test_sources
+            HostedLoopTests-Windows.cpp
+            EventLoopTests-Windows.cpp)
 endif ()
 
 # Permission bits, symlinks and FIFOs — the file behaviour Windows has no form
@@ -168,17 +181,27 @@ target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
 add_dependencies(CoreTests DynamicLibraryTestPlugin)
 
-# Builds of one module for ReloadableLibraryTests and HotReloadLoopTests,
-# linking no eacp library: a bare module needs only PluginExport.h, so it takes
-# eacp-core's include directory and nothing else. C lacks the answer function.
-foreach (fixture A B C)
-    eacp_add_plugin(ReloadFixture${fixture} ReloadFixture${fixture}.cpp)
-    target_include_directories(ReloadFixture${fixture} PRIVATE
+# Builds of one module for ReloadableLibraryTests, HotReloadLoopTests and
+# ReloadableTests, linking no eacp library: a bare module needs only
+# PluginExport.h or ReloadableEntry.h, so it takes eacp-core's include directory
+# and nothing else. ReloadFixtureC lacks the answer function, and
+# ReloadableFixtureMismatch's entry has the wrong signature. Each one's path is
+# EACP_<NAME_IN_CAPITALS>, so ReloadFixtureA is EACP_RELOAD_FIXTURE_A.
+foreach (fixture
+        ReloadFixtureA ReloadFixtureB ReloadFixtureC
+        ReloadableFixtureA ReloadableFixtureB ReloadableFixtureMismatch
+        ReloadableFixtureObjectA ReloadableFixtureObjectB ReloadableFixtureNull
+        ReloadableFixtureThrow ReloadableFixturePair)
+    eacp_add_plugin(${fixture} ${fixture}.cpp)
+    target_include_directories(${fixture} PRIVATE
             $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)
 
+    string(REGEX REPLACE "([a-z])([A-Z])" "\\1_\\2" define ${fixture})
+    string(TOUPPER ${define} define)
+
     target_compile_definitions(CoreTests PRIVATE
-            EACP_RELOAD_FIXTURE_${fixture}="$<TARGET_FILE:ReloadFixture${fixture}>")
-    add_dependencies(CoreTests ReloadFixture${fixture})
+            EACP_${define}="$<TARGET_FILE:${fixture}>")
+    add_dependencies(CoreTests ${fixture})
 endforeach ()
 
 # The thin-eacp-host bridge: a plugin whose own copy defers work, so the

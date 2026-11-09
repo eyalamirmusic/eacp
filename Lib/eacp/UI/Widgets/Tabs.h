@@ -51,7 +51,7 @@ public:
 
 private:
     Vector<std::string> names;
-    Color accent = defaultTheme().accent;
+    std::optional<Color> accent;
     int currentIndex = -1;
     int hoveredIndex = -1;
 };

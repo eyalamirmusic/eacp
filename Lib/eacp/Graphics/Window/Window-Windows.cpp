@@ -450,11 +450,25 @@ struct Window::Native
                         && AttachThreadInput(foregroundThread, thisThread, TRUE);
 
         BringWindowToTop(hwnd);
-        SetForegroundWindow(hwnd);
+        auto tookForeground = SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
         SetFocus(hwnd);
 
         if (attached)
             AttachThreadInput(foregroundThread, thisThread, FALSE);
+
+        if (!tookForeground)
+            raiseAboveOtherWindows(hwnd);
+    }
+
+    // Windows refused the foreground, so the window is at least put on top
+    // and its taskbar button flashed.
+    static void raiseAboveOtherWindows(HWND hwnd)
+    {
+        constexpr auto keepPlacement = SWP_NOMOVE | SWP_NOSIZE;
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, keepPlacement);
+        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, keepPlacement);
+        FlashWindow(hwnd, TRUE);
     }
 
     void setTitle(const std::string& title) const

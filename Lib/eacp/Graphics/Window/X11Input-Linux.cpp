@@ -7,9 +7,16 @@
 #include <xkbcommon/xkbcommon-x11.h>
 
 // xcb/xkb.h names a struct field `explicit`, which C++ will not take.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wkeyword-macro"
+#endif
 #define explicit explicit_
 #include <xcb/xkb.h>
 #undef explicit
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 #include <algorithm>
 #include <cmath>

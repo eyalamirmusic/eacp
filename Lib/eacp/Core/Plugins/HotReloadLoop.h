@@ -45,6 +45,8 @@ public:
         FilePath modulePath;
         FilePath stagingDirectory = FilePath::appCacheDirectory() / "HotReload";
         std::string requiredSymbol;
+        ReloadableLibrary::ValidateFunc validate = [](const DynamicLibrary&)
+        { return std::string {}; };
     };
 
     explicit HotReloadLoop(const Options& options);
@@ -62,6 +64,7 @@ public:
     [[nodiscard]] int getGeneration() const;
     [[nodiscard]] ReloadableLibrary& getLibrary();
     [[nodiscard]] const FilePath& getSourceDirectory() const;
+    [[nodiscard]] const Vector<FilePath>& getWatchedPaths() const;
 
     std::function<void()> onBuildStarted = [] {};
     std::function<void(std::string_view chunk)> onBuildOutput =
@@ -87,4 +90,8 @@ private:
     std::string failureMessage;
     Files::SourceWatcher watcher;
 };
+
+// The options a target's compile definitions describe: its source directory
+// watched, its build command, its module, and no required symbol.
+HotReloadLoop::Options hotReloadOptions(const HotReloadTarget& target);
 } // namespace eacp::Plugins

@@ -262,7 +262,10 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, PassActivity* activit
     auto buffer = (id<MTLCommandBuffer>) entry.commandBuffer.get();
     auto samples = (id<MTLCounterSampleBuffer>) entry.samples.get();
 
-    if (buffer == nil)
+    // A buffer that failed on the GPU has no times worth reading: either one
+    // may be zero, and an end read against a start of zero is the time since
+    // boot. The frame is reported unmeasured instead.
+    if (buffer == nil || buffer.status != MTLCommandBufferStatusCompleted)
         return 0.0;
 
     if (samples != nil && passCount > 0)
@@ -277,6 +280,9 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, PassActivity* activit
 
     // The frame's own total, which needs no counters at all - and so is the one
     // number that still works on a device that cannot sample them.
+    if (buffer.GPUStartTime <= 0.0)
+        return 0.0;
+
     const auto elapsed = buffer.GPUEndTime - buffer.GPUStartTime;
 
     return elapsed > 0.0 ? elapsed * 1000.0 : 0.0;

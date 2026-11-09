@@ -19,7 +19,10 @@ eacp is a cross-platform GUI/graphics framework written in modern C++20 with Obj
 `README.md` is written for users of the library — interface, capabilities and
 usage — and stays free of build-system and implementation detail. In-depth
 docs live under `Docs/` (`Build.md` for options, dependencies, capability
-variables and CI; `Linux.md` for the Linux backend) and beside the modules
+variables and CI; `Linux.md` for the Linux backend; `Toolbox.md` for the
+Core reuse map; `HotReload.md` for
+`Plugins::Reloadable`, `eacp_add_hot_reload` and the reload machinery under
+them) and beside the modules
 they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`,
 `Lib/eacp/UI/README.md`). New
 implementation-level documentation goes there, not in the README.
@@ -92,7 +95,9 @@ take it without eacp, its tests live there, and
 behind `EACP_BUILD_SPIRV` and so on Linux only by default,
 `glslang`; a Linux build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
-one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
+one `eacp-vulkan` target, fetched on no other platform) and `stb`
+(`CMake/FindStb.cmake`, the header-only `eacp-stb` target behind the Linux
+image codec). Plus libcurl on Linux,
 which backs the HTTP client there, and — on Linux, where none of them are
 optional — three pkg-config groups: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor (`CMake/FindWayland.cmake`, one
@@ -337,44 +342,42 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_WEBVIEW_DEV=ON
 ```
 
-- `EACP_HOT_RELOAD` (default `OFF`): the dev/static mode of every app wired
-  with `eacp_add_hot_reload(<app> MODULE <module> SOURCES <files...>
-  [HOT_RELOAD ON|OFF])` (`CMake/EacpPlugin.cmake`) that names no mode of its
-  own. An app's `HOT_RELOAD ON` is always dev mode and `OFF` always static,
-  whatever the option says; `Apps/UI/HotReload` names none, so it follows
-  the option, and `Apps/GPU/HotReload` (`HotReloadGPU`, always `ON`) reloads
-  a factory whose `GPUView` the host owns and recreates per generation. iOS and Android (no cmake to run) and Windows (not supported: `WINDOWS_EXPORT_ALL_SYMBOLS` never
-  exports a static library's symbols, and a module linking the exe would
-  relink a locked exe on every save) are always off. The sources are compiled
-  into the app in both modes, so that copy is generation 0 and the fallback;
-  dev mode also builds them as a module the app reloads on save, static mode
-  builds no module, no watcher and no build runner. The module links nothing
-  and binds at load time to the eacp the app exports (`-undefined
-  dynamic_lookup` on Apple, a Linux module's default), so C++ types cross its
-  one `extern "C"` entry point (`EACP_HOT_RELOAD_EXPORT`, empty on Windows). Dev mode gives the app `ENABLE_EXPORTS`
-  (`-export_dynamic` on Apple, `--export-dynamic` on Linux, which keeps the
-  exports alive under the libraries' Release IPO), links every static library
-  in its link closure whole-archive so the module can call what the app never
-  does, and compiles every eacp library in that closure at default
-  visibility. That is a property of the library targets, so of the whole
-  build directory: `eacp_add_plugin` modules built there re-export eacp and
-  lose their isolation, and should not be mixed with a hot-reload build.
-  A save rebuilds the module alone, never the running app. Everything in the
-  module's sources but its entry point stays in an anonymous namespace, or
-  it binds to the app's generation-0 copy. The module owns
-  nothing: no callbacks, no state, and any object it creates is the host's
-  to destroy by the next `onReloaded`, since its image is unmapped a loop
-  turn after the next reload. The host reads its mode and module from
-  `Core/Plugins/HotReload.h` — `if constexpr (Plugins::isHotReload())`,
-  `hotReloadTarget()` and `hotReloadBuildCommand` — and never spells an
-  `EACP_HOT_RELOAD_*` macro; it includes that header directly, never through
-  the `Core.h` umbrella, because its contents depend on the app's own compile
-  definitions. A configure prints `<app>: hot reload ON/OFF`.
+- `EACP_HOT_RELOAD` (default `OFF`): dev or static mode for every app wired
+  with `eacp_add_hot_reload` that passes no `HOT_RELOAD` of its own (both
+  in-tree examples pass `ON`; Windows, iOS and Android are always static).
+  `eacp_add_hot_reload(<app> <library> SOURCES ...)` creates the library: a
+  static one linked into the app in static mode, a module the app loads in
+  dev mode, whose own links are routed to the app and reach it compile-only.
+  An app lists its reloadable functions once with `EACP_RELOADABLE` and
+  reaches them by type through `Plugins::Reloadable` (`create<T>()`,
+  `function<F>()`; `Core/Plugins/Reloadable.h`, included directly, never
+  through `Core.h`); `Docs/HotReload.md` is the whole account — the CMake,
+  the module rules, ownership, failure handling and the layers underneath.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_HOT_RELOAD=ON
 ```
+
+- `EACP_PRECOMPILE_SHADERS` (default `ON`): every app wired with
+  `eacp_add_precompiled_shaders(<app> SOURCES ...)`
+  (`CMake/PrecompiledShaders.cmake`) gets an `<app>-shaders` host tool built
+  from its sources, each listing shaders in a self-registering
+  `EACP_SHADER_SET() { visit<MyShader>(); }`, run at build time into
+  `<app>-PrecompiledShaders/` and embedded under `EacpShaders`, so its
+  `ShaderLibrary`s load blobs instead of compiling source. `OFF`, a
+  cross-compile (iOS, Android, for now) or a host with no compiler for any
+  backend leaves the app compiling at run time, with a `STATUS` line saying
+  so. The backend is the platform's own (`metal` on Apple, `dxbc` on Windows,
+  `spirv` on Linux) unless the call passes `BACKENDS`;
+  `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides every call, and
+  a requested backend the host cannot compile is dropped with a `STATUS` line.
+  Metal needs Xcode's Metal Toolchain component (`xcrun -sdk macosx metal
+  --version` must run; `xcodebuild -downloadComponent MetalToolchain`), probed
+  once per build directory into `EACP_METAL_TOOLCHAIN_FOUND`; SPIR-V needs
+  `eacp-spirv`. A successful run deletes the blobs its manifest no longer
+  lists. `Apps/GPU/RotatingTriangle` and `Apps/GPU/Compute` use it;
+  "Compiling shaders at build time" in `Lib/eacp/GPU/README.md` is the account.
 
 ### Local Miro source
 
@@ -452,8 +455,10 @@ for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
 into `Core`'s `Clipboard` through the backend hook in
 `Core/App/Clipboard-Linux.h` so `eacp-core` links no Wayland; a copy needs
 keyboard focus on one of our windows), a compositor disconnect that fires
-`onLost` on every view surface and leaves the process headless, and stubs for
-image codecs, menus, tray and system appearance.
+`onLost` on every view surface and leaves the process headless, the PNG/JPEG
+codec (`Image/Image-Linux.cpp` over stb_image and stb_image_write, linked
+PRIVATE and kept out of the unity batches), and stubs for menus, tray and
+system appearance.
 
 The X11 half is its twin, on xcb with no Xlib symbol anywhere.
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
@@ -684,7 +689,7 @@ libfontconfig-dev fonts-dejavu-core fonts-dejavu-extra fonts-droid-fallback
 fonts-noto-color-emoji`.
 
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
-`TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
+`TextMetrics`, `TextInput` and the retained layer classes are
 left out of the Linux source list rather than stubbed, and with them
 `Apps/Graphics` and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
@@ -788,6 +793,29 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Core/ArgsTests.cpp`; `parse()` reads the stored command line, so a
   body needs no argc/argv), and `Console::print`/`printError`
   (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
+- Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
+  message, `AlertIcon`, buttons, default and cancel button; returns at once
+  from any thread, queues the alert (per eacp copy) so they come up one at a
+  time in call order, the next let in before the callback runs, and answers
+  the pressed button's index on the main thread exactly once. `NSAlert`'s
+  `runModal` on macOS (a quit that ends the modal is put to the root loop
+  again, and alerts queued behind it are not shown while it is pending,
+  through `Threads/EventLoop-macOS.h`), `TaskDialogIndirect` on Windows
+  (comctl32 v6 through shell32's manifest as an activation context,
+  `MessageBoxW` only when the function cannot be found; the thread's other
+  top-level windows are disabled while it is up), `UIAlertController` on iOS
+  (retried on later turns while nothing can present it). Nobody choosing — a
+  quit, a failed or dismissed dialog, an answer dropped unanswered (the last
+  copy of the answer going answers it), headless, Linux and Android (which
+  never show one), a standalone app with no loop running (answered at once on
+  the calling thread; `isEventLoopRunning` answers for the whole process) —
+  answers `Detail::unansweredButton`: the cancel button, else the default.
+  The platforms' id-to-button mappings are `Detail::` functions in
+  `Alert.cpp` so every lane tests them. `setAlertPresenter` replaces the
+  dialog (and the headless answer) at each alert's turn, which is how
+  `Tests/Core/AlertTests.cpp` and an app's own tests see and answer alerts;
+  replacing it answers the alert the old one held as unanswered.
+  `Apps/Graphics/AlertDemo` is the hand check of the native dialogs.
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations, backed by Core Graphics on
@@ -1056,36 +1084,12 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `run()` mid-run coalesces into exactly one rerun; a cancelled run finishes
   with `exited == false` (cancel kills the direct child only, not ninja under
   cmake)
-- `Plugins::ReloadableLibrary` (`Plugins/ReloadableLibrary.h`): `reload()` opens
-  a staged copy of a module being rebuilt (named `<stem>-<gen>-<pid>-<serial>`,
-  so two running copies of an app never remove each other's) and hands the
-  old image to `Plugins::unload`; every pointer from the image dies at the
-  next successful reload. With a `requiredSymbol`, an image that does not
-  export it is refused before the swap: the previous generation stays and
-  `lastError()` is `no <symbol>`. `Apps/UI/HotReload` is the worked example: an eacp-ui
-  layout function (`demoLayout(const LayoutTargets&, const UI::Rect&)`,
-  calling `setBounds` on components the host owns) in a module, rebuilt and
-  reloaded on save, or compiled in statically when `EACP_HOT_RELOAD` says so
-  (`Plugins/HotReload.h`: `isHotReload()`, `hotReloadTarget()`);
-  `Apps/GPU/HotReload` is the object case: `makeDemoView()` returns
-  an `OwningPointer<Graphics::View>` holding one of two module-defined
-  `GPUView`s, which the host destroys in `onReloaded`, while the old image is
-  still mapped, before asking the new one for a replacement
-- `Plugins::HotReloadLoop` (`Plugins/HotReloadLoop.h`): a `SourceWatcher`,
-  `BuildRunner` and `ReloadableLibrary` as one object, built from `Options`
-  or a define-free `HotReloadTarget` (`Plugins/HotReloadTarget.h`, with
-  `hotReloadBuildCommand`). A settled change builds (a change mid-build is
-  one coalesced rerun, reported as a build of its own), a successful build
-  reloads and calls `onReloaded(library)`, which fires only when the image
-  exports `Options::requiredSymbol`, so the app looks its entry point up
-  without a fallback; a failed build or load keeps the generation.
-  `BuildFailure::summary` (`buildFailureFrom`) strips ANSI colour and takes a
-  located compiler error, then any non-driver `error:` line, a `CMake Error`,
-  ninja's `FAILED:` and the last line, in that order. The module's and
-  staging directories are excluded from the watch when they lie under the
-  sources. `getState()`/`describeState()` (`generation N`, `building…`,
-  `build failed: …`, `load failed: …`) drive a status line. Nothing builds
-  until the first change; callbacks must not destroy the loop
+- Hot reload (`Plugins/`): `Reloadable` with `EACP_RELOADABLE` is the
+  interface (`Apps/UI/HotReload` reloads a layout function, `Apps/GPU/HotReload`
+  a `GPUView` factory held in a `Graphics::OptionalView`, replaced inside
+  `onReloaded`); `HotReloadLoop`, `ReloadableLibrary` (with its
+  `requiredSymbol` and `validate` refusals) and `BuildFailure` are the layers
+  under it. `Docs/HotReload.md` documents all of them
 
 **ObjC/** - Memory management bridge
 - `Ptr<T>`: RAII smart pointer for Objective-C objects (handles retain/release)
@@ -1241,6 +1245,26 @@ allocates, locks, logs or makes a syscall. Semantics, the undefined-case table
 and the realtime contract: `Lib/eacp/GPU/README.md`, "Running a kernel on the
 CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
 
+### DXC at run time (`Lib/eacp/GPU/Shader/Dxc.h`)
+
+On D3D12, `GPU::Dxc::setOptions({.enabled = true, .locateLibrary = ...})` makes
+every run-time `ShaderLibrary` compile through `dxcompiler.dll` (SM 6.0 DXIL,
+`-O1` by default through `Options::arguments`) instead of FXC; the DLL is
+loaded by path through `Plugins::DynamicLibrary`, lazily on the first compile
+or by `Dxc::load()`, and nothing links it. An unloadable compiler or a device
+with no Shader Model 6.0 logs once and falls back to FXC (`Dxc::status()` says
+why); a shader DXC rejects leaves the library invalid, with no FXC retry.
+Precompiled blobs and the backend's internal shaders are untouched, and off
+Windows the options change nothing (`Dxc-Default.cpp`). The default locator is
+the separate `eacp-gpu-dxc` target (`GPU/Dxc/DxcResource.h`,
+`Dxc::enableFromOnlineResource()`), which fetches the official release through
+`OnlineResource` into `<cache root>/eacp/DXC` so `eacp-gpu` never links
+`eacp-network`; `Apps/GPU/Teapot` uses it. `Tests/GPU/DxcTests-Windows.cpp`
+needs `EACP_TEST_DXC=1` for its download cases, and `EACP_D3D12_DXC=1` runs all
+of `GPUTests` under DXC. "Compiling with DXC at run time" in
+`Lib/eacp/GPU/README.md` is the account, including the three WARP failures
+(DXIL `Htan`/`Hsin`/`Hcos`) and why `-O1`.
+
 ### ML (`Lib/eacp/ML`)
 
 Two targets. `eacp-ml-graph` (every platform but iOS; links `eacp-core` and
@@ -1302,6 +1326,8 @@ Android: android, log, jnigraphics, the Vulkan loader the same way, and
 `java.net`/`javax.net.ssl` through JNI for the network; no libcurl.
 
 ## Code Style
+
+Before writing a helper, read `Docs/Toolbox.md`.
 
 Always use the most modern C++ and RAII practices.
 Use auto for variables and whenever possible.

@@ -33,6 +33,7 @@ target_sources(eacp-ui PRIVATE
         Widgets/ListBox.cpp
         Widgets/PopupMenu.cpp
         Widgets/Tabs.cpp
+        Widgets/Theme.cpp
         Widgets/TouchScroller.cpp
         Widgets/Viewport.cpp
         Widgets/Widgets.cpp)

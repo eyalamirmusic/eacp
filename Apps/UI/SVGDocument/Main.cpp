@@ -553,7 +553,7 @@ struct StatsBar final : UI::Component
         auto area = getLocalBounds();
         auto summary = std::string {};
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
 
         for (auto line = 0; line < lines; ++line)
         {
@@ -594,7 +594,7 @@ struct Gallery final : UI::Component
         setInterceptsMouseClicks(true);
         title.setColour(Graphics::Color {0.16f, 0.16f, 0.2f, 1.f});
         title.setFontSize(14.f);
-        hint.setColour(UI::defaultTheme().dimText);
+        hint.setThemeColour(UI::ThemeKeys::dimText);
         stats.document = &document;
 
         addChildren({title, hint, document, stats});

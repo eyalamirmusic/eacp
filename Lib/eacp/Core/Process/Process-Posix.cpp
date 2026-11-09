@@ -1,5 +1,6 @@
 #include "Process.h"
 #include "SpawnDirectory-Posix.h"
+#include "../Utils/Environment-Posix.h"
 #include "../Utils/Logging.h"
 
 #include <cerrno>
@@ -11,8 +12,6 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern char** environ;
 
 namespace eacp::Processes
 {
@@ -29,10 +28,7 @@ void ignoreSigPipeOnce()
 // code in the child, so there is no fork/setenv-in-child deadlock hazard.
 Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& overrides)
 {
-    auto entries = Vector<std::string> {};
-
-    for (auto entry = environ; *entry != nullptr; ++entry)
-        entries.push_back(*entry);
+    auto entries = copyEnvironmentEntries();
 
     for (const auto& var: overrides)
     {

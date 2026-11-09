@@ -528,11 +528,28 @@ auto tSplitDelimiter = test("Tcp/receiveUntilHandlesADelimiterSplitAcrossReads")
     check(second == "second-line");
 };
 
+namespace
+{
+// An interrupt has to beat the blocked call's own timeout by a margin a
+// stalled CI runner cannot close, so a late wake still reads as a wake and
+// only a missing one runs into the timeout.
+constexpr auto blockedCallTimeout = eacp::Time::MS {15000};
+constexpr auto interruptWindow = eacp::Time::MS {5000};
+
+void waitUntilAboutToBlock(const std::atomic<bool>& started)
+{
+    while (!started.load())
+        eacp::Time::sleepMS(1);
+
+    eacp::Time::sleepMS(20);
+}
+} // namespace
+
 auto tTcpInterruptWakesAccept = test("Tcp/interruptWakesABlockedAccept") = []
 {
-    auto listener =
-        Listener::bind(0, {eacp::Time::MS {5000}, eacp::Time::MS {2000}});
+    auto listener = Listener::bind(0, {blockedCallTimeout, eacp::Time::MS {2000}});
 
+    auto started = std::atomic<bool> {false};
     auto interrupted = std::atomic<bool> {false};
     auto timedOut = std::atomic<bool> {false};
 
@@ -540,6 +557,7 @@ auto tTcpInterruptWakesAccept = test("Tcp/interruptWakesABlockedAccept") = []
     {
         try
         {
+            started = true;
             listener.accept();
         }
         catch (const TimeoutError&)
@@ -554,8 +572,8 @@ auto tTcpInterruptWakesAccept = test("Tcp/interruptWakesABlockedAccept") = []
 
     auto acceptor = std::thread(acceptOnce);
 
-    eacp::Time::sleepMS(20);
-    auto promptly = eacp::Time::Deadline {eacp::Time::MS {1000}};
+    waitUntilAboutToBlock(started);
+    auto promptly = eacp::Time::Deadline {interruptWindow};
     listener.interrupt();
     acceptor.join();
 
@@ -594,10 +612,10 @@ auto tTcpInterruptWakesReceive = test("Tcp/interruptWakesABlockedReceive") = []
 
     auto server = std::thread(holdSilently);
 
-    auto client =
-        Connection::connect({"127.0.0.1", listener.port()},
-                            {eacp::Time::MS {2000}, eacp::Time::MS {5000}});
+    auto client = Connection::connect({"127.0.0.1", listener.port()},
+                                      {eacp::Time::MS {2000}, blockedCallTimeout});
 
+    auto started = std::atomic<bool> {false};
     auto ended = std::atomic<bool> {false};
     auto timedOut = std::atomic<bool> {false};
 
@@ -605,6 +623,7 @@ auto tTcpInterruptWakesReceive = test("Tcp/interruptWakesABlockedReceive") = []
     {
         try
         {
+            started = true;
             ended = client.receive().empty();
         }
         catch (const TimeoutError&)
@@ -619,8 +638,8 @@ auto tTcpInterruptWakesReceive = test("Tcp/interruptWakesABlockedReceive") = []
 
     auto reader = std::thread(receiveOnce);
 
-    eacp::Time::sleepMS(20);
-    auto promptly = eacp::Time::Deadline {eacp::Time::MS {1000}};
+    waitUntilAboutToBlock(started);
+    auto promptly = eacp::Time::Deadline {interruptWindow};
     client.interrupt();
     reader.join();
 

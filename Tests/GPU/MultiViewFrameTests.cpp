@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
 
 // One render drawing into several views' drawables
 // (GPUView::renderFrame from inside another view's render(), a frame nested in
@@ -284,6 +285,51 @@ auto tMultiViewOwnFrame = test("MultiView/aViewDoesNotNestInItsOwnFrame") = []
         check(rendered);
 
     check(!Device::shared().isFrameOpen());
+};
+
+// EACP-16: a draw that throws still lets the view go, so once the exception is
+// handled the next renderFrame renders rather than refusing for good as though
+// the thrown-out-of frame were still open.
+auto tMultiViewThrowingDraw =
+    test("MultiView/aViewRendersAgainAfterADrawThatThrew") = []
+{
+    if (!canTest())
+        return;
+
+    auto extra = ExtraView {};
+    auto threw = false;
+
+    try
+    {
+        extra.view.renderFrame([](Frame&)
+                               { throw std::runtime_error("draw failed"); });
+    }
+    catch (const std::runtime_error&)
+    {
+        threw = true;
+    }
+
+    auto drew = false;
+
+    const auto rendered = extra.view.renderFrame(
+        [&](Frame& frame)
+        {
+            clear(frame, slate);
+            drew = true;
+        });
+
+    check(!Device::shared().isFrameOpen());
+
+    // Linux and Windows give a view in no window no swapchain, so neither frame
+    // reaches its draw there; wherever the first one did, the second must too.
+    if constexpr (Platform::isApple())
+        check(threw, "the first draw ran and threw");
+
+    if (!threw)
+        return;
+
+    check(rendered, "the next frame is not refused");
+    check(drew, "and its draw runs");
 };
 
 auto tMultiViewUnreadable = test("MultiView/anUnreadableDrawableIsNotCopied") = []

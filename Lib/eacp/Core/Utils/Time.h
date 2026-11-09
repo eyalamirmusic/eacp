@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <string>
 
 namespace eacp::Time
 {
@@ -15,11 +16,27 @@ struct MS
     friend constexpr auto operator<=>(MS, MS) = default;
 };
 
+constexpr MS operator+(MS first, MS second)
+{
+    return MS {first.count + second.count};
+}
+
+constexpr MS operator*(MS duration, std::int64_t factor)
+{
+    return MS {duration.count * factor};
+}
+
 // Blocks the calling thread, keeping <thread> and <chrono> out of callers
 // that just need to sleep.
 void sleep(MS duration);
 
 void sleepMS(int ms);
+
+// Wall-clock time since the Unix epoch, for timestamps that leave the process.
+MS sinceEpoch();
+
+// UTC as ISO 8601 with milliseconds, "2026-10-27T18:48:02.569Z".
+std::string formatIso8601(MS sinceUnixEpoch);
 
 // A point in the future, for pump-until loops. Wraps the steady clock behind
 // out-of-line methods so headers using it stay free of <chrono>.

@@ -187,12 +187,29 @@ bool isInside(const FilePath& path, const FilePath& directory)
 HotReloadLoop::Options hotReloadOptionsFor(const HotReloadTarget& target,
                                            const std::string& requiredSymbol)
 {
-    auto options = HotReloadLoop::Options {};
-    options.sources.directory = FilePath {target.sourceDirectory};
-    options.buildCommand = hotReloadBuildCommand(target);
-    options.modulePath = FilePath {target.library};
+    auto options = hotReloadOptions(target);
     options.requiredSymbol = requiredSymbol;
     return options;
+}
+
+Vector<FilePath> hotReloadSourceFiles(std::string_view sources)
+{
+    auto files = Vector<FilePath> {};
+
+    while (!sources.empty())
+    {
+        auto end = sources.find('|');
+
+        if (auto file = sources.substr(0, end); !file.empty())
+            files.add(FilePath {file});
+
+        if (end == std::string_view::npos)
+            break;
+
+        sources.remove_prefix(end + 1);
+    }
+
+    return files;
 }
 
 Files::SourceWatcher::Options
@@ -209,6 +226,16 @@ Files::SourceWatcher::Options
     return sources;
 }
 } // namespace
+
+HotReloadLoop::Options hotReloadOptions(const HotReloadTarget& target)
+{
+    auto options = HotReloadLoop::Options {};
+    options.sources.directory = FilePath {target.sourceDirectory};
+    options.sources.files = hotReloadSourceFiles(target.sources);
+    options.buildCommand = hotReloadBuildCommand(target);
+    options.modulePath = FilePath {target.library};
+    return options;
+}
 
 BuildFailure buildFailureFrom(const Processes::ProcessResult& result)
 {
@@ -233,6 +260,7 @@ HotReloadLoop::HotReloadLoop(const Options& options)
     { buildFinished(result); };
     runner.onOutput = forwardOutput;
     runner.onFinished = finished;
+    library.validate = options.validate;
 }
 
 HotReloadLoop::HotReloadLoop(const HotReloadTarget& target,
@@ -336,5 +364,10 @@ ReloadableLibrary& HotReloadLoop::getLibrary()
 const FilePath& HotReloadLoop::getSourceDirectory() const
 {
     return watcher.getDirectory();
+}
+
+const Vector<FilePath>& HotReloadLoop::getWatchedPaths() const
+{
+    return watcher.getWatchedPaths();
 }
 } // namespace eacp::Plugins

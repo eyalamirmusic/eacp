@@ -20,6 +20,12 @@ void initMainThread();
 // thread rather than the host's UI thread.
 void setCurrentThreadAsMainFallback();
 
+// Lets the crash reporter report fast-fail and heap-corruption crashes, which
+// only Windows Error Reporting sees. eacp sets SEM_NOGPFAULTERRORBOX at start to
+// hide Windows' "stopped working" dialog, and that flag stops Windows Error
+// Reporting too; this clears it and keeps initMainThread from setting it again.
+void keepWindowsErrorReportingOn();
+
 void shutdownMainThread();
 
 // Kills every thread timer still registered (Timer-Windows.cpp), so WM_TIMER

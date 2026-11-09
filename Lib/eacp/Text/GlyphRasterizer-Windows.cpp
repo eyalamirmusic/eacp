@@ -847,7 +847,7 @@ struct GlyphRasterizer::Native
 
     GlyphBitmap rasterize(GlyphKey key,
                           const FontVariant& variant,
-                          const RasterRequest& request) const
+                          const RasterRequest& requestToUse) const
     {
         auto result = GlyphBitmap {};
         const auto at = faceOf(key, variant);
@@ -875,7 +875,7 @@ struct GlyphRasterizer::Native
         // CoreGraphics's does, so the request's lightText has nothing to say
         // here.
         if (!drawColorGlyph(run, result))
-            drawMask(run, result, request.subpixelX);
+            drawMask(run, result, requestToUse.subpixelX);
 
         return result;
     }

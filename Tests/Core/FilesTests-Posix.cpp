@@ -293,3 +293,36 @@ auto tFinderHidden = test("Files/aFinderHiddenFileIsHiddenWithoutADot") = []
     std::filesystem::remove_all(dir);
 };
 #endif
+
+auto tSetExecutableAddsExecuteBits =
+    test("Files/setExecutable adds execute bits") = []
+{
+    auto dir = scratchDirectory("files-set-executable");
+    auto path = dir / "tool.sh";
+    writeTestFile(path, "#!/bin/sh\n");
+
+    const auto readWrite =
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write;
+    const auto executeForEveryone = std::filesystem::perms::owner_exec
+                                    | std::filesystem::perms::group_exec
+                                    | std::filesystem::perms::others_exec;
+    std::filesystem::permissions(path, readWrite);
+
+    check(eacp::Files::setExecutable(FilePath {path}));
+    check(std::filesystem::status(path).permissions()
+          == (readWrite | executeForEveryone));
+    check(!eacp::Files::setExecutable(FilePath {dir / "missing.sh"}));
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tReadSymlinkGivesTarget = test("Files/readSymlink gives the link's text") = []
+{
+    auto dir = scratchDirectory("files-readlink");
+    writeTestFile(dir / "target.txt", "x");
+    std::filesystem::create_symlink("target.txt", dir / "link.txt");
+
+    check(eacp::Files::readSymlink(FilePath {dir / "link.txt"}) == "target.txt");
+
+    std::filesystem::remove_all(dir);
+};

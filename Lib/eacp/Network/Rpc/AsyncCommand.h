@@ -70,11 +70,11 @@ Threads::Async<Miro::Json::Value> runCommand(CommandExecution mode, Invoke invok
     };
 
     if (mode == CommandExecution::WorkerThread)
-        runOnWorkerThread([invoke = std::move(invoke), settle]() mutable
-                          { invoke(settle); });
+        runOnWorkerThread([work = std::move(invoke), settle]() mutable
+                          { work(settle); });
     else
-        Threads::callAsync([invoke = std::move(invoke), settle]() mutable
-                           { invoke(settle); });
+        Threads::callAsync([work = std::move(invoke), settle]() mutable
+                           { work(settle); });
 
     return promise.get();
 }
