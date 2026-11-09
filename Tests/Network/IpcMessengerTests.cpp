@@ -202,3 +202,66 @@ auto tServesClientsInTurn = test("Ipc/Messenger/servesClientsInTurn") = []
 
     check(greeted == 2);
 };
+
+namespace
+{
+constexpr auto stuckReaderMessageBytes = std::size_t {1} << 20;
+constexpr auto stuckReaderMessagesWithinLimit = 16;
+constexpr auto stuckReaderMessagesPastLimit = 80;
+constexpr auto sendingToAStuckReaderLimit = eacp::Time::MS {500};
+
+struct StuckReaderSession
+{
+    MessageServer server;
+    eacp::IPC::Channel reader;
+    Messenger* session = nullptr;
+    bool isGone = false;
+
+    explicit StuckReaderSession(const std::string& name)
+        : server(name)
+        , reader(eacp::IPC::Channel::connect(name))
+    {
+        server.onClient = [this](Messenger& arrived)
+        {
+            session = &arrived;
+            arrived.onDisconnected = [this] { isGone = true; };
+        };
+    }
+};
+
+bool isSendingFinishedWithinLimit(Messenger& session, int messageCount)
+{
+    auto payload = std::string(stuckReaderMessageBytes, 'x');
+    auto deadline = eacp::Time::Deadline {sendingToAStuckReaderLimit};
+
+    for (auto index = 0; index < messageCount; ++index)
+        session.send(payload);
+
+    return !deadline.expired();
+}
+} // namespace
+
+auto tSendingToAStuckReaderReturns =
+    test("Ipc/Messenger/sendingToAPeerThatStoppedReadingReturnsAtOnce") = []
+{
+    auto stuck = StuckReaderSession {"eacp.tests.msgr.stuckReader"};
+    check(runEventLoopUntil([&] { return stuck.session != nullptr; },
+                            messengerPumpTimeout));
+
+    check(isSendingFinishedWithinLimit(*stuck.session,
+                                       stuckReaderMessagesWithinLimit));
+    check(stuck.session->isConnected());
+};
+
+auto tStuckReaderIsDisconnected =
+    test("Ipc/Messenger/aPeerLeavingTooMuchUnreadIsDisconnected") = []
+{
+    auto stuck = StuckReaderSession {"eacp.tests.msgr.stuckReaderOverflow"};
+    check(runEventLoopUntil([&] { return stuck.session != nullptr; },
+                            messengerPumpTimeout));
+
+    check(isSendingFinishedWithinLimit(*stuck.session,
+                                       stuckReaderMessagesPastLimit));
+    check(runEventLoopUntil([&] { return stuck.isGone; }, messengerPumpTimeout));
+    check(!stuck.session->isConnected());
+};
