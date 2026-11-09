@@ -15,6 +15,14 @@
 //     SetRenderingDevice(). A lost device therefore invalidates every target,
 //     visual and surface, not just their pixels. Objects stamp themselves with
 //     getCompositionGeneration() and rebuild when it moves.
+//
+// Everything declared here is main-thread only. The compositor is one
+// unsynchronised process-wide object built on first use, a recovery replaces
+// its devices in place and then calls back into every host, view and listener,
+// and its retries run from the event loop. A device pointer read on another
+// thread can be released under it. (The D3D11 device is created without
+// D3D11_CREATE_DEVICE_SINGLETHREADED for the composition engine's own threads,
+// not for callers.)
 
 #include "D2D-Windows.h"
 
@@ -30,12 +38,22 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
+// The factories need no device and are null only if DirectWrite or Direct2D
+// itself failed to start. The D3D/D2D devices are null when no rendering device
+// could be made.
 ID2D1Factory1* getD2DFactory();
 IDWriteFactory* getDWriteFactory();
 ID3D11Device* getD3DDevice();
 IDXGIDevice* getDXGIDevice();
 ID2D1Device* getD2DDevice();
 
+// Null, and isCompositorInitialized() false, when DirectComposition is
+// unavailable while everything above is up: a session with no desktop
+// compositor (a service, a CI runner, a job started over ssh into session 0)
+// fails its creation with E_ACCESSDENIED. Nothing reaches the screen then, but
+// text and renderToImage still work. EACP_DCOMP_UNAVAILABLE=1 in the
+// environment, set before the first graphics call, forces that state on a
+// desktop that has a compositor (Tests/Text/NoComposition-WindowsTests.cpp).
 IDCompositionDesktopDevice* getCompositionDevice();
 bool isCompositorInitialized();
 
@@ -58,9 +76,36 @@ HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
 uint64_t getCompositionGeneration();
 
 // Recovers the shared D3D/D2D/DComp devices when `hr` is a device-loss HRESULT
-// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
-// recovery ran; the caller should drop the current frame — every host rebuilds
-// and redraws once the replacement device is live.
+// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if a
+// replacement rendering device is live; the caller should drop the current
+// frame — every host rebuilds and redraws. False for any other HRESULT, and
+// when the replacement failed (a GPU still resetting): the devices are then
+// null and the recovery is retried from the event loop, backing off from 0.5 s
+// to 30 s, until it works. So is a composition device that was up before the
+// loss and did not come back, on the rendering device already replaced.
 bool handleDeviceLossIfNeeded(HRESULT hr);
+
+// Runs a failed recovery's next attempt now if it is due, for a caller that
+// needs a device in a process that may never pump the event loop.
+void retryDeviceRecoveryIfDue();
+
+namespace Detail
+{
+// Test seam: the next `count` passes through `point` fail with `hr`, as a
+// device that is still resetting would.
+enum class DeviceFault
+{
+    CreateRenderingDevice,
+    CreateCompositionDevice,
+    SnapshotCreateDeviceContext,
+    SnapshotEndDraw,
+    Count
+};
+
+void injectDeviceFault(DeviceFault point, HRESULT hr, int count = 1);
+
+// S_OK, or the failure injected at `point`, which it consumes.
+HRESULT takeInjectedDeviceFault(DeviceFault point);
+} // namespace Detail
 
 } // namespace eacp::Graphics

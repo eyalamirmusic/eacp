@@ -862,13 +862,25 @@ OffscreenComposite makeOffscreenComposite(const Rect& bounds, float scale)
     if (composite.pixelWidth <= 0 || composite.pixelHeight <= 0)
         return composite;
 
+    if (getD2DDevice() == nullptr)
+        retryDeviceRecoveryIfDue();
+
     auto* device = getD2DDevice();
     if (!device)
         return composite;
 
-    if (FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-                                           composite.dc.GetAddressOf())))
+    auto hr = Detail::takeInjectedDeviceFault(
+        Detail::DeviceFault::SnapshotCreateDeviceContext);
+
+    if (SUCCEEDED(hr))
+        hr = device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                         composite.dc.GetAddressOf());
+
+    if (FAILED(hr))
+    {
+        handleDeviceLossIfNeeded(hr);
         return {};
+    }
 
     auto properties =
         D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
@@ -1022,8 +1034,18 @@ Image readbackComposite(OffscreenComposite& composite)
     if (!composite.valid())
         return {};
 
-    if (FAILED(composite.dc->EndDraw()))
+    auto hr = composite.dc->EndDraw();
+
+    if (auto injected =
+            Detail::takeInjectedDeviceFault(Detail::DeviceFault::SnapshotEndDraw);
+        FAILED(injected))
+        hr = injected;
+
+    if (FAILED(hr))
+    {
+        handleDeviceLossIfNeeded(hr);
         return {};
+    }
 
     auto properties = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,

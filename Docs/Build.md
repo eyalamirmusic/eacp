@@ -477,3 +477,11 @@ The environment variables those commands set — `EACP_VK_SOFTWARE`,
 `EACP_REQUIRE_GPU`, `EACP_REQUIRE_DISPLAY`, `EACP_REQUIRE_FONTS`,
 `EACP_HEADLESS` — are described in [Linux.md](Linux.md) and in the "Running
 it" section of `Lib/eacp/GPU/README.md`.
+
+On Windows, a session with no desktop compositor — a service, a CI runner, a
+job started over ssh, which lands in session 0 — cannot create a
+DirectComposition device (`E_ACCESSDENIED`). Nothing reaches the screen there,
+but DirectWrite, Direct2D and `renderToImage` still work, and so do the tests
+that use them; the ones that need on-screen composition self-skip.
+`EACP_DCOMP_UNAVAILABLE=1` forces that state on a desktop that has a
+compositor, which is how `NoCompositionTests` checks it on any machine.
