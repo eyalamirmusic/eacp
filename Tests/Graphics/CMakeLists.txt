@@ -39,6 +39,7 @@ set(graphics_test_sources
         SizeConstraintTests.cpp
         TestMain.cpp
         TouchTests.cpp
+        ViewLifetimeTests.cpp
         ViewVisibilityTests.cpp
         ViewWindowTests.cpp
         WindowTests.cpp)
