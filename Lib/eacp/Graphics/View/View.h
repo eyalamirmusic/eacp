@@ -347,6 +347,9 @@ public:
     void scaleToFit();
     void scaleToFit(ChildViews views);
 
+    // A view does not own its subviews. Destroying it removes it from its own
+    // parent and leaves each subview parentless, as removeSubview would, so
+    // the two can be destroyed in either order.
     void addChildren(ChildViews views);
     void addSubview(View& view);
     void removeSubview(View& view);
@@ -504,6 +507,11 @@ private:
 
     void viewAdded(View& view);
     void viewRemoved(View& view);
+
+    // What every platform's destructor does with the subviews it leaves
+    // behind, after removeFromParent(): each is taken out of this view the way
+    // removeSubview takes one, so none is left pointing at it.
+    void detachSubviews();
 
     // Walks the subtree announcing an effective-visibility change, skipping any
     // branch whose own flag already hides it: a view hidden in its own right

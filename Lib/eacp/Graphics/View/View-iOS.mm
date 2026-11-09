@@ -285,6 +285,7 @@ View::~View()
         layer->detachFromLayer();
 
     removeFromParent();
+    detachSubviews();
 }
 
 void* View::getHandle()

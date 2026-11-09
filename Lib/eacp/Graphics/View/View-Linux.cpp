@@ -212,6 +212,7 @@ View::~View()
         layer->detachFromLayer();
 
     removeFromParent();
+    detachSubviews();
 }
 
 // Not a native surface: a presenting view's comes from requestViewSurface.

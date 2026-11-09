@@ -84,6 +84,26 @@ void View::removeFromParent()
     parent = nullptr;
 }
 
+// Nothing owns a view's subviews, so a parent can die first: that is just the
+// order its owner's members are destroyed in. The subviews must not keep
+// pointing at it, or the next thing they do through their parent, their own
+// destruction included, reads freed memory.
+//
+// Called after removeFromParent(), never before. The ancestors clear what they
+// hold inside the removed subtree - hover, press, key focus, touches - by
+// walking up from those views through their parents, so the subtree has to be
+// intact while that happens.
+void View::detachSubviews()
+{
+    for (auto* view: subviews)
+    {
+        viewRemoved(*view);
+        view->parent = nullptr;
+    }
+
+    subviews.clear();
+}
+
 Window* View::getWindow() const
 {
     // Only the view a window adopted carries the pointer, so a subview walks up
