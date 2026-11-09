@@ -1,7 +1,9 @@
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Text/Text.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 using namespace eacp;
 using namespace GPU;
@@ -70,6 +72,15 @@ const char* phaseName(Graphics::TouchPhase phase)
     return "";
 }
 
+// EACP_RENDER_SCALE=0.5 renders a quarter of the pixels; a debug build takes
+// it from the launch intent (`am start ... --es EACP_RENDER_SCALE 0.5`).
+float renderScaleFromEnvironment()
+{
+    const auto value = getEnvValue("EACP_RENDER_SCALE");
+
+    return value.empty() ? 1.f : std::strtof(value.c_str(), nullptr);
+}
+
 void logTouch(const Graphics::TouchEvent& touch)
 {
     LOG("touch ",
@@ -90,6 +101,8 @@ struct HelloView final : GPUView
         setHandlesTouchEvents(true);
         setWantsTextInput(true);
         setContinuous(true);
+        setRenderScale(renderScaleFromEnvironment());
+        LOG("render scale ", renderScale());
 
         triangle.setVertices(triangleVertices);
         triangle.prepare(sampleCount());

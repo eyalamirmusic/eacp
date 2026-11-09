@@ -126,6 +126,7 @@ public:
         record.pixelWidth = pixelWidth;
         record.pixelHeight = pixelHeight;
         record.scale = scale;
+        record.stretchesBuffer = viewport != nullptr;
 
         // A subsurface's position is applied by its parent's commit, not its
         // own.
