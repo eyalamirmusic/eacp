@@ -5,6 +5,8 @@
 
 #include <aclapi.h>
 
+#include <thread>
+
 namespace eacp::IPC::detail
 {
 namespace
@@ -12,6 +14,9 @@ namespace
 // Sized for bulk payloads (video frames run to megabytes): the quota is
 // advisory, but an undersized one forces writer/reader ping-pong.
 constexpr auto pipeBufferSize = DWORD {1} << 20;
+
+// A peer that is alive but no longer reading would hold a close here forever.
+constexpr auto unreadBytesFlushLimit = DWORD {250};
 
 [[noreturn]] void fail(const std::string& context, DWORD reason)
 {
@@ -67,6 +72,17 @@ bool completed(HANDLE pipe, Operation& operation, DWORD& transferred, DWORD& rea
 
     reason = ::GetLastError();
     return false;
+}
+
+void flushUnlessThePeerIsStuck(HANDLE pipe)
+{
+    auto flusher = std::thread([pipe] { ::FlushFileBuffers(pipe); });
+    auto flusherHandle = (HANDLE) flusher.native_handle();
+
+    if (::WaitForSingleObject(flusherHandle, unreadBytesFlushLimit) == WAIT_TIMEOUT)
+        ::CancelSynchronousIo(flusherHandle);
+
+    flusher.join();
 }
 
 std::wstring pipePath(const std::string& safeName)
@@ -366,9 +382,9 @@ void channelClose(NativeChannel channel) noexcept
 
     // Unlike a socket, a pipe may drop written-but-unread bytes when its
     // handle closes; the flush holds the door until the peer has read them.
-    // A vanished peer fails the flush immediately, so this cannot hang on
-    // the dead.
-    ::FlushFileBuffers((HANDLE) channel);
+    // A vanished peer fails the flush immediately, and a stuck one is given
+    // up on after unreadBytesFlushLimit.
+    flushUnlessThePeerIsStuck((HANDLE) channel);
     ::CloseHandle((HANDLE) channel);
 }
 
