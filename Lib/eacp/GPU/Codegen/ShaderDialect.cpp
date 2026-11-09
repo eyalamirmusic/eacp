@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Format.h>
 
+#include <algorithm>
 #include <cassert>
 #include <span>
 #include <string_view>
@@ -27,8 +28,21 @@ struct BuiltinRename
     std::string_view renamed;
 };
 
-constexpr auto hlslRenames = Array<BuiltinRename, 4> {
-    {"fract", "frac"}, {"mix", "lerp"}, {"dfdx", "ddx"}, {"dfdy", "ddy"}};
+// HLSL's fma is double-only; mad is its float multiply-add. The inverse
+// hyperbolics are helpers there, keyed on the canonical name.
+constexpr auto hlslRenames = Array<BuiltinRename, 8> {{"fract", "frac"},
+                                                      {"mix", "lerp"},
+                                                      {"dfdx", "ddx"},
+                                                      {"dfdy", "ddy"},
+                                                      {"fma", "mad"},
+                                                      {"asinh", "eacpAsinh"},
+                                                      {"acosh", "eacpAcosh"},
+                                                      {"atanh", "eacpAtanh"}};
+
+// Metal's own asinh, under the fast math its library compiles with, cancels for
+// a negative argument; the helper takes it of the magnitude.
+constexpr auto metalRenames =
+    Array<BuiltinRename, 1> {BuiltinRename {"asinh", "eacpAsinh"}};
 
 constexpr auto hlslPrefixRenames = Array<BuiltinRename, 2> {
     {"as_type<uint", "asuint"}, {"as_type<float", "asfloat"}};
@@ -78,15 +92,52 @@ std::string_view findRename(std::span<const BuiltinRename> exact,
 std::string_view findDialectRename(Backend backend, const std::string& name)
 {
     if (backend == Backend::DirectX)
-        return findRename(hlslRenames, hlslPrefixRenames, name);
+    {
+        if (const auto* spelling = hlslTypeNameFor(name); spelling != nullptr)
+            return spelling;
 
-    if (backend != Backend::Vulkan)
-        return {};
+        return findRename(hlslRenames, hlslPrefixRenames, name);
+    }
+
+    if (backend == Backend::Metal)
+        return findExactRename(metalRenames, name);
 
     if (const auto* spelling = glslTypeNameFor(name); spelling != nullptr)
         return spelling;
 
     return findRename(glslRenames, glslPrefixRenames, name);
+}
+
+constexpr auto halfExactCalls = Array<std::string_view, 10> {"abs",
+                                                             "min",
+                                                             "max",
+                                                             "clamp",
+                                                             "floor",
+                                                             "ceil",
+                                                             "trunc",
+                                                             "round",
+                                                             "sign",
+                                                             "transpose"};
+
+bool isRoundedToHalf(const Expr& expr)
+{
+    if (!isHalf(expr.type))
+        return false;
+
+    if (expr.kind == ExprKind::Binary || expr.kind == ExprKind::Mul)
+        return true;
+
+    return expr.kind == ExprKind::Call
+           && !halfExactCalls.contains(std::string_view {expr.text});
+}
+
+std::string getRoundHalfFunction(ValueType type)
+{
+    if (!isMatrix(type))
+        return "eacpRoundHalf";
+
+    return Strings::format(
+        "eacpRoundHalf{}x{}", matrixRows(type), matrixColumns(type));
 }
 
 std::string getCallName(Backend backend, const std::string& name)
@@ -102,7 +153,14 @@ bool isGenTypeCall(const std::string& name)
 {
     return name == "min" || name == "max" || name == "clamp" || name == "mix"
            || name == "step" || name == "smoothstep" || name == "pow"
-           || name == "atan2";
+           || name == "atan2" || name == "fma";
+}
+
+// MSL's fma takes one type throughout; HLSL promotes a scalar itself, and has no
+// one-argument vector constructor to widen it with.
+bool isMetalGenTypeCall(const std::string& name)
+{
+    return name == "fma";
 }
 
 constexpr auto glslComparisonFunctions =
@@ -139,17 +197,24 @@ std::string_view getVectorComponentSuffix(int component)
 // offset, and float4 needs sixteen-byte alignment.
 std::string_view getMetalPackedVectorType(ValueType type)
 {
-    auto integers = isUnsignedInteger(type);
+    constexpr auto floats = Array<std::string_view, 3> {
+        "packed_float2", "packed_float3", "packed_float4"};
+    constexpr auto uints =
+        Array<std::string_view, 3> {"packed_uint2", "packed_uint3", "packed_uint4"};
+    constexpr auto ints =
+        Array<std::string_view, 3> {"packed_int2", "packed_int3", "packed_int4"};
+    constexpr auto halves =
+        Array<std::string_view, 3> {"packed_half2", "packed_half3", "packed_half4"};
 
-    switch (componentCount(type))
-    {
-        case 2:
-            return integers ? "packed_uint2" : "packed_float2";
-        case 3:
-            return integers ? "packed_uint3" : "packed_float3";
-        default:
-            return integers ? "packed_uint4" : "packed_float4";
-    }
+    auto width = std::clamp(componentCount(type), 2, 4) - 2;
+
+    if (isSignedInteger(type))
+        return ints[width];
+
+    if (isHalf(type))
+        return halves[width];
+
+    return isUnsignedInteger(type) ? uints[width] : floats[width];
 }
 
 std::string

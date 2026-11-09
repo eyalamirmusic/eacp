@@ -4,6 +4,12 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/GPU/Dxc/DxcResource.h>
+
+#include <csignal>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #endif
 
 namespace
@@ -53,7 +59,43 @@ int dxcExitCode()
                               + ": " + status.error);
     return 1;
 }
+
+void reportFatal(const char* what)
+{
+    std::fprintf(stderr, "GPUTests: %s\n", what);
+}
+
+void reportAbort(int)
+{
+    reportFatal("abort()");
+}
+
+void reportTerminate()
+{
+    reportFatal("std::terminate()");
+    std::abort();
+}
+
+void reportInvalidParameter(
+    const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t)
+{
+    reportFatal("a CRT function was handed an invalid parameter");
+    std::abort();
+}
+
+// A crash ends the process unflushed and a piped stdout is fully buffered, so
+// every case that ran before one would vanish with it. Unbuffered, the case
+// that crashed is the one after the last line printed.
+void reportCrashesAsTheyHappen()
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::signal(SIGABRT, reportAbort);
+    std::set_terminate(reportTerminate);
+    _set_invalid_parameter_handler(reportInvalidParameter);
+}
 #else
+void reportCrashesAsTheyHappen() {}
+
 void enableDxcWhenAsked() {}
 
 int dxcExitCode()
@@ -76,6 +118,7 @@ int main(int argc, char* argv[])
 {
     argCount = argc;
     argValues = argv;
+    reportCrashesAsTheyHappen();
 
     eacp::Apps::run(runTests);
     return exitCode;
