@@ -2,7 +2,7 @@
 
 #include <eacp/Core/Core.h>
 
-// CoreTests relaunches itself as the child its Process cases need, so the cases
+// ProcessTests relaunches itself as the child its Process cases need, so the cases
 // depend on no shell or system command. TestMain.cpp runs the mode instead of
 // the tests when the binary is started with the flag.
 namespace ProcessChildModes

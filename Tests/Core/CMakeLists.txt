@@ -35,11 +35,6 @@ set(core_test_sources
         MemoryMappedFileTests.cpp
         PlatformTests.cpp
         PluginObjectTests.cpp
-        # Relaunches CoreTests in a child mode (ProcessChildModes, TestMain.cpp).
-        ProcessChildModes.cpp
-        ProcessConcurrentPipesTests.cpp
-        ProcessInheritStdioTests.cpp
-        ProcessTokeniseTests.cpp
         RangeTests.cpp
         ReloadableLibraryTests.cpp
         Sha256Tests.cpp
@@ -48,31 +43,13 @@ set(core_test_sources
         TemporaryFileTests.cpp
         ThreadTests.cpp
         TimerTests.cpp
-        TestMain.cpp
         TimeTests.cpp
         ZipTests.cpp)
 
-# Cross-platform proof for captureOutput=false: redirect the test's own
-# stdout to a file and assert a non-capturing child writes through to it,
-# live, while a capturing child still doesn't.
-if (WIN32)
-    list(APPEND core_test_sources StdioCapture-Windows.cpp)
-else ()
-    list(APPEND core_test_sources StdioCapture-Posix.cpp)
-endif ()
-
-# ProcessTests drive POSIX commands (/bin/echo, pwd, ...) and signals, so they
-# only run on macOS and Linux.
+# These drive POSIX commands (/bin/sh, ...), so they only run on macOS and Linux.
 if (NOT WIN32)
     list(APPEND core_test_sources
-            BuildRunnerTests.cpp HotReloadLoopTests.cpp ReloadableTests.cpp
-            ProcessTests.cpp)
-endif ()
-
-# The same options (verbatim commandLine, merged stderr, live output, working
-# directory) through cmd.exe.
-if (WIN32)
-    list(APPEND core_test_sources ProcessTests-Windows.cpp)
+            BuildRunnerTests.cpp HotReloadLoopTests.cpp ReloadableTests.cpp)
 endif ()
 
 # The file/folder picker seam is Windows-only (App-Windows-FilePicker.h), and
@@ -122,7 +99,6 @@ if (LINUX)
 endif ()
 
 nano_add_executable(CoreTests
-        NO_MAIN
         SOURCES ${core_test_sources}
         TARGETS eacp-core)
 
@@ -146,15 +122,6 @@ add_custom_command(TARGET CoreTests POST_BUILD
 
 target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_RESOURCE_MARKER="${resource_marker_name}")
-
-# The child Process/inheritStdio/streamsWhileRunning watches: it prints a
-# marker to the stdout it inherited and lingers until the test kills it.
-add_executable(StdioLingerHarness StdioLingerHarness.cpp)
-target_link_libraries(StdioLingerHarness PRIVATE eacp-core)
-
-target_compile_definitions(CoreTests PRIVATE
-        EACP_STDIO_LINGER_HARNESS="$<TARGET_FILE:StdioLingerHarness>")
-add_dependencies(CoreTests StdioLingerHarness)
 
 # A command-line tool over Apps::runConsole and Args::Parser, which
 # ConsoleTests runs to read the exit code and both streams it leaves.
@@ -235,3 +202,5 @@ if (NOT CMAKE_CROSSCOMPILING)
     set_property(DIRECTORY APPEND PROPERTY
             TEST_INCLUDE_FILES "${clipboard_lock_file}")
 endif ()
+
+add_subdirectory(Process)

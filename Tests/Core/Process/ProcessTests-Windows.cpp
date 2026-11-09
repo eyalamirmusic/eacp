@@ -2,7 +2,7 @@
 // commandLine (cmd's own `&&` and quoting must reach it untouched), stderr
 // merged into stdout, the live output callback and the working directory.
 
-#include "Common.h"
+#include "../Common.h"
 
 #include <mutex>
 

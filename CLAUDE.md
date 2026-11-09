@@ -1075,7 +1075,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   is both streams interleaved, `errorOutput()` stays empty. `onOutput` sees each
   stdout chunk on the reader thread as it is read, before it is appended; it is
   not called for a separate stderr. Both need `captureOutput`
-- Tests: `ProcessTests.cpp` (POSIX commands), `ProcessTests-Windows.cpp` (the
+- Tests: the `ProcessTests` binary (`Tests/Core/Process/`), whose own `main`
+  runs it as a child in a mode (`--process-child echoInput`, ...) so the cases
+  need no shell; `ProcessTests.cpp` (POSIX), `ProcessTests-Windows.cpp` (the
   same options through cmd.exe), `ProcessTokeniseTests.cpp` (everywhere)
 - POSIX impl (`Process-Posix.cpp`, fork/exec) shared by macOS+Linux; Windows uses
   `CreateProcessW` (`Process-Windows.cpp`)
