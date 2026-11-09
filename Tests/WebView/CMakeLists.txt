@@ -6,6 +6,13 @@ nano_add_executable(ScriptHostTests
         SOURCES ScriptHostTests.cpp
         TARGETS eacp-webview-bridge)
 
+# The page messages the native backends read (key verdicts, the message
+# envelope, script results). Platform-free and in eacp-webview-bridge, so the
+# parsers are tested on every lane, Linux included.
+nano_add_executable(WebViewMessagesTests
+        SOURCES WebViewMessagesTests.cpp
+        TARGETS eacp-webview-bridge)
+
 if (NOT EACP_HAS_WEBVIEW)
     return ()
 endif ()
@@ -17,8 +24,7 @@ set(webview_test_sources
         AsyncBridgeTests.cpp
         FileProviderTests.cpp
         MessageOriginPolicyTests.cpp
-        StreamingRangeTests.cpp
-        WebViewMessagesTests.cpp)
+        StreamingRangeTests.cpp)
 
 # The drag-out drop source/target that stream onFileDragMoved / onFileDragEnded
 # through SHDoDragDrop's modal loop (FileDrag-Windows.h). The cursor reader is

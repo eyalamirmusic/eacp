@@ -19,7 +19,8 @@ target_sources(eacp-webview-bridge PRIVATE
         WebView/Bridge.cpp
         WebView/JsStringLiteral.cpp
         WebView/ScriptHost.cpp
-        WebView/StateBridge.cpp)
+        WebView/StateBridge.cpp
+        WebView/WebViewMessages.cpp)
 
 # The bridge's own page script, embedded for
 # ResEmbed::get("bridge-shim.js", "EacpWebView"). Its own NAMESPACE (the
@@ -70,8 +71,7 @@ target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
         WebView/DevServerProbe.cpp
         WebView/MenuHelpers.cpp
-        WebView/MessageOrigin.cpp
-        WebView/WebViewMessages.cpp)
+        WebView/MessageOrigin.cpp)
 
 # Page-side scripts, embedded for ResEmbed::get("<name>.js", "EacpWebView").
 res_embed_add(eacp-webview
