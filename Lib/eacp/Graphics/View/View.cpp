@@ -3,6 +3,7 @@
 #include "../Window/Window.h"
 #include <algorithm>
 #include <ranges>
+#include <utility>
 
 namespace eacp::Graphics
 {
@@ -82,6 +83,29 @@ void View::removeFromParent()
         parent->removeSubview(*this);
 
     parent = nullptr;
+}
+
+// Nothing owns a view's subviews, so a parent can die first: that is just the
+// order its owner's members are destroyed in. The subviews must not keep
+// pointing at it, or the next thing they do through their parent, their own
+// destruction included, reads freed memory.
+//
+// Called after removeFromParent(), never before. The ancestors clear what they
+// hold inside the removed subtree - hover, press, key focus, touches - by
+// walking up from those views through their parents, so the subtree has to be
+// intact while that happens.
+//
+// Walks a list moved out first: a platform callback during the native detach
+// (AppKit's, inside removeFromSuperview) could add or remove subviews.
+void View::detachSubviews()
+{
+    auto orphans = std::exchange(subviews, {});
+
+    for (auto* view: orphans)
+    {
+        viewRemoved(*view);
+        view->parent = nullptr;
+    }
 }
 
 Window* View::getWindow() const
@@ -192,6 +216,12 @@ void View::removeSubview(View& view)
         forgetTouchesIn(view);
         forgetKeyFocusIn(view);
         viewRemoved(view);
+
+        // Last, since the clearing above walks up through the removed views.
+        // Left set, the parent pointer outlives the removal and dangles once
+        // this view is destroyed.
+        if (view.parent == this)
+            view.parent = nullptr;
     }
 }
 
