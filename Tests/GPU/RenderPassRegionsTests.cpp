@@ -21,12 +21,6 @@ constexpr auto targetHeight = 30;
 
 const auto target = makeTargetRectangle(targetWidth, targetHeight);
 
-bool isSameRectangle(const Geometry::Rectangle<int>& a,
-                     const Geometry::Rectangle<int>& b)
-{
-    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-}
-
 bool isViewportKept(const Graphics::Rect& rect)
 {
     return target.contains(rect) && !rect.isEmpty();
@@ -45,34 +39,34 @@ auto tScissorRoundsOutward = test("RenderPassRegions/scissorRoundsOutward") = []
 {
     const auto pixels =
         calculateScissorRectangle({2.5f, 3.25f, 10.0f, 5.5f}, target);
-    check(isSameRectangle(pixels, {2, 3, 11, 6}));
+    check(pixels == Geometry::Rectangle<int> {2, 3, 11, 6});
 };
 
 auto tScissorWholePixels = test("RenderPassRegions/scissorKeepsWholePixels") = []
 {
     const auto pixels = calculateScissorRectangle({4.0f, 6.0f, 8.0f, 2.0f}, target);
-    check(isSameRectangle(pixels, {4, 6, 8, 2}));
+    check(pixels == Geometry::Rectangle<int> {4, 6, 8, 2});
 };
 
 auto tScissorClamps = test("RenderPassRegions/scissorClampsToTarget") = []
 {
     const auto pixels =
         calculateScissorRectangle({-5.0f, -2.0f, 100.0f, 100.0f}, target);
-    check(isSameRectangle(pixels, {0, 0, targetWidth, targetHeight}));
+    check(pixels == Geometry::Rectangle<int> {0, 0, targetWidth, targetHeight});
 };
 
 auto tScissorOutside = test("RenderPassRegions/scissorPastTargetIsEmpty") = []
 {
     const auto pixels =
         calculateScissorRectangle({50.0f, 40.0f, 10.0f, 10.0f}, target);
-    check(isSameRectangle(pixels, {targetWidth, targetHeight, 0, 0}));
+    check(pixels == Geometry::Rectangle<int> {targetWidth, targetHeight, 0, 0});
 };
 
 auto tScissorNegativeSize = test("RenderPassRegions/scissorNeverInverts") = []
 {
     const auto pixels =
         calculateScissorRectangle({10.0f, 10.0f, -5.0f, -5.0f}, target);
-    check(isSameRectangle(pixels, {10, 10, 0, 0}));
+    check(pixels == Geometry::Rectangle<int> {10, 10, 0, 0});
 };
 
 auto tViewportInside = test("RenderPassRegions/viewportInsideTargetIsKept") = []
