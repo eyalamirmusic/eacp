@@ -3,6 +3,8 @@
 #include "../IPC/Messenger.h"
 #include "../Rpc/AsyncCommand.h"
 
+#include <cstdint>
+
 namespace eacp::IPC
 {
 
@@ -37,14 +39,29 @@ public:
     Callback onClientDisconnected = [] {};
 
 private:
+    struct SessionId
+    {
+        std::uint64_t value = 0;
+
+        friend bool operator==(SessionId, SessionId) = default;
+    };
+
+    struct Session
+    {
+        Messenger* messenger = nullptr;
+        SessionId id;
+    };
+
     void serve(Messenger& client);
-    void handle(Messenger& client, const std::string& body);
+    void handle(SessionId sessionId, const std::string& body);
+    void reply(SessionId sessionId, const std::string& text);
     void broadcast();
 
     Miro::Bridge& bridge;
     Rpc::CommandExecution commandExecution =
         Rpc::CommandExecution::MainThreadDeferred;
-    Vector<Messenger*> clients;
+    Vector<Session> clients;
+    std::uint64_t nextSessionId = 0;
     Listener emitListener;
 
     // Last member on purpose: destroying the MessageServer first is what
