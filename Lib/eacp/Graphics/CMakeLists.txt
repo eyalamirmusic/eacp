@@ -184,7 +184,8 @@ elseif (UNIX)
             Helpers/SystemAppearance-Linux.cpp
             HotKey/GlobalHotKey-Linux.cpp
             Image/Image-Linux.cpp
-            Input/GameInput-Default.cpp
+            Input/EvdevGamepad-Linux.cpp
+            Input/GameInput-Linux.cpp
             Layers/Layer-Linux.cpp
             Menu/Menu-Linux.cpp
             Primitives/Path-Linux.cpp

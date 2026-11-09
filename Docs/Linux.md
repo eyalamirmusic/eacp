@@ -81,6 +81,33 @@ for real under a headless Weston, and again under an Xvfb for X11, which is
 where input is exercised — Weston's headless backend has no seat and Xvfb has
 one.
 
+## Gamepads
+
+`GameInput`'s gamepads come from evdev (`Input/GameInput-Linux.cpp`), with no
+new dependency: one reader thread per process opens every `/dev/input/event*`
+that reports `BTN_GAMEPAD`, follows hotplug through an inotify watch on
+`/dev/input`, and feeds every `GameInput` as XInput's poll thread does on
+Windows. Keys and mouse stay the window's. The buttons are the kernel's
+positional codes from its gamepad protocol, with the face buttons swapped back
+for the drivers that send them by label (xpad, xpadneo, and an Xbox pad over
+Bluetooth); the right stick and the triggers are found among the axis pairs the
+drivers use (`ABS_RX/RY` or `ABS_Z/RZ`, `ABS_Z/RZ` or `ABS_BRAKE/GAS`, and
+`BTN_TL2/TR2` as on-or-off triggers where there is no analog one, as on a
+Switch Pro Controller); the d-pad is the hat or the `BTN_DPAD_*` buttons. The
+axes are raw, normalised over the range the driver reports, with no deadzone,
+as on the other platforms. Pads that the kernel presents as a joystick
+(`BTN_TRIGGER` and no `BTN_GAMEPAD`, some generic USB pads) are not picked up.
+
+A process can read a pad only if the node is the user's to open. A desktop
+session grants that through systemd's uaccess ACL, which udev applies to
+everything it classifies as a joystick; without a session (over ssh, a
+service, a kiosk) the user has to be in the group that owns the nodes, usually
+`input` (`sudo usermod -aG input $USER`, then log in again). A pad that is
+there but cannot be opened is logged once, naming the node, and otherwise
+ignored. `GameInputTests-Linux.cpp` drives a virtual pad through `/dev/uinput`
+when that is writable and skips otherwise; a desktop session grants it where a
+udev rule tags `uinput` for uaccess, as KDE Connect's and Steam's do.
+
 ## Dependencies
 
 The Vulkan half needs no new build dependency: the headers, `volk` and the
