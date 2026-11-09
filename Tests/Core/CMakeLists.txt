@@ -30,6 +30,7 @@ set(core_test_sources
         FilesTests.cpp
         FilesWildcardTests.cpp
         FormatTests.cpp
+        GeometryTests.cpp
         HashTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp

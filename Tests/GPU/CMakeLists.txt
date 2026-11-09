@@ -122,6 +122,7 @@ set(gpu_test_sources
         ProgramGraphTests.cpp
         RecordedCountsTests.cpp
         RenderBufferRangeTests.cpp
+        RenderPassRegionsTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
         SamplerBindingDeviceTests.cpp
