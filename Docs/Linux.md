@@ -17,7 +17,9 @@ toplevel decorated by libdecor, the view tree, hit-testing and input routing are
 the portable ones with the seat's pointer and keyboard translated into them
 through xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its
 bounds and scaled by the compositor's fractional scale, `Display` reports the
-first output, mouse lock goes through pointer-constraints, the clipboard is a
+first output, mouse lock goes through pointer-constraints, `setFullScreen` is
+libdecor's full screen (the xdg-shell request) with `isFullScreen` read back
+from the configure that grants it, the clipboard is a
 `wl_data_device` on the seat (text and `text/uri-list`, installed into
 `Core`'s `Clipboard` through a backend hook so `eacp-core` still links no
 Wayland), a compositor that goes away mid-session tears every window down
@@ -29,7 +31,9 @@ position, a raise, an icon — and the file says so where it matters. On X11 a
 properties a window manager reads, with an `xcb_create_window` child per
 presenting view, the keymap taken from the server through `xkbcommon-x11` so
 layouts and dead keys behave as they do on Wayland, mouse lock as a pointer
-grab and a warp to the centre, and frames paced by a timer at the RandR mode's
+grab and a warp to the centre, full screen as a `_NET_WM_STATE_FULLSCREEN`
+request that only a window manager grants (a bare Xvfb leaves the window a
+window), and frames paced by a timer at the RandR mode's
 rate because X11 has no frame callback — re-rated when a RandR change moves
 that rate; a position is a real one there, the display's scale is `Xft.dpi`
 over 96 read from the root's `RESOURCE_MANAGER` and followed when it changes,

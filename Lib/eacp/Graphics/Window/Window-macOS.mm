@@ -6,10 +6,14 @@
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
 #include <eacp/Core/ObjC/RuntimeClass.h>
+#include <eacp/Core/Threads/EventLoop.h>
 #import <Cocoa/Cocoa.h>
 
 // std::min, for holding a window inside its screen's visible frame.
 #include <algorithm>
+
+// std::weak_ptr, for a full screen request that outlives its window.
+#include <memory>
 
 namespace
 {
@@ -785,6 +789,43 @@ struct Window::Native
         [getWindow() zoom:nil];
     }
 
+    // AppKit's own full screen, next time round the loop: a window still
+    // being shown ignores the toggle. The state is read again then, so a
+    // request that crossed a transition does not undo it.
+    void setFullScreen(bool shouldBeFullScreen)
+    {
+        if (eacp::Apps::getAppEnvironment().headless || !takesFullScreen())
+            return;
+
+        Threads::callAsync(
+            [weak = std::weak_ptr<Native*>(lifetime), shouldBeFullScreen]
+            {
+                if (auto native = weak.lock())
+                    (*native)->applyFullScreen(shouldBeFullScreen);
+            });
+    }
+
+    void applyFullScreen(bool shouldBeFullScreen)
+    {
+        if (isFullScreen() != shouldBeFullScreen)
+            [getWindow() toggleFullScreen:nil];
+    }
+
+    bool isFullScreen() const
+    {
+        return ([getWindow() styleMask] & NSWindowStyleMaskFullScreen) != 0;
+    }
+
+    // The opt-outs applyCollectionBehavior sets: allowsFullScreen off, and
+    // the auxiliary behaviour visibleOnAllWorkspaces brings with it.
+    bool takesFullScreen() const
+    {
+        auto denials = NSWindowCollectionBehaviorFullScreenNone
+                       | NSWindowCollectionBehaviorFullScreenAuxiliary;
+
+        return ([getWindow() collectionBehavior] & denials) == 0;
+    }
+
     NSWindow* getWindow() { return handle.get(); }
 
     // Objective-C has no const-qualified message send, so a const method
@@ -893,6 +934,9 @@ struct Window::Native
     View* contentView = nullptr;
     bool mouseLockIntent = false;
     bool mouseLockEngaged = false;
+
+    // What a deferred full screen request checks the window is still here by.
+    std::shared_ptr<Native*> lifetime = std::make_shared<Native*>(this);
 };
 
 Window::Window(const WindowOptions& optionsToUse)
@@ -937,6 +981,16 @@ void Window::toggleMaximize()
     impl->toggleMaximize();
 }
 
+void Window::setFullScreen(bool shouldBeFullScreen)
+{
+    impl->setFullScreen(shouldBeFullScreen);
+}
+
+bool Window::isFullScreen() const
+{
+    return impl->isFullScreen();
+}
+
 void* Window::getHandle()
 {
     return impl->getWindow();
@@ -976,6 +1030,10 @@ Point Window::getSize() const
 // recomputed by hand so the top-left holds instead.
 void Window::setSize(Point size)
 {
+    // A full screen window's size is the display's.
+    if (impl->isFullScreen())
+        return;
+
     NSWindow* window = impl->getWindow();
     auto frame = window.frame;
     auto newSize =

@@ -633,6 +633,77 @@ auto tPrimaryDisplayReportsTheOutput =
     }
 };
 
+// The state follows the compositor's configure, not the request, so each
+// step waits for it. Weston gives a full screen window its output; on a real
+// desktop the compositor may pick another output than the primary one, so
+// the size is only held to the output Scripts/with-weston names.
+auto tFullScreenFillsTheOutputAndComesBack =
+    test("Wayland/fullScreenFillsTheOutputAndComesBack") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto host = CompositorWindow {640, 400};
+    host.window->setSize({600.f, 380.f});
+
+    check(host.isUp());
+    check(!host.window->isFullScreen());
+
+    host.window->setFullScreen(true);
+
+    Threads::runEventLoopUntil([&] { return host.window->isFullScreen(); },
+                               waylandTestTimeout);
+
+    check(host.window->isFullScreen(), "the compositor never took it full screen");
+    check(host.content.getBounds().w > 600.f);
+
+    if (const auto expected = waylandWestonOutputSize())
+    {
+        check(host.content.getBounds().w == expected->x);
+        check(host.content.getBounds().h == expected->y);
+        check(host.window->getSize().x == expected->x);
+    }
+
+    host.window->setFullScreen(false);
+
+    Threads::runEventLoopUntil([&] { return !host.window->isFullScreen(); },
+                               waylandTestTimeout);
+
+    check(!host.window->isFullScreen(), "the compositor never let it go");
+
+    // Back to the size it was before, not the output's.
+    check(host.content.getBounds().w == 600.f);
+    check(host.content.getBounds().h == 380.f);
+};
+
+// Asked before there is anything on screen, the request waits for the frame,
+// and the window comes up full screen rather than growing into it.
+auto tFullScreenAskedBeforeTheMapIsKept =
+    test("Wayland/fullScreenAskedBeforeTheMapIsKept") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+
+    auto content = View {};
+    auto window = Window {options};
+
+    window.setFullScreen(true);
+    window.setContentView(content);
+
+    Threads::runEventLoopUntil(
+        [&] { return window.isVisible() && window.isFullScreen(); },
+        waylandTestTimeout);
+
+    check(window.isVisible());
+    check(window.isFullScreen());
+
+    if (const auto expected = waylandWestonOutputSize())
+        check(content.getBounds().w == expected->x);
+};
+
 auto tFrameCallbackArrivesAfterACommit =
     test("Wayland/frameCallbackArrivesAfterACommit") = []
 {

@@ -964,6 +964,56 @@ auto tHidingUnmapsTheWindow = test("X11/hidingUnmapsAndShowingMapsAgain") = []
     check(host.window->isVisible(), "the window never mapped again");
 };
 
+// Only a window manager grants a full screen. Under the bare Xvfb this suite
+// starts, the request goes unanswered and the window stays a window, which is
+// what is worth holding there; anywhere else the window manager's
+// _NET_WM_STATE and ConfigureNotify have to come back, and go away again.
+auto tFullScreenIsTheWindowManagers =
+    test("X11/fullScreenIsTheWindowManagersToGrant") = []
+{
+    if (!x11ServerReachable())
+        return;
+
+    auto host = ServerWindow {600, 380};
+
+    check(host.isUp());
+    check(!host.window->isFullScreen());
+
+    host.window->setFullScreen(true);
+
+    if (onOwnXvfb())
+    {
+        Threads::runEventLoopUntil([&] { return host.window->isFullScreen(); },
+                                   Time::MS {300});
+
+        check(!host.window->isFullScreen(), "nobody was there to grant it");
+        check(host.content.getBounds().w == 600.f);
+
+        host.window->setFullScreen(false);
+        return;
+    }
+
+    // The state and the size arrive as two events, in either order.
+    auto grown = [&]
+    { return host.window->isFullScreen() && host.content.getBounds().w > 600.f; };
+
+    Threads::runEventLoopUntil(grown, x11TestTimeout);
+
+    check(grown(), "the window manager never took it full screen");
+
+    host.window->setFullScreen(false);
+
+    auto restored = [&]
+    {
+        return !host.window->isFullScreen() && host.content.getBounds().w == 600.f
+               && host.content.getBounds().h == 380.f;
+    };
+
+    Threads::runEventLoopUntil(restored, x11TestTimeout);
+
+    check(restored(), "the window manager never gave the window back");
+};
+
 auto tSetPositionMovesTheWindow =
     test("X11/setPositionMovesTheWindowAndReports") = []
 {

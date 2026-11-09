@@ -130,6 +130,11 @@ struct WaylandWindowNative final
         if (!state.miniaturizable)
             libdecor_frame_unset_capabilities(frame, LIBDECOR_ACTION_MINIMIZE);
 
+        // Before the map, so the first configure is already the full screen
+        // one rather than a window that then grows.
+        if (state.fullScreenRequested)
+            libdecor_frame_set_fullscreen(frame, nullptr);
+
         libdecor_frame_map(frame);
         connection->flush();
     }
@@ -143,10 +148,14 @@ struct WaylandWindowNative final
         frame = nullptr;
     }
 
+    // A configure with no size leaves it to the client, and the size it means
+    // is the floating one: on the way out of a maximise or a full screen the
+    // content is still the size the compositor gave, not the one to go back
+    // to.
     void configure(libdecor_configuration* configuration)
     {
-        auto width = std::max((int) std::lround(contentSize.x), 1);
-        auto height = std::max((int) std::lround(contentSize.y), 1);
+        auto width = std::max((int) std::lround(floatingSize.x), 1);
+        auto height = std::max((int) std::lround(floatingSize.y), 1);
 
         auto proposedWidth = 0;
         auto proposedHeight = 0;
@@ -178,10 +187,15 @@ struct WaylandWindowNative final
         if (hasWindowState)
         {
             state.maximized = (windowState & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0;
+            state.fullScreen = (windowState & LIBDECOR_WINDOW_STATE_FULLSCREEN) != 0;
             state.setActive((windowState & LIBDECOR_WINDOW_STATE_ACTIVE) != 0);
         }
 
         state.resizeTo({(float) width, (float) height});
+
+        if (libdecor_frame_is_floating(frame))
+            floatingSize = contentSize;
+
         present();
 
         if (!mapped)
@@ -266,11 +280,16 @@ struct WaylandWindowNative final
     }
 
     // The frame is torn down and rebuilt on the way back: an xdg_surface's
-    // initial configure sequence happens only once.
+    // initial configure sequence happens only once. It comes back full screen
+    // if it went away full screen, whatever was asked for before that - the
+    // compositor may have taken it out on the user's say.
     void unmap()
     {
         auto wasMapped = mapped;
         mapped = false;
+
+        if (wasMapped)
+            state.fullScreenRequested = state.fullScreen;
 
         if (contentView != nullptr)
             linuxWindowSurfaceStateChanged(*contentView);
@@ -289,12 +308,13 @@ struct WaylandWindowNative final
             state.notifyHostVisibility(false);
     }
 
-    // A maximised window's size is the compositor's, so there is nothing to
-    // ask for. A frame is committed outside a configure when there is one;
-    // with no frame yet the size is simply taken, and createFrame maps it.
+    // A maximised or full screen window's size is the compositor's, so there
+    // is nothing to ask for. A frame is committed outside a configure when
+    // there is one; with no frame yet the size is simply taken, and
+    // createFrame maps it.
     void setSize(Point newSize) override
     {
-        if (state.maximized)
+        if (state.hasSystemManagedSize())
             return;
 
         auto width = std::max((int) std::lround(newSize.x), 1);
@@ -316,6 +336,7 @@ struct WaylandWindowNative final
         }
 
         state.resizeTo({(float) width, (float) height});
+        floatingSize = contentSize;
         present();
     }
 
@@ -345,6 +366,25 @@ struct WaylandWindowNative final
             libdecor_frame_unset_maximized(frame);
         else
             libdecor_frame_set_maximized(frame);
+    }
+
+    // On whichever output the compositor picks. With no frame yet the
+    // request waits for createFrame; either way the configure that answers
+    // is what sets state.fullScreen.
+    void setFullScreen(bool shouldBeFullScreen) override
+    {
+        state.fullScreenRequested = shouldBeFullScreen;
+
+        if (frame == nullptr)
+            return;
+
+        if (shouldBeFullScreen)
+            libdecor_frame_set_fullscreen(frame, nullptr);
+        else
+            libdecor_frame_unset_fullscreen(frame);
+
+        if (auto* connection = waylandDisplay())
+            connection->flush();
     }
 
     // The compositor went away. Everything made from the connection is
@@ -520,6 +560,11 @@ struct WaylandWindowNative final
     }
 
     LinuxWindowState state;
+
+    // The content size of the window when the compositor is not choosing it
+    // (not maximised, full screen or tiled), which is the one a configure
+    // with no size goes back to.
+    Point floatingSize = contentSize;
 
     libdecor_frame* frame = nullptr;
     wp_viewport* viewport = nullptr;
