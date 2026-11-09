@@ -163,30 +163,44 @@ GlobalHotKey::GlobalHotKey(ModifierKeys modifiers,
 
 GlobalHotKey::~GlobalHotKey() = default;
 
+struct CarbonChord
+{
+    UInt32 modifiers = 0;
+    uint16_t keyCode = 0;
+};
+
+static bool isEnabledShortcutOnChord(NSDictionary* shortcut, CarbonChord chord)
+{
+    auto enabled =
+        [shortcut[(__bridge NSString*) kHISymbolicHotKeyEnabled] boolValue];
+    auto shortcutKeyCode =
+        [shortcut[(__bridge NSString*) kHISymbolicHotKeyCode] unsignedIntValue];
+    auto shortcutModifiers = [shortcut[(__bridge NSString*) kHISymbolicHotKeyModifiers]
+        unsignedIntValue];
+    auto nameableModifiersMask = UInt32 {shiftKey | controlKey | optionKey | cmdKey};
+
+    if (!enabled || shortcutKeyCode != chord.keyCode)
+        return false;
+
+    return (shortcutModifiers & nameableModifiersMask) == chord.modifiers;
+}
+
 // The system's own shortcuts win over any app's hotkey, so an enabled one on
 // the same chord is a GlobalHotKey that would never fire. Only the four
 // modifiers a chord can name are compared: the entries carry other bits too.
 bool GlobalHotKey::isAvailable(ModifierKeys modifiers, uint16_t keyCode)
 {
-    auto raw = CFArrayRef {nullptr};
+    auto copiedShortcuts = CFArrayRef {nullptr};
 
-    if (CopySymbolicHotKeys(&raw) != noErr || raw == nullptr)
+    if (CopySymbolicHotKeys(&copiedShortcuts) != noErr || copiedShortcuts == nullptr)
         return true;
 
-    auto shortcuts = CFRef<CFArrayRef> {raw};
-    auto wanted = toCarbonModifiers(modifiers);
-    auto relevant = UInt32 {shiftKey | controlKey | optionKey | cmdKey};
+    auto shortcuts = CFRef<CFArrayRef> {copiedShortcuts};
+    auto chord = CarbonChord {toCarbonModifiers(modifiers), keyCode};
 
     for (NSDictionary* shortcut in (__bridge NSArray*) shortcuts.get())
     {
-        auto enabled =
-            [shortcut[(__bridge NSString*) kHISymbolicHotKeyEnabled] boolValue];
-        auto code =
-            [shortcut[(__bridge NSString*) kHISymbolicHotKeyCode] unsignedIntValue];
-        auto mods = [shortcut[(__bridge NSString*) kHISymbolicHotKeyModifiers]
-            unsignedIntValue];
-
-        if (enabled && code == keyCode && (mods & relevant) == wanted)
+        if (isEnabledShortcutOnChord(shortcut, chord))
             return false;
     }
 
