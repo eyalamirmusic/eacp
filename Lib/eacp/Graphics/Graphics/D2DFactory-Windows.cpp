@@ -100,23 +100,50 @@ public:
     }
 
 private:
-    // A headless or hosted context — most notably a plugin editor opened on a
-    // CI runner or in a session with no accessible desktop compositor — can fail
-    // to create the D3D / DComp device, typically with E_ACCESSDENIED. Every
-    // consumer already guards a null device and degrades to no GPU compositing,
-    // so failure must NOT escape into a host (a DAW, a validator) that installed
-    // no handler. Log it and leave the singleton uninitialised instead.
+    // Three tiers, each needing the one before it and each more likely to be
+    // missing than the last:
+    //
+    //   * the DirectWrite and Direct2D factories, which need no device and are
+    //     all text measuring, shaping and path geometry use;
+    //   * the D3D11 + D2D device pair, which off-screen drawing (renderToImage)
+    //     uses;
+    //   * the DirectComposition device, which is the only way anything reaches
+    //     the screen.
+    //
+    // A session with no accessible desktop compositor — a service, a CI runner,
+    // a job started over ssh into session 0, some plugin hosts — fails the last
+    // one, typically with E_ACCESSDENIED, while the first two come up fine. So
+    // only the composition device is dropped then: text and snapshots keep
+    // working, and on-screen views draw nothing. Every consumer of the
+    // composition device guards it being null. No failure may escape into a
+    // host (a DAW, a validator) that installed no handler, so each is logged
+    // and leaves its tier, and the ones above it, empty.
     DCompCompositor()
     {
-        if (auto hr = create(); FAILED(hr))
+        if (auto hr = createFactories(); FAILED(hr))
         {
-            LOGF("DCompCompositor: composition device init failed (hr=0x{:08x}); "
-                 "GPU compositing unavailable. Expected on headless sessions "
-                 "and plugin hosts without an accessible desktop compositor — "
-                 "views degrade to no compositing instead of crashing the host.",
+            LOGF("DCompCompositor: DirectWrite/Direct2D factory creation failed "
+                 "(hr=0x{:08x}); no text, drawing or compositing is available.",
                  static_cast<unsigned long>(hr));
 
             releaseAll();
+            return;
+        }
+
+        if (auto hr = createRenderingDevice(); FAILED(hr))
+        {
+            LOGF("DCompCompositor: D3D11/Direct2D device creation failed "
+                 "(hr=0x{:08x}); views and renderToImage draw nothing. Text "
+                 "still measures and shapes.",
+                 static_cast<unsigned long>(hr));
+
+            releaseDevices();
+            return;
+        }
+
+        if (auto hr = createCompositionDevice(); FAILED(hr))
+        {
+            logCompositionUnavailable(hr);
             return;
         }
 
@@ -125,7 +152,17 @@ private:
 
     ~DCompCompositor() { releaseAll(); }
 
-    HRESULT create()
+    static void logCompositionUnavailable(HRESULT hr)
+    {
+        LOGF("DCompCompositor: DirectComposition device creation failed "
+             "(hr=0x{:08x}); nothing will reach the screen. Expected in a "
+             "session with no desktop compositor (a service, a CI runner, "
+             "session 0) and in hosts without one. Text, Direct2D drawing and "
+             "renderToImage still work.",
+             static_cast<unsigned long>(hr));
+    }
+
+    HRESULT createFactories()
     {
         auto hr = DWriteCreateFactory(
             DWRITE_FACTORY_TYPE_SHARED,
@@ -134,16 +171,8 @@ private:
         if (FAILED(hr))
             return hr;
 
-        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
-                               d2dFactory.GetAddressOf());
-        if (FAILED(hr))
-            return hr;
-
-        hr = createRenderingDevice();
-        if (FAILED(hr))
-            return hr;
-
-        return createCompositionDevice();
+        return D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                                 d2dFactory.GetAddressOf());
     }
 
     // Creates (or re-creates, after device loss) the D3D + D2D device pair the
@@ -153,6 +182,11 @@ private:
         d2dDevice.Reset();
         dxgiDevice.Reset();
         d3dDevice.Reset();
+
+        // A recovery can be asked for (by a GPU device loss, say) in a process
+        // whose factories never came up.
+        if (!d2dFactory)
+            return E_POINTER;
 
         // BGRA support is required for D2D interop.
         Array featureLevels = {D3D_FEATURE_LEVEL_11_1,
@@ -212,17 +246,32 @@ private:
                                          IID_PPV_ARGS(device.GetAddressOf()));
     }
 
+    // Never touches the factories: they are device-independent, the text laid
+    // out against them stays good across a device loss, and the next retry
+    // builds its device from them.
     bool recreateRenderingDevice()
     {
-        if (FAILED(createRenderingDevice()) || FAILED(createCompositionDevice()))
+        if (FAILED(createRenderingDevice()))
         {
             // The GPU may still be resetting; the next BeginDraw failure retries.
-            releaseAll();
+            releaseDevices();
             initialized = false;
             return false;
         }
 
-        initialized = true;
+        // Optional here as at startup: a replacement rendering device with no
+        // compositor still serves off-screen drawing.
+        if (auto hr = createCompositionDevice(); FAILED(hr))
+        {
+            if (initialized)
+                logCompositionUnavailable(hr);
+
+            initialized = false;
+        }
+        else
+        {
+            initialized = true;
+        }
 
         // Everything built against the old device — targets, visuals, surfaces —
         // is dead. Moving the generation is what tells every holder to rebuild.
@@ -232,13 +281,18 @@ private:
         return true;
     }
 
-    void releaseAll()
+    void releaseDevices()
     {
         device.Reset();
         d2dDevice.Reset();
-        d2dFactory.Reset();
         dxgiDevice.Reset();
         d3dDevice.Reset();
+    }
+
+    void releaseAll()
+    {
+        releaseDevices();
+        d2dFactory.Reset();
         dwriteFactory.Reset();
     }
 

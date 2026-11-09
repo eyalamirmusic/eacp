@@ -30,12 +30,22 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
+// The factories need no device and are null only if DirectWrite or Direct2D
+// itself failed to start. The D3D/D2D devices are null when no rendering device
+// could be made.
 ID2D1Factory1* getD2DFactory();
 IDWriteFactory* getDWriteFactory();
 ID3D11Device* getD3DDevice();
 IDXGIDevice* getDXGIDevice();
 ID2D1Device* getD2DDevice();
 
+// Null, and isCompositorInitialized() false, when DirectComposition is
+// unavailable while everything above is up: a session with no desktop
+// compositor (a service, a CI runner, a job started over ssh into session 0)
+// fails its creation with E_ACCESSDENIED. Nothing reaches the screen then, but
+// text and renderToImage still work. EACP_DCOMP_UNAVAILABLE=1 in the
+// environment, set before the first graphics call, forces that state on a
+// desktop that has a compositor (Tests/Text/NoComposition-WindowsTests.cpp).
 IDCompositionDesktopDevice* getCompositionDevice();
 bool isCompositorInitialized();
 

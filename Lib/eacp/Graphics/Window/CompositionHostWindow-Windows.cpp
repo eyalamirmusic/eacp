@@ -497,16 +497,19 @@ void CompositionHostWindow::initializeComposition(bool topMost)
 
     topMostTarget = topMost;
 
+    // Drop anything built against a previous device before rebuilding, and
+    // before finding there is nothing to rebuild with: a device-loss recovery
+    // can bring the rendering device back without a composition device, and
+    // the old target and root are dead either way.
+    rootVisual.Reset();
+    target.Reset();
+    generation = getCompositionGeneration();
+
     auto* device = getCompositionDevice();
     if (!device)
         return;
 
     EA::Vectors::addIfNotThere(compositionHosts(), this);
-
-    // Drop anything built against a previous device before rebuilding.
-    rootVisual.Reset();
-    target.Reset();
-    generation = getCompositionGeneration();
 
     if (FAILED(device->CreateTargetForHwnd(hwnd, topMost, target.GetAddressOf())))
     {
