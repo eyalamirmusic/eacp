@@ -16,7 +16,7 @@ cmake -G Ninja -B "$buildDir" -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF ${
 
 targets=(ScriptHostTests WebViewMessagesTests)
 hasWebView=0
-if ninja -C "$buildDir" -t targets all | grep -q '^WebViewTests:'; then
+if ninja -C "$buildDir" -t targets all | grep '^WebViewTests:' > /dev/null; then
     targets+=(WebViewTests WebViewKeys)
     hasWebView=1
 fi
