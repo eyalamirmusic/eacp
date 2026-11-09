@@ -561,6 +561,13 @@ void linuxAttachShaper(LinuxSizedFace& sized)
     if (sized.syntheticOblique)
         hb_font_set_synthetic_slant(sized.font.get(), linuxObliqueShear);
 #endif
+
+    // A synthetic setter marks the font changed, and hb-ft then pushes the
+    // font's own variation coordinates onto the FT_Face - none, on HarfBuzz
+    // 15, so the instance linuxApplyAxes chose falls back to the default.
+    // Reading the face back now gives the font those coordinates to push.
+    if (sized.syntheticBold || sized.syntheticOblique)
+        hb_ft_font_changed(sized.font.get());
 }
 
 bool linuxOpenFace(LinuxSizedFace& sized,

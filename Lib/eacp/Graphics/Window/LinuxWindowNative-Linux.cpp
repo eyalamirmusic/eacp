@@ -95,6 +95,11 @@ void LinuxWindowState::setPosition(Point newPosition)
     events->onMoved(position);
 }
 
+bool LinuxWindowState::hasSystemManagedSize() const
+{
+    return maximized || fullScreen;
+}
+
 void LinuxWindowState::notifyHostVisibility(bool visible)
 {
     linuxNotifyHostVisibility(surface.contentView, visible);
@@ -148,6 +153,11 @@ LinuxWindowSurface& LinuxWindowNative::getWindowSurface()
 bool LinuxWindowNative::isVisible()
 {
     return getWindowSurface().mapped;
+}
+
+bool LinuxWindowNative::isFullScreen()
+{
+    return getState().fullScreen;
 }
 
 Point LinuxWindowNative::getPosition()

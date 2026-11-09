@@ -48,6 +48,9 @@ struct HeadlessWindowNative final
     void minimize() override {}
     void toggleMaximize() override {}
 
+    // Nothing to fill, so nothing grants it: the window stays a window.
+    void setFullScreen(bool) override {}
+
     void setMouseLocked(bool locked) override { mouseLockIntent = locked; }
 
     bool isKeyPressed(uint16_t) override { return false; }

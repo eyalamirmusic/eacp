@@ -17,7 +17,9 @@ toplevel decorated by libdecor, the view tree, hit-testing and input routing are
 the portable ones with the seat's pointer and keyboard translated into them
 through xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its
 bounds and scaled by the compositor's fractional scale, `Display` reports the
-first output, mouse lock goes through pointer-constraints, the clipboard is a
+first output, mouse lock goes through pointer-constraints, `setFullScreen` is
+libdecor's full screen (the xdg-shell request) with `isFullScreen` read back
+from the configure that grants it, the clipboard is a
 `wl_data_device` on the seat (text and `text/uri-list`, installed into
 `Core`'s `Clipboard` through a backend hook so `eacp-core` still links no
 Wayland), a compositor that goes away mid-session tears every window down
@@ -29,7 +31,9 @@ position, a raise, an icon — and the file says so where it matters. On X11 a
 properties a window manager reads, with an `xcb_create_window` child per
 presenting view, the keymap taken from the server through `xkbcommon-x11` so
 layouts and dead keys behave as they do on Wayland, mouse lock as a pointer
-grab and a warp to the centre, and frames paced by a timer at the RandR mode's
+grab and a warp to the centre, full screen as a `_NET_WM_STATE_FULLSCREEN`
+request that only a window manager grants (a bare Xvfb leaves the window a
+window), and frames paced by a timer at the RandR mode's
 rate because X11 has no frame callback — re-rated when a RandR change moves
 that rate; a position is a real one there, the display's scale is `Xft.dpi`
 over 96 read from the root's `RESOURCE_MANAGER` and followed when it changes,
@@ -80,6 +84,33 @@ Mesa's lavapipe with no display server at all; the window and present tests run
 for real under a headless Weston, and again under an Xvfb for X11, which is
 where input is exercised — Weston's headless backend has no seat and Xvfb has
 one.
+
+## Gamepads
+
+`GameInput`'s gamepads come from evdev (`Input/GameInput-Linux.cpp`), with no
+new dependency: one reader thread per process opens every `/dev/input/event*`
+that reports `BTN_GAMEPAD`, follows hotplug through an inotify watch on
+`/dev/input`, and feeds every `GameInput` as XInput's poll thread does on
+Windows. Keys and mouse stay the window's. The buttons are the kernel's
+positional codes from its gamepad protocol, with the face buttons swapped back
+for the drivers that send them by label (xpad, xpadneo, and an Xbox pad over
+Bluetooth); the right stick and the triggers are found among the axis pairs the
+drivers use (`ABS_RX/RY` or `ABS_Z/RZ`, `ABS_Z/RZ` or `ABS_BRAKE/GAS`, and
+`BTN_TL2/TR2` as on-or-off triggers where there is no analog one, as on a
+Switch Pro Controller); the d-pad is the hat or the `BTN_DPAD_*` buttons. The
+axes are raw, normalised over the range the driver reports, with no deadzone,
+as on the other platforms. Pads that the kernel presents as a joystick
+(`BTN_TRIGGER` and no `BTN_GAMEPAD`, some generic USB pads) are not picked up.
+
+A process can read a pad only if the node is the user's to open. A desktop
+session grants that through systemd's uaccess ACL, which udev applies to
+everything it classifies as a joystick; without a session (over ssh, a
+service, a kiosk) the user has to be in the group that owns the nodes, usually
+`input` (`sudo usermod -aG input $USER`, then log in again). A pad that is
+there but cannot be opened is logged once, naming the node, and otherwise
+ignored. `GameInputTests-Linux.cpp` drives a virtual pad through `/dev/uinput`
+when that is writable and skips otherwise; a desktop session grants it where a
+udev rule tags `uinput` for uaccess, as KDE Connect's and Steam's do.
 
 ## Dependencies
 

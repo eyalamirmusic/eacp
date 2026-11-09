@@ -54,10 +54,13 @@ if (EACP_HAS_CONTEXT)
     list(APPEND graphics_test_sources RenderToImageTests.cpp)
 endif ()
 
-# The two Linux tables with no portable half: the commands a Path records, and
-# the framework's KeyCodes against the kernel's evdev numbering.
+# The Linux tables with no portable half: the commands a Path records, the
+# framework's KeyCodes against the kernel's evdev numbering, and the evdev
+# gamepad mapping (with a uinput pad driven through the whole backend where
+# /dev/uinput is the user's to write).
 if (LINUX)
     list(APPEND graphics_test_sources
+            GameInputTests-Linux.cpp
             KeyCodeTests-Linux.cpp
             PathTests-Linux.cpp)
 endif ()

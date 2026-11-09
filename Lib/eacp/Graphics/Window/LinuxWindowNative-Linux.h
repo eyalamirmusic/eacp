@@ -48,6 +48,11 @@ struct LinuxWindowState
     // A programmatic move is still a move, so it reports itself.
     void setPosition(Point newPosition);
 
+    // Whether the size is the window system's - maximised or full screen - so
+    // there is nothing for the window to ask for, and what it is given is a
+    // ceiling rather than a drag.
+    bool hasSystemManagedSize() const;
+
     // hostWindowVisibilityChanged down the whole content tree.
     void notifyHostVisibility(bool visible);
 
@@ -86,6 +91,12 @@ struct LinuxWindowState
     Point position;
     bool active = false;
     bool maximized = false;
+
+    // What the window system says the window is, and what the app last asked
+    // it to be: the two differ until a request is granted, and for good where
+    // nobody grants it. The request is what a window coming up asks for.
+    bool fullScreen = false;
+    bool fullScreenRequested = false;
 };
 
 // What a Window forwards to. Not a LinuxWindowSurface itself: a native is this
@@ -111,6 +122,11 @@ public:
     virtual void setTitle(const std::string& title) = 0;
     virtual void minimize() = 0;
     virtual void toggleMaximize() = 0;
+
+    // Records the request and passes it on; the state follows when the
+    // window system answers (LinuxWindowState::fullScreen).
+    virtual void setFullScreen(bool shouldBeFullScreen) = 0;
+
     virtual void setMouseLocked(bool locked) = 0;
 
     // The native unit is the evdev keycode on every Linux backend.
@@ -128,6 +144,7 @@ public:
     LinuxWindowSurface& getWindowSurface();
 
     bool isVisible();
+    bool isFullScreen();
     Point getPosition();
     bool isMouseLocked();
     void* getContentViewHandle();

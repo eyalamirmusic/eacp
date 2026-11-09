@@ -23,6 +23,26 @@ auto tMouseLockIntent = test("Window/mouseLockIntentToggles") = []
     check(!window.isMouseLocked());
 };
 
+// Under headless there is nothing to fill and nobody to grant it, so the
+// request leaves the window as it was - a window, or on iOS and Android the
+// screen it always is.
+auto tHeadlessFullScreenChangesNothing =
+    test("Window/headlessFullScreenChangesNothing") = []
+{
+    auto window = Window {};
+    const auto wasFullScreen = window.isFullScreen();
+    const auto size = window.getSize();
+
+    window.setFullScreen(!wasFullScreen);
+    check(window.isFullScreen() == wasFullScreen);
+
+    window.setFullScreen(wasFullScreen);
+    check(window.isFullScreen() == wasFullScreen);
+
+    check(window.getSize().x == size.x);
+    check(window.getSize().y == size.y);
+};
+
 auto tSecondaryWindowDefaultQuitIsNoOp =
     test("WindowOptions/secondaryDefaultQuitIsNoOp") = []
 {
