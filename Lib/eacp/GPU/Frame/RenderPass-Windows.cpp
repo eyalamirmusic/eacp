@@ -418,6 +418,17 @@ void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
+// The slot's sampler table alone, which both stages see.
+void RenderPass::setFragmentSampler(const Sampler& sampler, int slot)
+{
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
+void RenderPass::setVertexSampler(const Sampler& sampler, int slot)
+{
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
 namespace
 {
 // The address a stage's root SRV binds to, with the buffer moved into the state
