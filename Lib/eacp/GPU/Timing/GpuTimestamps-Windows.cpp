@@ -5,6 +5,8 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
+#include <optional>
+
 // Windows/D3D12 backend. Each slot owns a timestamp query heap and the readback
 // buffer the GPU resolves it into: a query heap cannot be read by the CPU, so
 // the command list itself has to copy it somewhere that can be, which is the
@@ -48,10 +50,14 @@ struct GpuTimestamps::Native
     // arriving with the first slot rather than at construction.
     void ensureCreated(GPU::Device& owner)
     {
-        if (tried)
+        const auto currentGeneration = getD3D12Shared().getGeneration();
+
+        if (createdForGeneration == currentGeneration)
             return;
 
-        tried = true;
+        // A removed device's query heap on the new device's list crashes WARP.
+        forgetSlotsOfLostDevice();
+        createdForGeneration = currentGeneration;
 
         auto& context = getD3D12Context(owner);
 
@@ -109,12 +115,32 @@ struct GpuTimestamps::Native
         supported = frequency != 0;
     }
 
+    bool isFromLostDevice() const
+    {
+        return createdForGeneration.has_value()
+               && createdForGeneration != getD3D12Shared().getGeneration();
+    }
+
+    bool hasReadableResults(const Slot& slot) const
+    {
+        return !isFromLostDevice() && slot.results != nullptr && frequency != 0;
+    }
+
+    void forgetSlotsOfLostDevice()
+    {
+        for (auto& slot: slots)
+            slot = Slot {.submitted = true};
+
+        frequency = 0;
+        supported = false;
+    }
+
     Array<Slot, slotCount> slots;
 
     UINT64 frequency = 0;
 
     bool supported = false;
-    bool tried = false;
+    std::optional<std::uint64_t> createdForGeneration;
 };
 
 GpuTimestamps::GpuTimestamps() = default;
@@ -210,6 +236,9 @@ void GpuTimestamps::noteSubmitted(int slot, std::uint64_t fenceValue)
 
 bool GpuTimestamps::isSlotComplete(int slot, const Device& device) const
 {
+    if (impl->isFromLostDevice())
+        return true;
+
     const auto& entry = impl->slots[slot];
 
     return entry.submitted && getD3D12Context(device).hasCompleted(entry.fenceValue);
@@ -219,7 +248,7 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, PassActivity* activit
 {
     const auto& entry = impl->slots[slot];
 
-    if (entry.results == nullptr || impl->frequency == 0)
+    if (!impl->hasReadableResults(entry))
         return 0.0;
 
     const auto toMilliseconds = [this](UINT64 start, UINT64 end)
