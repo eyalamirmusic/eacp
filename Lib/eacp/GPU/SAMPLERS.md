@@ -174,11 +174,19 @@ at `s0..s7`, so codegen shaders and per-bind shaders share one root signature
 without either moving. It is the same shape the storage buffers already have
 (`t<8 + slot>`, `RenderPass::bufferRegisterBase`), and it keeps shader model 5.0:
 register spaces would have been the tidier separation, but they need 5.1 and
-bgfx's DXBC is 5.0. A codegen shader never reads `s8..`, so on D3D12 it samples
-the way it declared whatever `Sampler` is bound; on Metal and Vulkan it shares
-the slot with the per-bind sampler, so a `Sampler` bound after
-`ShaderProgram::bindTextures` would override the declaration there. Don't mix
-the two on one slot.
+bgfx's DXBC is 5.0. A codegen texture's baked sampling never reads `s8..`, so
+on D3D12 it samples the way it declared whatever `Sampler` is bound; on Metal
+and Vulkan it shares the slot with the per-bind sampler, so a `Sampler` bound
+after `ShaderProgram::bindTextures` would override the declaration there.
+Don't mix the two on one slot.
+
+The codegen layer now has per-bind samplers of its own: a `SamplerBinding` or
+`ComparisonSamplerBinding` member (`Codegen/Samplers.h`) is a slot from the
+texture counter whose sampler sits exactly where this section puts slot `n`'s
+- `sampler(n)`, `s<8 + n>` through the same tables, and on Vulkan the sampler
+half of binding `8 + n` - with no texture of its own, so it never shares a
+slot with a baked sampler. On the Qualcomm route it inherits the fallback
+below. "Samplers as bindings" in `README.md` has the rest.
 
 On Vulkan the render layout keeps its combined image samplers: the sampler
 already travelled in the descriptor write, so per-bind costs nothing there. A

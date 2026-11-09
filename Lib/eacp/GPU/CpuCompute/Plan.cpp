@@ -17,6 +17,7 @@ constexpr int planLaneAlignment = 16;
 constexpr std::int64_t planMaxLanes = std::int64_t {1} << 20;
 constexpr std::size_t planMaxWords = INT32_MAX;
 
+// Both float families: an f16 lane is held as the float it rounds to.
 bool isFloatFamily(ValueType type)
 {
     switch (type)
@@ -25,12 +26,13 @@ bool isFloatFamily(ValueType type)
         case ValueType::Float2:
         case ValueType::Float3:
         case ValueType::Float4:
-        case ValueType::Float2x2:
-        case ValueType::Float3x3:
-        case ValueType::Float4x4:
+        case ValueType::Half:
+        case ValueType::Half2:
+        case ValueType::Half3:
+        case ValueType::Half4:
             return true;
         default:
-            return false;
+            return isMatrix(type);
     }
 }
 
@@ -95,6 +97,16 @@ const char* planKindName(ExprKind kind)
             return "SimdGroupIndex";
         case ExprKind::BuiltIn:
             return "BuiltIn";
+        case ExprKind::TextureFunction:
+            return "TextureFunction";
+        case ExprKind::TextureQuery:
+            return "TextureQuery";
+        case ExprKind::MatrixColumn:
+            return "MatrixColumn";
+        case ExprKind::Override:
+            return "Override";
+        case ExprKind::FunctionCall:
+            return "FunctionCall";
     }
 
     return "unknown";
@@ -136,8 +148,20 @@ const char* planStatementName(StatementKind kind)
             return "SimdMatrixStore";
         case StatementKind::SimdMatrixMultiplyAdd:
             return "SimdMatrixMultiplyAdd";
-        case StatementKind::AtomicAdd:
-            return "AtomicAdd";
+        case StatementKind::Atomic:
+            return "Atomic";
+        case StatementKind::BreakIf:
+            return "BreakIf";
+        case StatementKind::Switch:
+            return "Switch";
+        case StatementKind::Case:
+            return "Case";
+        case StatementKind::Return:
+            return "Return";
+        case StatementKind::Discard:
+            return "Discard";
+        case StatementKind::Call:
+            return "Call";
     }
 
     return "unknown";
@@ -154,13 +178,15 @@ constexpr MathName planMathNames[] = {
     {"tan", MathFunction::Tan},     {"asin", MathFunction::Asin},
     {"acos", MathFunction::Acos},   {"atan", MathFunction::Atan},
     {"sinh", MathFunction::Sinh},   {"cosh", MathFunction::Cosh},
-    {"tanh", MathFunction::Tanh},   {"exp", MathFunction::Exp},
-    {"exp2", MathFunction::Exp2},   {"log", MathFunction::Log},
-    {"log2", MathFunction::Log2},   {"log10", MathFunction::Log10},
-    {"sqrt", MathFunction::Sqrt},   {"rsqrt", MathFunction::Rsqrt},
-    {"floor", MathFunction::Floor}, {"ceil", MathFunction::Ceil},
-    {"trunc", MathFunction::Trunc}, {"round", MathFunction::Round},
-    {"fract", MathFunction::Fract}, {"sign", MathFunction::Sign}};
+    {"tanh", MathFunction::Tanh},   {"asinh", MathFunction::Asinh},
+    {"acosh", MathFunction::Acosh}, {"atanh", MathFunction::Atanh},
+    {"exp", MathFunction::Exp},     {"exp2", MathFunction::Exp2},
+    {"log", MathFunction::Log},     {"log2", MathFunction::Log2},
+    {"log10", MathFunction::Log10}, {"sqrt", MathFunction::Sqrt},
+    {"rsqrt", MathFunction::Rsqrt}, {"floor", MathFunction::Floor},
+    {"ceil", MathFunction::Ceil},   {"trunc", MathFunction::Trunc},
+    {"round", MathFunction::Round}, {"fract", MathFunction::Fract},
+    {"sign", MathFunction::Sign}};
 
 struct GeometricName
 {
@@ -190,7 +216,8 @@ constexpr BroadcastName planBroadcastNames[] = {{"pow", Op::Pow, 2},
                                                 {"step", Op::Step, 2},
                                                 {"clamp", Op::Clamp, 3},
                                                 {"mix", Op::Mix, 3},
-                                                {"smoothstep", Op::Smoothstep, 3}};
+                                                {"smoothstep", Op::Smoothstep, 3},
+                                                {"fma", Op::Fma, 3}};
 
 // The helpers applied per component, at any float width.
 struct ComponentHelperName
@@ -202,7 +229,61 @@ struct ComponentHelperName
 constexpr ComponentHelperName planComponentHelperNames[] = {
     {"eacpErf", HelperFunction::Erf},
     {"eacpErfc", HelperFunction::Erfc},
-    {"eacpSaturatingTanh", HelperFunction::SaturatingTanh}};
+    {"eacpSaturatingTanh", HelperFunction::SaturatingTanh},
+    {"eacpQuantizeToF16", HelperFunction::QuantizeToF16}};
+
+// The bit helpers, at any integer width: the value arguments are the result's
+// type, the field arguments (offset, count) a scalar UInt.
+struct BitHelperName
+{
+    std::string_view name;
+    HelperFunction unsignedFunction;
+    HelperFunction signedFunction;
+    int valueArguments;
+    int fieldArguments;
+};
+
+constexpr BitHelperName planBitHelperNames[] = {
+    {"eacpCountOneBits",
+     HelperFunction::CountOneBits,
+     HelperFunction::CountOneBits,
+     1,
+     0},
+    {"eacpReverseBits",
+     HelperFunction::ReverseBits,
+     HelperFunction::ReverseBits,
+     1,
+     0},
+    {"eacpCountLeadingZeros",
+     HelperFunction::CountLeadingZeros,
+     HelperFunction::CountLeadingZeros,
+     1,
+     0},
+    {"eacpCountTrailingZeros",
+     HelperFunction::CountTrailingZeros,
+     HelperFunction::CountTrailingZeros,
+     1,
+     0},
+    {"eacpFirstLeadingBit",
+     HelperFunction::FirstLeadingBitUnsigned,
+     HelperFunction::FirstLeadingBitSigned,
+     1,
+     0},
+    {"eacpFirstTrailingBit",
+     HelperFunction::FirstTrailingBit,
+     HelperFunction::FirstTrailingBit,
+     1,
+     0},
+    {"eacpExtractBits",
+     HelperFunction::ExtractBitsUnsigned,
+     HelperFunction::ExtractBitsSigned,
+     1,
+     2},
+    {"eacpInsertBits",
+     HelperFunction::InsertBits,
+     HelperFunction::InsertBits,
+     2,
+     2}};
 
 // The packed-data helpers, each with the one signature the shader defines.
 struct PackedHelperName
@@ -299,11 +380,59 @@ constexpr PackedHelperName planPackedHelperNames[] = {
      ValueType::UInt,
      1,
      ValueType::UInt4,
+     ValueType::UInt},
+    {"eacpPackUnorm8x4",
+     HelperFunction::PackUnorm8x4,
+     ValueType::UInt,
+     1,
+     ValueType::Float4,
+     ValueType::UInt},
+    {"eacpPackSnorm8x4",
+     HelperFunction::PackSnorm8x4,
+     ValueType::UInt,
+     1,
+     ValueType::Float4,
+     ValueType::UInt},
+    {"eacpPackUnorm16x2",
+     HelperFunction::PackUnorm16x2,
+     ValueType::UInt,
+     1,
+     ValueType::Float2,
+     ValueType::UInt},
+    {"eacpPackSnorm16x2",
+     HelperFunction::PackSnorm16x2,
+     ValueType::UInt,
+     1,
+     ValueType::Float2,
+     ValueType::UInt},
+    {"eacpUnpackUnorm8x4",
+     HelperFunction::UnpackUnorm8x4,
+     ValueType::Float4,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackSnorm8x4",
+     HelperFunction::UnpackSnorm8x4,
+     ValueType::Float4,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackUnorm16x2",
+     HelperFunction::UnpackUnorm16x2,
+     ValueType::Float2,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackSnorm16x2",
+     HelperFunction::UnpackSnorm16x2,
+     ValueType::Float2,
+     1,
+     ValueType::UInt,
      ValueType::UInt}};
 
 bool isConversionName(std::string_view name)
 {
-    for (auto raw = 0; raw <= static_cast<int>(ValueType::Bool4); ++raw)
+    for (auto raw = 0; raw <= static_cast<int>(lastValueType); ++raw)
     {
         auto type = static_cast<ValueType>(raw);
 
@@ -341,16 +470,27 @@ PlanLevel planJoin(PlanLevel a, PlanLevel b)
     return a < b ? b : a;
 }
 
-PlanLevel planLeafLevel(ExprKind kind)
+bool isDispatchWideBuiltIn(const Expr& expr)
 {
-    switch (kind)
+    auto which = static_cast<ShaderBuiltIn>(expr.index);
+    return which == ShaderBuiltIn::GroupCount
+           || which == ShaderBuiltIn::SimdGroupSize;
+}
+
+PlanLevel planLeafLevel(const Expr& expr)
+{
+    switch (expr.kind)
     {
         case ExprKind::Constant:
+        case ExprKind::Override:
         case ExprKind::Uniform:
         case ExprKind::GridExtent:
             return PlanLevel::Dispatch;
         case ExprKind::GroupId:
             return PlanLevel::Group;
+        case ExprKind::BuiltIn:
+            return isDispatchWideBuiltIn(expr) ? PlanLevel::Dispatch
+                                               : PlanLevel::Lane;
         default:
             return PlanLevel::Lane;
     }
@@ -387,7 +527,7 @@ public:
 
     void build()
     {
-        if (!checkGraph())
+        if (!checkGraph() || !resolveOverrideWords())
             return;
 
         plan.nodes.resize(graph.nodeCount());
@@ -406,8 +546,13 @@ public:
             return;
 
         for (auto id = 0; id < graph.nodeCount() && !failed(); ++id)
-            if (plan.nodes[id].used)
-                decodeNode(id);
+        {
+            if (!plan.nodes[id].used)
+                continue;
+
+            decodeNode(id);
+            markHalfRounding(id);
+        }
 
         if (failed())
             return;
@@ -426,6 +571,39 @@ private:
     };
 
     bool failed() const { return !plan.failure.empty(); }
+
+    static Word overrideWord(const PipelineConstant& value)
+    {
+        switch (value.type)
+        {
+            case PipelineConstantType::Bool:
+                return Lanes::maskOf(value.asBool());
+            case PipelineConstantType::Float:
+            case PipelineConstantType::Half:
+                return Lanes::toWord(value.asFloat());
+            case PipelineConstantType::Int:
+            case PipelineConstantType::UInt:
+                break;
+        }
+
+        return static_cast<Word>(value.bits);
+    }
+
+    bool resolveOverrideWords()
+    {
+        const auto resolved = resolveOverrides(graph, options.overrides);
+
+        if (!resolved.isValid())
+        {
+            fail(resolved.error);
+            return false;
+        }
+
+        for (const auto& value: resolved.values)
+            overrideWords.add(overrideWord(value));
+
+        return true;
+    }
 
     void fail(std::string reason)
     {
@@ -448,6 +626,17 @@ private:
             return false;
         }
 
+        for (auto slot = 0; slot < graph.textureCount(); ++slot)
+        {
+            if (graph.textureAccess(slot) == TextureAccess::Sampler)
+            {
+                fail("texture slot " + std::to_string(slot)
+                     + " is a sampler: samplers are not supported by the CPU "
+                       "executor");
+                return false;
+            }
+        }
+
         const auto& slots = graph.storageBuffers();
 
         if (slots.size() > Plan::maxSlots)
@@ -465,6 +654,7 @@ private:
             plan.slotAccess[static_cast<std::size_t>(slot)] = slots[slot];
             plan.slotElement[static_cast<std::size_t>(slot)] =
                 graph.storageElementType(slot);
+            recordStructSlot(slot);
         }
 
         plan.shape = graph.threadGroupShape();
@@ -501,6 +691,45 @@ private:
         return packUniforms();
     }
 
+    void recordStructSlot(int slot)
+    {
+        auto structId = graph.storageStructType(slot);
+
+        if (structId < 0)
+            return;
+
+        const auto& type = graph.structType(structId);
+        auto at = static_cast<std::size_t>(slot);
+        plan.slotStructStride[at] = type.size;
+        plan.slotStructComponents[at].begin = plan.structComponentList.size();
+
+        for (const auto& component: type.components)
+            plan.structComponentList.add(component);
+
+        plan.slotStructComponents[at].end = plan.structComponentList.size();
+    }
+
+    // How many words a value takes in a lane: its components, a struct's
+    // every field's laid end to end.
+    int flatComponents(ValueType type, int structId) const
+    {
+        if (type == ValueType::Struct)
+            return structId >= 0 ? graph.structType(structId).components.size() : 0;
+
+        return componentCount(type);
+    }
+
+    int nodeComponents(const Expr& expr) const
+    {
+        return flatComponents(expr.type, expr.structType);
+    }
+
+    int variableComponents(int slot) const
+    {
+        return flatComponents(graph.variables()[slot],
+                              graph.variableStructType(slot));
+    }
+
     bool packUniforms()
     {
         plan.uniformTypes = graph.uniforms();
@@ -522,10 +751,13 @@ private:
         return false;
     }
 
+    // jumpsOut: something in the block may leave the frame it runs in empty -
+    // a jump, or a return; returns: a return, which no loop stops.
     struct BlockResult
     {
         int id = -1;
         bool jumpsOut = false;
+        bool returns = false;
     };
 
     bool enterBlock(int graphBlock)
@@ -600,10 +832,17 @@ private:
                 case StatementKind::Declare:
                 case StatementKind::Assign:
                     if (!checkVariable(statement.slot) || !checkNode(statement.value)
-                        || !checkVariableValue(statement))
+                        || !checkVariableValue(statement)
+                        || !checkElementIndex(statement))
                         return result;
 
+                    if (statement.index >= 0)
+                        step.type = graph.expr(statement.index).type;
+
+                    step.component = fieldComponent(
+                        graph.variableStructType(statement.slot), statement.member);
                     schedule.roots[0] = statement.value;
+                    schedule.roots[1] = statement.index;
                     pinned = -1;
                     break;
 
@@ -615,6 +854,7 @@ private:
                     auto body = buildBlock(statement.body, loopDepth, depth + 1);
                     step.body = body.id;
                     step.bodiesJumpOut = body.jumpsOut;
+                    result.returns = result.returns || body.returns;
 
                     if (statement.elseBody >= 0)
                     {
@@ -622,6 +862,7 @@ private:
                             buildBlock(statement.elseBody, loopDepth, depth + 1);
                         step.elseBody = elseBody.id;
                         step.bodiesJumpOut = step.bodiesJumpOut || elseBody.jumpsOut;
+                        result.returns = result.returns || elseBody.returns;
                     }
 
                     result.jumpsOut = result.jumpsOut || step.bodiesJumpOut;
@@ -637,6 +878,20 @@ private:
 
                     auto body = buildBlock(statement.body, loopDepth + 1, depth + 1);
                     step.body = body.id;
+
+                    if (statement.continuing >= 0)
+                    {
+                        auto enclosing = continuingLoopDepth;
+                        continuingLoopDepth = loopDepth + 1;
+                        auto continuing = buildBlock(
+                            statement.continuing, loopDepth + 1, depth + 1);
+                        continuingLoopDepth = enclosing;
+                        step.continuing = continuing.id;
+                    }
+
+                    step.bodiesJumpOut = body.returns;
+                    result.jumpsOut = result.jumpsOut || body.returns;
+                    result.returns = result.returns || body.returns;
                     schedule.roots[0] = statement.value;
                     pinned = -1;
                     break;
@@ -652,13 +907,124 @@ private:
                         return result;
                     }
 
+                    if (loopDepth == continuingLoopDepth)
+                    {
+                        fail(std::string("statement ")
+                             + planStatementName(statement.kind)
+                             + " inside a continuing block");
+                        return result;
+                    }
+
                     result.jumpsOut = true;
                     pinned = -1;
                     break;
 
-                case StatementKind::Store:
-                    if (!checkStore(statement, 1))
+                case StatementKind::BreakIf:
+                    if (!checkBreakIf(statement, statementId, graphBlock, loopDepth))
                         return result;
+
+                    if (depth + 1 > plan.nesting)
+                        plan.nesting = depth + 1;
+
+                    result.jumpsOut = true;
+                    schedule.roots[0] = statement.value;
+                    pinned = -1;
+                    break;
+
+                case StatementKind::Switch:
+                {
+                    if (!checkSwitch(statement))
+                        return result;
+
+                    auto enclosingCases = casesBlock;
+                    casesBlock = statement.body;
+                    auto cases = buildBlock(statement.body, loopDepth, depth + 1);
+                    casesBlock = enclosingCases;
+                    step.body = cases.id;
+                    step.isDefault = hasDefaultClause(statement.body);
+                    step.bodiesJumpOut = cases.jumpsOut;
+                    result.jumpsOut = result.jumpsOut || cases.jumpsOut;
+                    result.returns = result.returns || cases.returns;
+                    schedule.roots[0] = statement.value;
+                    pinned = -1;
+                    break;
+                }
+
+                case StatementKind::Case:
+                {
+                    if (graphBlock != casesBlock)
+                    {
+                        fail("statement Case outside a switch's clause list");
+                        return result;
+                    }
+
+                    const auto& labels = graph.caseLabels(statement.slot);
+                    step.caseLabelBegin = plan.caseLabelWords.size();
+                    step.caseLabelCount = labels.values.size();
+                    step.isDefault = labels.isDefault;
+
+                    for (auto value: labels.values)
+                        plan.caseLabelWords.add(static_cast<Word>(value));
+
+                    auto body = buildBlock(statement.body, loopDepth, depth);
+                    step.body = body.id;
+                    step.bodiesJumpOut = body.jumpsOut;
+                    result.jumpsOut = result.jumpsOut || body.jumpsOut;
+                    result.returns = result.returns || body.returns;
+                    pinned = -1;
+                    break;
+                }
+
+                case StatementKind::Return:
+                    if (continuingLoopDepth >= 0)
+                    {
+                        fail("statement Return inside a continuing block");
+                        return result;
+                    }
+
+                    result.jumpsOut = true;
+                    result.returns = true;
+                    pinned = -1;
+                    break;
+
+                case StatementKind::Discard:
+                    fail("statement Discard: a kernel has no fragment to discard");
+                    return result;
+
+                case StatementKind::Call:
+                {
+                    if (statement.body < 0)
+                    {
+                        fail("statement Call that was not inlined");
+                        return result;
+                    }
+
+                    auto enclosingContinuing = continuingLoopDepth;
+                    auto enclosingCases = casesBlock;
+                    continuingLoopDepth = -1;
+                    casesBlock = -1;
+                    auto body = buildBlock(statement.body, 0, depth + 1);
+                    continuingLoopDepth = enclosingContinuing;
+                    casesBlock = enclosingCases;
+                    step.body = body.id;
+                    pinned = -1;
+                    break;
+                }
+
+                case StatementKind::Store:
+                    if (isStructSlot(statement.slot))
+                    {
+                        if (!checkStructStore(statement))
+                            return result;
+
+                        step.component =
+                            fieldComponent(graph.storageStructType(statement.slot),
+                                           statement.member);
+                    }
+                    else if (!checkStore(statement, 1))
+                    {
+                        return result;
+                    }
 
                     schedule.roots[0] = statement.index;
                     schedule.roots[1] = statement.value;
@@ -733,13 +1099,19 @@ private:
                     pinned = -1;
                     break;
 
-                case StatementKind::AtomicAdd:
-                    if (!checkAtomicAdd(statement))
+                case StatementKind::Atomic:
+                    if (!checkAtomic(statement))
                         return result;
 
                     step.buffer = statement.bufferSlot;
+                    step.memory = statement.memory;
+                    step.atomic = statement.atomic;
+                    step.compare = statement.compare;
+                    step.exchanged = statement.exchanged;
+                    step.type = graph.variables()[statement.slot];
                     schedule.roots[0] = statement.index;
                     schedule.roots[1] = statement.value;
+                    schedule.roots[2] = statement.compare;
                     pinned = -1;
                     break;
 
@@ -809,8 +1181,37 @@ private:
         return false;
     }
 
+    // A struct field's first flat component; the whole struct's, 0.
+    int fieldComponent(int structId, int field) const
+    {
+        if (structId < 0 || field < 0)
+            return 0;
+
+        return graph.structType(structId).fields[field].firstComponent;
+    }
+
+    bool isField(int structId, int field) const
+    {
+        return structId >= 0 && field >= -1
+               && field < graph.structType(structId).fields.size();
+    }
+
     bool checkVariableValue(const Statement& statement)
     {
+        auto structId = graph.variableStructType(statement.slot);
+
+        if (structId >= 0 || statement.member >= 0)
+        {
+            if (isField(structId, statement.member)
+                && graph.fitsField(structId, statement.member, statement.value))
+                return true;
+
+            fail(std::string("statement ") + planStatementName(statement.kind)
+                 + " gives struct variable " + std::to_string(statement.slot)
+                 + " a value that is not of its field's type");
+            return false;
+        }
+
         auto variableType = graph.variables()[statement.slot];
         auto valueType = graph.expr(statement.value).type;
 
@@ -821,6 +1222,145 @@ private:
              + " gives variable " + std::to_string(statement.slot) + " of type "
              + typeName(variableType) + " a value of type " + typeName(valueType));
         return false;
+    }
+
+    // An Assign to a private array names its element with an Int or a UInt;
+    // nothing else is indexed.
+    bool checkElementIndex(const Statement& statement)
+    {
+        auto isArray = graph.variableArraySize(statement.slot) > 0;
+        auto isElementWrite = statement.kind == StatementKind::Assign && isArray;
+
+        if (statement.index < 0 && !isElementWrite)
+            return true;
+
+        if (!isElementWrite)
+        {
+            fail(std::string("statement ") + planStatementName(statement.kind)
+                 + " indexes variable " + std::to_string(statement.slot)
+                 + ", which is not a private array being assigned");
+            return false;
+        }
+
+        if (!checkNode(statement.index))
+            return false;
+
+        auto indexType = graph.expr(statement.index).type;
+
+        if (indexType == ValueType::Int || indexType == ValueType::UInt)
+            return true;
+
+        fail("an element of private array " + std::to_string(statement.slot)
+             + " is indexed by a " + typeName(indexType));
+        return false;
+    }
+
+    bool checkBreakIf(const Statement& statement,
+                      int statementId,
+                      int graphBlock,
+                      int loopDepth)
+    {
+        if (!checkCondition(statement.value))
+            return false;
+
+        const auto& block = graph.block(graphBlock);
+
+        if (loopDepth == continuingLoopDepth && block.role == BlockRole::Continuing
+            && block.statements.back() == statementId)
+            return true;
+
+        fail("statement BreakIf other than as a continuing block's last");
+        return false;
+    }
+
+    bool isValidCase(int statementId) const
+    {
+        if (statementId < 0 || statementId >= graph.statementCount())
+            return false;
+
+        const auto& clause = graph.statement(statementId);
+        return clause.kind == StatementKind::Case && clause.slot >= 0
+               && clause.slot < graph.caseCount();
+    }
+
+    bool hasDefaultClause(int cases) const
+    {
+        for (auto clause: graph.block(cases).statements)
+            if (graph.caseLabels(graph.statement(clause).slot).isDefault)
+                return true;
+
+        return false;
+    }
+
+    // Labels that fit the selector, none twice, at most one default.
+    bool checkSwitchLabels(const Statement& statement, ValueType selector)
+    {
+        auto seen = Vector<std::int64_t> {};
+        auto defaults = 0;
+        const auto low =
+            selector == ValueType::Int
+                ? std::int64_t {std::numeric_limits<std::int32_t>::min()}
+                : std::int64_t {0};
+        const auto high =
+            selector == ValueType::Int
+                ? std::int64_t {std::numeric_limits<std::int32_t>::max()}
+                : std::int64_t {std::numeric_limits<std::uint32_t>::max()};
+
+        for (auto clause: graph.block(statement.body).statements)
+        {
+            const auto& labels = graph.caseLabels(graph.statement(clause).slot);
+            defaults += labels.isDefault ? 1 : 0;
+
+            for (auto value: labels.values)
+            {
+                if (value < low || value > high || seen.contains(value))
+                {
+                    fail("a switch label " + std::to_string(value)
+                         + " is repeated or does not fit its selector");
+                    return false;
+                }
+
+                seen.add(value);
+            }
+        }
+
+        if (defaults <= 1)
+            return true;
+
+        fail("a switch has more than one default clause");
+        return false;
+    }
+
+    bool checkSwitch(const Statement& statement)
+    {
+        if (!checkNode(statement.value))
+            return false;
+
+        auto selector = graph.expr(statement.value).type;
+
+        if (selector != ValueType::Int && selector != ValueType::UInt)
+        {
+            fail("a Switch selector is not a scalar Int or UInt");
+            return false;
+        }
+
+        if (statement.body < 0 || statement.body >= graph.blockCount())
+        {
+            fail("a statement names block " + std::to_string(statement.body)
+                 + ", which does not exist");
+            return false;
+        }
+
+        for (auto clause: graph.block(statement.body).statements)
+        {
+            if (!isValidCase(clause))
+            {
+                fail("a Switch's clause list holds a statement other than a Case");
+                return false;
+            }
+        }
+
+        return checkSwitchLabels(statement, selector);
     }
 
     bool checkCondition(int node)
@@ -845,6 +1385,47 @@ private:
 
         fail("storage slot " + std::to_string(slot) + " does not exist");
         return false;
+    }
+
+    bool isStructSlot(int slot) const
+    {
+        return slot >= 0 && slot < plan.slotCount
+               && graph.storageStructType(slot) >= 0;
+    }
+
+    bool checkStructStore(const Statement& statement)
+    {
+        if (!checkSlot(statement.slot) || !checkNode(statement.index)
+            || !checkNode(statement.value))
+            return false;
+
+        auto structId = graph.storageStructType(statement.slot);
+
+        if (plan.slotAccess[static_cast<std::size_t>(statement.slot)]
+            != BufferAccess::Write)
+        {
+            fail("a Store writes struct slot " + std::to_string(statement.slot)
+                 + ", which is read-only");
+            return false;
+        }
+
+        if (!isField(structId, statement.member)
+            || !graph.fitsField(structId, statement.member, statement.value))
+        {
+            fail("a Store gives struct slot " + std::to_string(statement.slot)
+                 + " a value that is not of its field's type");
+            return false;
+        }
+
+        auto index = graph.expr(statement.index).type;
+
+        if (componentCount(index) != 1 || !isIntegerFamily(index))
+        {
+            fail("a Store has an index that is not a scalar integer");
+            return false;
+        }
+
+        return true;
     }
 
     bool checkStore(const Statement& statement, int width)
@@ -882,7 +1463,8 @@ private:
 
         auto element = plan.slotElement[slot];
 
-        if (isFloatFamily(valueType) != isFloatFamily(element))
+        if (isFloatFamily(valueType) != isFloatFamily(element)
+            || isHalf(valueType) != isHalf(element))
         {
             fail(std::string("a ") + planStatementName(statement.kind)
                  + " stores a value of type " + typeName(valueType)
@@ -955,25 +1537,78 @@ private:
         return false;
     }
 
-    bool checkAtomicAdd(const Statement& statement)
+    // The element type of the atomic storage an Atomic names, or Float where
+    // it names none.
+    ValueType atomicElement(const Statement& statement)
     {
-        if (!checkVariable(statement.slot) || !checkSlot(statement.bufferSlot)
-            || !checkNode(statement.index) || !checkNode(statement.value)
-            || !checkIndex(statement))
+        if (statement.memory == MemorySpace::Shared)
+        {
+            if (!checkSharedSlot(statement.bufferSlot))
+                return ValueType::Float;
+
+            const auto& shared = graph.sharedArrays()[statement.bufferSlot];
+
+            if (shared.atomic)
+                return shared.elementType;
+
+            fail("an Atomic names shared array "
+                 + std::to_string(statement.bufferSlot) + ", which is not atomic");
+            return ValueType::Float;
+        }
+
+        if (!checkSlot(statement.bufferSlot))
+            return ValueType::Float;
+
+        auto slot = static_cast<std::size_t>(statement.bufferSlot);
+
+        if (plan.slotAccess[slot] == BufferAccess::Atomic)
+            return plan.slotElement[slot];
+
+        fail("an Atomic names storage slot " + std::to_string(statement.bufferSlot)
+             + ", which is not atomic");
+        return ValueType::Float;
+    }
+
+    bool checkComparand(const Statement& statement, ValueType element)
+    {
+        auto comparing = statement.atomic == AtomicOperation::CompareExchange;
+
+        if (!comparing)
+            return statement.compare < 0 && statement.exchanged < 0;
+
+        if (!checkNode(statement.compare) || !checkVariable(statement.exchanged))
             return false;
 
-        if (plan.slotAccess[static_cast<std::size_t>(statement.bufferSlot)]
-            != BufferAccess::Atomic)
+        return graph.expr(statement.compare).type == element
+               && graph.variables()[statement.exchanged] == ValueType::Bool;
+    }
+
+    bool checkAtomic(const Statement& statement)
+    {
+        if (!checkVariable(statement.slot) || !checkNode(statement.index)
+            || !checkNode(statement.value) || !checkIndex(statement))
+            return false;
+
+        auto element = atomicElement(statement);
+
+        if (failed())
+            return false;
+
+        if (element != ValueType::UInt && element != ValueType::Int)
         {
-            fail("an AtomicAdd names storage slot "
-                 + std::to_string(statement.bufferSlot) + ", which is not atomic");
+            fail("an Atomic acts on elements of " + std::string(typeName(element))
+                 + "; only UInt and Int are atomic");
             return false;
         }
 
-        if (graph.variables()[statement.slot] != ValueType::UInt
-            || graph.expr(statement.value).type != ValueType::UInt)
+        if (graph.variables()[statement.slot] != element
+            || graph.expr(statement.value).type != element
+            || !checkComparand(statement, element))
         {
-            fail("an AtomicAdd adds or returns a value that is not a UInt");
+            if (!failed())
+                fail("an Atomic takes, compares or returns a value that is not "
+                     "its element's type");
+
             return false;
         }
 
@@ -1180,7 +1815,7 @@ private:
 
     int argumentComponents(const Expr& expr, int which) const
     {
-        return componentCount(argumentType(expr, which));
+        return nodeComponents(graph.expr(expr.args[which]));
     }
 
     void rejectNode(int id, const std::string& why)
@@ -1231,24 +1866,61 @@ private:
             plan.arguments.add(argument);
     }
 
+    // An f16 node is computed in float and rounded to the nearest half where
+    // it lands, which for + - * / and sqrt is the correctly rounded half (a
+    // float holds every such result of two halves to more than twice a half's
+    // precision) and for the rest is HLSL's own rounding. A leaf - a literal,
+    // a read of storage or of a variable - already holds a half.
+    void markHalfRounding(int id)
+    {
+        auto& node = plan.nodes[id];
+        node.roundsToHalf = isHalf(graph.expr(id).type) && node.op != Op::Leaf;
+    }
+
     void decodeNode(int id)
     {
         const auto& expr = graph.expr(id);
         auto& node = plan.nodes[id];
-        node.components = static_cast<std::uint8_t>(componentCount(expr.type));
+        auto components = nodeComponents(expr);
+
+        if (components > std::numeric_limits<std::uint8_t>::max())
+        {
+            rejectNode(id, "a struct of more than 255 components");
+            return;
+        }
+
+        node.components = static_cast<std::uint8_t>(components);
         setArguments(node, expr);
 
         switch (expr.kind)
         {
             case ExprKind::Input:
             case ExprKind::Varying:
-            case ExprKind::BuiltIn:
                 rejectNode(id, "a render graph input cannot run as a kernel");
+                return;
+
+            case ExprKind::BuiltIn:
+                if (stageOf(static_cast<ShaderBuiltIn>(expr.index))
+                    != ShaderStage::Compute)
+                {
+                    rejectNode(id, "a render graph input cannot run as a kernel");
+                    return;
+                }
+
+                plan.builtInLeaves.add({id, expr.index});
                 return;
 
             case ExprKind::Sample:
             case ExprKind::Fetch:
+            case ExprKind::TextureFunction:
+            case ExprKind::TextureQuery:
                 rejectNode(id, "textures are not supported by the CPU executor");
+                return;
+
+            case ExprKind::FunctionCall:
+                rejectNode(id,
+                           "a call in a constant array's element: the CPU "
+                           "executor inlines calls in front of a statement");
                 return;
 
             case ExprKind::AtomicLoad:
@@ -1293,6 +1965,10 @@ private:
                 plan.constantNodes.add({id, constantWord(expr)});
                 return;
 
+            case ExprKind::Override:
+                plan.constantNodes.add({id, overrideWords[expr.index]});
+                return;
+
             case ExprKind::GridExtent:
                 plan.extentLeaves.add({id, expr.index});
                 return;
@@ -1308,9 +1984,11 @@ private:
                 return;
 
             case ExprKind::VarRead:
-                if (expr.index < 0 || expr.index >= graph.variables().size())
-                    rejectNode(id, "names a variable that does not exist");
+                decodeVarRead(id, node, expr);
+                return;
 
+            case ExprKind::MatrixColumn:
+                decodeMatrixColumn(id, node, expr);
                 return;
 
             case ExprKind::Construct:
@@ -1361,6 +2039,12 @@ private:
                 if (!requireArguments(id, 1) || !checkSlot(expr.index))
                     return;
 
+                if (expr.member >= 0 || isStructSlot(expr.index))
+                {
+                    decodeStructRead(id, node, expr);
+                    return;
+                }
+
                 if (isMatrix(expr.type) || isBoolean(expr.type))
                 {
                     rejectNode(id, "reads a type no buffer holds");
@@ -1409,9 +2093,10 @@ private:
             || !requireScalarIndex(id, expr))
             return;
 
-        if (plan.slotAccess[static_cast<std::size_t>(expr.index)]
-                != BufferAccess::Atomic
-            || expr.type != ValueType::UInt)
+        auto slot = static_cast<std::size_t>(expr.index);
+
+        if (plan.slotAccess[slot] != BufferAccess::Atomic
+            || expr.type != plan.slotElement[slot])
         {
             rejectNode(id, "reads a slot that is not atomic");
             return;
@@ -1419,6 +2104,26 @@ private:
 
         node.op = Op::AtomicLoad;
         node.immediate = expr.index;
+    }
+
+    void decodeStructRead(int id, Plan::Node& node, const Expr& expr)
+    {
+        auto structId = graph.storageStructType(expr.index);
+
+        if (expr.kind != ExprKind::BufferRead || structId < 0 || expr.member < 0
+            || !isField(structId, expr.member)
+            || graph.structType(structId).fields[expr.member].type != expr.type)
+        {
+            rejectNode(id, "reads a struct buffer other than a field at a time");
+            return;
+        }
+
+        if (!requireScalarIndex(id, expr))
+            return;
+
+        node.op = Op::StructRead;
+        node.immediate = expr.index;
+        node.component = fieldComponent(structId, expr.member);
     }
 
     void decodeSharedRead(int id, Plan::Node& node, const Expr& expr)
@@ -1447,12 +2152,85 @@ private:
         switch (expr.type)
         {
             case ValueType::Float:
+            case ValueType::Half:
                 return Lanes::toWord(expr.value);
             case ValueType::Bool:
                 return Lanes::maskOf(expr.index != 0);
             default:
                 return static_cast<Word>(expr.index);
         }
+    }
+
+    bool isIndexType(ValueType type) const
+    {
+        return type == ValueType::Int || type == ValueType::UInt;
+    }
+
+    // A plain variable's read is its storage; a private array's element is
+    // gathered by the lane's index.
+    void decodeVarRead(int id, Plan::Node& node, const Expr& expr)
+    {
+        if (expr.index < 0 || expr.index >= graph.variables().size())
+        {
+            rejectNode(id, "names a variable that does not exist");
+            return;
+        }
+
+        auto isArray = graph.variableArraySize(expr.index) > 0;
+        auto structId = graph.variableStructType(expr.index);
+
+        if (structId >= 0 || expr.member >= 0)
+        {
+            if (!isField(structId, expr.member) || expr.member < 0
+                || graph.structType(structId).fields[expr.member].type != expr.type)
+            {
+                rejectNode(id,
+                           "reads a struct variable other than a field at a time");
+                return;
+            }
+
+            node.component = fieldComponent(structId, expr.member);
+        }
+
+        if (!isArray && expr.args.empty())
+            return;
+
+        if (!isArray || !requireArguments(id, 1)
+            || !isIndexType(argumentType(expr, 0)))
+        {
+            rejectNode(id, "a private array is read an element at an Int or UInt");
+            return;
+        }
+
+        node.op = Op::VariableElementRead;
+        node.immediate = expr.index;
+        node.sub = signedIndexFlag(argumentType(expr, 0));
+    }
+
+    // Node::sub on an indexed read: 1 where the index is an Int.
+    static std::uint8_t signedIndexFlag(ValueType index)
+    {
+        return index == ValueType::Int ? 1 : 0;
+    }
+
+    void decodeMatrixColumn(int id, Plan::Node& node, const Expr& expr)
+    {
+        if (!requireArguments(id, 2))
+            return;
+
+        auto matrix = argumentType(expr, 0);
+
+        if (!isMatrix(matrix) || !isIndexType(argumentType(expr, 1))
+            || node.components != matrixRows(matrix))
+        {
+            rejectNode(id, "takes a matrix and an Int or UInt column");
+            return;
+        }
+
+        node.op = Op::MatrixColumn;
+        node.columns = static_cast<std::uint8_t>(matrixColumns(matrix));
+        node.rows = static_cast<std::uint8_t>(matrixRows(matrix));
+        node.sub = signedIndexFlag(argumentType(expr, 1));
     }
 
     void decodeConstruct(int id, Plan::Node& node, const Expr& expr)
@@ -1683,25 +2461,36 @@ private:
 
         auto left = argumentType(expr, 0);
         auto right = argumentType(expr, 1);
-        auto leftOrder = matrixOrder(left);
-        auto rightOrder = matrixOrder(right);
+        auto isLeftVector = isFloatFamily(left) && !isMatrix(left);
+        auto isRightVector = isFloatFamily(right) && !isMatrix(right);
+        auto shape = [](int value) { return static_cast<std::uint8_t>(value); };
 
-        if (leftOrder > 0 && rightOrder == 0 && componentCount(right) == leftOrder
-            && isFloatFamily(right))
+        if (isMatrix(left) && isRightVector
+            && componentCount(right) == matrixColumns(left)
+            && node.components == matrixRows(left))
         {
             node.op = Op::MatVec;
-            node.order = static_cast<std::uint8_t>(leftOrder);
+            node.columns = shape(matrixColumns(left));
+            node.rows = shape(matrixRows(left));
         }
-        else if (leftOrder == 0 && rightOrder > 0
-                 && componentCount(left) == rightOrder && isFloatFamily(left))
+        else if (isLeftVector && isMatrix(right)
+                 && componentCount(left) == matrixRows(right)
+                 && node.components == matrixColumns(right))
         {
             node.op = Op::VecMat;
-            node.order = static_cast<std::uint8_t>(rightOrder);
+            node.columns = shape(matrixColumns(right));
+            node.rows = shape(matrixRows(right));
         }
-        else if (leftOrder > 0 && leftOrder == rightOrder)
+        else if (isMatrix(left) && isMatrix(right)
+                 && matrixColumns(left) == matrixRows(right)
+                 && expr.type
+                        == matrixOf(
+                            matrixColumns(right), matrixRows(left), isHalf(left)))
         {
             node.op = Op::MatMat;
-            node.order = static_cast<std::uint8_t>(leftOrder);
+            node.order = shape(matrixColumns(left));
+            node.rows = shape(matrixRows(left));
+            node.columns = shape(matrixColumns(right));
         }
         else
         {
@@ -1822,14 +2611,21 @@ private:
 
         if (name == "transpose" || name == "determinant")
         {
-            if (!requireArguments(id, 1) || !isMatrix(operand))
+            auto isTranspose = name == "transpose";
+
+            if (!requireArguments(id, 1) || !isMatrix(operand)
+                || (isTranspose && type != transposedMatrix(operand))
+                || (!isTranspose && matrixOrder(operand) == 0))
             {
-                rejectNode(id, "takes a matrix");
+                rejectNode(id,
+                           isTranspose ? "takes a matrix" : "takes a square matrix");
                 return;
             }
 
-            node.op = name == "transpose" ? Op::Transpose : Op::Determinant;
+            node.op = isTranspose ? Op::Transpose : Op::Determinant;
             node.order = static_cast<std::uint8_t>(matrixOrder(operand));
+            node.columns = static_cast<std::uint8_t>(matrixColumns(operand));
+            node.rows = static_cast<std::uint8_t>(matrixRows(operand));
             return;
         }
 
@@ -1916,7 +2712,55 @@ private:
             return;
         }
 
+        for (const auto& helper: planBitHelperNames)
+        {
+            if (name != helper.name)
+                continue;
+
+            decodeBitHelper(id, node, expr, helper);
+            return;
+        }
+
         rejectNode(id, "unknown helper");
+    }
+
+    void decodeBitHelper(int id,
+                         Plan::Node& node,
+                         const Expr& expr,
+                         const BitHelperName& helper)
+    {
+        auto type = expr.type;
+
+        if (!requireArguments(id, helper.valueArguments + helper.fieldArguments))
+            return;
+
+        if (!isSignedInteger(type) && !isUnsignedInteger(type))
+        {
+            rejectNode(id, "defined on the integers only");
+            return;
+        }
+
+        for (auto which = 0; which < helper.valueArguments; ++which)
+        {
+            if (argumentType(expr, which) != type)
+            {
+                rejectNode(id, "its argument and result types differ");
+                return;
+            }
+        }
+
+        for (auto which = helper.valueArguments; which < expr.args.size(); ++which)
+        {
+            if (argumentType(expr, which) != ValueType::UInt)
+            {
+                rejectNode(id, "its offset and count are not scalar UInts");
+                return;
+            }
+        }
+
+        node.op = Op::Helper;
+        node.sub = static_cast<std::uint8_t>(
+            isSignedInteger(type) ? helper.signedFunction : helper.unsignedFunction);
     }
 
     void decodeGeometric(int id, Plan::Node& node, const Expr& expr, Op op)
@@ -2035,6 +2879,8 @@ private:
         {
             case ExprKind::Constant:
                 return constantForm(constantWord(expr));
+            case ExprKind::Override:
+                return constantForm(overrideWords[expr.index]);
             case ExprKind::Uniform:
             case ExprKind::GridExtent:
                 return laneInvariant();
@@ -2176,7 +3022,7 @@ private:
     bool usesAtomics() const
     {
         for (const auto& step: plan.steps)
-            if (step.kind == StatementKind::AtomicAdd)
+            if (step.kind == StatementKind::Atomic)
                 return true;
 
         for (const auto& node: plan.nodes)
@@ -2241,9 +3087,14 @@ private:
         return static_cast<std::uint32_t>(offset);
     }
 
-    static bool ownsScratch(ExprKind kind)
+    // A plain variable's read is its storage and a local id the lane's own
+    // coordinates; a private array's element is gathered into scratch.
+    static bool ownsScratch(const Expr& expr)
     {
-        return kind != ExprKind::VarRead && kind != ExprKind::LocalId;
+        if (expr.kind == ExprKind::VarRead)
+            return !expr.args.empty();
+
+        return expr.kind != ExprKind::LocalId;
     }
 
     void layOutShared()
@@ -2283,17 +3134,20 @@ private:
         {
             auto& node = plan.nodes[id];
 
-            if (node.used && ownsScratch(graph.expr(id).kind) && !isPooled(id))
+            if (node.used && ownsScratch(graph.expr(id)) && !isPooled(id))
                 node.scratch = allocate(node.components);
         }
 
         colourPooledNodes();
 
-        for (auto type: graph.variables())
+        for (auto slot = 0; slot < graph.variables().size(); ++slot)
         {
+            auto size = graph.variableArraySize(slot);
             auto variable = Plan::Variable {};
-            variable.components = componentCount(type);
-            variable.storage = allocate(variable.components);
+            variable.components = variableComponents(slot);
+            variable.elements = size > 0 ? size : 1;
+            variable.isArray = size > 0;
+            variable.storage = allocate(variable.components * variable.elements);
             plan.variableLayouts.add(variable);
         }
 
@@ -2301,8 +3155,11 @@ private:
         {
             const auto& expr = graph.expr(id);
 
-            if (plan.nodes[id].used && expr.kind == ExprKind::VarRead)
-                plan.nodes[id].scratch = plan.variableLayouts[expr.index].storage;
+            if (plan.nodes[id].used && expr.kind == ExprKind::VarRead
+                && !ownsScratch(expr))
+                plan.nodes[id].scratch = plan.variableLayouts[expr.index].storage
+                                         + static_cast<std::uint32_t>(
+                                             plan.nodes[id].component * plan.stride);
         }
 
         for (auto& layout: plan.arrayLayouts)
@@ -2349,7 +3206,7 @@ private:
     {
         const auto& node = plan.nodes[id];
         return node.used && node.op != Op::Leaf && levels[id] == PlanLevel::Lane
-               && ownsScratch(graph.expr(id).kind);
+               && ownsScratch(graph.expr(id));
     }
 
     // Times: schedule position p is 2p, and a step's commit, which reads its
@@ -2479,7 +3336,7 @@ private:
                          byLastUse.end(),
                          [this](int a, int b) { return lastUses[a] < lastUses[b]; });
 
-        auto freeSlots = std::array<Vector<std::uint32_t>, 17> {};
+        auto freeSlots = std::array<Vector<std::uint32_t>, 256> {};
         auto released = 0;
 
         for (auto id: byDefinition)
@@ -2586,7 +3443,7 @@ private:
             auto subtreeLast = stepId;
             stepBlocks[stepId] = block;
 
-            for (auto body: {step.body, step.elseBody})
+            for (auto body: {step.body, step.elseBody, step.continuing})
             {
                 if (body < 0)
                     continue;
@@ -2632,12 +3489,13 @@ private:
             return PlanLevel::Lane;
 
         if (node.op == Op::Leaf)
-            return planLeafLevel(graph.expr(id).kind);
+            return planLeafLevel(graph.expr(id));
 
         switch (node.op)
         {
             case Op::BufferRead:
             case Op::BufferVectorRead:
+            case Op::StructRead:
                 if (plan.access(node.immediate) != BufferAccess::Read)
                     return PlanLevel::Lane;
 
@@ -2853,6 +3711,14 @@ private:
     Vector<int> definitions;
     Vector<int> lastUses;
     Vector<int> lastDefinitions;
+
+    // Each override's value, by id, as the word a constant of its type holds.
+    Vector<Word> overrideWords;
+
+    // The loop depth of the continuing block being built, or -1 outside one,
+    // and the clause list of the switch being built, or -1.
+    int continuingLoopDepth = -1;
+    int casesBlock = -1;
     int stamp = 0;
     std::size_t cursor = 0;
 };
@@ -2867,6 +3733,14 @@ std::uint64_t nextPlanSerial()
 } // namespace
 
 Plan::Plan(const ShaderGraph& graph, Options options)
+{
+    if (graph.functionCount() > 0)
+        build(graph.withFunctionsInlined(), options);
+    else
+        build(graph, options);
+}
+
+void Plan::build(const ShaderGraph& graph, const Options& options)
 {
     auto groupLimit = std::numeric_limits<int>::max();
 
@@ -2904,6 +3778,23 @@ bool Plan::referencesSlot(int slot) const
 {
     return slot >= 0 && slot < slotCount
            && slotReferenced[static_cast<std::size_t>(slot)];
+}
+
+int Plan::structStride(int slot) const
+{
+    return slot >= 0 && slot < slotCount
+               ? slotStructStride[static_cast<std::size_t>(slot)]
+               : 0;
+}
+
+std::span<const StructComponent> Plan::structComponents(int slot) const
+{
+    if (structStride(slot) == 0)
+        return {};
+
+    const auto& range = slotStructComponents[static_cast<std::size_t>(slot)];
+    return {structComponentList.data() + range.begin,
+            static_cast<std::size_t>(range.end - range.begin)};
 }
 
 ValueType Plan::uniformType(int slot) const

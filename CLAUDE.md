@@ -95,7 +95,9 @@ take it without eacp, its tests live there, and
 behind `EACP_BUILD_SPIRV` and so on Linux only by default,
 `glslang`; a Linux build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
-one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
+one `eacp-vulkan` target, fetched on no other platform) and `stb`
+(`CMake/FindStb.cmake`, the header-only `eacp-stb` target behind the Linux
+image codec). Plus libcurl on Linux,
 which backs the HTTP client there, and — on Linux, where none of them are
 optional — three pkg-config groups: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor (`CMake/FindWayland.cmake`, one
@@ -453,8 +455,10 @@ for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
 into `Core`'s `Clipboard` through the backend hook in
 `Core/App/Clipboard-Linux.h` so `eacp-core` links no Wayland; a copy needs
 keyboard focus on one of our windows), a compositor disconnect that fires
-`onLost` on every view surface and leaves the process headless, and stubs for
-image codecs, menus, tray and system appearance.
+`onLost` on every view surface and leaves the process headless, the PNG/JPEG
+codec (`Image/Image-Linux.cpp` over stb_image and stb_image_write, linked
+PRIVATE and kept out of the unity batches), and stubs for menus, tray and
+system appearance.
 
 The X11 half is its twin, on xcb with no Xlib symbol anywhere.
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
@@ -685,7 +689,7 @@ libfontconfig-dev fonts-dejavu-core fonts-dejavu-extra fonts-droid-fallback
 fonts-noto-color-emoji`.
 
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
-`TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
+`TextMetrics`, `TextInput` and the retained layer classes are
 left out of the Linux source list rather than stubbed, and with them
 `Apps/Graphics` and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out

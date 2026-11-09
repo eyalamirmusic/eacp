@@ -288,6 +288,15 @@ public:
     // VK_EXT_shader_viewport_index_layer below it.
     bool supportsLayeredRendering() const;
 
+    // f16 arithmetic and f16 storage buffers: shaderFloat16 with
+    // storageBuffer16BitAccess, the Vulkan 1.2/1.1 features on the core floor
+    // and VK_KHR_shader_float16_int8 with VK_KHR_16bit_storage below it.
+    bool supportsShaderFloat16() const;
+
+    // A fragment stage run per sample (SampleRateShading): sampleRateShading,
+    // enabled wherever the device offers it.
+    bool supportsSampleRateShading() const;
+
     // Null before the device came up.
     VkSampler getSampler(const TextureSampling& sampling) const;
 
@@ -326,6 +335,7 @@ private:
     bool depthResolvesBySampleZero = false;
     bool indirectCountSupported = false;
     bool layeredRenderingSupported = false;
+    bool shaderFloat16Supported = false;
 
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 
@@ -494,7 +504,6 @@ private:
                                                std::size_t bytes);
 
     ConstantPage* pageFor(CommandContext& commands, std::size_t bytes);
-
 
     VkBuffer acquirePooled(Vector<PooledBuffer>& pool,
                            Vector<int>& taken,

@@ -27,6 +27,11 @@ struct VisitSet
 
 bool isLocalWanted(ExprKind kind);
 
+// dfdx, dfdy and fwidth; and anything taking the fragment's derivatives,
+// those three and the samples whose level is derived from them.
+bool isDerivativeCall(const Expr& expr);
+bool takesDerivedLevel(const ShaderGraph& graph, const Expr& expr);
+
 void countUses(const ShaderGraph& graph,
                int node,
                Vector<int>& uses,
@@ -59,6 +64,10 @@ bool doesTouchSharedMemory(const ShaderGraph& graph, const Statement& statement)
 void collectBufferWrites(const ShaderGraph& graph,
                          const Statement& statement,
                          Vector<char>& written);
+
+void collectCalledBufferWrites(const ShaderGraph& graph,
+                               int function,
+                               Vector<char>& written);
 
 struct StalenessQuery
 {

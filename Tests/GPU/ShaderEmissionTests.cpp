@@ -48,8 +48,11 @@ int findStatement(const ShaderGraph& graph, StatementKind kind)
 
 using namespace ShaderEmissionTests;
 
-static_assert(getFlatQualifier(Backend::Vulkan, ValueType::Int) == "flat ");
-static_assert(getFlatQualifier(Backend::DirectX, ValueType::UInt)
+static_assert(getInterpolationTypeQualifier(
+                  Backend::Vulkan, defaultInterpolation(ValueType::Int).type)
+              == "flat ");
+static_assert(getInterpolationTypeQualifier(
+                  Backend::DirectX, defaultInterpolation(ValueType::UInt).type)
               == "nointerpolation ");
 static_assert(getPositionSemantic(Backend::Metal) == " [[position]]");
 static_assert(getComponentSuffix(2) == ".z");
@@ -67,8 +70,12 @@ auto tEmissionSpellings = test("ShaderEmission/spellingsMatchTheEmittedSource") 
     check(getAttributeSemantic(Backend::Metal, 3) == " [[attribute(3)]]");
     check(getAttributeSemantic(Backend::DirectX, 3) == " : TEXCOORD3");
     check(getAttributeSemantic(Backend::Vulkan, 3).empty());
-    check(getVaryingSemantic(Backend::Metal, 1, ValueType::UInt) == " [[flat]]");
-    check(getVaryingSemantic(Backend::Metal, 1, ValueType::Float).empty());
+    check(
+        getVaryingSemantic(Backend::Metal, 1, defaultInterpolation(ValueType::UInt))
+        == " [[flat]]");
+    check(
+        getVaryingSemantic(Backend::Metal, 1, defaultInterpolation(ValueType::Float))
+            .empty());
     check(getLocationLayout(2) == "layout(location = 2) ");
     check(getAttributeName(Backend::Vulkan, 4) == "attr4");
     check(getVaryingName(Backend::Metal, 4) == "input.v4");

@@ -481,8 +481,8 @@ struct RenderPipeline::Native
             || descriptor.library == nullptr)
             return;
 
-        auto* program =
-            static_cast<D3D12ShaderProgram*>(descriptor.library->nativeLibrary());
+        auto* program = static_cast<D3D12ShaderProgram*>(
+            descriptor.library->nativeLibrary(descriptor.constants));
 
         const auto hasFragment = descriptor.library->hasFragment();
 
