@@ -24,6 +24,7 @@ target_sources(eacp-core PRIVATE
         App/Alert.cpp
         App/App.cpp
         App/Args.cpp
+        Geometry/Geometry.cpp
         Maths/Mat4.cpp
         Platform/AppInfo.cpp
         Platform/Platform.cpp

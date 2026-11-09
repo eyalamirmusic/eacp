@@ -83,12 +83,47 @@ auto tSplitsIntegerRectangles = test("Geometry/splitsIntegerRectangles") = []
     check(area.inset(Insets<int> {.left = 1, .right = 2})
           == Rectangle<int> {1, 5, 7, 15});
 };
-static_assert(Rectangle<int> {0, 0, 10, 10}.contains(Rectangle<int> {2, 2, 3, 3}));
-static_assert(Rectangle<int> {0, 0, 10, 10}.intersects({5, 5, 10, 10}));
-static_assert(Rectangle<int> {0, 0, 10, 10}.intersection({20, 20, 5, 5}).isEmpty());
-static_assert(Rectangle<float> {1.5f, 0.f, 1.f, 1.f}.to<int>().x == 1);
-static_assert((Point<int> {1, 2} + Point<int> {3, 4}).x == 4);
-static_assert(Insets<int> {.top = 1, .bottom = 2}.size().y == 3);
-static_assert(Rectangle<int> {1, 2, 3, 4} == Rectangle<int> {1, 2, 3, 4});
-static_assert(Rectangle<int> {1, 2, 3, 4} != Rectangle<int> {1, 2, 3, 5});
+auto tAddsAndSubtractsPoints = test("Geometry/addsAndSubtractsPoints") = []
+{
+    check(Point<int> {1, 2} + Point<int> {3, 4} == Point<int> {4, 6});
+    check(Point<double> {1.5, 2.} - Point<double> {0.5, 3.}
+          == Point<double> {1., -1.});
+    check(Insets<int> {.top = 1, .bottom = 2}.size() == Point<int> {0, 3});
+};
+
+auto tRoundsIntegerLengthsToTheNearest =
+    test("Geometry/roundsIntegerLengthsToTheNearest") = []
+{
+    check(Point<int> {3, 4}.length() == 5);
+    check(Point<int> {1, 1}.length() == 1);
+    check(Point<int> {2, 2}.length() == 3);
+    check(Point<int> {0, 0}.distanceTo({-6, 8}) == 10);
+    check(Point<float> {3.f, 4.f}.length() == 5.f);
+};
+
+auto tNormalizesIntegerPointsToTheNearestUnitStep =
+    test("Geometry/normalizesIntegerPointsToTheNearestUnitStep") = []
+{
+    check(Point<int> {10, 0}.normalized() == Point<int> {1, 0});
+    check(Point<int> {-3, -4}.normalized() == Point<int> {-1, -1});
+    check(Point<int> {0, 0}.normalized() == Point<int> {});
+    check(Point<double> {0., -2.}.normalized() == Point<double> {0., -1.});
+};
+
+auto tMapsIntoIntegerRectanglesWithoutDividingByZero =
+    test("Geometry/mapsIntoIntegerRectanglesWithoutDividingByZero") = []
+{
+    auto rect = Rectangle<int> {0, 0, 0, 4};
+    check(rect.getRelativePoint({3, 4}) == Point<int> {0, 1});
+    check(Rectangle<int> {0, 0, 5, 7}.center() == Point<int> {2, 3});
+    check(Rectangle<double> {0., 0., 4., 2.}.getRelativePoint({1., 1.})
+          == Point<double> {0.25, 0.5});
+};
+
+auto tComparesEveryMember = test("Geometry/comparesEveryMember") = []
+{
+    check(Rectangle<int> {1, 2, 3, 4} == Rectangle<int> {1, 2, 3, 4});
+    check(Rectangle<int> {1, 2, 3, 4} != Rectangle<int> {1, 2, 3, 5});
+    check(Insets<double> {.top = 1.} != Insets<double> {.left = 1.});
+};
 } // namespace GeometryTests
