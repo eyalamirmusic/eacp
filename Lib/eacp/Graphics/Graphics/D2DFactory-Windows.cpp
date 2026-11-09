@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include <eacp/Core/Utils/Environment.h>
+
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
@@ -33,6 +35,18 @@ void handleRenderingDeviceReplaced()
 
     for (auto& listener: renderingDeviceReplacedListeners())
         listener();
+}
+
+// EACP_DCOMP_UNAVAILABLE=1 (anything but "0") makes composition-device
+// creation fail with E_ACCESSDENIED, which is what DCompositionCreateDevice2
+// answers in a session with no desktop compositor: a service, a CI runner, a
+// job started over ssh into session 0. It lets that state be tested, and
+// reproduced, on a desktop that has a compositor. Read when the device is
+// built, so it has to be set before the first graphics call.
+bool compositionForcedUnavailable()
+{
+    const auto value = getEnvValue("EACP_DCOMP_UNAVAILABLE");
+    return !value.empty() && value != "0";
 }
 } // namespace
 
@@ -190,6 +204,9 @@ private:
     HRESULT createCompositionDevice()
     {
         device.Reset();
+
+        if (compositionForcedUnavailable())
+            return E_ACCESSDENIED;
 
         return DCompositionCreateDevice2(d2dDevice.Get(),
                                          IID_PPV_ARGS(device.GetAddressOf()));
