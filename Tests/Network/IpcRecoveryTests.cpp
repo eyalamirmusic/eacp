@@ -3,8 +3,10 @@
 #include <eacp/Network/IPCRpc/RpcClient.h>
 #include <eacp/Network/IPCRpc/RpcServer.h>
 
+#include <atomic>
 #include <cstdint>
 #include <optional>
+#include <thread>
 
 using namespace nano;
 using eacp::IPC::Channel;
@@ -24,6 +26,8 @@ constexpr auto implausibleLength = std::uint32_t {0xffffffff};
 constexpr auto concurrentClientCount = 16;
 constexpr auto overflowMessageBytes = std::size_t {1} << 20;
 constexpr auto overflowMessageCount = 80;
+constexpr auto floodSendingLimit = eacp::Time::MS {500};
+constexpr auto floodPollInterval = eacp::Time::MS {5};
 
 struct EchoRequest
 {
@@ -79,6 +83,34 @@ struct CountingServer
         };
     }
 };
+
+bool isFloodSentWithinLimit(Messenger& session, Channel& slowReader)
+{
+    auto isFinished = std::atomic<bool> {false};
+    auto sender = std::thread(
+        [&session, &isFinished]
+        {
+            auto payload = std::string(overflowMessageBytes, 'x');
+
+            for (auto index = 0; index < overflowMessageCount; ++index)
+                session.send(payload);
+
+            isFinished = true;
+        });
+
+    auto deadline = eacp::Time::Deadline {floodSendingLimit};
+
+    while (!isFinished && !deadline.expired())
+        eacp::Time::sleep(floodPollInterval);
+
+    auto isFinishedInTime = isFinished.load();
+
+    if (!isFinishedInTime)
+        slowReader.close();
+
+    sender.join();
+    return isFinishedInTime;
+}
 
 bool isServedAfterwards(CountingServer& counting, const std::string& name)
 {
@@ -187,11 +219,7 @@ auto tStuckReaderRecovers =
     check(runEventLoopUntil([&session] { return session.has_value(); },
                             recoveryPumpTimeout));
 
-    auto payload = std::string(overflowMessageBytes, 'x');
-
-    for (auto index = 0; index < overflowMessageCount; ++index)
-        (*session)->send(payload);
-
+    check(isFloodSentWithinLimit(**session, slowReader));
     check(runEventLoopUntil([&counting] { return counting.sessionsGone == 1; },
                             recoveryPumpTimeout));
     check(isServedAfterwards(counting, name));
