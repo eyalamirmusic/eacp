@@ -7,6 +7,17 @@ option(EACP_PRECOMPILE_SHADERS
 set(EACP_PRECOMPILE_SHADER_BACKENDS "" CACHE STRING
         "The backends every eacp_add_precompiled_shaders call compiles for, from metal, dxbc and spirv, overriding each call's BACKENDS. Empty: the call's BACKENDS, else the target platform's own (metal on Apple, dxbc on Windows, spirv on Linux and Android).")
 
+# EACP_SHADER_SET() names each set with __COUNTER__, which Clang 23 reports
+# under -Wpedantic as a C2y extension; every compiler eacp builds with has it.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag(-Wc2y-extensions EACP_HAS_C2Y_EXTENSIONS_WARNING)
+
+function(eacp_allow_counter_macro target)
+    if (EACP_HAS_C2Y_EXTENSIONS_WARNING)
+        target_compile_options(${target} PRIVATE -Wno-c2y-extensions)
+    endif ()
+endfunction()
+
 # Whether `xcrun -sdk macosx metal` can run. An Xcode without its Metal Toolchain
 # component still answers `xcrun --find metal`, so the compiler is asked for its
 # version instead. Probed once per build directory; delete the cache entry after
@@ -211,6 +222,7 @@ function(eacp_add_precompiled_shaders app)
     add_executable(${tool} "${tool_main}" ${ARG_SOURCES})
     target_link_libraries(${tool} PRIVATE eacp-shader-compiler eacp-gpu ${ARG_LINK})
     set_default_warnings_level(${tool})
+    eacp_allow_counter_macro(${tool})
     set_target_properties(${tool} PROPERTIES EXCLUDE_FROM_ALL ON)
 
     set(output_dir "${CMAKE_CURRENT_BINARY_DIR}/${app}-PrecompiledShaders")

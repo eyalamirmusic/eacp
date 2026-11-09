@@ -127,6 +127,8 @@ struct WaylandSeatDispatch
 
     static void pointerAxisDirection(void*, wl_pointer*, uint32_t, uint32_t) {}
 
+    static void pointerWarp(void*, wl_pointer*, wl_fixed_t, wl_fixed_t) {}
+
     static void relativeMotion(void* data,
                                zwp_relative_pointer_v1*,
                                uint32_t,
@@ -213,6 +215,9 @@ const wl_pointer_listener WaylandSeatDispatch::pointerListener {
     .axis_discrete = WaylandSeatDispatch::pointerAxisDiscrete,
     .axis_value120 = WaylandSeatDispatch::pointerAxisValue120,
     .axis_relative_direction = WaylandSeatDispatch::pointerAxisDirection,
+#ifdef WL_POINTER_WARP_SINCE_VERSION
+    .warp = WaylandSeatDispatch::pointerWarp,
+#endif
 };
 
 const wl_keyboard_listener WaylandSeatDispatch::keyboardListener {
