@@ -121,6 +121,15 @@ void GlyphRenderer::setSampleCount(int count)
     prepared = false;
 }
 
+void GlyphRenderer::setPassHasDepthAttachment(bool hasDepthAttachment)
+{
+    if (hasDepthAttachment == passHasDepthAttachment)
+        return;
+
+    passHasDepthAttachment = hasDepthAttachment;
+    prepared = false;
+}
+
 void GlyphRenderer::begin()
 {
     masks.clear();
@@ -188,14 +197,15 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
         // then that texture faded, otherwise loses the coverage of every edge it
         // has. On a window's own drawable, where the destination is opaque
         // already, the two are the same picture.
-        maskProgram->prepare(sampleCount,
-                             false,
-                             PrimitiveTopology::Triangles,
-                             BlendMode::AlphaBlendOntoTransparent);
-        colorProgram->prepare(sampleCount,
-                              false,
-                              PrimitiveTopology::Triangles,
-                              BlendMode::AlphaBlendOntoTransparent);
+        auto descriptor = RenderPipelineDescriptor {};
+        descriptor.sampleCount = sampleCount;
+        descriptor.blendMode = BlendMode::AlphaBlendOntoTransparent;
+        descriptor.depth = passHasDepthAttachment;
+        descriptor.depthCompare = DepthCompare::Always;
+        descriptor.depthWrite = false;
+
+        maskProgram->prepare(descriptor);
+        colorProgram->prepare(descriptor);
 
         // The quad every glyph is instanced over never changes, so it is
         // uploaded once here rather than per draw. Per draw it was a buffer
