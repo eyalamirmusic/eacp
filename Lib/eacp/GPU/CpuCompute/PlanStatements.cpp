@@ -19,6 +19,23 @@ bool isStorable(ValueType type, int width)
            && !isMatrix(type) && !isBoolean(type);
 }
 
+struct SelectorRange
+{
+    std::int64_t low = 0;
+    std::int64_t high = 0;
+
+    bool contains(std::int64_t value) const { return value >= low && value <= high; }
+};
+
+SelectorRange getSelectorRange(ValueType selector)
+{
+    if (selector == ValueType::Int)
+        return {std::numeric_limits<std::int32_t>::min(),
+                std::numeric_limits<std::int32_t>::max()};
+
+    return {0, std::numeric_limits<std::uint32_t>::max()};
+}
+
 bool isReducible(ValueType type)
 {
     return type == ValueType::Float || type == ValueType::UInt
@@ -40,16 +57,8 @@ bool PlanBuilder::checkGraph()
         return false;
     }
 
-    for (auto slot = 0; slot < graph.textureCount(); ++slot)
-    {
-        if (graph.textureAccess(slot) == TextureAccess::Sampler)
-        {
-            fail("texture slot " + std::to_string(slot)
-                 + " is a sampler: samplers are not supported by the CPU "
-                   "executor");
-            return false;
-        }
-    }
+    if (!checkNoSamplers())
+        return false;
 
     const auto& slots = graph.storageBuffers();
 
@@ -72,6 +81,22 @@ bool PlanBuilder::checkGraph()
     }
 
     return checkThreadGroupShape() && packUniforms();
+}
+
+bool PlanBuilder::checkNoSamplers()
+{
+    for (auto slot = 0; slot < graph.textureCount(); ++slot)
+    {
+        if (graph.textureAccess(slot) == TextureAccess::Sampler)
+        {
+            fail("texture slot " + std::to_string(slot)
+                 + " is a sampler: samplers are not supported by the CPU "
+                   "executor");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void PlanBuilder::recordStructSlot(int slot)
@@ -817,12 +842,7 @@ bool PlanBuilder::checkSwitchLabels(const Statement& statement, ValueType select
 {
     auto seen = Vector<std::int64_t> {};
     auto defaults = 0;
-    const auto low = selector == ValueType::Int
-                         ? std::int64_t {std::numeric_limits<std::int32_t>::min()}
-                         : std::int64_t {0};
-    const auto high = selector == ValueType::Int
-                          ? std::int64_t {std::numeric_limits<std::int32_t>::max()}
-                          : std::int64_t {std::numeric_limits<std::uint32_t>::max()};
+    const auto range = getSelectorRange(selector);
 
     for (auto clause: graph.block(statement.body).statements)
     {
@@ -831,7 +851,7 @@ bool PlanBuilder::checkSwitchLabels(const Statement& statement, ValueType select
 
         for (auto value: labels.values)
         {
-            if (value < low || value > high || seen.contains(value))
+            if (!range.contains(value) || seen.contains(value))
             {
                 fail("a switch label " + std::to_string(value)
                      + " is repeated or does not fit its selector");
@@ -1156,6 +1176,14 @@ bool PlanBuilder::checkComparand(const Statement& statement, ValueType element)
            && graph.variables()[statement.exchanged] == ValueType::Bool;
 }
 
+bool PlanBuilder::hasAtomicOperandTypes(const Statement& statement,
+                                        ValueType element)
+{
+    return graph.variables()[statement.slot] == element
+           && graph.expr(statement.value).type == element
+           && checkComparand(statement, element);
+}
+
 bool PlanBuilder::checkAtomic(const Statement& statement)
 {
     if (!checkVariable(statement.slot) || !checkIndexAndValue(statement)
@@ -1174,9 +1202,7 @@ bool PlanBuilder::checkAtomic(const Statement& statement)
         return false;
     }
 
-    if (graph.variables()[statement.slot] != element
-        || graph.expr(statement.value).type != element
-        || !checkComparand(statement, element))
+    if (!hasAtomicOperandTypes(statement, element))
     {
         if (!failed())
             fail("an Atomic takes, compares or returns a value that is not "

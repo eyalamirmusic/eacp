@@ -82,47 +82,47 @@ struct BitHelperName
 
 namespace
 {
-constexpr BitHelperName planBitHelperNames[] = {
-    {"eacpCountOneBits",
-     HelperFunction::CountOneBits,
-     HelperFunction::CountOneBits,
-     1,
-     0},
-    {"eacpReverseBits",
-     HelperFunction::ReverseBits,
-     HelperFunction::ReverseBits,
-     1,
-     0},
-    {"eacpCountLeadingZeros",
-     HelperFunction::CountLeadingZeros,
-     HelperFunction::CountLeadingZeros,
-     1,
-     0},
-    {"eacpCountTrailingZeros",
-     HelperFunction::CountTrailingZeros,
-     HelperFunction::CountTrailingZeros,
-     1,
-     0},
-    {"eacpFirstLeadingBit",
-     HelperFunction::FirstLeadingBitUnsigned,
-     HelperFunction::FirstLeadingBitSigned,
-     1,
-     0},
-    {"eacpFirstTrailingBit",
-     HelperFunction::FirstTrailingBit,
-     HelperFunction::FirstTrailingBit,
-     1,
-     0},
-    {"eacpExtractBits",
-     HelperFunction::ExtractBitsUnsigned,
-     HelperFunction::ExtractBitsSigned,
-     1,
-     2},
-    {"eacpInsertBits",
-     HelperFunction::InsertBits,
-     HelperFunction::InsertBits,
-     2,
-     2}};
+constexpr auto bitHelperNames =
+    Array<BitHelperName, 8> {{"eacpCountOneBits",
+                              HelperFunction::CountOneBits,
+                              HelperFunction::CountOneBits,
+                              1,
+                              0},
+                             {"eacpReverseBits",
+                              HelperFunction::ReverseBits,
+                              HelperFunction::ReverseBits,
+                              1,
+                              0},
+                             {"eacpCountLeadingZeros",
+                              HelperFunction::CountLeadingZeros,
+                              HelperFunction::CountLeadingZeros,
+                              1,
+                              0},
+                             {"eacpCountTrailingZeros",
+                              HelperFunction::CountTrailingZeros,
+                              HelperFunction::CountTrailingZeros,
+                              1,
+                              0},
+                             {"eacpFirstLeadingBit",
+                              HelperFunction::FirstLeadingBitUnsigned,
+                              HelperFunction::FirstLeadingBitSigned,
+                              1,
+                              0},
+                             {"eacpFirstTrailingBit",
+                              HelperFunction::FirstTrailingBit,
+                              HelperFunction::FirstTrailingBit,
+                              1,
+                              0},
+                             {"eacpExtractBits",
+                              HelperFunction::ExtractBitsUnsigned,
+                              HelperFunction::ExtractBitsSigned,
+                              1,
+                              2},
+                             {"eacpInsertBits",
+                              HelperFunction::InsertBits,
+                              HelperFunction::InsertBits,
+                              2,
+                              2}};
 
 // The second argument type is read only when the helper takes two.
 struct HelperSignature
@@ -423,6 +423,39 @@ bool hasGeometricWidths(const ShaderGraph& graph, const Expr& expr, Op op, int w
 
     return true;
 }
+bool hasArgumentTypes(
+    const ShaderGraph& graph, const Expr& expr, int begin, int end, ValueType type)
+{
+    for (auto which = begin; which < end; ++which)
+        if (getArgumentType(graph, expr, which) != type)
+            return false;
+
+    return true;
+}
+
+bool isMatrixTimesVector(ValueType matrix, ValueType vector, int resultComponents)
+{
+    return isMatrix(matrix) && isFloatVector(vector)
+           && componentCount(vector) == matrixColumns(matrix)
+           && resultComponents == matrixRows(matrix);
+}
+
+bool isVectorTimesMatrix(ValueType vector, ValueType matrix, int resultComponents)
+{
+    return isFloatVector(vector) && isMatrix(matrix)
+           && componentCount(vector) == matrixRows(matrix)
+           && resultComponents == matrixColumns(matrix);
+}
+
+bool isMatrixTimesMatrix(ValueType left, ValueType right, ValueType result)
+{
+    if (!isMatrix(left) || !isMatrix(right)
+        || matrixColumns(left) != matrixRows(right))
+        return false;
+
+    return result == matrixOf(matrixColumns(right), matrixRows(left), isHalf(left));
+}
+
 bool isIndexType(ValueType type)
 {
     return type == ValueType::Int || type == ValueType::UInt;
@@ -752,8 +785,7 @@ void PlanBuilder::decodeVarRead(int id, Plan::Node& node, const Expr& expr)
 
     if (structId >= 0 || expr.member >= 0)
     {
-        if (!isField(structId, expr.member) || expr.member < 0
-            || graph.structType(structId).fields[expr.member].type != expr.type)
+        if (!isFieldRead(structId, expr))
         {
             rejectNode(id, "reads a struct variable other than a field at a time");
             return;
@@ -775,6 +807,15 @@ void PlanBuilder::decodeVarRead(int id, Plan::Node& node, const Expr& expr)
     node.op = Op::VariableElementRead;
     node.immediate = expr.index;
     node.sub = signedIndexFlag(getArgumentType(graph, expr, 0));
+}
+
+// A read of one named field of the struct, of that field's type.
+bool PlanBuilder::isFieldRead(int structId, const Expr& expr) const
+{
+    if (structId < 0 || expr.member < 0 || !isField(structId, expr.member))
+        return false;
+
+    return graph.structType(structId).fields[expr.member].type == expr.type;
 }
 
 void PlanBuilder::decodeMatrixColumn(int id, Plan::Node& node, const Expr& expr)
@@ -874,9 +915,7 @@ void PlanBuilder::decodeStructRead(int id, Plan::Node& node, const Expr& expr)
 {
     auto structId = graph.storageStructType(expr.index);
 
-    if (expr.kind != ExprKind::BufferRead || structId < 0 || expr.member < 0
-        || !isField(structId, expr.member)
-        || graph.structType(structId).fields[expr.member].type != expr.type)
+    if (expr.kind != ExprKind::BufferRead || !isFieldRead(structId, expr))
     {
         rejectNode(id, "reads a struct buffer other than a field at a time");
         return;
@@ -1071,31 +1110,21 @@ void PlanBuilder::decodeMul(int id, Plan::Node& node, const Expr& expr)
 
     auto left = getArgumentType(graph, expr, 0);
     auto right = getArgumentType(graph, expr, 1);
-    auto isLeftVector = isFloatFamily(left) && !isMatrix(left);
-    auto isRightVector = isFloatFamily(right) && !isMatrix(right);
     auto shape = [](int value) { return static_cast<std::uint8_t>(value); };
 
-    if (isMatrix(left) && isRightVector
-        && componentCount(right) == matrixColumns(left)
-        && node.components == matrixRows(left))
+    if (isMatrixTimesVector(left, right, node.components))
     {
         node.op = Op::MatVec;
         node.columns = shape(matrixColumns(left));
         node.rows = shape(matrixRows(left));
     }
-    else if (isLeftVector && isMatrix(right)
-             && componentCount(left) == matrixRows(right)
-             && node.components == matrixColumns(right))
+    else if (isVectorTimesMatrix(left, right, node.components))
     {
         node.op = Op::VecMat;
         node.columns = shape(matrixColumns(right));
         node.rows = shape(matrixRows(right));
     }
-    else if (isMatrix(left) && isMatrix(right)
-             && matrixColumns(left) == matrixRows(right)
-             && expr.type
-                    == matrixOf(
-                        matrixColumns(right), matrixRows(left), isHalf(left)))
+    else if (isMatrixTimesMatrix(left, right, expr.type))
     {
         node.op = Op::MatMat;
         node.order = shape(matrixColumns(left));
@@ -1324,16 +1353,7 @@ void PlanBuilder::decodePackedHelper(int id, Plan::Node& node, const Expr& expr)
 
     if (packed == packedHelperNames.end())
     {
-        for (const auto& helper: planBitHelperNames)
-        {
-            if (name != helper.name)
-                continue;
-
-            decodeBitHelper(id, node, expr, helper);
-            return;
-        }
-
-        rejectNode(id, "unknown helper");
+        decodeNamedBitHelper(id, node, expr);
         return;
     }
 
@@ -1357,6 +1377,17 @@ void PlanBuilder::decodePackedHelper(int id, Plan::Node& node, const Expr& expr)
     node.sub = static_cast<std::uint8_t>(packed->function);
 }
 
+void PlanBuilder::decodeNamedBitHelper(int id, Plan::Node& node, const Expr& expr)
+{
+    auto name = std::string_view {expr.text};
+    auto helper = std::ranges::find(bitHelperNames, name, &BitHelperName::name);
+
+    if (helper == bitHelperNames.end())
+        rejectNode(id, "unknown helper");
+    else
+        decodeBitHelper(id, node, expr, *helper);
+}
+
 void PlanBuilder::decodeBitHelper(int id,
                                   Plan::Node& node,
                                   const Expr& expr,
@@ -1373,22 +1404,17 @@ void PlanBuilder::decodeBitHelper(int id,
         return;
     }
 
-    for (auto which = 0; which < helper.valueArguments; ++which)
+    if (!hasArgumentTypes(graph, expr, 0, helper.valueArguments, type))
     {
-        if (getArgumentType(graph, expr, which) != type)
-        {
-            rejectNode(id, "its argument and result types differ");
-            return;
-        }
+        rejectNode(id, "its argument and result types differ");
+        return;
     }
 
-    for (auto which = helper.valueArguments; which < expr.args.size(); ++which)
+    if (!hasArgumentTypes(
+            graph, expr, helper.valueArguments, expr.args.size(), ValueType::UInt))
     {
-        if (getArgumentType(graph, expr, which) != ValueType::UInt)
-        {
-            rejectNode(id, "its offset and count are not scalar UInts");
-            return;
-        }
+        rejectNode(id, "its offset and count are not scalar UInts");
+        return;
     }
 
     node.op = Op::Helper;

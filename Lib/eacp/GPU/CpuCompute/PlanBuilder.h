@@ -166,6 +166,7 @@ private:
 
     // PlanStatements.cpp
     bool checkGraph();
+    bool checkNoSamplers();
     void recordStructSlot(int slot);
     int nodeComponents(const Expr& expr) const;
     int variableComponents(int slot) const;
@@ -227,6 +228,7 @@ private:
     bool checkSimdMatrixStorage(const Statement&);
     ValueType atomicElement(const Statement&);
     bool checkComparand(const Statement&, ValueType element);
+    bool hasAtomicOperandTypes(const Statement&, ValueType element);
     bool checkAtomic(const Statement&);
 
     // PlanNodes.cpp
@@ -249,6 +251,7 @@ private:
     void decodeIdLeaf(int id, Plan::Node&, const Expr&);
     void decodeUniform(int id, Plan::Node&, const Expr&);
     void decodeVarRead(int id, Plan::Node&, const Expr&);
+    bool isFieldRead(int structId, const Expr&) const;
     void decodeMatrixColumn(int id, Plan::Node&, const Expr&);
     void decodeOverride(int id, Plan::Node&, const Expr&);
     void decodeBuiltIn(int id, Plan::Node&, const Expr&);
@@ -279,6 +282,7 @@ private:
     void decodeBitcast(int id, Plan::Node&, const Expr&);
     void decodeHelper(int id, Plan::Node&, const Expr&);
     void decodePackedHelper(int id, Plan::Node&, const Expr&);
+    void decodeNamedBitHelper(int id, Plan::Node&, const Expr&);
     void decodeBitHelper(int id, Plan::Node&, const Expr&, const BitHelperName&);
     void decodeGeometric(int id, Plan::Node&, const Expr&, Op);
     void decodeConversion(int id, Plan::Node&, const Expr&);
