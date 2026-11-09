@@ -67,13 +67,15 @@ std::string encodeFrameHeader(std::uint32_t length)
 
 struct CountingServer
 {
+    std::string name;
     MessageServer server;
     int sessionsSeen = 0;
     int sessionsGone = 0;
     std::string lastMessage;
 
-    explicit CountingServer(const std::string& name)
-        : server(name)
+    explicit CountingServer(const std::string& nameToClaim)
+        : name(nameToClaim)
+        , server(nameToClaim)
     {
         server.onClient = [this](Messenger& session)
         {
@@ -116,10 +118,10 @@ bool isFloodSentWithinLimit(Messenger& session, Channel& slowReader)
     return isFinishedInTime;
 }
 
-bool isServedAfterwards(CountingServer& counting, const std::string& name)
+bool isServedAfterwards(CountingServer& counting)
 {
     auto reply = std::string {};
-    auto client = Messenger {name};
+    auto client = Messenger {counting.name};
     client.onConnected = [&client] { client.send("again"); };
     client.onMessage = [&reply](const std::string& message) { reply = message; };
 
@@ -144,7 +146,7 @@ auto tPeerDyingMidMessage =
     check(runEventLoopUntil([&counting] { return counting.sessionsGone == 1; },
                             recoveryPumpTimeout));
     check(counting.lastMessage.empty());
-    check(isServedAfterwards(counting, name));
+    check(isServedAfterwards(counting));
 };
 
 auto tGarbageFrame = test("Ipc/Recovery/anImplausibleFrameEndsOnlyItsSession") = []
@@ -158,7 +160,7 @@ auto tGarbageFrame = test("Ipc/Recovery/anImplausibleFrameEndsOnlyItsSession") =
     check(runEventLoopUntil([&counting] { return counting.sessionsGone == 1; },
                             recoveryPumpTimeout));
     check(raw.receive().empty());
-    check(isServedAfterwards(counting, name));
+    check(isServedAfterwards(counting));
 };
 
 auto tConcurrentClients =
@@ -226,7 +228,7 @@ auto tStuckReaderRecovers =
     check(isFloodSentWithinLimit(**session, slowReader));
     check(runEventLoopUntil([&counting] { return counting.sessionsGone == 1; },
                             recoveryPumpTimeout));
-    check(isServedAfterwards(counting, name));
+    check(isServedAfterwards(counting));
 };
 
 auto tRpcClientSeesHubRestart =
