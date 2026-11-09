@@ -163,6 +163,24 @@ GlobalHotKey::GlobalHotKey(ModifierKeys modifiers,
 
 GlobalHotKey::~GlobalHotKey() = default;
 
+static bool isEnabledShortcutOnChord(NSDictionary* shortcut,
+                                     UInt32 carbonModifiers,
+                                     uint16_t keyCode)
+{
+    auto enabled =
+        [shortcut[(__bridge NSString*) kHISymbolicHotKeyEnabled] boolValue];
+    auto code =
+        [shortcut[(__bridge NSString*) kHISymbolicHotKeyCode] unsignedIntValue];
+    auto mods = [shortcut[(__bridge NSString*) kHISymbolicHotKeyModifiers]
+        unsignedIntValue];
+    auto chordModifiers = UInt32 {shiftKey | controlKey | optionKey | cmdKey};
+
+    if (!enabled || code != keyCode)
+        return false;
+
+    return (mods & chordModifiers) == carbonModifiers;
+}
+
 // The system's own shortcuts win over any app's hotkey, so an enabled one on
 // the same chord is a GlobalHotKey that would never fire. Only the four
 // modifiers a chord can name are compared: the entries carry other bits too.
@@ -175,18 +193,10 @@ bool GlobalHotKey::isAvailable(ModifierKeys modifiers, uint16_t keyCode)
 
     auto shortcuts = CFRef<CFArrayRef> {raw};
     auto wanted = toCarbonModifiers(modifiers);
-    auto relevant = UInt32 {shiftKey | controlKey | optionKey | cmdKey};
 
     for (NSDictionary* shortcut in (__bridge NSArray*) shortcuts.get())
     {
-        auto enabled =
-            [shortcut[(__bridge NSString*) kHISymbolicHotKeyEnabled] boolValue];
-        auto code =
-            [shortcut[(__bridge NSString*) kHISymbolicHotKeyCode] unsignedIntValue];
-        auto mods = [shortcut[(__bridge NSString*) kHISymbolicHotKeyModifiers]
-            unsignedIntValue];
-
-        if (enabled && code == keyCode && (mods & relevant) == wanted)
+        if (isEnabledShortcutOnChord(shortcut, wanted, keyCode))
             return false;
     }
 
