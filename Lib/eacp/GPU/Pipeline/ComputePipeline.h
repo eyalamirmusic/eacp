@@ -4,6 +4,7 @@
 
 #include "../Common.h"
 
+#include "../Shader/PipelineConstants.h"
 #include "../Shader/ShaderSource.h"
 
 namespace eacp::GPU
@@ -19,6 +20,13 @@ class ComputePipeline
 {
 public:
     ComputePipeline(Device& device, const ShaderLibrary& library);
+
+    // The library's kernel specialised with `constants`, its pipeline-
+    // overridable constants (PipelineConstants.h); the ones left out take the
+    // shader's defaults. A library with none ignores them.
+    ComputePipeline(Device& device,
+                    const ShaderLibrary& library,
+                    const PipelineConstants& constants);
 
     bool isValid() const;
 

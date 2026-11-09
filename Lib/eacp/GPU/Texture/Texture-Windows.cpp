@@ -1046,9 +1046,21 @@ struct Texture::Native
         viewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         viewDesc.Texture2D.MipLevels = 1;
 
-        // An array target's depth reads as the array it is, level 0 of every
-        // slice.
-        if (shape.kind != TextureType::TwoD)
+        // An array target's depth reads as the array it is, and a cube or a
+        // cube array target's as a cube or a cube array, level 0 of every
+        // slice - the kind Metal's depth texture and Vulkan's view have.
+        if (shape.kind == TextureType::Cube)
+        {
+            viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+            viewDesc.TextureCube.MipLevels = 1;
+        }
+        else if (shape.kind == TextureType::CubeArray)
+        {
+            viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
+            viewDesc.TextureCubeArray.MipLevels = 1;
+            viewDesc.TextureCubeArray.NumCubes = static_cast<UINT>(shape.layers);
+        }
+        else if (shape.kind != TextureType::TwoD)
         {
             viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
             viewDesc.Texture2DArray.MipLevels = 1;

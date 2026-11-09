@@ -179,6 +179,12 @@ ComputePipeline Device::makeComputePipeline(const ShaderLibrary& library)
     return {*this, library};
 }
 
+ComputePipeline Device::makeComputePipeline(const ShaderLibrary& library,
+                                            const PipelineConstants& constants)
+{
+    return {*this, library, constants};
+}
+
 CommandBuffer Device::makeCommandBuffer()
 {
     assertOwningThread();

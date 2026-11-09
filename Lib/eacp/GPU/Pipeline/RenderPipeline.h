@@ -6,6 +6,7 @@
 
 #include "../Common.h"
 
+#include "../Shader/PipelineConstants.h"
 #include "../Texture/Texture.h"
 #include "VertexLayout.h"
 
@@ -500,6 +501,12 @@ struct RenderPipelineDescriptor
     // target leaves this empty and means what it always meant. The attachment
     // count and every format have to match the pass, as colorFormat does.
     Vector<ColorTargetState> extraColorTargets;
+
+    // The values the library's pipeline-overridable constants take in this
+    // pipeline (PipelineConstants.h), both stages alike; the ones left out
+    // take the shader's defaults. Empty, and so the library as compiled, by
+    // default. ShaderProgram fills it from names (OverrideValues.h).
+    PipelineConstants constants;
 
     int colorTargetCount() const;
 

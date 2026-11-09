@@ -3,8 +3,18 @@
 #include "ShaderExpressionPrinter.h"
 #include "ShaderGraphAnalysis.h"
 
+#include <functional>
+#include <string>
+
 namespace eacp::GPU::ShaderEmission
 {
+class StageEmitter;
+
+// What a Return statement prints at `indent`, after the locals its roots share
+// are named: a kernel's bare return, or a render function's outputs.
+using ReturnPrinter =
+    std::function<std::string(const StageEmitter&, const std::string& indent)>;
+
 // Any operation evaluated more than once becomes a tN local. A name is given
 // up once a statement writes something it read, and a loop condition takes none.
 class StageEmitter
@@ -20,9 +30,18 @@ public:
     std::string declareArrays(const Vector<int>& roots, std::string_view indent);
     std::string emitBlock(int block, std::string_view indentToUse);
 
+    // A variable declared outside every block this emits: a function's
+    // parameter, which its signature declares.
+    void markInScope(int slot) { variablesInScope[slot] = 1; }
+
     Vector<int> locals; // node id -> local index, -1 = inline
     ExprPrinter printer;
     int localCount = 0;
+
+    // The outputs a Return evaluates where it stands, and how it prints them.
+    Vector<int> returnRoots;
+    ReturnPrinter printReturn = [](const StageEmitter&, const std::string& indent)
+    { return indent + "return;\n"; };
 
 private:
     struct StatementScope
@@ -48,6 +67,15 @@ private:
         std::string stride;
     };
 
+    struct AtomicCall
+    {
+        std::string element;
+        std::string operand;
+        std::string type;
+        std::string name;
+        std::string_view indent;
+    };
+
     static StatementEmitFunction findStatementEmitter(StatementKind kind);
 
     std::string emitStatement(const Statement& statement,
@@ -57,13 +85,36 @@ private:
     std::string emitLoop(const Statement& statement,
                          const std::string& indent,
                          Vector<int>& open);
+    std::string emitLoopWithContinuing(const Statement& statement,
+                                       const std::string& indent);
+    std::string printLoopBlock(int block, const std::string& indent);
     std::string emitVariableWrite(const Statement& statement, StatementScope& scope);
+    std::string emitArrayWrite(const Statement& statement, StatementScope& scope);
     std::string emitIf(const Statement& statement, StatementScope& scope);
     std::string emitBreak(const Statement& statement, StatementScope& scope);
     std::string emitContinue(const Statement& statement, StatementScope& scope);
+    std::string emitBreakIf(const Statement& statement, StatementScope& scope);
+    std::string emitSwitch(const Statement& statement, StatementScope& scope);
+    std::string printClause(const Statement& clause,
+                            ValueType selector,
+                            const std::string& indent);
+    std::string printLoopJump(int code, const std::string& indent) const;
+    std::string
+        printJumpsOutOfSwitch(int flag, int jumps, const std::string& indent) const;
+    std::string emitReturn(const Statement& statement, StatementScope& scope);
+    std::string emitValueReturn(const Statement& statement, StatementScope& scope);
+    std::string emitCall(const Statement& statement, StatementScope& scope);
+    bool returnReadsOnlyVariablesInScope();
+    bool readsOnlyVariablesInScope(int node);
+    std::string emitDiscard(const Statement& statement, StatementScope& scope);
     std::string emitStore(const Statement& statement, StatementScope& scope);
+    std::string emitStructStore(const Statement& statement, StatementScope& scope);
+    std::string printHlslHalfStore(int slot,
+                                   const std::string& index,
+                                   const std::string& value,
+                                   const StatementScope& scope) const;
     std::string emitVectorStore(const Statement& statement, StatementScope& scope);
-    std::string emitAtomicAdd(const Statement& statement, StatementScope& scope);
+    std::string emitAtomic(const Statement& statement, StatementScope& scope);
     std::string emitSharedStore(const Statement& statement, StatementScope& scope);
     std::string emitBarrier(const Statement& statement, StatementScope& scope);
     std::string emitGroupReduce(const Statement& statement, StatementScope& scope);
@@ -74,10 +125,14 @@ private:
     std::string emitSimdMatrixMultiplyAdd(const Statement& statement,
                                           StatementScope& scope);
     std::string emitTextureStore(const Statement& statement, StatementScope& scope);
+    std::string emitStorageStore(const Statement& statement, StatementScope& scope);
     std::string emitNothing(const Statement& statement, StatementScope& scope);
 
     std::string defineLocalsInScope(const Vector<int>& roots, StatementScope& scope);
     std::string printBody(int block, const std::string& indent);
+
+    std::string formatCompareExchange(const Statement& statement,
+                                      const AtomicCall& call);
 
     std::string formatGroupReduction(const Statement& statement,
                                      const StatementScope& scope);
@@ -131,5 +186,16 @@ private:
     VisitSet visited;
     Vector<char> written;
     Vector<char> buffersWritten;
+
+    // The constructs a break or continue would land in, innermost last: a loop
+    // (jumpsToLoop), or a switch, by the flag that carries a loop jump out of
+    // it - or noJumpFlag where none of its clauses jumps.
+    static constexpr int jumpsToLoop = -1;
+    static constexpr int noJumpFlag = -2;
+    Vector<int> jumpTargets;
+    int controlCount = 0;
+
+    // Per variable: whether its declaration was printed in a block still open.
+    Vector<char> variablesInScope;
 };
 } // namespace eacp::GPU::ShaderEmission

@@ -77,4 +77,43 @@ HelperFloat4 unpackUInt4x4(std::uint32_t bits);
 // The low eight bits of each component, .x lowest: wraps, never saturates.
 std::uint32_t packInt8x4(HelperInt4 values);
 std::uint32_t packUInt8x4(HelperUInt4 values);
+
+// eacpQuantizeToF16: narrowToHalf then widenHalf, so Metal's rounding.
+float quantizeToF16(float value);
+
+// WGSL's normalized packs: clamped, scaled, floor(0.5 + scaled), .x lowest.
+// A NaN component clamps to the range's low end, as fmax(NaN, low) answers.
+std::uint32_t packUnorm8x4(HelperFloat4 values);
+std::uint32_t packSnorm8x4(HelperFloat4 values);
+std::uint32_t packUnorm16x2(HelperFloat2 values);
+std::uint32_t packSnorm16x2(HelperFloat2 values);
+
+// Each field over its scale; a signed one no lower than -1.
+HelperFloat4 unpackUnorm8x4(std::uint32_t bits);
+HelperFloat4 unpackSnorm8x4(std::uint32_t bits);
+HelperFloat2 unpackUnorm16x2(std::uint32_t bits);
+HelperFloat2 unpackSnorm16x2(std::uint32_t bits);
+
+// The bit helpers on one 32-bit lane, with WGSL's answers: 32 leading or
+// trailing zeros in a zero, all ones (-1) for a first bit that is not there,
+// and an Int's leading bit the highest one that differs from its sign.
+std::uint32_t countOneBits(std::uint32_t value);
+std::uint32_t reverseBits(std::uint32_t value);
+std::uint32_t countLeadingZeros(std::uint32_t value);
+std::uint32_t countTrailingZeros(std::uint32_t value);
+std::uint32_t firstLeadingBit(std::uint32_t value);
+std::int32_t firstLeadingBit(std::int32_t value);
+std::uint32_t firstTrailingBit(std::uint32_t value);
+
+// The offset is clamped to 32 and the count to 32 - offset; a zero count
+// extracts zero and inserts nothing. The signed extract sign-extends from the
+// field's top bit.
+std::uint32_t
+    extractBits(std::uint32_t value, std::uint32_t offset, std::uint32_t count);
+std::int32_t
+    extractBits(std::int32_t value, std::uint32_t offset, std::uint32_t count);
+std::uint32_t insertBits(std::uint32_t value,
+                         std::uint32_t newBits,
+                         std::uint32_t offset,
+                         std::uint32_t count);
 } // namespace eacp::GPU::CpuCompute

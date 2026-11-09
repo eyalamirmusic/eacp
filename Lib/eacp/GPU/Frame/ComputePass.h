@@ -114,6 +114,11 @@ public:
     void setInputTexture(const Texture& texture, int slot, const Sampler& sampler);
     void setOutputTexture(const Texture& texture, int slot);
 
+    // A sampler alone, the compute sibling of RenderPass::setFragmentSampler:
+    // MSL sampler(slot), HLSL s<RenderPass::samplerRegisterBase + slot>, and
+    // on Vulkan a sampler descriptor at the slot's texture binding.
+    void setSampler(const Sampler& sampler, int slot);
+
     // One mip level of a texture, every slice of it, bound as the shader
     // declares the kind - texture2d, texture2d_array, texture3d and so on, a
     // volume with that level's images - so level 0 of the view is `level` of
@@ -157,8 +162,10 @@ public:
     // TextureDescriptor::sampleableDepth (one that was not binds nothing), and
     // the pass that drew it has ended with DepthAction::Keep. The kernel
     // declares the target's kind as a depth texture - depth2d,
-    // depth2d_array, depthcube in MSL, Texture2D<float> or Texture2DArray<float>
-    // in HLSL, sampler2D in GLSL - and reads it with read() or a sample, one
+    // depth2d_array, depthcube, depthcube_array in MSL, Texture2D<float>,
+    // Texture2DArray<float>, TextureCube<float> or TextureCubeArray<float> in
+    // HLSL, sampler2D, sampler2DArray, samplerCube or samplerCubeArray in GLSL -
+    // and reads it with read() or a sample, one
     // float. Level 0 of every slice, as the fragment bind gives. What a hi-Z
     // pyramid copies its first level out of, and what an ambient-occlusion
     // pass starts from.

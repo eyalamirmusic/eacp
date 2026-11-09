@@ -18,13 +18,60 @@ enum class Backend
 
 constexpr std::string_view getDialectTypeName(Backend backend, ValueType type)
 {
-    return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
+    if (backend == Backend::Vulkan)
+        return glslTypeName(type);
+
+    return backend == Backend::DirectX ? hlslTypeName(type) : typeName(type);
 }
 std::string formatShaderFloatLiteral(float value);
 
-constexpr bool isFlatVarying(ValueType type)
+// What makes a float literal an f16 one: MSL's 0.5h, GLSL's 0.5hf (from
+// GL_EXT_shader_explicit_arithmetic_types_float16). HLSL holds f16 in float,
+// and the literal is already a value a half holds.
+constexpr std::string_view getHalfLiteralSuffix(Backend backend)
 {
-    return isSignedInteger(type) || isUnsignedInteger(type);
+    if (backend == Backend::Metal)
+        return "h";
+
+    return backend == Backend::Vulkan ? "hf" : "";
+}
+
+// MSL's interpolation attribute, written after the member name; nothing for
+// perspective at the centre, which is what a member is without one.
+constexpr std::string_view getMetalInterpolation(Interpolation interpolation)
+{
+    if (interpolation.type == InterpolationType::Flat)
+        return " [[flat]]";
+
+    const auto linear = interpolation.type == InterpolationType::Linear;
+
+    switch (interpolation.sampling)
+    {
+        case InterpolationSampling::Centroid:
+            return linear ? " [[centroid_no_perspective]]"
+                          : " [[centroid_perspective]]";
+        case InterpolationSampling::Sample:
+            return linear ? " [[sample_no_perspective]]" : " [[sample_perspective]]";
+        default:
+            return linear ? " [[center_no_perspective]]" : std::string_view {};
+    }
+}
+
+constexpr std::string_view getInterpolationTypeQualifier(Backend backend,
+                                                         InterpolationType type)
+{
+    if (type == InterpolationType::Flat)
+        return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
+
+    return type == InterpolationType::Linear ? "noperspective " : "";
+}
+
+constexpr std::string_view getSamplingQualifier(InterpolationSampling sampling)
+{
+    if (sampling == InterpolationSampling::Centroid)
+        return "centroid ";
+
+    return sampling == InterpolationSampling::Sample ? "sample " : "";
 }
 
 inline std::string getAttributeSemantic(Backend backend, int index)
@@ -38,11 +85,12 @@ inline std::string getAttributeSemantic(Backend backend, int index)
     return Strings::format(" : TEXCOORD{}", index);
 }
 
-// Metal writes the flat qualifier after the member name, as part of the semantic.
-inline std::string getVaryingSemantic(Backend backend, int index, ValueType type)
+// Metal writes the interpolation after the member name, as part of the semantic.
+inline std::string
+    getVaryingSemantic(Backend backend, int index, Interpolation interpolation)
 {
     if (backend == Backend::Metal)
-        return isFlatVarying(type) ? " [[flat]]" : std::string {};
+        return std::string {getMetalInterpolation(interpolation)};
 
     if (backend != Backend::DirectX)
         return {};
@@ -61,12 +109,16 @@ constexpr std::string_view getPositionSemantic(Backend backend)
     return " : SV_Position";
 }
 
-constexpr std::string_view getFlatQualifier(Backend backend, ValueType type)
+// HLSL's and GLSL's modifiers ahead of the member: the type's, then the
+// sampling's, so `noperspective centroid` in both.
+inline std::string getInterpolationQualifier(Backend backend,
+                                             Interpolation interpolation)
 {
-    if (backend == Backend::Metal || !isFlatVarying(type))
+    if (backend == Backend::Metal)
         return {};
 
-    return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
+    return std::string {getInterpolationTypeQualifier(backend, interpolation.type)}
+           + std::string {getSamplingQualifier(interpolation.sampling)};
 }
 
 inline std::string getLocationLayout(int index)
@@ -91,8 +143,21 @@ inline std::string getVaryingName(Backend backend, int index)
     return Strings::format("input.v{}", index);
 }
 
+// Whether HLSL rounds a node's value to f16 where it is computed: HLSL holds a
+// Half in float, so every arithmetic result of the f16 family - an operator, a
+// product, a built-in, a conversion into it - goes to f16 bits and back,
+// which is what makes it the value Metal's half and GLSL's float16_t hold. A
+// built-in whose result is already a half of its arguments is left alone.
+bool isRoundedToHalf(const Expr& expr);
+
+// FXC converts a float4 to a float2x2 as readily as it passes it as a float4,
+// so a matrix overload sharing the vectors' name makes their calls ambiguous:
+// each matrix rounds under a name of its own, eacpRoundHalf2x4 for a float2x4.
+std::string getRoundHalfFunction(ValueType type);
+
 std::string getCallName(Backend backend, const std::string& name);
 bool isGenTypeCall(const std::string& name);
+bool isMetalGenTypeCall(const std::string& name);
 std::string_view getGlslComparisonFunction(const std::string& op);
 
 std::string getHlslSamplerName(const TextureSampling& sampling);

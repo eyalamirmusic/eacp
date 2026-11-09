@@ -1,11 +1,14 @@
 #include "ShaderGraphAnalysis.h"
 
+#include <initializer_list>
+
 namespace eacp::GPU::ShaderEmission
 {
 namespace
 {
 // Leaf reads and swizzles stay inline: naming them saves nothing.
-constexpr auto kindsWorthALocal = Array<ExprKind, 14> {ExprKind::Construct,
+constexpr auto kindsWorthALocal = Array<ExprKind, 18> {ExprKind::FunctionCall,
+                                                       ExprKind::Construct,
                                                        ExprKind::Call,
                                                        ExprKind::Unary,
                                                        ExprKind::Binary,
@@ -14,11 +17,14 @@ constexpr auto kindsWorthALocal = Array<ExprKind, 14> {ExprKind::Construct,
                                                        ExprKind::Mul,
                                                        ExprKind::Sample,
                                                        ExprKind::Fetch,
+                                                       ExprKind::TextureFunction,
+                                                       ExprKind::TextureQuery,
                                                        ExprKind::BufferRead,
                                                        ExprKind::BufferVectorRead,
                                                        ExprKind::AtomicLoad,
                                                        ExprKind::ArrayRead,
-                                                       ExprKind::SharedRead};
+                                                       ExprKind::SharedRead,
+                                                       ExprKind::MatrixColumn};
 
 constexpr auto bufferElementReadKinds = Array<ExprKind, 3> {
     ExprKind::BufferRead, ExprKind::BufferVectorRead, ExprKind::AtomicLoad};
@@ -26,7 +32,7 @@ constexpr auto bufferElementReadKinds = Array<ExprKind, 3> {
 constexpr auto variableWritingStatements =
     Array<StatementKind, 4> {StatementKind::Declare,
                              StatementKind::Assign,
-                             StatementKind::AtomicAdd,
+                             StatementKind::Atomic,
                              StatementKind::GroupReduce};
 
 constexpr auto sharedMovingStatements = Array<StatementKind, 3> {
@@ -39,16 +45,9 @@ Vector<int> getNestedBodies(const Statement& statement)
 {
     auto bodies = Vector<int> {};
 
-    if (statement.kind == StatementKind::If)
-    {
-        bodies.add(statement.body);
-
-        if (statement.elseBody >= 0)
-            bodies.add(statement.elseBody);
-    }
-
-    if (statement.kind == StatementKind::Loop)
-        bodies.add(statement.body);
+    for (auto body: {statement.body, statement.elseBody, statement.continuing})
+        if (body >= 0)
+            bodies.add(body);
 
     return bodies;
 }
@@ -82,11 +81,16 @@ bool doesStoreSimdMatrixTo(const Statement& statement, SimdMatrixMemory memory)
            && statement.memory == memory;
 }
 
-// An atomic add's `slot` names the variable that receives the old value, and a
+bool isAtomicOn(const Statement& statement, MemorySpace memory)
+{
+    return statement.kind == StatementKind::Atomic && statement.memory == memory;
+}
+
+// An atomic's `slot` names the variable that receives the old value, and a
 // fragment store's names the fragment.
 bool doesWriteBufferSlotField(const Statement& statement)
 {
-    return statement.kind == StatementKind::AtomicAdd
+    return isAtomicOn(statement, MemorySpace::Buffer)
            || doesStoreSimdMatrixTo(statement, SimdMatrixMemory::Buffer);
 }
 
@@ -102,7 +106,9 @@ void addStatementExpressions(const Statement& statement,
 
     roots.add(statement.index);
     roots.add(statement.indexY);
+    roots.add(statement.layer);
     roots.add(statement.stride);
+    roots.add(statement.compare);
 }
 
 } // namespace
@@ -110,6 +116,29 @@ void addStatementExpressions(const Statement& statement,
 bool isLocalWanted(ExprKind kind)
 {
     return kindsWorthALocal.contains(kind);
+}
+
+bool isDerivativeCall(const Expr& expr)
+{
+    return expr.text == "dfdx" || expr.text == "dfdy" || expr.text == "fwidth";
+}
+
+// A plain sample's level is derived unless it was given one; a layered or a
+// comparison one has no level form at all.
+bool takesDerivedLevel(const ShaderGraph& graph, const Expr& expr)
+{
+    switch (expr.kind)
+    {
+        case ExprKind::TextureFunction:
+            return usesImplicitDerivatives(textureFunctionNamed(expr.text));
+        case ExprKind::Sample:
+            return expr.text == "compare" || isLayered(graph.textureKind(expr.index))
+                   || expr.args.size() < 2;
+        case ExprKind::Call:
+            return isDerivativeCall(expr);
+        default:
+            return false;
+    }
 }
 
 void countUses(const ShaderGraph& graph,
@@ -188,6 +217,12 @@ void collectWrites(const ShaderGraph& graph,
     if (variableWritingStatements.contains(statement.kind))
         written[statement.slot] = 1;
 
+    if (statement.kind == StatementKind::Call && statement.slot >= 0)
+        written[statement.slot] = 1;
+
+    if (statement.exchanged >= 0)
+        written[statement.exchanged] = 1;
+
     for (auto body: getNestedBodies(statement))
         collectBlockWrites(graph, body, written);
 }
@@ -197,7 +232,8 @@ bool doesTouchSharedMemory(const ShaderGraph& graph, const Statement& statement)
     if (sharedMovingStatements.contains(statement.kind))
         return true;
 
-    if (doesStoreSimdMatrixTo(statement, SimdMatrixMemory::Shared))
+    if (doesStoreSimdMatrixTo(statement, SimdMatrixMemory::Shared)
+        || isAtomicOn(statement, MemorySpace::Shared))
         return true;
 
     for (auto body: getNestedBodies(statement))
@@ -217,8 +253,21 @@ void collectBufferWrites(const ShaderGraph& graph,
     if (doesWriteBufferSlotField(statement))
         written[statement.bufferSlot] = 1;
 
+    if (statement.kind == StatementKind::Call && statement.value >= 0)
+        collectCalledBufferWrites(graph, graph.expr(statement.value).index, written);
+
     for (auto body: getNestedBodies(statement))
         collectBlockBufferWrites(graph, body, written);
+}
+
+// What a function writes is what a call of it writes, its callees' included -
+// which its own statements reach, since a function writing storage is called
+// as a statement.
+void collectCalledBufferWrites(const ShaderGraph& graph,
+                               int function,
+                               Vector<char>& written)
+{
+    collectBlockBufferWrites(graph, graph.function(function).body, written);
 }
 
 bool StalenessQuery::doesReadWrittenVariable(const Expr& expr) const
@@ -271,13 +320,8 @@ void collectStatementExpressions(const ShaderGraph& graph,
 
         addStatementExpressions(statement, loopConditions, roots);
 
-        if (statement.body >= 0)
-            collectStatementExpressions(
-                graph, statement.body, loopConditions, roots);
-
-        if (statement.elseBody >= 0)
-            collectStatementExpressions(
-                graph, statement.elseBody, loopConditions, roots);
+        for (auto body: getNestedBodies(statement))
+            collectStatementExpressions(graph, body, loopConditions, roots);
     }
 }
 
