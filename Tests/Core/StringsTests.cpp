@@ -4,6 +4,7 @@
 
 #include <array>
 #include <clocale>
+#include <limits>
 
 using namespace nano;
 using eacp::Strings::widen;
@@ -405,4 +406,38 @@ auto tToHexWritesLowercasePairs = test("Strings/toHex writes two digits a byte")
     check(eacp::Strings::toHex(bytes) == "000aabff");
     check(eacp::Strings::toHex({}).empty());
     check(eacp::Strings::parseHex(eacp::Strings::toHex(bytes)) == 0x000aabffu);
+};
+
+auto tFormatHexPadsToTheWidthOfItsType =
+    test("Strings/formatHex pads to two digits a byte of its type") = []
+{
+    using eacp::Strings::formatHex;
+
+    check(formatHex(std::uint8_t {0x0a}) == "0a");
+    check(formatHex(std::uint16_t {0xabc}) == "0abc");
+    check(formatHex(std::uint32_t {0xabc}) == "00000abc");
+    check(formatHex(std::uint64_t {0xcbf29ce484222325ull}) == "cbf29ce484222325");
+};
+
+auto tFormatHexWritesZeroAndMaximum =
+    test("Strings/formatHex writes zero and the maximum") = []
+{
+    using eacp::Strings::formatHex;
+
+    check(formatHex(std::uint8_t {0}) == "00");
+    check(formatHex(std::uint64_t {0}) == "0000000000000000");
+    check(formatHex(std::numeric_limits<std::uint8_t>::max()) == "ff");
+    check(formatHex(std::numeric_limits<std::uint16_t>::max()) == "ffff");
+    check(formatHex(std::numeric_limits<std::uint32_t>::max()) == "ffffffff");
+    check(formatHex(std::numeric_limits<std::uint64_t>::max())
+          == "ffffffffffffffff");
+};
+
+auto tFormatHexWritesTheBitPatternOfASignedValue =
+    test("Strings/formatHex writes the bit pattern of a signed value") = []
+{
+    constexpr auto accessDeniedResult = std::int32_t {-2147024891};
+
+    check(eacp::Strings::formatHex(accessDeniedResult) == "80070005");
+    check(eacp::Strings::formatHex(std::int8_t {-1}) == "ff");
 };

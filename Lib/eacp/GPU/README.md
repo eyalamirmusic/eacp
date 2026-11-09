@@ -1465,8 +1465,8 @@ app compiles at run time, as it does under `-DEACP_PRECOMPILE_SHADERS=OFF`. A
 cross-compile (iOS, Android) skips it too for now: the tool would have to be
 built for the host, not the target.
 
-A blob is named by its key, `Hashing::toHex(Hashing::fnv1a64(text))`
-(`Core/Utils/Hash.h`, spelled once as `Precompiled::keyFor` in
+A blob is named by its key, `Strings::formatHex(Hashing::fnv1a64(text))`
+(`Core/Utils/Hash.h` and `Strings.h`, spelled once as `Precompiled::keyFor` in
 `Shader/PrecompiledNames.h`, whose suffixes and `spirvResourceName` the tool
 writes by and the runtime looks up by) of exactly the text `ShaderBuilder::build()` hands the
 runtime in that dialect — `buildShader(graph, backend)` is `build()` for any

@@ -4,6 +4,7 @@
 #include "ShaderSource.h"
 
 #include <eacp/Core/Utils/Hash.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <string>
 #include <string_view>
@@ -28,7 +29,7 @@ inline constexpr std::string_view computeDxbcSuffix = ".cs.dxbc";
 // binary, and any change to the emitter changes every key it touches.
 inline std::string keyFor(std::string_view sourceText)
 {
-    return Hashing::toHex(Hashing::fnv1a64(sourceText));
+    return Strings::formatHex(Hashing::fnv1a64(sourceText));
 }
 
 inline std::string keyFor(const ShaderSource& source)

@@ -3,6 +3,7 @@
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Hash.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
 #include <eacp/GPU/Codegen/ComputeKernel.h>
 #include <eacp/GPU/Codegen/ShaderSets.h>
@@ -116,7 +117,7 @@ static_assert(VisitsBuiltWithNoArguments<ScalingKernel>);
 
 std::string keyOf(const ShaderGraph& graph, ShaderBackend backend)
 {
-    return Hashing::toHex(
+    return Strings::formatHex(
         Hashing::fnv1a64(buildShader(graph, backend).source.source));
 }
 
