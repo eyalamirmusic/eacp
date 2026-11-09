@@ -18,4 +18,5 @@ cmake -G Ninja -B "$build_dir" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 
 cmake --build "$build_dir" --target CoreTests
 
-UBSAN_OPTIONS="print_stacktrace=1" "$build_dir/Tests/Core/CoreTests"
+UBSAN_OPTIONS="print_stacktrace=1" ctest --test-dir "$build_dir" \
+    --output-on-failure -j "$(nproc)" -E "^(CpuComputeTests|MLGraphTests|ScriptHostTests)$"
