@@ -5,25 +5,6 @@
 
 namespace eacp::Geometry
 {
-// std::floor and std::ceil are only constexpr from C++23.
-template <typename Whole, typename T>
-constexpr Whole floorToWhole(T value)
-{
-    const auto truncated = static_cast<Whole>(value);
-    if (static_cast<T>(truncated) > value)
-        return truncated - 1;
-    return truncated;
-}
-
-template <typename Whole, typename T>
-constexpr Whole ceilToWhole(T value)
-{
-    const auto truncated = static_cast<Whole>(value);
-    if (static_cast<T>(truncated) < value)
-        return truncated + 1;
-    return truncated;
-}
-
 template <typename T>
 struct Point
 {
@@ -53,21 +34,19 @@ struct Point
         return {static_cast<U>(x), static_cast<U>(y)};
     }
 
+    friend constexpr Point operator+(const Point& a, const Point& b)
+    {
+        return {a.x + b.x, a.y + b.y};
+    }
+
+    friend constexpr Point operator-(const Point& a, const Point& b)
+    {
+        return {a.x - b.x, a.y - b.y};
+    }
+
     T x = T {};
     T y = T {};
 };
-
-template <typename T>
-constexpr Point<T> operator+(const Point<T>& a, const Point<T>& b)
-{
-    return {a.x + b.x, a.y + b.y};
-}
-
-template <typename T>
-constexpr Point<T> operator-(const Point<T>& a, const Point<T>& b)
-{
-    return {a.x - b.x, a.y - b.y};
-}
 
 // A border of four thicknesses, one per edge, in points. Every side defaults
 // to zero so a caller names only the edges it means: `Insets {.top = 56.f}`.
@@ -254,12 +233,12 @@ struct Rectangle
     // The smallest rectangle of whole U units that covers this one: left and
     // top floored, right and bottom ceiled.
     template <typename U>
-    constexpr Rectangle<U> roundedOutwardTo() const
+    Rectangle<U> roundedOutwardTo() const
     {
-        const auto roundedLeft = floorToWhole<U>(left());
-        const auto roundedTop = floorToWhole<U>(top());
-        const auto roundedRight = ceilToWhole<U>(right());
-        const auto roundedBottom = ceilToWhole<U>(bottom());
+        const auto roundedLeft = static_cast<U>(std::floor(left()));
+        const auto roundedTop = static_cast<U>(std::floor(top()));
+        const auto roundedRight = static_cast<U>(std::ceil(right()));
+        const auto roundedBottom = static_cast<U>(std::ceil(bottom()));
 
         return {roundedLeft,
                 roundedTop,
