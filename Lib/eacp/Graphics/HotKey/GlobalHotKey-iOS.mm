@@ -22,4 +22,9 @@ GlobalHotKey::GlobalHotKey(ModifierKeys modifiers,
 
 GlobalHotKey::~GlobalHotKey() = default;
 
+bool GlobalHotKey::isAvailable(ModifierKeys, uint16_t)
+{
+    return true;
+}
+
 } // namespace eacp::Graphics

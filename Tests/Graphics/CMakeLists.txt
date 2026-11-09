@@ -104,6 +104,7 @@ endif ()
 if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
+            GlobalHotKeyTests-Windows.cpp
             KeyFocusTests-Windows.cpp
             KeyForwardingTests-Windows.cpp
             MouseDeltaTests-Windows.cpp
