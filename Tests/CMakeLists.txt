@@ -71,3 +71,17 @@ endif ()
 # Always added: ScriptHostTests needs no web runtime and no graphics. The
 # directory returns after it unless EACP_HAS_WEBVIEW.
 add_subdirectory(WebView)
+
+# eacp_default_setup() asks Clang for full LTO in Release. Read the option back
+# from the directory eacp-core is generated in, so a setting that never leaves
+# the function's scope fails here instead of quietly building with ThinLTO.
+if (PROJECT_IS_TOP_LEVEL AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    get_target_property(coreSourceDirectory eacp-core SOURCE_DIR)
+    get_directory_property(coreIpoOptions DIRECTORY "${coreSourceDirectory}"
+            DEFINITION CMAKE_CXX_COMPILE_OPTIONS_IPO)
+
+    add_test(NAME Build/eacpCoreTakesFullLto
+            COMMAND "${CMAKE_COMMAND}" -E echo "${coreIpoOptions}")
+    set_tests_properties(Build/eacpCoreTakesFullLto PROPERTIES
+            PASS_REGULAR_EXPRESSION "-flto=full")
+endif ()
