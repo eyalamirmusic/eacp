@@ -27,6 +27,25 @@ struct HoverCounter final : View
     int exits = 0;
 };
 
+// Writes down, as it is destroyed, the parent it still has at that moment.
+struct ParentRecorder final : View
+{
+    ParentRecorder(View*& parentSeenToUse, bool& destroyedToUse)
+        : parentSeen(parentSeenToUse)
+        , destroyed(destroyedToUse)
+    {
+    }
+
+    ~ParentRecorder() override
+    {
+        parentSeen = getParent();
+        destroyed = true;
+    }
+
+    View*& parentSeen;
+    bool& destroyed;
+};
+
 MouseEvent pointerEvent(MouseEventType type, Point position)
 {
     auto event = MouseEvent {};
@@ -65,16 +84,73 @@ auto tOrphanForgetsItsParent = test("ViewLifetime/subviewOutlivesItsParent") = [
 // removeFromParent must find no parent to remove itself from.
 auto tOrphanDestroyedLater = test("ViewLifetime/orphanIsDestroyedAfterItsParent") = []
 {
-    auto child = std::make_unique<View>();
+    auto parentSeen = static_cast<View*>(nullptr);
+    auto destroyed = false;
+    auto child = std::make_unique<ParentRecorder>(parentSeen, destroyed);
     auto parent = std::make_unique<View>();
 
     parent->addSubview(*child);
 
     parent.reset();
     child->removeFromParent();
+    check(child->getParent() == nullptr);
+
+    parentSeen = &*child; // anything but null, so the destructor has to write it
     child.reset();
 
-    check(true);
+    check(destroyed);
+    check(parentSeen == nullptr);
+};
+
+// removeSubview is the other way out of a parent, and leaves the view as
+// parentless as the parent's destruction does.
+auto tRemoveSubviewClearsParent =
+    test("ViewLifetime/removeSubviewClearsTheChildsParent") = []
+{
+    auto parent = View {};
+    auto child = View {};
+
+    parent.addSubview(child);
+    parent.removeSubview(child);
+
+    check(child.getParent() == nullptr);
+    check(parent.getSubviews().empty());
+};
+
+// Removed first, the parent destroyed later: the parent no longer lists the
+// view, so only removeSubview itself can have cleared the pointer.
+auto tRemovedChildOutlivesFormerParent =
+    test("ViewLifetime/removedChildOutlivesItsFormerParent") = []
+{
+    auto child = std::make_unique<View>();
+    auto parent = std::make_unique<View>();
+
+    parent->addSubview(*child);
+    parent->removeSubview(*child);
+
+    parent.reset();
+
+    check(child->getParent() == nullptr);
+    check(child->getWindow() == nullptr);
+    child.reset();
+};
+
+// The orphan becomes a root and keeps its own subtree.
+auto tOrphanKeepsSubtree = test("ViewLifetime/orphanKeepsItsOwnSubtree") = []
+{
+    auto grandchild = View {};
+    auto child = View {};
+    auto parent = std::make_unique<View>();
+
+    parent->addSubview(child);
+    child.addSubview(grandchild);
+
+    parent.reset();
+
+    check(child.getParent() == nullptr);
+    check(grandchild.getParent() == &child);
+    check(child.getSubviews().size() == 1);
+    check(grandchild.getWindow() == nullptr);
 };
 
 // A parent between the root and the hovered view. The root keeps the hover
