@@ -112,6 +112,22 @@ public:
             retryRecovery();
     }
 
+    // The fresh token is hygiene, not what keeps it to one chain: whichever of
+    // the two callbacks fires first either fails, superseding the other, or
+    // succeeds, leaving the other nothing to do.
+    void resumeRecovery()
+    {
+        if (!retryDue)
+            return;
+
+        const auto untilDue = *retryDue - Clock::now();
+
+        if (untilDue <= Clock::duration::zero())
+            retryRecovery();
+        else
+            scheduleRetry(std::chrono::ceil<std::chrono::milliseconds>(untilDue));
+    }
+
     bool recoverFromDeviceLoss(HRESULT hr)
     {
         if (hr != DXGI_ERROR_DEVICE_REMOVED && hr != DXGI_ERROR_DEVICE_RESET
@@ -394,15 +410,15 @@ private:
             return;
 
         retryDue = Clock::now() + retryDelay;
-        scheduleRetry();
+        scheduleRetry(retryDelay);
     }
 
-    // Each failure schedules a fresh callback and supersedes any still pending,
-    // late or dropped (a hosted copy detaching stops the scheduler).
-    void scheduleRetry()
+    // Each schedule supersedes any callback still pending, late or dropped (a
+    // hosted copy detaching stops the scheduler): only the latest one acts.
+    void scheduleRetry(std::chrono::milliseconds delay)
     {
         const auto token = ++retryToken;
-        Threads::callAfter(Time::MS {retryDelay.count()},
+        Threads::callAfter(Time::MS {delay.count()},
                            [this, token]
                            {
                                if (token == retryToken)
@@ -530,6 +546,11 @@ bool handleDeviceLossIfNeeded(HRESULT hr)
 void retryDeviceRecoveryIfDue()
 {
     DCompCompositor::instance().retryRecoveryIfDue();
+}
+
+void resumeDeviceRecovery()
+{
+    DCompCompositor::instance().resumeRecovery();
 }
 
 } // namespace eacp::Graphics

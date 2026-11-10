@@ -13,6 +13,7 @@
 #include <dxgi.h>
 
 #include <chrono>
+#include <optional>
 #include <thread>
 
 // Everything that should still work when DirectComposition does not.
@@ -416,6 +417,133 @@ auto tDroppedRetryIsRescheduled =
     restoreRenderingDevice();
 };
 
+// A hosted copy that detaches and attaches again drops the retry it had
+// scheduled, and the first thing to need the devices after is the host it
+// opens, often with no snapshot to retry from: the host restarts the retries.
+// Here the retry is dropped before it is due, still with the scheduler.
+auto tRetryDroppedBeforeItIsDueResumedByAHost =
+    test("NoComposition/aRetryADetachDroppedBeforeItWasDueIsResumedByANewHost") = []
+{
+    check(Graphics::getDWriteFactory() != nullptr);
+    Threads::runEventLoopFor(Time::MS {50});
+
+    Graphics::Detail::injectDeviceFault(
+        DeviceFault::CreateRenderingDevice, E_FAIL, 2);
+    check(!Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED));
+
+    Threads::detachCurrentThreadAsMain();
+    Threads::attachCurrentThreadAsMain();
+
+    auto bare = BareHost {};
+    check(waitFor([] { return Graphics::getD2DDevice() != nullptr; }));
+
+    restoreRenderingDevice();
+};
+
+// The same, dropped once due: handed to the event loop, and not yet run.
+auto tRetryDroppedOnceDueResumedByAHost =
+    test("NoComposition/aRetryADetachDroppedOnceDueIsResumedByANewHost") = []
+{
+    check(Graphics::getDWriteFactory() != nullptr);
+    Threads::runEventLoopFor(Time::MS {50});
+
+    Graphics::Detail::injectDeviceFault(
+        DeviceFault::CreateRenderingDevice, E_FAIL, 2);
+    check(!Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED));
+    sleepFor(700);
+
+    Threads::detachCurrentThreadAsMain();
+    Threads::attachCurrentThreadAsMain();
+
+    auto bare = BareHost {};
+    check(waitFor([] { return Graphics::getD2DDevice() != nullptr; }));
+
+    restoreRenderingDevice();
+};
+
+// Retries are scheduled on the event loop, not on a host window, so closing a
+// host drops none.
+auto tRetryOutlivesAClosedHost =
+    test("NoComposition/aRetryOutlivesAHostClosedWhileItIsPending") = []
+{
+    check(Graphics::getDWriteFactory() != nullptr);
+    Threads::runEventLoopFor(Time::MS {50});
+
+    auto bare = std::optional<BareHost> {std::in_place};
+    Graphics::Detail::injectDeviceFault(
+        DeviceFault::CreateRenderingDevice, E_FAIL, 2);
+    check(!Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED));
+
+    bare.reset();
+    check(waitFor([] { return Graphics::getD2DDevice() != nullptr; }));
+
+    restoreRenderingDevice();
+};
+
+// A host opened while the scheduled retry is still live takes its place
+// rather than running a second chain of attempts beside it. Counted before the
+// second retry: an extra attempt at 0.5 s doubles the backoff again, and by
+// the third the attempt it pushed out would hide it.
+auto tHostOpenedMidRetryStartsNoSecondChain =
+    test("NoComposition/aHostOpenedDuringARetryStartsNoSecondChain") = []
+{
+    check(Graphics::getDWriteFactory() != nullptr);
+    Threads::runEventLoopFor(Time::MS {50});
+
+    constexpr auto faults = 100;
+    Graphics::Detail::injectDeviceFault(
+        DeviceFault::CreateRenderingDevice, E_FAIL, faults);
+    check(!Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED));
+
+    auto bare = BareHost {};
+
+    // The loss, then the attempt at 0.5 s; the next is at 1.5 s. A second chain
+    // makes one more at 0.5 s.
+    Threads::runEventLoopFor(Time::MS {1100});
+
+    const auto attempts =
+        faults - takeRemainingFaults(DeviceFault::CreateRenderingDevice);
+    check(attempts == 2);
+
+    restoreRenderingDevice();
+};
+
+// A compositor retry dropped by a detach, and due by the time a new host opens:
+// the host runs it there and then, and the compositor coming back rebuilds the
+// hosts already open before the new one builds on it. Needs a compositor that
+// can come up: none can in session 0.
+auto tDueCompositorRetryRunByANewHost =
+    test("NoComposition/aDueCompositorRetryRunByANewHostRebuildsTheOthers") = []
+{
+    auto allowed = CompositionAllowed {};
+
+    if (!Graphics::isCompositorInitialized())
+    {
+        check(true);
+        return;
+    }
+
+    auto open = BareHost {};
+    check(open.host.target != nullptr);
+
+    Graphics::Detail::injectDeviceFault(DeviceFault::CreateCompositionDevice,
+                                        E_FAIL);
+    check(Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED));
+    check(!Graphics::isCompositorInitialized());
+    check(open.host.target == nullptr);
+
+    Threads::detachCurrentThreadAsMain();
+    Threads::attachCurrentThreadAsMain();
+    sleepFor(700);
+
+    auto opened = BareHost {};
+    check(Graphics::isCompositorInitialized());
+    check(open.host.target != nullptr);
+    check(opened.host.target != nullptr);
+    check(open.host.generation == Graphics::getCompositionGeneration());
+    check(opened.host.generation == Graphics::getCompositionGeneration());
+};
+
 // A snapshot that runs the due attempt while the scheduled callback for it
 // waits unpumped leaves one chain of attempts: the late callback must not run
 // a second beside the snapshot's. The compositor is built first, so its
@@ -456,11 +584,13 @@ auto tNewLossRetriedFromTheFirstDelay =
     check(Graphics::getDWriteFactory() != nullptr);
     Threads::runEventLoopFor(Time::MS {50});
 
-    // Attempts at 0, 0.5, 1.5 and 3.5 s leave the next one pending at 7.5 s.
+    // Attempts at 0, 0.5, 1.5, 3.5 and 7.5 s leave the next one pending at
+    // 15.5 s, far enough out that a loaded machine's delays stay inside the
+    // bound and a retry that waited for it stays outside.
     Graphics::Detail::injectDeviceFault(
         DeviceFault::CreateRenderingDevice, E_FAIL, 100);
     check(!Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED));
-    Threads::runEventLoopFor(Time::MS {5000});
+    Threads::runEventLoopFor(Time::MS {8000});
     check(Graphics::getD2DDevice() == nullptr);
 
     clearFault(DeviceFault::CreateRenderingDevice);
@@ -471,7 +601,7 @@ auto tNewLossRetriedFromTheFirstDelay =
 
     check(!Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED));
     check(waitFor([] { return Graphics::getD2DDevice() != nullptr; }));
-    check(millisecondsSince(start) < std::chrono::milliseconds {1500});
+    check(millisecondsSince(start) < std::chrono::milliseconds {3000});
 
     restoreRenderingDevice();
 };

@@ -495,6 +495,12 @@ void CompositionHostWindow::initializeComposition(bool topMost)
     if (!hwnd)
         return;
 
+    // A new host can be the first use of the devices since a detach dropped
+    // the retry scheduled for them. A registered host is being rebuilt by a
+    // recovery that has already rescheduled or finished: nothing to resume.
+    if (!compositionHosts().contains(this))
+        resumeDeviceRecovery();
+
     topMostTarget = topMost;
 
     // Drop anything built against a previous device before rebuilding, and
