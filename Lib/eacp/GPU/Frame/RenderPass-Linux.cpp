@@ -876,14 +876,16 @@ void RenderPass::end()
     // may not stay active past the end of rendering.
     endOcclusionQuery();
 
-    endTimedPass(*impl->encoder);
-
     auto buffer = impl->commandBuffer();
 
     if (getVulkanShared().usesRenderPasses())
         vkCmdEndRenderPass(buffer);
     else
         vkCmdEndRendering(buffer);
+
+    // Outside rendering: a tiler (Honeykrisp) never makes a timestamp written
+    // inside it available, and bottom-of-pipe still waits for every draw.
+    endTimedPass(*impl->encoder);
 
     impl->encoder->commands->context->setRenderPassOpen(false);
 
