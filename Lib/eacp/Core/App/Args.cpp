@@ -459,11 +459,11 @@ Result Parser::parse()
 
 Result Parser::parse(int argc, const char* const* argv)
 {
+    const auto all = Apps::utf8Arguments(argc, argv);
     auto args = Vector<std::string> {};
 
-    for (auto index = 1; index < argc; ++index)
-        args.add(argv[index] != nullptr ? std::string {argv[index]}
-                                        : std::string {});
+    for (auto index = 1; index < all.size(); ++index)
+        args.add(all[index]);
 
     return parse(args);
 }

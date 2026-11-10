@@ -636,7 +636,7 @@ bool Writer::addDirectory(const FilePath& directory,
     for (const auto& file: files)
     {
         const auto relative =
-            toStdPath(file).lexically_relative(root).generic_string();
+            FilePath {toStdPath(file).lexically_relative(root)}.str();
         const auto name = base.empty() ? relative : base + "/" + relative;
 
         ok = addFile(name, file, level) && ok;

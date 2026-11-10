@@ -1,9 +1,11 @@
 #include "App.h"
 #include "AppEnvironment.h"
+#include "CommandLine.h"
 #include "../Utils/Console.h"
 #include "../Utils/FilePath.h"
 #include "../Utils/Singleton.h"
 
+#include <algorithm>
 #include <atomic>
 #include <exception>
 
@@ -24,13 +26,21 @@ AppEnvironment& getAppEnvironment()
     return Singleton::get<AppEnvironment>();
 }
 
+Vector<std::string> utf8Arguments(int argc, const char* const* argv)
+{
+    auto args = Vector<std::string> {};
+    args.reserve(std::max(argc, 0));
+
+    for (auto i = 0; i < argc; ++i)
+        args.emplace_back(argv[i] != nullptr ? argv[i] : "");
+
+    Detail::recoverUtf8Arguments(args);
+    return args;
+}
+
 void setCommandLineArgs(int argc, char* argv[])
 {
-    auto& args = getAppEnvironment().commandLineArgs;
-    args.clear();
-    args.reserve(argc);
-    for (auto i = 0; i < argc; ++i)
-        args.emplace_back(argv[i]);
+    getAppEnvironment().commandLineArgs = utf8Arguments(argc, argv);
 }
 
 const Vector<std::string>& commandLineArgs()

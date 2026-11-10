@@ -125,6 +125,58 @@ auto tStoredArgs =
     check(withLfEndings(failed.errorOutput) == "ConsoleHarness: boom\n");
 };
 
+const auto nonAsciiText = nonAsciiName();
+
+auto tNonAsciiArgument =
+    test("Console/a non-ASCII argument reaches the body as UTF-8") = []
+{
+    auto result = runHarness({"--say", nonAsciiText});
+
+    check(result.exitCode == 0);
+    check(withLfEndings(result.output) == nonAsciiText + "\n");
+
+    auto stored = runHarnessOnStoredArgs({"--say", nonAsciiText});
+
+    check(stored.exitCode == 0);
+    check(withLfEndings(stored.output) == nonAsciiText + "\n");
+};
+
+// The command line the process started with must not replace an argument
+// main() changed, here argv[0], even when the other arguments are not ASCII.
+auto tReplacedArgumentIsKept = test(
+    "Console/an argv[0] main() replaced is kept beside non-ASCII arguments") = []
+{
+    auto result =
+        runHarnessNamed("some/dir/Tool.exe", {"--say", nonAsciiText, "--throw"});
+
+    check(result.exitCode == 1);
+    check(withLfEndings(result.errorOutput) == "Tool: boom\n");
+};
+
+auto tExplicitArgv = test(
+    "Console/Parser::parse(argc, argv) reads a non-ASCII argument as UTF-8") = []
+{
+    auto result = runHarnessWith(
+        {"--say", nonAsciiText}, "EACP_CONSOLE_HARNESS_EXPLICIT", "1");
+
+    check(result.exitCode == 0);
+    check(withLfEndings(result.output) == nonAsciiText + "\n");
+};
+
+// A list with fewer entries than the process's command line is not that command
+// line, so nothing in it is recovered: the argument is stored exactly as main()
+// got it, which the harness echoes to stderr first.
+auto tShorterListIsStoredAsGiven =
+    test("Console/a list shorter than the command line is stored as given") = []
+{
+    auto result = runHarnessWith(
+        {"--say", nonAsciiText, "dropped"}, "EACP_CONSOLE_HARNESS_DROP_LAST", "1");
+
+    check(result.exitCode == 0);
+    check(!result.errorOutput.empty());
+    check(withLfEndings(result.output) == withLfEndings(result.errorOutput));
+};
+
 auto tFailReportsLikeAParseError =
     test("Console/Parser::fail prints the error and exits 2") = []
 {

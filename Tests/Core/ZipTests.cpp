@@ -245,6 +245,22 @@ auto tZipAddsFilesAndDirectories = test("Zip/addsFilesAndDirectories") = []
     check(!reader.contains("root.txt"));
 };
 
+auto tZipAddsNonAsciiDirectories = test("Zip/addDirectory/utf8Names") = []
+{
+    const auto name = nonAsciiName();
+    const auto dir = FilePath {scratchDirectory("zip-tree-utf8")};
+    check(eacp::Files::createDirectories(FilePath {dir.str() + "/" + name}));
+    eacp::Files::writeFile(FilePath {dir.str() + "/" + name + "/" + name + ".txt"},
+                           std::string_view {"unicode"});
+
+    auto writer = Writer {};
+    check(writer.addDirectory(dir, "tree/"));
+
+    const auto reader = Reader {writer.finish()};
+    check(reader.numEntries() == 1);
+    check(reader.readText("tree/" + name + "/" + name + ".txt") == "unicode");
+};
+
 auto tZipExtractsAll = test("Zip/extractsAll") = []
 {
     const auto dir = scratchDirectory("zip-extract");

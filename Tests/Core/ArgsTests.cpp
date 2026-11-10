@@ -843,4 +843,19 @@ auto tStoredCommandLine =
     check(bundles.size() == 1);
     check(bundles[0] == "Plugin.vst3");
 };
+
+auto tUtf8ArgumentsCopiesAList =
+    test("Args/utf8Arguments copies a list that is not the command line") = []
+{
+    const char* argv[] = {"/bin/Tool", nullptr, "Plugin.vst3", "?", "x"};
+    const auto args = eacp::Apps::utf8Arguments(5, argv);
+
+    check(args.size() == 5);
+    check(args[0] == "/bin/Tool");
+    check(args[1].empty());
+    check(args[2] == "Plugin.vst3");
+    check(args[3] == "?");
+    check(args[4] == "x");
+    check(eacp::Apps::utf8Arguments(0, nullptr).empty());
+};
 } // namespace ArgsTests

@@ -62,6 +62,7 @@ target_sources(eacp-core PRIVATE
 
 if (APPLE)
     target_sources(eacp-core PRIVATE
+            App/CommandLine-Default.cpp
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
             Platform/ScopedAutoReleasePool-Apple.mm
@@ -112,6 +113,7 @@ elseif (WIN32)
             App/Alert-Windows.cpp
             App/App-Windows.cpp
             App/Clipboard-Windows.cpp
+            App/CommandLine-Windows.cpp
             App/FilePickerAsync-Default.cpp
             App/LoginItem-Windows.cpp
             Platform/ScopedAutoReleasePool-Default.cpp
@@ -132,6 +134,7 @@ elseif (WIN32)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/Alert-Default.cpp
+            App/CommandLine-Default.cpp
             App/FilePickerAsync-Default.cpp
             App/LoginItem-Linux.cpp
             Platform/ScopedAutoReleasePool-Default.cpp
