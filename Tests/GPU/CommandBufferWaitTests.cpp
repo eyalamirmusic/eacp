@@ -508,6 +508,45 @@ auto tScopedUpdateWaitsForOneBufferOnly =
     for (auto attempt = 0; attempt < maxAttempts && !overlapped; ++attempt)
         overlapped = updateFoundTrailingStillRunning();
 
+    // The same pair with a plain wait(), which needs nothing of update(): a
+    // device that never reports the first done while the second still runs
+    // (Honeykrisp signals them together) leaves nothing here to tell apart.
+    const auto waitFoundTrailingStillRunning = [&]
+    {
+        auto commands = device.makeCommandBuffer();
+        dispatchSlowWork(commands, slow);
+        commands.submit();
+
+        auto trailing = device.makeCommandBuffer();
+
+        for (auto pass = 0; pass < trailingPasses; ++pass)
+            dispatchSlowWork(trailing, trailingSlow);
+
+        trailing.submit();
+        commands.wait();
+
+        const auto trailingWasRunning = !trailing.isComplete();
+        trailing.wait();
+
+        return trailingWasRunning;
+    };
+
+    if (!overlapped)
+    {
+        auto deviceCanTell = false;
+
+        for (auto attempt = 0; attempt < maxAttempts && !deviceCanTell; ++attempt)
+            deviceCanTell = waitFoundTrailingStillRunning();
+
+        if (!deviceCanTell)
+        {
+            LOG("CommandBufferWait/aScopedUpdateWaitsForOneBufferOnly: ",
+                device.name(),
+                " never reports a submission done while a later one runs");
+            return;
+        }
+    }
+
     check(overlapped);
 };
 } // namespace CommandBufferWaitTests
