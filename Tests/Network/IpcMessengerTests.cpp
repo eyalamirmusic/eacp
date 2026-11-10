@@ -1,6 +1,8 @@
 #include "Common.h"
 
+#include <atomic>
 #include <optional>
+#include <thread>
 
 using namespace nano;
 using eacp::IPC::MessageServer;
@@ -201,4 +203,83 @@ auto tServesClientsInTurn = test("Ipc/Messenger/servesClientsInTurn") = []
     }
 
     check(greeted == 2);
+};
+
+namespace
+{
+constexpr auto stuckReaderMessageBytes = std::size_t {1} << 20;
+constexpr auto stuckReaderMessagesWithinLimit = 16;
+constexpr auto stuckReaderMessagesPastLimit = 80;
+constexpr auto sendingToAStuckReaderLimit = eacp::Time::MS {500};
+constexpr auto sendingPollInterval = eacp::Time::MS {5};
+
+struct StuckReaderSession
+{
+    MessageServer server;
+    eacp::IPC::Channel reader;
+    Messenger* session = nullptr;
+    bool isGone = false;
+
+    explicit StuckReaderSession(const std::string& name)
+        : server(name)
+        , reader(eacp::IPC::Channel::connect(name))
+    {
+        server.onClient = [this](Messenger& arrived)
+        {
+            session = &arrived;
+            arrived.onDisconnected = [this] { isGone = true; };
+        };
+    }
+};
+
+bool isSendingFinishedWithinLimit(StuckReaderSession& stuck, int messageCount)
+{
+    auto isFinished = std::atomic<bool> {false};
+    auto sender = std::thread(
+        [&stuck, &isFinished, messageCount]
+        {
+            auto payload = std::string(stuckReaderMessageBytes, 'x');
+
+            for (auto index = 0; index < messageCount; ++index)
+                stuck.session->send(payload);
+
+            isFinished = true;
+        });
+
+    auto deadline = eacp::Time::Deadline {sendingToAStuckReaderLimit};
+
+    while (!isFinished && !deadline.expired())
+        eacp::Time::sleep(sendingPollInterval);
+
+    auto isFinishedInTime = isFinished.load();
+
+    if (!isFinishedInTime)
+        stuck.reader.close();
+
+    sender.join();
+    return isFinishedInTime;
+}
+} // namespace
+
+auto tSendingToAStuckReaderReturns =
+    test("Ipc/Messenger/sendingToAPeerThatStoppedReadingReturnsAtOnce") = []
+{
+    auto stuck = StuckReaderSession {"eacp.tests.msgr.stuckReader"};
+    check(runEventLoopUntil([&] { return stuck.session != nullptr; },
+                            messengerPumpTimeout));
+
+    check(isSendingFinishedWithinLimit(stuck, stuckReaderMessagesWithinLimit));
+    check(stuck.session->isConnected());
+};
+
+auto tStuckReaderIsDisconnected =
+    test("Ipc/Messenger/aPeerLeavingTooMuchUnreadIsDisconnected") = []
+{
+    auto stuck = StuckReaderSession {"eacp.tests.msgr.stuckReaderOverflow"};
+    check(runEventLoopUntil([&] { return stuck.session != nullptr; },
+                            messengerPumpTimeout));
+
+    check(isSendingFinishedWithinLimit(stuck, stuckReaderMessagesPastLimit));
+    check(runEventLoopUntil([&] { return stuck.isGone; }, messengerPumpTimeout));
+    check(!stuck.session->isConnected());
 };

@@ -5,6 +5,8 @@
 
 #include <aclapi.h>
 
+#include <thread>
+
 namespace eacp::IPC::detail
 {
 namespace
@@ -12,6 +14,9 @@ namespace
 // Sized for bulk payloads (video frames run to megabytes): the quota is
 // advisory, but an undersized one forces writer/reader ping-pong.
 constexpr auto pipeBufferSize = DWORD {1} << 20;
+
+// A peer that is alive but no longer reading would hold a close here forever.
+constexpr auto unreadBytesFlushLimit = DWORD {250};
 
 [[noreturn]] void fail(const std::string& context, DWORD reason)
 {
@@ -67,6 +72,17 @@ bool completed(HANDLE pipe, Operation& operation, DWORD& transferred, DWORD& rea
 
     reason = ::GetLastError();
     return false;
+}
+
+void flushUnlessThePeerIsStuck(HANDLE pipe)
+{
+    auto flusher = std::thread([pipe] { ::FlushFileBuffers(pipe); });
+    auto flusherHandle = (HANDLE) flusher.native_handle();
+
+    if (::WaitForSingleObject(flusherHandle, unreadBytesFlushLimit) == WAIT_TIMEOUT)
+        ::CancelSynchronousIo(flusherHandle);
+
+    flusher.join();
 }
 
 std::wstring pipePath(const std::string& safeName)
@@ -182,15 +198,30 @@ bool endOfStream(DWORD reason)
            || reason == ERROR_OPERATION_ABORTED;
 }
 
-// Waits up to timeout for a client on the pipe instance. The wait is the
-// overlapped connect's own event, so a bounded accept costs one wait
-// rather than a polling loop.
-bool waitForClient(HANDLE pipe, HANDLE wake, Time::MS timeout)
+bool isPendingConnectFinished(HANDLE pipe, Operation& operation)
 {
-    auto operation = Operation {};
+    auto transferred = DWORD {0};
+    auto reason = DWORD {0};
 
-    // An overlapped ConnectNamedPipe never succeeds outright: it either
-    // goes pending or reports why it had nothing to wait for.
+    if (completed(pipe, operation, transferred, reason))
+        return true;
+
+    return clientArrived(reason);
+}
+
+bool isConnectSignalledBeforeWake(Operation& operation, HANDLE wake, Time::MS timeout)
+{
+    auto wait = timeout.count <= 0 ? INFINITE : (DWORD) timeout.count;
+    HANDLE waitOn[] = {operation.event(), wake};
+    auto count = wake != nullptr ? DWORD {2} : DWORD {1};
+
+    return ::WaitForMultipleObjects(count, waitOn, FALSE, wait) == WAIT_OBJECT_0;
+}
+
+// An overlapped ConnectNamedPipe never succeeds outright: it either goes
+// pending or reports why it had nothing to wait for.
+bool startConnecting(HANDLE pipe, Operation& operation)
+{
     if (::ConnectNamedPipe(pipe, operation.get()) != 0)
         return true;
 
@@ -202,21 +233,25 @@ bool waitForClient(HANDLE pipe, HANDLE wake, Time::MS timeout)
     if (reason != ERROR_IO_PENDING)
         fail("cannot wait for a channel client", reason);
 
-    auto wait = timeout.count <= 0 ? INFINITE : (DWORD) timeout.count;
-    HANDLE waitOn[] = {operation.event(), wake};
-    auto count = wake != nullptr ? DWORD {2} : DWORD {1};
+    return false;
+}
 
-    if (::WaitForMultipleObjects(count, waitOn, FALSE, wait) == WAIT_OBJECT_0)
+// Waits up to timeout for a client on the pipe instance. The wait is the
+// overlapped connect's own event, so a bounded accept costs one wait
+// rather than a polling loop.
+bool waitForClient(HANDLE pipe, HANDLE wake, Time::MS timeout)
+{
+    auto operation = Operation {};
+
+    if (startConnecting(pipe, operation))
+        return true;
+
+    if (isConnectSignalledBeforeWake(operation, wake, timeout))
     {
-        auto transferred = DWORD {0};
-
-        if (completed(pipe, operation, transferred, reason))
+        if (isPendingConnectFinished(pipe, operation))
             return true;
 
-        if (clientArrived(reason))
-            return true;
-
-        fail("cannot wait for a channel client", reason);
+        fail("cannot wait for a channel client");
     }
 
     // The connect is still in flight and its OVERLAPPED lives on this
@@ -225,13 +260,7 @@ bool waitForClient(HANDLE pipe, HANDLE wake, Time::MS timeout)
     // landed in that same breath outruns the cancel and is kept, rather
     // than being dropped for being a moment late.
     ::CancelIoEx(pipe, operation.get());
-
-    auto transferred = DWORD {0};
-
-    if (completed(pipe, operation, transferred, reason))
-        return true;
-
-    return clientArrived(reason);
+    return isPendingConnectFinished(pipe, operation);
 }
 } // namespace
 
@@ -366,9 +395,9 @@ void channelClose(NativeChannel channel) noexcept
 
     // Unlike a socket, a pipe may drop written-but-unread bytes when its
     // handle closes; the flush holds the door until the peer has read them.
-    // A vanished peer fails the flush immediately, so this cannot hang on
-    // the dead.
-    ::FlushFileBuffers((HANDLE) channel);
+    // A vanished peer fails the flush immediately, and a stuck one is given
+    // up on after unreadBytesFlushLimit.
+    flushUnlessThePeerIsStuck((HANDLE) channel);
     ::CloseHandle((HANDLE) channel);
 }
 
