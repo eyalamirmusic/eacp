@@ -84,7 +84,8 @@ bool isWholeLevel(const Texture& texture, int level, int x, int y, int w, int h)
 }
 
 // A plain texture rests in PIXEL_SHADER_RESOURCE and every later use moves it
-// from wherever the tracking says, so a copy hands it back there.
+// from wherever the tracking says, so a copy hands it back there. A source keeps
+// COPY_SOURCE beside it until it is next written (see transitionTextureForUse).
 void restAfterCopy(ID3D12GraphicsCommandList* list, D3D12TextureData& data)
 {
     transitionTextureForUse(list, data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
