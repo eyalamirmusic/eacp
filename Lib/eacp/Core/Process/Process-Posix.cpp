@@ -280,7 +280,7 @@ private:
     }
 
     static void setSpawnFlags(posix_spawnattr_t& attr,
-                              posix_spawn_file_actions_t& actions,
+                              [[maybe_unused]] posix_spawn_file_actions_t& actions,
                               const ProcessOptions& options)
     {
         auto spawnFlags = short {0};
