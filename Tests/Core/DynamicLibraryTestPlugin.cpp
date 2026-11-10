@@ -2,6 +2,7 @@
 // bumps EACP_TEST_PLUGIN_LOADS in the process environment. Statics only
 // re-run on a genuine load, so the counter observes real unmaps — a resident
 // image reopened does not re-initialize.
+#include <eacp/Core/Plugins/ModuleInfo.h>
 #include <eacp/Core/Plugins/PluginExport.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Strings.h>
@@ -28,4 +29,9 @@ int bumpLoadCount()
 EACP_PLUGIN_EXPORT int eacpTestPluginAdd(int a, int b)
 {
     return a + b;
+}
+
+EACP_PLUGIN_EXPORT bool eacpTestPluginIsDynamicLibrary()
+{
+    return eacp::Plugins::isDynamicLibrary();
 }
