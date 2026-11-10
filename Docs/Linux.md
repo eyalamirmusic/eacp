@@ -131,7 +131,12 @@ pkg-config` on Debian/Ubuntu,
 `with-xvfb` in the image) with `libxcb-xtest0-dev` for the X11 suite's own
 synthetic input, and fonts for the text tests to resolve —
 `fonts-dejavu-core fonts-dejavu-extra
-fonts-droid-fallback fonts-noto-color-emoji`. `EACP_REQUIRE_DISPLAY=1` does for
+fonts-droid-fallback fonts-noto-color-emoji`. Bitmap (CBDT/sbix) and COLRv0
+colour fonts draw in colour through FreeType; a COLRv1-only one, such as
+Fedora's Noto Color Emoji, needs HarfBuzz 13 or later with its `harfbuzz-raster`
+library, which `CMake/FindLinuxText.cmake` links when pkg-config finds it
+(`-DEACP_USE_HB_RASTER=OFF` declines it) — without it those glyphs come back
+as masks, empty for Noto. `EACP_REQUIRE_DISPLAY=1` does for
 the display server what `EACP_REQUIRE_GPU=1` does for the device, and
 `EACP_REQUIRE_FONTS=1` does it for the fonts, which is the third way a suite can
 report green by skipping everything.

@@ -16,6 +16,11 @@
 #include <hb.h>
 #include <hb-ft.h>
 
+#if EACP_HAS_HB_RASTER
+#include <hb-ot.h>
+#include <hb-raster.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -33,6 +38,12 @@ namespace eacp::Text
 // GCC reads an internal-linkage member as an ODR hazard (-Wsubobject-linkage).
 namespace LinuxText
 {
+#if EACP_HAS_HB_RASTER
+constexpr auto linuxPaintsColorOutlines = true;
+#else
+constexpr auto linuxPaintsColorOutlines = false;
+#endif
+
 struct LinuxFaceDeleter
 {
     void operator()(FT_FaceRec_* face) const { FT_Done_Face(face); }
@@ -52,6 +63,24 @@ struct LinuxShaperBufferDeleter
 {
     void operator()(hb_buffer_t* buffer) const { hb_buffer_destroy(buffer); }
 };
+
+#if EACP_HAS_HB_RASTER
+struct LinuxRasterPaintDeleter
+{
+    void operator()(hb_raster_paint_t* paint) const
+    {
+        hb_raster_paint_destroy(paint);
+    }
+};
+
+struct LinuxRasterImageDeleter
+{
+    void operator()(hb_raster_image_t* image) const
+    {
+        hb_raster_image_destroy(image);
+    }
+};
+#endif
 
 struct LinuxPatternDeleter
 {
@@ -75,6 +104,11 @@ using LinuxShaperBuffer = std::unique_ptr<hb_buffer_t, LinuxShaperBufferDeleter>
 using LinuxPattern = std::unique_ptr<FcPattern, LinuxPatternDeleter>;
 using LinuxFontSet = std::unique_ptr<FcFontSet, LinuxFontSetDeleter>;
 using LinuxObjectSet = std::unique_ptr<FcObjectSet, LinuxObjectSetDeleter>;
+
+#if EACP_HAS_HB_RASTER
+using LinuxRasterPaint = std::unique_ptr<hb_raster_paint_t, LinuxRasterPaintDeleter>;
+using LinuxRasterImage = std::unique_ptr<hb_raster_image_t, LinuxRasterImageDeleter>;
+#endif
 
 // The bytes live for the life of the process: every FT_Face opened over them
 // reads out of them lazily.
@@ -328,7 +362,9 @@ std::string linuxFamilyOfPostScriptName(const std::string& name)
     return linuxFamilyOf(set->fonts[0], {});
 }
 
-LinuxFontSet linuxSortedFonts(const std::string& family, const FontVariant& variant)
+LinuxFontSet linuxSortedFonts(const std::string& family,
+                              const FontVariant& variant,
+                              bool trim)
 {
     auto pattern = LinuxPattern {FcPatternCreate()};
 
@@ -346,8 +382,8 @@ LinuxFontSet linuxSortedFonts(const std::string& family, const FontVariant& vari
 
     auto status = FcResult {};
 
-    return LinuxFontSet {
-        FcFontSort(nullptr, pattern.get(), FcTrue, nullptr, &status)};
+    return LinuxFontSet {FcFontSort(
+        nullptr, pattern.get(), trim ? FcTrue : FcFalse, nullptr, &status)};
 }
 
 bool linuxPatternHasChar(FcPattern* pattern, char32_t codepoint)
@@ -710,6 +746,7 @@ struct GlyphRasterizer::Native
         variants.clear();
         fallbacks.clear();
         sortedFonts.clear();
+        untrimmedFonts.clear();
     }
 
     void resolve()
@@ -1017,26 +1054,52 @@ struct GlyphRasterizer::Native
                     bool wantsColor,
                     const FontVariant& variant) const
     {
-        auto* set = sortedSetFor(variant);
+        auto* set = sortedSetFor(variant, true);
 
         if (set == nullptr)
             return 0;
 
-        // Colour pass first when asked, or the sort offers a mono face sooner.
-        for (auto pass = wantsColor ? 0 : 1; pass < 2; ++pass)
-            for (auto index = 0; index < set->nfont; ++index)
-            {
-                auto* pattern = set->fonts[index];
+        // Colour first when asked, or the sort offers a mono face sooner.
+        if (wantsColor)
+        {
+            if (const auto font = firstFallbackIn(set, codepoint, true, variant);
+                font > 0)
+                return font;
 
-                if (pass == 0 && !linuxPatternIsColor(pattern))
-                    continue;
-
-                if (!linuxPatternHasChar(pattern, codepoint))
-                    continue;
-
-                if (const auto font = adoptFallback(pattern, variant); font > 0)
+            // The trimmed sort drops a colour face whose codepoints a mono
+            // emoji face ranked above it covers. Found past it, a COLRv1 face
+            // would draw nothing unless HarfBuzz can paint it.
+            if constexpr (linuxPaintsColorOutlines)
+                if (const auto font = firstFallbackIn(
+                        sortedSetFor(variant, false), codepoint, true, variant);
+                    font > 0)
                     return font;
-            }
+        }
+
+        return firstFallbackIn(set, codepoint, false, variant);
+    }
+
+    int firstFallbackIn(FcFontSet* set,
+                        char32_t codepoint,
+                        bool colorOnly,
+                        const FontVariant& variant) const
+    {
+        if (set == nullptr)
+            return 0;
+
+        for (auto index = 0; index < set->nfont; ++index)
+        {
+            auto* pattern = set->fonts[index];
+
+            if (colorOnly && !linuxPatternIsColor(pattern))
+                continue;
+
+            if (!linuxPatternHasChar(pattern, codepoint))
+                continue;
+
+            if (const auto font = adoptFallback(pattern, variant); font > 0)
+                return font;
+        }
 
         return 0;
     }
@@ -1076,14 +1139,15 @@ struct GlyphRasterizer::Native
         return fallbacks.size();
     }
 
-    FcFontSet* sortedSetFor(const FontVariant& variant) const
+    FcFontSet* sortedSetFor(const FontVariant& variant, bool trim) const
     {
         const auto key = variantKey(variant);
-        auto found = sortedFonts.find(key);
+        auto& sets = trim ? sortedFonts : untrimmedFonts;
+        auto found = sets.find(key);
 
-        if (found == sortedFonts.end())
+        if (found == sets.end())
             found =
-                sortedFonts.emplace(key, linuxSortedFonts(resolved, variant)).first;
+                sets.emplace(key, linuxSortedFonts(resolved, variant, trim)).first;
 
         return found->second.get();
     }
@@ -1196,7 +1260,13 @@ struct GlyphRasterizer::Native
         const auto pixelMode = (FT_Pixel_Mode) slot->bitmap.pixel_mode;
 
         if (pixelMode == FT_PIXEL_MODE_BGRA)
-            takeColorBitmap(sized, *slot, bitmap);
+            takeColorBitmap(slot->bitmap,
+                            slot->bitmap_left,
+                            slot->bitmap_top,
+                            sized.bitmapScale,
+                            bitmap);
+        else if (paintColorGlyph(sized, glyph, raster, bitmap))
+            return;
         else if (pixelMode == FT_PIXEL_MODE_GRAY)
             takeMaskBitmap(*slot, bitmap);
         else
@@ -1262,17 +1332,98 @@ struct GlyphRasterizer::Native
         }
     }
 
-    // FreeType's premultiplied BGRA to the straight RGBA the atlas stores.
-    static void takeColorBitmap(const LinuxSizedFace& sized,
-                                const FT_GlyphSlotRec& slot,
+#if EACP_HAS_HB_RASTER
+    // FreeType rasterizes no COLRv1 paint graph, so a glyph that has one came
+    // back as its monochrome outline; HarfBuzz paints it instead.
+    static bool paintColorGlyph(const LinuxSizedFace& sized,
+                                std::uint32_t glyph,
+                                const RasterRequest& raster,
                                 GlyphBitmap& bitmap)
     {
-        const auto& source = slot.bitmap;
-        const auto scale = sized.bitmapScale;
+        auto* font = sized.font.get();
 
+        if (!sized.color || font == nullptr || sized.pixelSize <= 0.f
+            || !hb_ot_color_glyph_has_paint(hb_font_get_face(font), glyph))
+            return false;
+
+        auto paint = LinuxRasterPaint {hb_raster_paint_create_or_fail()};
+
+        if (!paint)
+            return false;
+
+        // The font's scale is its units per pixel: 64 for hb-ft's 26.6.
+        auto xScale = 0;
+        auto yScale = 0;
+        hb_font_get_scale(font, &xScale, &yScale);
+
+        const auto unitsPerPixel = (float) xScale / sized.pixelSize;
+        const auto shift = std::clamp(raster.subpixelX, 0.f, 1.f);
+
+        if (unitsPerPixel <= 0.f)
+            return false;
+
+        hb_raster_paint_set_transform(paint.get(),
+                                      1.f / unitsPerPixel,
+                                      0.f,
+                                      0.f,
+                                      1.f / unitsPerPixel,
+                                      shift,
+                                      0.f);
+        hb_raster_paint_set_foreground(paint.get(), HB_COLOR(0, 0, 0, 255));
+
+        if (!hb_raster_paint_glyph_or_fail(paint.get(), font, glyph))
+            return false;
+
+        auto image = LinuxRasterImage {hb_raster_paint_render(paint.get())};
+
+        if (!image)
+            return false;
+
+        takePaintedImage(*image, bitmap);
+
+        return true;
+    }
+
+    // HarfBuzz's rows run upwards from the image's bottom edge, so the view
+    // starts at the last row with a negative pitch, as FreeType's would.
+    static void takePaintedImage(const hb_raster_image_t& image, GlyphBitmap& bitmap)
+    {
+        auto extents = hb_raster_extents_t {};
+        hb_raster_image_get_extents(&image, &extents);
+
+        const auto* buffer = hb_raster_image_get_buffer(&image);
+        const auto height = (int) extents.height;
+        auto source = FT_Bitmap {};
+
+        if (buffer != nullptr && extents.width > 0 && height > 0)
+        {
+            source.width = extents.width;
+            source.rows = extents.height;
+            source.pitch = -(int) extents.stride;
+            source.buffer = const_cast<unsigned char*>(
+                buffer + (std::ptrdiff_t) (height - 1) * extents.stride);
+        }
+
+        takeColorBitmap(
+            source, extents.x_origin, extents.y_origin + height, 1.f, bitmap);
+    }
+#else
+    static bool paintColorGlyph(const LinuxSizedFace&,
+                                std::uint32_t,
+                                const RasterRequest&,
+                                GlyphBitmap&)
+    {
+        return false;
+    }
+#endif
+
+    // A premultiplied BGRA bitmap to the straight RGBA the atlas stores.
+    static void takeColorBitmap(
+        const FT_Bitmap& source, int left, int top, float scale, GlyphBitmap& bitmap)
+    {
         bitmap.format = GlyphFormat::Color;
-        bitmap.bearingX = (float) slot.bitmap_left * scale;
-        bitmap.bearingY = (float) slot.bitmap_top * scale;
+        bitmap.bearingX = (float) left * scale;
+        bitmap.bearingY = (float) top * scale;
 
         if (source.width == 0 || source.rows == 0 || source.buffer == nullptr)
             return;
@@ -1312,7 +1463,7 @@ struct GlyphRasterizer::Native
                                     + (std::ptrdiff_t) row * source.pitch
                                     + (std::ptrdiff_t) column * 4;
 
-                // FreeType lays a colour pixel out blue first.
+                // A colour pixel is laid out blue first.
                 totals[0] += pixel[2];
                 totals[1] += pixel[1];
                 totals[2] += pixel[0];
@@ -1343,6 +1494,7 @@ struct GlyphRasterizer::Native
     Vector<LinuxFamilyFace> familyFaces;
     mutable std::map<int, LinuxSizedFace> variants;
     mutable std::map<int, LinuxFontSet> sortedFonts;
+    mutable std::map<int, LinuxFontSet> untrimmedFonts;
     mutable Vector<std::unique_ptr<LinuxSizedFace>> fallbacks;
     mutable std::map<std::uint64_t, int> fallbackChoices;
     bool valid = false;
