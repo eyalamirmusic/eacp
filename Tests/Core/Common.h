@@ -12,6 +12,14 @@
 #include <thread>
 #include <vector>
 
+// U+00DC n U+00EF c U+00F8 d U+00E9 - U+65E5 U+672C as UTF-8: Latin-1 letters
+// every Western code page has, and two CJK ones a Western code page lacks.
+inline std::string nonAsciiName()
+{
+    const auto text = std::u8string {u8"\u00dcn\u00efc\u00f8d\u00e9-\u65e5\u672c"};
+    return {text.begin(), text.end()};
+}
+
 inline std::filesystem::path scratchDirectory(const std::string& name)
 {
     auto dir = std::filesystem::temp_directory_path() / ("eacp-" + name);

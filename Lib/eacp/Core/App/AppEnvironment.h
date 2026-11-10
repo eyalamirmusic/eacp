@@ -21,14 +21,24 @@ struct AppEnvironment
     // loaded afterwards.
     bool headless = getEnvValue("EACP_HEADLESS") == "1";
 
-    // Snapshot of main()'s argc/argv, populated by setCommandLineArgs().
-    // Index 0 is the executable path, per the argv convention.
+    // Snapshot of main()'s argc/argv as UTF-8, populated by
+    // setCommandLineArgs(). Index 0 is the executable path, per the argv
+    // convention.
     Vector<std::string> commandLineArgs;
 };
 
 AppEnvironment& getAppEnvironment();
 
-// Copies main()'s argc/argv into commandLineArgs. Call once at startup,
+// main()'s argc/argv as UTF-8, argv[0] first; a null entry is empty. On macOS,
+// Linux and Android that is a copy. On Windows, where main() gets its arguments
+// in the ANSI code page, a list as long as the process's command line has each
+// entry that is the ANSI form of the matching process argument replaced by that
+// argument's UTF-8, so characters the code page lacks survive. Any other entry,
+// and a list of another length, is copied as given, so an argv the caller
+// built or changed keeps its own text.
+Vector<std::string> utf8Arguments(int argc, const char* const* argv);
+
+// Stores utf8Arguments(argc, argv) in commandLineArgs. Call once at startup,
 // before app construction.
 void setCommandLineArgs(int argc, char* argv[]);
 

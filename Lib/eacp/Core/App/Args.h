@@ -629,7 +629,8 @@ public:
     // `args` without the program name.
     Result parse(const Vector<std::string>& args);
 
-    // main()'s own, argv[0] included. A null entry is read as empty.
+    // main()'s own, argv[0] included, read through Apps::utf8Arguments, so as
+    // UTF-8 on Windows too. A null entry is read as empty.
     Result parse(int argc, const char* const* argv);
 
     std::string helpText() const;

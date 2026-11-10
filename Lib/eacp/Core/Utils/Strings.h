@@ -90,8 +90,10 @@ std::wstring widen(std::string_view utf8);
 
 // The reverse leg, on the same contract: unpaired surrogates and units past
 // U+10FFFF become U+FFFD, so it neither throws nor fails. Together these two are
-// the framework's only encoding conversions - nothing else should call
-// MultiByteToWideChar or WideCharToMultiByte.
+// the framework's only UTF-8 conversions - nothing else should call
+// MultiByteToWideChar or WideCharToMultiByte for them. The one other conversion
+// is App/CommandLine-Windows.cpp's to the ANSI code page, which reproduces what
+// the C runtime handed main() and is never used as text.
 std::string narrow(std::wstring_view wide);
 
 // Number/bool → string. String-like and char inputs pass through unchanged so
