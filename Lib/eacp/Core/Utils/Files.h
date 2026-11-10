@@ -28,6 +28,14 @@ void writeFile(const FilePath& path, std::string_view text);
 // - An existing file's permission bits are carried over, so saving a script
 //   does not silently un-execute it by handing the replacement the umask.
 //
+// Windows replaces as rename(2) does: a file another program holds open is
+// replaced while that program keeps reading the old one, provided it opened
+// the file with FILE_SHARE_DELETE (one that did not, as fopen and std::fstream
+// do not, makes the save throw until it closes the file), and a read-only
+// file is replaced and stays read-only. Filesystems without POSIX rename
+// semantics (FAT, exFAT, many network shares) and Windows 10 before 1709
+// still replace a read-only file, but not an open one.
+//
 // Throws std::runtime_error, like writeFile, if the write or the rename fails.
 void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes);
 void writeFileAtomically(const FilePath& path, std::string_view text);

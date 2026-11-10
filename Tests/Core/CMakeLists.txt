@@ -54,11 +54,13 @@ if (NOT WIN32)
 endif ()
 
 # The file/folder picker seam is Windows-only (App-Windows-FilePicker.h), and
-# so are the wide-path conversions FilePathTests-Windows.cpp covers.
+# so are the wide-path conversions FilePathTests-Windows.cpp covers, and the
+# open handles and read-only attribute FilesTests-Windows.cpp replaces through.
 if (WIN32)
     list(APPEND core_test_sources
             FilePathTests-Windows.cpp
-            FilePickerWindowsTests.cpp)
+            FilePickerWindowsTests.cpp
+            FilesTests-Windows.cpp)
 endif ()
 
 # A hosted copy under a foreign host's own Win32 pump: attach, detach, attach
