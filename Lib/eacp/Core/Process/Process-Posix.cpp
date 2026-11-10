@@ -69,6 +69,7 @@ struct Process::Native
 {
     explicit Native(ProcessOptions options)
         : detached(options.detached)
+        , leadsItsOwnGroup(options.newProcessGroup && !options.detached)
         , onOutput(std::move(options.onOutput))
     {
         ignoreSigPipeOnce();
@@ -122,6 +123,18 @@ struct Process::Native
     {
         if (pid > 0)
             ::kill(pid, SIGKILL);
+    }
+
+    // Sent under the lock reaping takes, so the child cannot be reaped, and its
+    // pid reused, between the check and the signal.
+    bool requestStop()
+    {
+        auto lock = std::lock_guard {reapMutex};
+
+        if (pid <= 0 || reapIfExited(WNOHANG))
+            return false;
+
+        return ::kill(leadsItsOwnGroup ? -pid : pid, SIGTERM) == 0;
     }
 
     bool writeToInput(const std::string& data)
@@ -291,6 +304,15 @@ private:
             spawnFlags |= POSIX_SPAWN_SETSID;
 #endif
 
+        // newProcessGroup is ignored for a detached child: where setsid is
+        // available it already leads a group, and a session leader cannot
+        // change its group.
+        if (options.newProcessGroup && !options.detached)
+        {
+            spawnFlags |= POSIX_SPAWN_SETPGROUP;
+            posix_spawnattr_setpgroup(&attr, 0);
+        }
+
         posix_spawnattr_setflags(&attr, spawnFlags);
     }
 
@@ -402,10 +424,49 @@ private:
             errReader.join();
     }
 
+    // The blocking wait leaves the child unreaped (WNOWAIT) and holds no lock,
+    // so isRunning() and requestStop() on other threads still answer while one
+    // thread waits; the status is then collected once, under the lock. A child
+    // already reaped is never waited on: its pid may now be another child's
+    // (short of another thread reaping it in the instant between the check and
+    // the wait).
+    // waitid's outcome is only a hint: should it fail or return early, the
+    // old blocking waitpid under the lock finishes the job.
     bool reap(bool blocking) const
     {
+        if (blocking && !hasBeenReaped())
+            waitUntilExited();
+
         auto lock = std::lock_guard {reapMutex};
 
+        if (!blocking)
+            return reapIfExited(WNOHANG);
+
+        return reapIfExited(WNOHANG) || reapIfExited(0);
+    }
+
+    bool hasBeenReaped() const
+    {
+        auto lock = std::lock_guard {reapMutex};
+        return reaped;
+    }
+
+    void waitUntilExited() const
+    {
+        if (pid <= 0)
+            return;
+
+        auto info = siginfo_t {};
+
+        while (waitid(P_PID, (id_t) pid, &info, WEXITED | WNOWAIT) != 0
+               && errno == EINTR)
+        {
+        }
+    }
+
+    // Needs reapMutex held.
+    bool reapIfExited(int waitOptions) const
+    {
         if (reaped)
             return true;
 
@@ -413,7 +474,10 @@ private:
             return false;
 
         int status = 0;
-        auto result = waitpid(pid, &status, blocking ? 0 : WNOHANG);
+        auto result = waitpid(pid, &status, waitOptions);
+
+        while (result < 0 && errno == EINTR)
+            result = waitpid(pid, &status, waitOptions);
 
         if (result == 0)
             return false;
@@ -447,6 +511,7 @@ private:
     pid_t pid = -1;
     bool execFailed = false; // posix_spawn couldn't exec → report 127
     const bool detached;
+    const bool leadsItsOwnGroup;
     const std::function<void(std::string_view)> onOutput;
     int inputFd = -1;
 
@@ -503,6 +568,10 @@ void Process::terminate()
 void Process::kill()
 {
     impl->kill();
+}
+bool Process::requestStop()
+{
+    return impl->requestStop();
 }
 
 std::string Process::output() const

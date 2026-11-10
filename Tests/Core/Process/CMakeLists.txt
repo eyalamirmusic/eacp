@@ -4,8 +4,20 @@ set(process_test_sources
         ProcessChildModes.cpp
         ProcessConcurrentPipesTests.cpp
         ProcessInheritStdioTests.cpp
+        ProcessStopTests.cpp
         ProcessTokeniseTests.cpp
         TestMain.cpp)
+
+# requestStop() reaches a child through a different handler on each platform
+# (StopRequest), and what it refuses or signals differs: CTRL_BREAK_EVENT to a
+# process group sharing the console on Windows, SIGTERM elsewhere.
+if (WIN32)
+    list(APPEND process_test_sources
+            ProcessStopTests-Windows.cpp StopRequest-Windows.cpp)
+else ()
+    list(APPEND process_test_sources
+            ProcessStopTests-Posix.cpp StopRequest-Posix.cpp)
+endif ()
 
 # Cross-platform proof for captureOutput=false: redirect the test's own
 # stdout to a file and assert a non-capturing child writes through to it,

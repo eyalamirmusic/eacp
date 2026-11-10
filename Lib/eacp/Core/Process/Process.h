@@ -61,6 +61,21 @@ struct ProcessOptions
     // window of its own. Ignored for detached launches, which already come
     // without a console.
     bool noWindow = false;
+
+    // When true the child starts in a process group of its own, which
+    // Process::requestStop() then signals as a whole, children of its own
+    // included. POSIX makes the child the leader of a new group (its group id
+    // is its pid). Windows passes CREATE_NEW_PROCESS_GROUP, which also starts
+    // the child with Ctrl+C disabled, as an ignored SIGINT is inherited on
+    // POSIX: Ctrl+C pressed in the shared console no longer reaches it, and a
+    // child that wants it back calls SetConsoleCtrlHandler(nullptr, FALSE).
+    // Ctrl+Break, and requestStop(), still do. On POSIX the new group is a
+    // background group of the launcher's terminal: Ctrl+C there no longer
+    // reaches the child either, and a child reading the terminal it inherited
+    // (captureOutput = false) is stopped by SIGTTIN, or by SIGTTOU writing to
+    // it under `stty tostop`. terminate() and kill() still reach the child
+    // alone, not the rest of its group. Ignored for detached launches.
+    bool newProcessGroup = false;
 };
 
 struct ProcessResult
@@ -98,9 +113,31 @@ public:
     bool writeToInput(const std::string& data);
     void closeInput();
 
+    // Blocks until the child exits and its output has been read, and returns
+    // its exit code. Call it from one thread at a time: isRunning() and
+    // requestStop() may be called from others meanwhile, but two concurrent
+    // waits on a child with captured output are not supported.
     int wait();
     void terminate();
     void kill();
+
+    // Asks the child to stop, leaving it the chance to shut down cleanly, and
+    // returns whether the request was sent. The child may take its time, or
+    // ignore it; terminate() and kill() remain the way to end it regardless.
+    // POSIX sends SIGTERM, to the whole process group when the child was
+    // started with newProcessGroup. Windows has no signal one process can send
+    // another, so it raises CTRL_BREAK_EVENT in the child's process group
+    // (GenerateConsoleCtrlEvent): the child sees SIGBREAK, or its console
+    // control handler runs, and one with neither ends with exit code
+    // STATUS_CONTROL_C_EXIT. The event travels through a console, so on
+    // Windows this returns false without sending anything unless the child was
+    // started with newProcessGroup and shares this process's console: not with
+    // noWindow (the child gets a console of its own), not detached (it gets
+    // none), and not when this process has no console (a GUI app; its
+    // console-subsystem children get consoles of their own). Returns false
+    // once the child has exited, even if others of its group still run. Safe
+    // to call while another thread is in wait().
+    bool requestStop();
 
     [[nodiscard]] std::string output() const;
     [[nodiscard]] std::string errorOutput() const;
