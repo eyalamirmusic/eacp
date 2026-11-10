@@ -157,7 +157,20 @@ DWORD creationFlags(const ProcessOptions& options, const std::wstring& environme
     if (options.noWindow)
         flags |= CREATE_NO_WINDOW;
 
+    if (options.newProcessGroup)
+        flags |= CREATE_NEW_PROCESS_GROUP;
+
     return flags;
+}
+
+// GenerateConsoleCtrlEvent reaches the processes of one group attached to the
+// caller's console, so the child must lead a group of its own and share that
+// console: a noWindow child gets a console of its own, a detached one none. An
+// id that leads no group can reach every process on the console, this one
+// included, which is why a child without its own group is refused.
+bool canReceiveConsoleBreak(const ProcessOptions& options)
+{
+    return options.newProcessGroup && !options.noWindow && !options.detached;
 }
 
 struct ChildStdHandles
@@ -243,6 +256,7 @@ struct Process::Native
 {
     explicit Native(ProcessOptions options)
         : detached(options.detached)
+        , receivesConsoleBreak(canReceiveConsoleBreak(options))
         , onOutput(std::move(options.onOutput))
     {
         launch(std::move(options));
@@ -284,6 +298,15 @@ struct Process::Native
     }
 
     void kill() { terminate(); }
+
+    // Fails by itself when this process has no console to send it through.
+    bool requestStop()
+    {
+        if (!receivesConsoleBreak || !isRunning())
+            return false;
+
+        return GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, processId) != FALSE;
+    }
 
     bool writeToInput(const std::string& data)
     {
@@ -509,8 +532,15 @@ private:
             errReader.join();
     }
 
+    // The blocking wait holds no lock, so isRunning() and requestStop() on
+    // other threads still answer while one thread waits; the status is then
+    // collected under the lock. The handle stays open until the destructor, so
+    // the wait stays valid while the other threads use it.
     bool reap(bool blocking) const
     {
+        if (blocking && processHandle != nullptr)
+            WaitForSingleObject(processHandle, INFINITE);
+
         auto lock = std::lock_guard {reapMutex};
 
         if (reaped)
@@ -519,9 +549,7 @@ private:
         if (processHandle == nullptr)
             return false;
 
-        auto result = WaitForSingleObject(processHandle, blocking ? INFINITE : 0);
-
-        if (result == WAIT_TIMEOUT)
+        if (WaitForSingleObject(processHandle, 0) == WAIT_TIMEOUT)
             return false;
 
         DWORD code = 0;
@@ -557,6 +585,7 @@ private:
     HANDLE threadHandle = nullptr;
     DWORD processId = 0;
     const bool detached;
+    const bool receivesConsoleBreak;
     const std::function<void(std::string_view)> onOutput;
     HANDLE inputWrite = nullptr;
 
@@ -613,6 +642,10 @@ void Process::terminate()
 void Process::kill()
 {
     impl->kill();
+}
+bool Process::requestStop()
+{
+    return impl->requestStop();
 }
 
 std::string Process::output() const

@@ -1109,6 +1109,26 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   is both streams interleaved, `errorOutput()` stays empty. `onOutput` sees each
   stdout chunk on the reader thread as it is read, before it is appended; it is
   not called for a separate stderr. Both need `captureOutput`
+- `requestStop()` asks the child to stop and returns whether the request went:
+  SIGTERM on POSIX (to the whole group under `newProcessGroup`, which makes the
+  child a group leader through `POSIX_SPAWN_SETPGROUP`), and on Windows
+  `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)`, which the child sees as
+  `SIGBREAK` or a console control handler. Windows needs `newProcessGroup`
+  (`CREATE_NEW_PROCESS_GROUP`, which also disables Ctrl+C in the child) and a
+  console shared with the launcher, so it refuses a child without its own group,
+  a `noWindow` or detached one, and fails in a launcher with no console (a GUI
+  app); a child with no handler ends with `STATUS_CONTROL_C_EXIT`.
+  `terminate()`/`kill()` still reach the child alone. The blocking wait in
+  `wait()` holds no lock (`WaitForSingleObject` on the handle, POSIX
+  `waitid(WNOWAIT)` then a `WNOHANG` reap), so `isRunning()`/`requestStop()`
+  answer while another thread waits (`wait()` itself stays on one thread:
+  two concurrent waits on a capturing child race joining the readers); a child
+  already reaped is never waited on again, and POSIX signals under the reap
+  lock, so a reaped pid is never hit. `ProcessStopTests.cpp` and its `-Windows`/`-Posix`
+  halves cover it through the `awaitStopRequest` and
+  `awaitStopRequestWithGrandchild` child modes (`StopRequest-<platform>.cpp`).
+  The Windows signalling cases need the runner to have a console of its own:
+  run from a GUI app or detached, they fail and pop console windows
 - Tests: the `ProcessTests` binary (`Tests/Core/Process/`), whose own `main`
   runs it as a child in a mode (`--process-child echoInput`, ...) so the cases
   need no shell; `ProcessTests.cpp` (POSIX), `ProcessTests-Windows.cpp` (the

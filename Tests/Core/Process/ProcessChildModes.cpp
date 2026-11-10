@@ -1,8 +1,11 @@
 #include "ProcessChildModes.h"
+#include "StopRequest.h"
 
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -14,6 +17,8 @@ constexpr auto modeArgumentIndex = 2;
 constexpr auto firstModeParameterIndex = 3;
 constexpr auto unknownModeExitCode = 2;
 constexpr auto inputChunkSize = 4096;
+constexpr auto stopRequestTimeoutExitCode = 3;
+constexpr auto stopRequestDeadline = std::chrono::seconds {30};
 
 void writeAndFlush(std::FILE* stream, const std::string& text)
 {
@@ -63,6 +68,80 @@ int printEnvironmentVariable(const std::string& name)
     return 0;
 }
 
+void writeReadyLine()
+{
+    writeAndFlush(stdout, std::string {readyLine} + '\n');
+}
+
+bool waitForStopRequest()
+{
+    const auto deadline = std::chrono::steady_clock::now() + stopRequestDeadline;
+
+    while (!StopRequest::wasRequested()
+           && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds {10});
+
+    return StopRequest::wasRequested();
+}
+
+void announceReady(const std::string& markerFile)
+{
+    std::ofstream {markerFile + readyFileSuffix} << readyLine;
+    writeReadyLine();
+}
+
+int writeMarkerOnStopRequest(const std::string& markerFile)
+{
+    StopRequest::installHandler();
+    announceReady(markerFile);
+
+    if (!waitForStopRequest())
+        return stopRequestTimeoutExitCode;
+
+    std::ofstream {markerFile} << stoppedMarkerText;
+    return stoppedExitCode;
+}
+
+bool waitFor(const std::function<bool()>& condition)
+{
+    const auto deadline = std::chrono::steady_clock::now() + stopRequestDeadline;
+
+    while (!condition() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds {10});
+
+    return condition();
+}
+
+// The grandchild is started with no options of its own, so it stays in this
+// child's process group: only a request sent to the whole group reaches it.
+int writeMarkersOnStopRequestWithGrandchild(const std::string& markerFile)
+{
+    StopRequest::installHandler();
+
+    auto grandchild = eacp::Processes::Process {
+        createChildOptions(awaitStopRequest, {markerFile + grandchildSuffix})};
+
+    if (!waitFor(
+            [&]
+            { return grandchild.output().find(readyLine) != std::string::npos; }))
+        return stopRequestTimeoutExitCode;
+
+    announceReady(markerFile);
+
+    if (!waitForStopRequest())
+        return stopRequestTimeoutExitCode;
+
+    waitFor([&] { return !grandchild.isRunning(); });
+    std::ofstream {markerFile} << stoppedMarkerText;
+    return stoppedExitCode;
+}
+
+int sleepForSecondsOnceReady(const std::string& seconds)
+{
+    writeReadyLine();
+    return sleepForSeconds(seconds);
+}
+
 struct ChildMode
 {
     std::string_view name;
@@ -76,6 +155,9 @@ constexpr ChildMode childModes[] = {
     {sleepSeconds, sleepForSeconds},
     {writeBothStreams, writeOneTwoThreeAcrossBothStreams},
     {printEnvironment, printEnvironmentVariable},
+    {awaitStopRequest, writeMarkerOnStopRequest},
+    {awaitStopRequestWithGrandchild, writeMarkersOnStopRequestWithGrandchild},
+    {sleepWhenReady, sleepForSecondsOnceReady},
 };
 } // namespace
 
