@@ -59,5 +59,13 @@ bool hasHiddenAttribute(const std::filesystem::path& path)
 
     return lstat(path.c_str(), &info) == 0 && (info.st_flags & UF_HIDDEN) != 0;
 }
+
+std::error_code replaceFile(const std::filesystem::path& from,
+                            const std::filesystem::path& to)
+{
+    auto error = std::error_code {};
+    std::filesystem::rename(from, to, error);
+    return error;
+}
 } // namespace Detail
 } // namespace eacp

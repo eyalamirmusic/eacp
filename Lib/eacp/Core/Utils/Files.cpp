@@ -150,10 +150,7 @@ void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes)
     if (auto existing = std::filesystem::status(target, ec); !ec)
         std::filesystem::permissions(temporary, existing.permissions(), ec);
 
-    ec.clear();
-    std::filesystem::rename(temporary, target, ec);
-
-    if (ec)
+    if (Detail::replaceFile(temporary, target))
         throw abandon("cannot replace");
 }
 
