@@ -145,6 +145,7 @@ set(gpu_test_sources
         SuppliedMipChainTests.cpp
         TextureCreationTests.cpp
         TextureFunctionDeviceTests.cpp
+        TextureLifetimeTests.cpp
         TextureReadTests.cpp
         TextureRegionTests.cpp
         TextureArrayTests.cpp
