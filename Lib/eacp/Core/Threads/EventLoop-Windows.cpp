@@ -10,7 +10,6 @@
 
 #include <atomic>
 #include <mutex>
-#include <thread>
 #include <tlhelp32.h>
 
 namespace eacp::Threads
@@ -220,7 +219,36 @@ static DWORD getParentProcessId()
     return parent;
 }
 
-static void startParentDeathWatchdog()
+// Same graceful quit the window's close button drives; callAsync posts to the
+// message-only window (thread-safe) so teardown runs on the main thread.
+static void CALLBACK quitOnParentDeath(void*, BOOLEAN)
+{
+    callAsync([] { getEventLoop().quit(); });
+}
+
+// The parent's handle and the thread-pool wait on it. A wait rather than a
+// thread of our own: the loop starts no thread through the C runtime, which a
+// short-lived program built with the static runtime could otherwise leave
+// still starting as it exits, entering the runtime after exit() has shut it
+// down. Both are kept so a detaching copy can take the wait down before its
+// image, which holds the callback, is unmapped.
+struct ParentDeathWatchdog
+{
+    std::mutex mutex;
+    HANDLE parent = nullptr;
+    HANDLE wait = nullptr;
+
+    // runFor re-enters initLoopThread on every pass of a nested pump; one
+    // attempt per attach is enough, whether or not it found a parent to watch.
+    bool attempted = false;
+};
+
+static ParentDeathWatchdog& getParentDeathWatchdog()
+{
+    return Singleton::get<ParentDeathWatchdog>();
+}
+
+static void startParentDeathWatchdog(ParentDeathWatchdog& watchdog)
 {
     auto parentPid = getParentProcessId();
     if (parentPid == 0)
@@ -239,24 +267,48 @@ static void startParentDeathWatchdog()
         return;
     }
 
-    std::thread(
-        [parent]
-        {
-            WaitForSingleObject(parent, INFINITE);
-            CloseHandle(parent);
-            // Same graceful quit the window's close button drives; callAsync
-            // posts to the message-only window (thread-safe) so teardown runs on
-            // the main thread.
-            callAsync([] { getEventLoop().quit(); });
-        })
-        .detach();
+    auto wait = HANDLE {};
+
+    if (!RegisterWaitForSingleObject(
+            &wait, parent, quitOnParentDeath, nullptr, INFINITE, WT_EXECUTEONLYONCE))
+    {
+        CloseHandle(parent);
+        return;
+    }
+
+    watchdog.parent = parent;
+    watchdog.wait = wait;
 }
 
-// runFor re-enters initLoopThread on every pass of a nested pump; one watchdog is enough.
 static void installParentDeathWatchdog()
 {
-    static auto parentDeathWatchdogInstalled = std::once_flag {};
-    std::call_once(parentDeathWatchdogInstalled, startParentDeathWatchdog);
+    auto& watchdog = getParentDeathWatchdog();
+    auto lock = std::lock_guard {watchdog.mutex};
+
+    if (watchdog.attempted)
+        return;
+
+    watchdog.attempted = true;
+    startParentDeathWatchdog(watchdog);
+}
+
+// Blocking: a callback already running finishes before this returns, so none
+// is left in code that is about to be unmapped. A later loop pass watches
+// again.
+static void stopParentDeathWatchdog()
+{
+    auto& watchdog = getParentDeathWatchdog();
+    auto lock = std::lock_guard {watchdog.mutex};
+
+    if (watchdog.wait != nullptr)
+        UnregisterWaitEx(watchdog.wait, INVALID_HANDLE_VALUE);
+
+    if (watchdog.parent != nullptr)
+        CloseHandle(watchdog.parent);
+
+    watchdog.wait = nullptr;
+    watchdog.parent = nullptr;
+    watchdog.attempted = false;
 }
 
 namespace
@@ -488,13 +540,14 @@ void attachCurrentThreadAsMain()
         PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
 }
 
-// The scheduler first, so no thread of ours posts to the window while it goes;
-// a message already posted to a destroyed window is discarded by the system.
-// The main-thread marker stays: destructors that run while the image unloads
-// still assert they are on it.
+// The scheduler and the parent watch first, so nothing of ours posts to the
+// window while it goes; a message already posted to a destroyed window is
+// discarded by the system. The main-thread marker stays: destructors that run
+// while the image unloads still assert they are on it.
 void detachCurrentThreadAsMain()
 {
     stopCallAfterScheduler();
+    stopParentDeathWatchdog();
     stopLiveTimers();
     destroyMessageWindow();
     unregisterMessageWindowClass();
