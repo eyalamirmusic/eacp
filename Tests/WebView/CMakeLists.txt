@@ -6,6 +6,13 @@ nano_add_executable(ScriptHostTests
         SOURCES ScriptHostTests.cpp
         TARGETS eacp-webview-bridge)
 
+# The page messages the native backends read (key verdicts, the message
+# envelope, script results). Platform-free and in eacp-webview-bridge, so the
+# parsers are tested on every lane, Linux included.
+nano_add_executable(WebViewMessagesTests
+        SOURCES WebViewMessagesTests.cpp
+        TARGETS eacp-webview-bridge)
+
 if (NOT EACP_HAS_WEBVIEW)
     return ()
 endif ()
@@ -34,9 +41,16 @@ endif ()
 # is just the pure-logic suites above.
 #
 #   StreamingPumpTests      the live streaming pump
+#   CustomSchemeTests       in-memory and streaming schemes: status codes, a
+#                           multi-megabyte stream and ranges inside it
+#   ScriptResultTests       what callJS resolves with per result type
+#   WebViewLifecycleTests   repeated create and destroy, bounds reaching the
+#                           page, and page message bodies of every type
 #   WebViewCallTests        the C++ -> page call path
 #   CommandDispatchTests    page -> C++ dispatch: per-command execution mode
 #                           (main vs worker thread) and async Completer handlers
+#   KeyVerdictTests         key-events.js's report for DOM-dispatched keys,
+#                           read through parseKeyVerdict on both backends
 #   MessageOriginTests      page -> C++ dispatch refusing senders outside
 #                           Options::trustedOrigins, framework handlers included
 #   WindowDragTests         window-drag.js classification (installWindowDragSupport
@@ -60,14 +74,18 @@ endif ()
 if (TARGET eacp-webview-test-main)
     list(APPEND webview_test_sources
             CommandDispatchTests.cpp
+            CustomSchemeTests.cpp
+            KeyVerdictTests.cpp
             MessageOriginTests.cpp
             OffscreenAnimationTests.cpp
             RenderToImageAsyncTests.cpp
+            ScriptResultTests.cpp
             SnapshotDeadlineTests.cpp
             StreamingPumpTests.cpp
             UserAgentTests.cpp
             WebViewAffordanceTests.cpp
             WebViewCallTests.cpp
+            WebViewLifecycleTests.cpp
             WindowControlTests.cpp
             WindowDragTests.cpp)
 
@@ -80,8 +98,12 @@ if (TARGET eacp-webview-test-main)
         list(APPEND webview_test_sources KeyForwardingTests.mm)
     endif ()
 
+    # Routed mouse events reach WebView2 through its composition controller
+    # only on Windows; WKWebView takes its own input.
     if (WIN32)
-        list(APPEND webview_test_sources KeyForwardingTests-Windows.cpp)
+        list(APPEND webview_test_sources
+                KeyForwardingTests-Windows.cpp
+                WebViewMouseTests-Windows.cpp)
     endif ()
 
     add_executable(WebViewTests ${webview_test_sources})

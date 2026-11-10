@@ -39,12 +39,34 @@ WebView::Options forwardingOptions()
     return options;
 }
 
+struct NavigationKey
+{
+    uint16_t keyCode = 0;
+    unichar functionKey = 0;
+};
+
+const Vector<NavigationKey> navigationKeys = {
+    {KeyCode::PageUp, NSPageUpFunctionKey},
+    {KeyCode::PageDown, NSPageDownFunctionKey},
+    {KeyCode::Home, NSHomeFunctionKey},
+    {KeyCode::End, NSEndFunctionKey},
+    {KeyCode::LeftArrow, NSLeftArrowFunctionKey},
+    {KeyCode::RightArrow, NSRightArrowFunctionKey},
+    {KeyCode::UpArrow, NSUpArrowFunctionKey},
+    {KeyCode::DownArrow, NSDownArrowFunctionKey}};
+
+NSString* createCharactersForFunctionKey(unichar functionKey)
+{
+    return [NSString stringWithCharacters:&functionKey length:1];
+}
+
 struct Fixture
 {
     WebView webView {forwardingOptions()};
     Window window {};
     bool ready = false;
     Vector<KeyEvent> received;
+    NSEventModifierFlags heldModifiers = 0;
 
     Fixture()
     {
@@ -100,7 +122,7 @@ struct Fixture
 
         auto* event = [NSEvent keyEventWithType:type
                                        location:NSZeroPoint
-                                  modifierFlags:0
+                                  modifierFlags:heldModifiers
                                       timestamp:timestamp
                                    windowNumber:nsWindow.windowNumber
                                         context:nil
@@ -231,4 +253,73 @@ auto tKeyForwardEditable = test("KeyForwarding/typingInTextInputStaysInPage") = 
     check(fix.received.size() == 2);
     check(fix.received[0].keyCode == KeyCode::Space);
     check(fix.received[1].keyCode == KeyCode::Space);
+};
+
+auto tKeyForwardNavigationKeys =
+    test("KeyForwarding/navigationKeysReachCallbackWithTheirKeyCode") = []
+{
+    auto fix = Fixture {};
+
+    for (auto& navigationKey: navigationKeys)
+        fix.sendKey(navigationKey.keyCode,
+                    createCharactersForFunctionKey(navigationKey.functionKey));
+
+    if (!fix.waitForReceivedCount(2 * navigationKeys.size()))
+    {
+        check(false, "every navigation key comes back down and up");
+        return;
+    }
+
+    for (auto index = 0; index < navigationKeys.size(); ++index)
+    {
+        check(fix.received[2 * index].type == KeyEventType::Down);
+        check(fix.received[2 * index].keyCode == navigationKeys[index].keyCode);
+        check(fix.received[2 * index + 1].type == KeyEventType::Up);
+    }
+};
+
+auto tKeyForwardTabStaysInPage = test("KeyForwarding/tabStaysInThePage") = []
+{
+    auto fix = Fixture {};
+
+    fix.sendKey(KeyCode::Tab, @"\t");
+    fix.runJS("document.activeElement.blur()");
+    fix.sendKey(KeyCode::Space, @" ");
+
+    check(fix.waitForKeyUp(KeyCode::Space));
+    check(fix.received.size() == 2);
+    check(!fix.received.empty() && fix.received[0].keyCode == KeyCode::Space);
+};
+
+auto tKeyForwardShiftSpace = test("KeyForwarding/shiftSpaceKeepsShift") = []
+{
+    auto fix = Fixture {};
+
+    fix.heldModifiers = NSEventModifierFlagShift;
+    fix.sendKey(KeyCode::Space, @" ");
+
+    if (!fix.waitForReceivedCount(2))
+    {
+        check(false, "shift+space comes back");
+        return;
+    }
+
+    check(fix.received[0].keyCode == KeyCode::Space);
+    check(fix.received[0].modifiers.shift);
+};
+
+auto tKeyForwardMalformedVerdictsDropped =
+    test("KeyForwarding/malformedVerdictsAreDropped") = []
+{
+    auto fix = Fixture {};
+
+    fix.sendKey(KeyCode::Space, @" ");
+    fix.runJS("{const keyHandler = window.webkit.messageHandlers.__eacpKeyEvent;"
+              "keyHandler.postMessage('down:1');"
+              "keyHandler.postMessage('{not json');"
+              "keyHandler.postMessage({kind: 'press', consumed: true})}");
+
+    check(fix.waitForKeyUp(KeyCode::Space));
+    check(fix.received.size() == 2);
+    check(!fix.received.empty() && fix.received[0].type == KeyEventType::Down);
 };
