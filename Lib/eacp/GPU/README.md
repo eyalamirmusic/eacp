@@ -4964,7 +4964,11 @@ CI lane's second test step.
   tick that arrives too early presents nothing and asks for the next callback
   again, and `ViewSurface::requestFrameCallback` commits the subsurface on its
   own when no present will, so the loop carries across the skip with no timer
-  beside it.
+  beside it. Weston 15 can leave such a commit unanswered when it lands just
+  after a repaint, which would end the loop, so a skipped tick also arms a
+  one-shot `callAfter` one interval (plus 50 ms) later that runs the tick if
+  the callback has still not come. It fires once until a callback arrives, so a
+  hidden or occluded surface still goes idle.
 - **Present modes**: `MAILBOX` where the surface offers it, so a renderer faster
   than the display drops frames instead of blocking; `FIFO` otherwise, which the
   spec guarantees. Format `B8G8R8A8_UNORM` + `SRGB_NONLINEAR` where offered
