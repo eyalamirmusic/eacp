@@ -666,7 +666,10 @@ and `VK_KHR_xcb_surface` each when the driver offers it, so one binary presents
 to either; mailbox or FIFO; frames in flight on the context timeline; rebuilt
 on resize and `OUT_OF_DATE`; continuous mode paced by whatever answered
 `requestFrameCallback` — the compositor on Wayland, the pacer on X11 — with
-`setMaxFps` skipping early ticks rather than running a timer), every pipeline
+`setMaxFps` skipping early ticks rather than running a timer, a skipped
+tick's request backed by a one-shot `callAfter` one interval later, since Weston
+15 can leave a commit with nothing new in it unanswered; once, until a callback
+comes, so an occluded surface still idles), every pipeline
 built through one `VkPipelineCache` persisted under `$XDG_CACHE_HOME/eacp/`,
 with the off-screen `renderNativeContent` path
 unchanged beside it. The GPU module knows the window system only as the

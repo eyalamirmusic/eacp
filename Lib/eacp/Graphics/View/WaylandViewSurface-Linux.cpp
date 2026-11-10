@@ -136,6 +136,11 @@ public:
 
     void requestFrame() override
     {
+        // One request outstanding: an earlier one still unanswered would
+        // otherwise tick the view a second time when it is.
+        if (frameCallback != nullptr)
+            wl_callback_destroy(frameCallback);
+
         frameCallback = wl_surface_frame(surface);
         wl_callback_add_listener(frameCallback, &frameListener(), this);
 
