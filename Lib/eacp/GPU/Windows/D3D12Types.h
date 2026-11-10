@@ -548,6 +548,12 @@ void transitionForUse(CommandContext& commands,
 // by the previous frame's last pass is what it is still in. Getting that wrong
 // is a barrier the debug layer rejects rather than anything visible, which is
 // exactly why the tracking lives here and not at the two call sites.
+//
+// A read (PIXEL_SHADER_RESOURCE, NON_PIXEL_SHADER_RESOURCE, COPY_SOURCE) asked of
+// a texture already in another is added to it, never swapped for it, so the
+// barrier into the next write names every read since the last one. Swapping is
+// valid D3D12 too; combining works around a driver that mis-orders the swap (see
+// stateAfter).
 void transitionTextureForUse(ID3D12GraphicsCommandList* list,
                              D3D12TextureData& texture,
                              D3D12_RESOURCE_STATES target);

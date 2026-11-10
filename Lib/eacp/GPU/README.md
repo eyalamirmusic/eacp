@@ -4712,6 +4712,15 @@ with `noBoxedTextureCopy` takes whole subresources only. Vulkan records
 extent), `vkCmdCopyBuffer` and the buffer-image pair through the layout
 tracker, each image returned to its resting layout after.
 
+D3D12's tracking combines read states rather than swapping one for another, so
+a copy's source is in `COPY_SOURCE | PIXEL_SHADER_RESOURCE` until the next pass
+draws into it. The swap (`COPY_SOURCE` to `PIXEL_SHADER_RESOURCE` to
+`RENDER_TARGET`) is valid D3D12 and WARP orders it, but an NVIDIA driver (RTX
+5070 Ti, 32.0.16.1088) let that pass's clear reach the copy. The combined state
+is the workaround, and the recommended form anyway; it is not a Vulkan concern,
+where each of those steps is a layout transition whose stage masks chain.
+`Copy/copiesBetweenPassesAreInOrderAtEverySize` is the test.
+
 ## Windows
 
 The D3D12 backend is less exercised than the Metal one. Notes worth having:
