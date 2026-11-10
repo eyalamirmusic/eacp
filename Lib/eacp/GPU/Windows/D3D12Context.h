@@ -531,6 +531,7 @@ private:
                                                 UINT capacity);
     DescriptorSlot allocateFrom(DescriptorAllocator& allocator);
     void freeFrom(DescriptorAllocator& allocator, const DescriptorSlot& slot);
+    void returnRetiredDescriptors();
     std::uint64_t signal();
 
     // A chunk of this recording's upload arena with room for `bytes`, adding one
@@ -626,6 +627,21 @@ private:
     };
 
     Vector<Retired> retired;
+
+    // A shader-visible descriptor slot whose texture or sampler is gone. A list
+    // reads the heap when it executes, not when it was recorded, so a slot
+    // handed straight back out would get the next view written over the one a
+    // draw of the open recording names. Returned to its free list on the same
+    // terms as Retired.
+    struct RetiredDescriptor
+    {
+        DescriptorAllocator* allocator = nullptr;
+        UINT index = 0;
+        std::uint64_t fenceValue = 0;
+        bool stamped = false;
+    };
+
+    Vector<RetiredDescriptor> retiredDescriptors;
 
     // A default-heap buffer offered back for reuse. `stamped` and `fenceValue`
     // work exactly as Retired's do -- the resource cannot be handed out again

@@ -1235,6 +1235,7 @@ void D3D12Context::createNullDescriptors()
 void D3D12Context::releaseAll()
 {
     retired.clear();
+    retiredDescriptors.clear();
     staging.clear();
     readback.clear();
     constantPages.clear();
@@ -1312,6 +1313,11 @@ DescriptorSlot D3D12Context::allocateFrom(DescriptorAllocator& allocator)
     if (allocator.heap == nullptr)
         return {};
 
+    // Slots come back only as their fences pass, so a full heap may be holding
+    // some that already have.
+    if (allocator.freeList.empty() && allocator.next >= allocator.capacity)
+        purgeRetired();
+
     auto index = UINT {0};
 
     if (!allocator.freeList.empty())
@@ -1361,7 +1367,20 @@ void D3D12Context::freeFrom(DescriptorAllocator& allocator,
     if (slot.generation != generation || allocator.heap == nullptr)
         return;
 
-    allocator.freeList.push_back(slot.index);
+    retiredDescriptors.add({&allocator, slot.index, 0, false});
+}
+
+void D3D12Context::returnRetiredDescriptors()
+{
+    retiredDescriptors.eraseIf(
+        [this](const RetiredDescriptor& entry)
+        {
+            if (!entry.stamped || !hasCompleted(entry.fenceValue))
+                return false;
+
+            entry.allocator->freeList.push_back(entry.index);
+            return true;
+        });
 }
 
 DescriptorSlot D3D12Context::allocateTextureDescriptor()
@@ -1431,7 +1450,18 @@ void D3D12Context::purgeRetired()
                 entry.stamped = true;
             }
         }
+
+        for (auto& entry: retiredDescriptors)
+        {
+            if (!entry.stamped)
+            {
+                entry.fenceValue = lastSubmittedValue;
+                entry.stamped = true;
+            }
+        }
     }
+
+    returnRetiredDescriptors();
 
     // Each goes as its own value passes. Waiting instead for the fence to be
     // past *everything* ever submitted is what this used to do, and under
