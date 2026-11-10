@@ -71,6 +71,12 @@ if (WIN32)
             EventLoopTests-Windows.cpp)
 endif ()
 
+# Windows keeps the process's environment block beside the C runtime's copy;
+# setEnv and getEnv are checked against both.
+if (WIN32)
+    list(APPEND core_test_sources EnvironmentTests-Windows.cpp)
+endif ()
+
 # Permission bits, symlinks and FIFOs — the file behaviour Windows has no form
 # of. Each portable half covers the rest.
 if (NOT WIN32)

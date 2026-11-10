@@ -56,3 +56,26 @@ auto tEnvironmentReadsWhileAnotherThreadWrites =
 
     check(missingReads == reads);
 };
+
+// The parent hands the child a non-ASCII value through the process environment;
+// the child reads it with getEnvValue (EACP_CONSOLE_HARNESS_ARGV0 becomes its
+// program name) and prints it back in its error line.
+auto tEnvironmentNonAsciiReachesAChild =
+    test("Environment/a non-ASCII value reaches getEnv in a child as UTF-8") = []
+{
+    const auto text = std::u8string {u8"\u00dcn\u00efc\u00f8d\u00e9-\u65e5\u672c"};
+    const auto name = std::string {text.begin(), text.end()};
+
+    auto options = Processes::ProcessOptions {};
+    options.executable = EACP_CONSOLE_HARNESS;
+    options.arguments = {"--throw"};
+    options.environment.add(
+        {"EACP_CONSOLE_HARNESS_ARGV0", "some/dir/" + name + ".exe"});
+    auto result = Processes::run(std::move(options));
+
+    auto errorOutput = result.errorOutput;
+    std::erase(errorOutput, '\r');
+
+    check(result.exitCode == 1);
+    check(errorOutput == name + ": boom\n");
+};
