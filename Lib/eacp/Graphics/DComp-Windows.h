@@ -89,6 +89,14 @@ bool handleDeviceLossIfNeeded(HRESULT hr);
 // needs a device in a process that may never pump the event loop.
 void retryDeviceRecoveryIfDue();
 
+// For a new host, which can be the first use of the devices since the scheduled
+// attempt was dropped: a hosted copy that detaches drops every callback it
+// scheduled, and may attach again. A due attempt runs now, synchronously; one
+// not yet due is scheduled again. New hosts and snapshots are the only uses
+// that restart a dropped retry, which is enough because a copy's hosts are gone
+// by the time it detaches. A callback per call, so not for a per-frame path.
+void resumeDeviceRecovery();
+
 namespace Detail
 {
 // Test seam: the next `count` passes through `point` fail with `hr`, as a
