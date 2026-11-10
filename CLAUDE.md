@@ -695,7 +695,11 @@ installation with no fonts runs the Text suite as a silent green;
 `EACP_REQUIRE_FONTS=1` turns that skip into a failure, and the packages CI and
 the `Dockerfile` install for it are `libfreetype-dev libharfbuzz-dev
 libfontconfig-dev fonts-dejavu-core fonts-dejavu-extra fonts-droid-fallback
-fonts-noto-color-emoji`.
+fonts-noto-color-emoji`. FreeType draws bitmap (CBDT/sbix) and COLRv0 colour
+glyphs; a COLRv1-only emoji font (Fedora's Noto Color Emoji) is colour only
+where HarfBuzz 13+ provides `harfbuzz-raster`, which the finder links when
+found (`EACP_HAS_HB_RASTER`, PRIVATE; `-DEACP_USE_HB_RASTER=OFF` declines it)
+to paint those glyphs — without it they come back as masks, empty for Noto.
 
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
 `TextMetrics`, `TextInput` and the retained layer classes are
