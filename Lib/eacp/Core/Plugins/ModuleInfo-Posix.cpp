@@ -1,15 +1,16 @@
 #include "ModuleInfo.h"
+#include "ModuleInfoPlatform.h"
 
 #include <dlfcn.h>
 #include <filesystem>
 
 namespace eacp::Plugins
 {
-FilePath getCurrentModulePath()
+FilePath Detail::findLoadedImagePath()
 {
     auto info = Dl_info {};
 
-    if (dladdr((const void*) &getCurrentModulePath, &info) == 0
+    if (dladdr((const void*) &Detail::findLoadedImagePath, &info) == 0
         || info.dli_fname == nullptr)
         return {};
 

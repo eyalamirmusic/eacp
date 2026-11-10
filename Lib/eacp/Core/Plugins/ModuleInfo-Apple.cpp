@@ -1,4 +1,5 @@
 #include "ModuleInfo.h"
+#include "ModuleInfoPlatform.h"
 
 #include <dlfcn.h>
 #include <mach-o/loader.h>
@@ -21,5 +22,10 @@ bool isDynamicLibrary()
     }();
 
     return result;
+}
+
+FilePath getCurrentModulePath()
+{
+    return Detail::findLoadedImagePath();
 }
 } // namespace eacp::Plugins

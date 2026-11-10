@@ -1,42 +1,57 @@
 #include "ModuleInfo.h"
+#include "ModuleInfoPlatform.h"
 
-#include "../Utils/StdPath.h"
-
+#include <dlfcn.h>
 #include <filesystem>
+#include <optional>
+#include <sys/auxv.h>
 
 namespace eacp::Plugins
 {
+namespace
+{
+std::optional<const void*> findImageBaseContaining(const void* address)
+{
+    auto info = Dl_info {};
+
+    if (dladdr(address, &info) == 0)
+        return std::nullopt;
+
+    return info.dli_fbase;
+}
+} // namespace
+
 bool isDynamicLibrary()
 {
     static const auto result = []
     {
-        // A PIE executable and a shared object are both ET_DYN, so the ELF
-        // header can't tell them apart; compare images instead -- resolved on
-        // both sides, because /proc/self/exe always is and the path dladdr
-        // reports is the one the program was invoked with. Launched as `./app`
-        // they differ, and a standalone app taken for a plugin returns from
-        // run<T>() without ever starting its event loop.
-        auto ec = std::error_code();
-        const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        // AT_PHDR points into the main program however it was started.
+        const auto mainProgramHeaders = (const void*) getauxval(AT_PHDR);
+        const auto mainProgramBase = findImageBaseContaining(mainProgramHeaders);
+        const auto ownFunction = (const void*) &isDynamicLibrary;
+        const auto ownBase = findImageBaseContaining(ownFunction);
 
-        if (ec)
+        if (!mainProgramBase || !ownBase)
             return false;
 
-        const auto module = toStdPath(getCurrentModulePath());
-
-        if (module.empty())
-            return false;
-
-        const auto resolved = std::filesystem::weakly_canonical(module, ec);
-
-        // Unresolvable is answered the same way an unreadable /proc/self/exe
-        // is, above: standalone.
-        if (ec)
-            return false;
-
-        return FilePath {exe} != FilePath {resolved};
+        return *mainProgramBase != *ownBase;
     }();
 
     return result;
+}
+
+// glibc names the main program by argv[0], so its path comes from the kernel.
+FilePath getCurrentModulePath()
+{
+    if (isDynamicLibrary())
+        return Detail::findLoadedImagePath();
+
+    auto ec = std::error_code();
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", ec);
+
+    if (ec)
+        return Detail::findLoadedImagePath();
+
+    return FilePath {executable};
 }
 } // namespace eacp::Plugins
