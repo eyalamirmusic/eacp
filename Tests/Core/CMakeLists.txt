@@ -141,6 +141,18 @@ target_compile_definitions(CoreTests PRIVATE
         EACP_CONSOLE_HARNESS="$<TARGET_FILE:ConsoleHarness>")
 add_dependencies(CoreTests ConsoleHarness)
 
+# A short-lived program that runs the loop and prints how many threads it
+# left, which EventLoopTests-Windows.cpp reads. It has to be a process of its
+# own: only the first pass of the loop in a process starts its watchdog.
+if (WIN32)
+    add_executable(LoopExitHarness LoopExitHarness-Windows.cpp)
+    target_link_libraries(LoopExitHarness PRIVATE eacp-core)
+
+    target_compile_definitions(CoreTests PRIVATE
+            EACP_LOOP_EXIT_HARNESS="$<TARGET_FILE:LoopExitHarness>")
+    add_dependencies(CoreTests LoopExitHarness)
+endif ()
+
 # The image a standalone executable reports for itself cannot be checked from
 # inside the test binary: it depends on the path the launcher used, so the
 # fixture is a second executable the cases start three different ways.
