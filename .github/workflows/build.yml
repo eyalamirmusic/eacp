@@ -247,6 +247,35 @@ jobs:
           EACP_VK_RENDER_PASSES: '1'
         run: Scripts/with-weston build/Tests/GPU/GPUTests
 
+  # CoreTests under UBSan: undefined behaviour fails the run.
+  build-sanitizers:
+    name: Linux UBSan
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_DEPEND: '1'
+      EACP_HEADLESS: '1'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up the compiler cache
+        uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: linux-sanitizers
+          max-size: 500M
+          evict-old-files: job
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev
+
+      - name: Build and test
+        run: >
+          Scripts/sanitizer-tests build
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
   build-ios:
     name: iOS Simulator
     runs-on: macos-latest

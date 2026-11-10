@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Builds CoreTests with UndefinedBehaviorSanitizer and runs it; the first
+# report ends the process, so undefined behaviour fails the run.
+#   Scripts/sanitizer-tests [build-dir] [extra cmake args...]
+set -euo pipefail
+
+build_dir="${1:-build-sanitizers}"
+shift || true
+
+sanitizer_flags="-fsanitize=undefined -fno-sanitize-recover=undefined"
+
+cmake -G Ninja -B "$build_dir" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DEACP_UNITY_BUILD=OFF -DEACP_BUILD_GRAPHICS=OFF -DEACP_ENABLE_EXAMPLES=OFF \
+    -DCMAKE_C_FLAGS="$sanitizer_flags" -DCMAKE_CXX_FLAGS="$sanitizer_flags" \
+    -DCMAKE_EXE_LINKER_FLAGS="$sanitizer_flags" \
+    -DCMAKE_SHARED_LINKER_FLAGS="$sanitizer_flags" \
+    "$@"
+
+cmake --build "$build_dir" --target CoreTests
+
+UBSAN_OPTIONS="print_stacktrace=1" ctest --test-dir "$build_dir" \
+    --output-on-failure -j "$(nproc)" -E "^(CpuComputeTests|MLGraphTests|ScriptHostTests)$"
