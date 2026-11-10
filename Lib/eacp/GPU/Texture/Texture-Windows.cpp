@@ -5,6 +5,7 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 #include "MipChain.h"
+#include "../NativeFormatTable.h"
 #include "TextureShape.h"
 
 #include <cmath>
@@ -19,115 +20,64 @@ namespace eacp::GPU
 {
 namespace
 {
-// Exhaustive, in the same words the Metal backend uses: a format added without
-// a DXGI counterpart is a -Wswitch warning rather than a resource quietly
-// created as RGBA8, which is what the default this replaced would have made of
-// every one of the block formats.
+constexpr auto dxgiFormatsByTextureFormat =
+    std::to_array<NativeFormatMapping<TextureFormat, DXGI_FORMAT>>({
+        {TextureFormat::RGBA8Unorm, DXGI_FORMAT_R8G8B8A8_UNORM},
+        {TextureFormat::BGRA8Unorm, DXGI_FORMAT_B8G8R8A8_UNORM},
+        {TextureFormat::R8Unorm, DXGI_FORMAT_R8_UNORM},
+        {TextureFormat::RG8Unorm, DXGI_FORMAT_R8G8_UNORM},
+        {TextureFormat::RGBA16Float, DXGI_FORMAT_R16G16B16A16_FLOAT},
+        {TextureFormat::RGBA32Float, DXGI_FORMAT_R32G32B32A32_FLOAT},
+        {TextureFormat::R32Float, DXGI_FORMAT_R32_FLOAT},
+        {TextureFormat::R16Float, DXGI_FORMAT_R16_FLOAT},
+        {TextureFormat::RG16Float, DXGI_FORMAT_R16G16_FLOAT},
+        {TextureFormat::RG32Float, DXGI_FORMAT_R32G32_FLOAT},
+        {TextureFormat::R16Unorm, DXGI_FORMAT_R16_UNORM},
+        {TextureFormat::R32Uint, DXGI_FORMAT_R32_UINT},
+        {TextureFormat::RGBA8UnormSrgb, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB},
+        {TextureFormat::BGRA8UnormSrgb, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB},
+        {TextureFormat::RG16Unorm, DXGI_FORMAT_R16G16_UNORM},
+        {TextureFormat::RGBA16Unorm, DXGI_FORMAT_R16G16B16A16_UNORM},
+        {TextureFormat::RGB10A2Unorm, DXGI_FORMAT_R10G10B10A2_UNORM},
+        {TextureFormat::RG11B10Float, DXGI_FORMAT_R11G11B10_FLOAT},
+        {TextureFormat::RGB9E5Float, DXGI_FORMAT_R9G9B9E5_SHAREDEXP},
+        {TextureFormat::R8Uint, DXGI_FORMAT_R8_UINT},
+        {TextureFormat::RG8Uint, DXGI_FORMAT_R8G8_UINT},
+        {TextureFormat::RGBA8Uint, DXGI_FORMAT_R8G8B8A8_UINT},
+        {TextureFormat::R16Uint, DXGI_FORMAT_R16_UINT},
+        {TextureFormat::RG16Uint, DXGI_FORMAT_R16G16_UINT},
+        {TextureFormat::RGBA16Uint, DXGI_FORMAT_R16G16B16A16_UINT},
+        {TextureFormat::RG32Uint, DXGI_FORMAT_R32G32_UINT},
+        {TextureFormat::RGBA32Uint, DXGI_FORMAT_R32G32B32A32_UINT},
+        {TextureFormat::R8Sint, DXGI_FORMAT_R8_SINT},
+        {TextureFormat::RG8Sint, DXGI_FORMAT_R8G8_SINT},
+        {TextureFormat::RGBA8Sint, DXGI_FORMAT_R8G8B8A8_SINT},
+        {TextureFormat::R16Sint, DXGI_FORMAT_R16_SINT},
+        {TextureFormat::RG16Sint, DXGI_FORMAT_R16G16_SINT},
+        {TextureFormat::RGBA16Sint, DXGI_FORMAT_R16G16B16A16_SINT},
+        {TextureFormat::R32Sint, DXGI_FORMAT_R32_SINT},
+        {TextureFormat::RG32Sint, DXGI_FORMAT_R32G32_SINT},
+        {TextureFormat::RGBA32Sint, DXGI_FORMAT_R32G32B32A32_SINT},
+        {TextureFormat::BC1RGBA, DXGI_FORMAT_BC1_UNORM},
+        {TextureFormat::BC2RGBA, DXGI_FORMAT_BC2_UNORM},
+        {TextureFormat::BC3RGBA, DXGI_FORMAT_BC3_UNORM},
+        {TextureFormat::BC7RGBA, DXGI_FORMAT_BC7_UNORM},
+        {TextureFormat::BC1RGBASrgb, DXGI_FORMAT_BC1_UNORM_SRGB},
+        {TextureFormat::BC2RGBASrgb, DXGI_FORMAT_BC2_UNORM_SRGB},
+        {TextureFormat::BC3RGBASrgb, DXGI_FORMAT_BC3_UNORM_SRGB},
+        {TextureFormat::BC7RGBASrgb, DXGI_FORMAT_BC7_UNORM_SRGB},
+        {TextureFormat::BC4RUnorm, DXGI_FORMAT_BC4_UNORM},
+        {TextureFormat::BC4RSnorm, DXGI_FORMAT_BC4_SNORM},
+        {TextureFormat::BC5RGUnorm, DXGI_FORMAT_BC5_UNORM},
+        {TextureFormat::BC5RGSnorm, DXGI_FORMAT_BC5_SNORM},
+        {TextureFormat::BC6HRGBUfloat, DXGI_FORMAT_BC6H_UF16},
+    });
+
+static_assert(mapsEveryFormatOnce(dxgiFormatsByTextureFormat));
+
 DXGI_FORMAT toDXGIFormat(TextureFormat format)
 {
-    switch (format)
-    {
-        case TextureFormat::RGBA8Unorm:
-            return DXGI_FORMAT_R8G8B8A8_UNORM;
-        case TextureFormat::BGRA8Unorm:
-            return DXGI_FORMAT_B8G8R8A8_UNORM;
-        case TextureFormat::R8Unorm:
-            return DXGI_FORMAT_R8_UNORM;
-        case TextureFormat::RG8Unorm:
-            return DXGI_FORMAT_R8G8_UNORM;
-        case TextureFormat::RGBA16Float:
-            return DXGI_FORMAT_R16G16B16A16_FLOAT;
-        case TextureFormat::RGBA32Float:
-            return DXGI_FORMAT_R32G32B32A32_FLOAT;
-        case TextureFormat::R32Float:
-            return DXGI_FORMAT_R32_FLOAT;
-        case TextureFormat::R16Float:
-            return DXGI_FORMAT_R16_FLOAT;
-        case TextureFormat::RG16Float:
-            return DXGI_FORMAT_R16G16_FLOAT;
-        case TextureFormat::RG32Float:
-            return DXGI_FORMAT_R32G32_FLOAT;
-        case TextureFormat::R16Unorm:
-            return DXGI_FORMAT_R16_UNORM;
-        case TextureFormat::R32Uint:
-            return DXGI_FORMAT_R32_UINT;
-        case TextureFormat::RGBA8UnormSrgb:
-            return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        case TextureFormat::BGRA8UnormSrgb:
-            return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-        case TextureFormat::RG16Unorm:
-            return DXGI_FORMAT_R16G16_UNORM;
-        case TextureFormat::RGBA16Unorm:
-            return DXGI_FORMAT_R16G16B16A16_UNORM;
-        case TextureFormat::RGB10A2Unorm:
-            return DXGI_FORMAT_R10G10B10A2_UNORM;
-        case TextureFormat::RG11B10Float:
-            return DXGI_FORMAT_R11G11B10_FLOAT;
-        case TextureFormat::RGB9E5Float:
-            return DXGI_FORMAT_R9G9B9E5_SHAREDEXP;
-        case TextureFormat::R8Uint:
-            return DXGI_FORMAT_R8_UINT;
-        case TextureFormat::RG8Uint:
-            return DXGI_FORMAT_R8G8_UINT;
-        case TextureFormat::RGBA8Uint:
-            return DXGI_FORMAT_R8G8B8A8_UINT;
-        case TextureFormat::R16Uint:
-            return DXGI_FORMAT_R16_UINT;
-        case TextureFormat::RG16Uint:
-            return DXGI_FORMAT_R16G16_UINT;
-        case TextureFormat::RGBA16Uint:
-            return DXGI_FORMAT_R16G16B16A16_UINT;
-        case TextureFormat::RG32Uint:
-            return DXGI_FORMAT_R32G32_UINT;
-        case TextureFormat::RGBA32Uint:
-            return DXGI_FORMAT_R32G32B32A32_UINT;
-        case TextureFormat::R8Sint:
-            return DXGI_FORMAT_R8_SINT;
-        case TextureFormat::RG8Sint:
-            return DXGI_FORMAT_R8G8_SINT;
-        case TextureFormat::RGBA8Sint:
-            return DXGI_FORMAT_R8G8B8A8_SINT;
-        case TextureFormat::R16Sint:
-            return DXGI_FORMAT_R16_SINT;
-        case TextureFormat::RG16Sint:
-            return DXGI_FORMAT_R16G16_SINT;
-        case TextureFormat::RGBA16Sint:
-            return DXGI_FORMAT_R16G16B16A16_SINT;
-        case TextureFormat::R32Sint:
-            return DXGI_FORMAT_R32_SINT;
-        case TextureFormat::RG32Sint:
-            return DXGI_FORMAT_R32G32_SINT;
-        case TextureFormat::RGBA32Sint:
-            return DXGI_FORMAT_R32G32B32A32_SINT;
-        case TextureFormat::BC1RGBA:
-            return DXGI_FORMAT_BC1_UNORM;
-        case TextureFormat::BC2RGBA:
-            return DXGI_FORMAT_BC2_UNORM;
-        case TextureFormat::BC3RGBA:
-            return DXGI_FORMAT_BC3_UNORM;
-        case TextureFormat::BC7RGBA:
-            return DXGI_FORMAT_BC7_UNORM;
-        case TextureFormat::BC1RGBASrgb:
-            return DXGI_FORMAT_BC1_UNORM_SRGB;
-        case TextureFormat::BC2RGBASrgb:
-            return DXGI_FORMAT_BC2_UNORM_SRGB;
-        case TextureFormat::BC3RGBASrgb:
-            return DXGI_FORMAT_BC3_UNORM_SRGB;
-        case TextureFormat::BC7RGBASrgb:
-            return DXGI_FORMAT_BC7_UNORM_SRGB;
-        case TextureFormat::BC4RUnorm:
-            return DXGI_FORMAT_BC4_UNORM;
-        case TextureFormat::BC4RSnorm:
-            return DXGI_FORMAT_BC4_SNORM;
-        case TextureFormat::BC5RGUnorm:
-            return DXGI_FORMAT_BC5_UNORM;
-        case TextureFormat::BC5RGSnorm:
-            return DXGI_FORMAT_BC5_SNORM;
-        case TextureFormat::BC6HRGBUfloat:
-            return DXGI_FORMAT_BC6H_UF16;
-    }
-
-    return DXGI_FORMAT_UNKNOWN;
+    return findNativeFormat(dxgiFormatsByTextureFormat, format, DXGI_FORMAT_UNKNOWN);
 }
 
 } // namespace

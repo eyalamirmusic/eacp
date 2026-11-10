@@ -1,6 +1,7 @@
 #include "RenderPipeline.h"
 
 #include "../Device/Device.h"
+#include "../NativeFormatTable.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Vulkan/VulkanTypes.h"
 #include "VulkanSpecialization-Linux.h"
@@ -29,97 +30,59 @@ VkPrimitiveTopology toVkTopology(PrimitiveTopology topology)
 }
 
 // UNORM/SNORM, not UINT/SINT: the shader reads these as 0..1 and -1..1.
-VkFormat toVkVertexFormat(VertexFormat format)
-{
-    switch (format)
-    {
-        case VertexFormat::Float:
-            return VK_FORMAT_R32_SFLOAT;
-        case VertexFormat::Float2:
-            return VK_FORMAT_R32G32_SFLOAT;
-        case VertexFormat::Float3:
-            return VK_FORMAT_R32G32B32_SFLOAT;
-        case VertexFormat::Float4:
-            return VK_FORMAT_R32G32B32A32_SFLOAT;
-        case VertexFormat::UByte4Norm:
-            return VK_FORMAT_R8G8B8A8_UNORM;
-        case VertexFormat::Half2:
-            return VK_FORMAT_R16G16_SFLOAT;
-        case VertexFormat::Half4:
-            return VK_FORMAT_R16G16B16A16_SFLOAT;
-        case VertexFormat::Short2Norm:
-            return VK_FORMAT_R16G16_SNORM;
-        case VertexFormat::Short4Norm:
-            return VK_FORMAT_R16G16B16A16_SNORM;
-
+constexpr auto vkFormatsByVertexFormat =
+    std::to_array<NativeFormatMapping<VertexFormat, VkFormat>>({
+        {VertexFormat::Float, VK_FORMAT_R32_SFLOAT},
+        {VertexFormat::Float2, VK_FORMAT_R32G32_SFLOAT},
+        {VertexFormat::Float3, VK_FORMAT_R32G32B32_SFLOAT},
+        {VertexFormat::Float4, VK_FORMAT_R32G32B32A32_SFLOAT},
+        {VertexFormat::UByte4Norm, VK_FORMAT_R8G8B8A8_UNORM},
+        {VertexFormat::Half2, VK_FORMAT_R16G16_SFLOAT},
+        {VertexFormat::Half4, VK_FORMAT_R16G16B16A16_SFLOAT},
+        {VertexFormat::Short2Norm, VK_FORMAT_R16G16_SNORM},
+        {VertexFormat::Short4Norm, VK_FORMAT_R16G16B16A16_SNORM},
         // Every format here is one the spec makes mandatory for
         // VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT. A2B10G10R10 names its channels
         // from the top bit down, so R is in the low ten bits as on the others.
-        case VertexFormat::UByte:
-            return VK_FORMAT_R8_UINT;
-        case VertexFormat::UByte2:
-            return VK_FORMAT_R8G8_UINT;
-        case VertexFormat::UByte4:
-            return VK_FORMAT_R8G8B8A8_UINT;
-        case VertexFormat::UByteNorm:
-            return VK_FORMAT_R8_UNORM;
-        case VertexFormat::UByte2Norm:
-            return VK_FORMAT_R8G8_UNORM;
-        case VertexFormat::Byte:
-            return VK_FORMAT_R8_SINT;
-        case VertexFormat::Byte2:
-            return VK_FORMAT_R8G8_SINT;
-        case VertexFormat::Byte4:
-            return VK_FORMAT_R8G8B8A8_SINT;
-        case VertexFormat::ByteNorm:
-            return VK_FORMAT_R8_SNORM;
-        case VertexFormat::Byte2Norm:
-            return VK_FORMAT_R8G8_SNORM;
-        case VertexFormat::Byte4Norm:
-            return VK_FORMAT_R8G8B8A8_SNORM;
-        case VertexFormat::UShort:
-            return VK_FORMAT_R16_UINT;
-        case VertexFormat::UShort2:
-            return VK_FORMAT_R16G16_UINT;
-        case VertexFormat::UShort4:
-            return VK_FORMAT_R16G16B16A16_UINT;
-        case VertexFormat::UShortNorm:
-            return VK_FORMAT_R16_UNORM;
-        case VertexFormat::UShort2Norm:
-            return VK_FORMAT_R16G16_UNORM;
-        case VertexFormat::UShort4Norm:
-            return VK_FORMAT_R16G16B16A16_UNORM;
-        case VertexFormat::Short:
-            return VK_FORMAT_R16_SINT;
-        case VertexFormat::Short2:
-            return VK_FORMAT_R16G16_SINT;
-        case VertexFormat::Short4:
-            return VK_FORMAT_R16G16B16A16_SINT;
-        case VertexFormat::ShortNorm:
-            return VK_FORMAT_R16_SNORM;
-        case VertexFormat::Half:
-            return VK_FORMAT_R16_SFLOAT;
-        case VertexFormat::UInt1010102Norm:
-            return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-        case VertexFormat::UInt:
-            return VK_FORMAT_R32_UINT;
-        case VertexFormat::UInt2:
-            return VK_FORMAT_R32G32_UINT;
-        case VertexFormat::UInt3:
-            return VK_FORMAT_R32G32B32_UINT;
-        case VertexFormat::UInt4:
-            return VK_FORMAT_R32G32B32A32_UINT;
-        case VertexFormat::Int:
-            return VK_FORMAT_R32_SINT;
-        case VertexFormat::Int2:
-            return VK_FORMAT_R32G32_SINT;
-        case VertexFormat::Int3:
-            return VK_FORMAT_R32G32B32_SINT;
-        case VertexFormat::Int4:
-            return VK_FORMAT_R32G32B32A32_SINT;
-    }
+        {VertexFormat::UByte, VK_FORMAT_R8_UINT},
+        {VertexFormat::UByte2, VK_FORMAT_R8G8_UINT},
+        {VertexFormat::UByte4, VK_FORMAT_R8G8B8A8_UINT},
+        {VertexFormat::UByteNorm, VK_FORMAT_R8_UNORM},
+        {VertexFormat::UByte2Norm, VK_FORMAT_R8G8_UNORM},
+        {VertexFormat::Byte, VK_FORMAT_R8_SINT},
+        {VertexFormat::Byte2, VK_FORMAT_R8G8_SINT},
+        {VertexFormat::Byte4, VK_FORMAT_R8G8B8A8_SINT},
+        {VertexFormat::ByteNorm, VK_FORMAT_R8_SNORM},
+        {VertexFormat::Byte2Norm, VK_FORMAT_R8G8_SNORM},
+        {VertexFormat::Byte4Norm, VK_FORMAT_R8G8B8A8_SNORM},
+        {VertexFormat::UShort, VK_FORMAT_R16_UINT},
+        {VertexFormat::UShort2, VK_FORMAT_R16G16_UINT},
+        {VertexFormat::UShort4, VK_FORMAT_R16G16B16A16_UINT},
+        {VertexFormat::UShortNorm, VK_FORMAT_R16_UNORM},
+        {VertexFormat::UShort2Norm, VK_FORMAT_R16G16_UNORM},
+        {VertexFormat::UShort4Norm, VK_FORMAT_R16G16B16A16_UNORM},
+        {VertexFormat::Short, VK_FORMAT_R16_SINT},
+        {VertexFormat::Short2, VK_FORMAT_R16G16_SINT},
+        {VertexFormat::Short4, VK_FORMAT_R16G16B16A16_SINT},
+        {VertexFormat::ShortNorm, VK_FORMAT_R16_SNORM},
+        {VertexFormat::Half, VK_FORMAT_R16_SFLOAT},
+        {VertexFormat::UInt1010102Norm, VK_FORMAT_A2B10G10R10_UNORM_PACK32},
+        {VertexFormat::UInt, VK_FORMAT_R32_UINT},
+        {VertexFormat::UInt2, VK_FORMAT_R32G32_UINT},
+        {VertexFormat::UInt3, VK_FORMAT_R32G32B32_UINT},
+        {VertexFormat::UInt4, VK_FORMAT_R32G32B32A32_UINT},
+        {VertexFormat::Int, VK_FORMAT_R32_SINT},
+        {VertexFormat::Int2, VK_FORMAT_R32G32_SINT},
+        {VertexFormat::Int3, VK_FORMAT_R32G32B32_SINT},
+        {VertexFormat::Int4, VK_FORMAT_R32G32B32A32_SINT},
+    });
 
-    return VK_FORMAT_R32G32B32_SFLOAT;
+static_assert(mapsEveryFormatOnce(vkFormatsByVertexFormat));
+
+VkFormat toVkVertexFormat(VertexFormat format)
+{
+    return findNativeFormat(
+        vkFormatsByVertexFormat, format, VK_FORMAT_R32G32B32_SFLOAT);
 }
 
 StepRate stepRateForSlot(const VertexLayout& layout, int slot)
