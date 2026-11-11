@@ -7,6 +7,7 @@
 #include "../Primitives/GraphicUtils.h"
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Threads/EventLoop-macOS.h>
 #import <Cocoa/Cocoa.h>
 
 // std::min, for holding a window inside its screen's visible frame.
@@ -68,6 +69,12 @@ void requestActivation()
 #pragma clang diagnostic pop
 }
 
+bool workspaceReportsThisAppFrontmost()
+{
+    return NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier
+           == NSProcessInfo.processInfo.processIdentifier;
+}
+
 // Ask LaunchServices to "open" this app. An open of an already-running app is
 // a user-level activation the system honours even while another app is
 // receiving input — unlike the cooperative request above. Bundled apps only:
@@ -76,6 +83,9 @@ void reopenSelfViaLaunchServices()
 {
     auto* bundle = [NSBundle mainBundle];
     if (! [bundle.bundlePath.pathExtension isEqualToString:@"app"])
+        return;
+
+    if (workspaceReportsThisAppFrontmost())
         return;
 
     auto* configuration = [NSWorkspaceOpenConfiguration configuration];
@@ -130,6 +140,47 @@ void ensureAppBecomesActive()
                                           else
                                               requestActivation();
                                       }];
+}
+
+constexpr auto launchActivationGraceSeconds = 0.3;
+
+void raiseFrontWindowAboveOtherApps()
+{
+    for (NSWindow* window in NSApp.orderedWindows)
+    {
+        if (window.visible)
+        {
+            [window orderFrontRegardless];
+            return;
+        }
+    }
+}
+
+void activateIfStillInactive()
+{
+    if (NSApp.active)
+        return;
+
+    raiseFrontWindowAboveOtherApps();
+    ensureAppBecomesActive();
+}
+
+void activateOnceLaunchHasSettled()
+{
+    static auto scheduled = false;
+    if (scheduled)
+        return;
+
+    scheduled = true;
+
+    eacp::Threads::Detail::callWhenAppFinishedLaunching(
+        []
+        {
+            [NSTimer scheduledTimerWithTimeInterval:launchActivationGraceSeconds
+                                            repeats:NO
+                                              block:^(NSTimer*)
+                                              { activateIfStillInactive(); }];
+        });
 }
 } // namespace
 
@@ -669,6 +720,12 @@ struct Window::Native
             return;
 
         [getWindow() makeKeyAndOrderFront:nil];
+
+        if (Threads::Detail::isAppLaunching())
+        {
+            activateOnceLaunchHasSettled();
+            return;
+        }
 
         // While activation is pending (see ensureAppBecomesActive), still
         // show the window above other apps' windows — visible immediately,
