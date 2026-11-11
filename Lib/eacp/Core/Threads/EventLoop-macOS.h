@@ -1,7 +1,12 @@
 #pragma once
 
+#include <eacp/Core/Utils/Common.h>
+
 namespace eacp::Threads::Detail
 {
+bool isAppLaunching();
+void callWhenAppFinishedLaunching(const Callback& func);
+
 // [NSApp stop:] ends whatever modal session is on top rather than [NSApp run],
 // so a quit that arrives while a runModal is up (an alert, a blocking file
 // panel) is used up by the modal. Call this after every runModal: if this
