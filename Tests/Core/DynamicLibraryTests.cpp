@@ -1,5 +1,6 @@
 #include "Common.h"
 #include <eacp/Core/Plugins/DynamicLibrary.h>
+#include <eacp/Core/Plugins/ModuleInfo.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Strings.h>
@@ -119,4 +120,16 @@ auto tUnloadDefersWhileLooping = test("DynamicLibrary/unloadDefersWhileLooping")
     // The loop has since run the deferred close, so this is a genuine reload.
     auto reopened = Plugins::DynamicLibrary(EACP_TEST_PLUGIN);
     check(pluginLoadCount() == 2);
+};
+
+auto tPluginKnowsItIsALibrary =
+    test("DynamicLibrary/pluginReportsDynamicLibraryAndHostDoesNot") = []
+{
+    auto library = Plugins::DynamicLibrary(EACP_TEST_PLUGIN);
+    auto isPluginDynamicLibrary =
+        library.findFunction<bool (*)()>("eacpTestPluginIsDynamicLibrary");
+    check(isPluginDynamicLibrary != nullptr);
+
+    check(isPluginDynamicLibrary());
+    check(!Plugins::isDynamicLibrary());
 };
