@@ -204,4 +204,77 @@ auto tDoubleClickSkipsDeleted =
     check(target == nullptr);
     check(doubles == 0);
 };
+
+// A press moves focus before the pressed component hears it. When losing focus
+// deletes the pressed component, as an inspector rebuilding its rows when a
+// text box commits on blur does, the press goes nowhere and the host survives.
+struct FocusDeletionHarness
+{
+    struct LosesFocus : Component
+    {
+        LosesFocus()
+        {
+            setInterceptsMouseClicks(true);
+            setWantsKeyboardFocus(true);
+        }
+
+        void focusLost() override { onFocusLost(); }
+
+        std::function<void()> onFocusLost = [] {};
+    };
+
+    struct CountsPresses : Component
+    {
+        explicit CountsPresses(int& pressesToUse)
+            : presses(pressesToUse)
+        {
+            setInterceptsMouseClicks(true);
+            setWantsKeyboardFocus(true);
+        }
+
+        void mouseDown(const UI::MouseEvent&) override { ++presses; }
+
+        int& presses;
+    };
+
+    FocusDeletionHarness()
+    {
+        host.setBounds({0.f, 0.f, 100.f, 100.f});
+        host.setRootComponent(root);
+        root.setBounds({0.f, 0.f, 100.f, 100.f});
+
+        root.addAndMakeVisible(focused);
+        root.addAndMakeVisible(*pressed);
+        focused.setBounds({0.f, 0.f, 100.f, 50.f});
+        pressed->setBounds({0.f, 50.f, 100.f, 50.f});
+
+        host.mouseDown(mouseAt(focusedPoint));
+        host.mouseUp(mouseAt(focusedPoint));
+        focused.onFocusLost = [this] { pressed.reset(); };
+    }
+
+    static inline const auto focusedPoint = Point {50.f, 25.f};
+    static inline const auto pressedPoint = Point {50.f, 75.f};
+
+    ComponentHost host;
+    Component root;
+    int presses = 0;
+    LosesFocus focused;
+    std::unique_ptr<CountsPresses> pressed =
+        std::make_unique<CountsPresses>(presses);
+};
+
+auto tPressDeletedByFocusLoss =
+    test("MouseEvent/aPressWhoseFocusChangeDeletesItsTargetGoesNowhere") = []
+{
+    auto harness = FocusDeletionHarness {};
+    check(harness.host.getFocusedComponent() == &harness.focused);
+
+    harness.host.mouseDown(mouseAt(FocusDeletionHarness::pressedPoint));
+    harness.host.mouseUp(mouseAt(FocusDeletionHarness::pressedPoint));
+
+    check(harness.pressed == nullptr);
+    check(harness.presses == 0);
+    check(harness.host.getFocusedComponent() == nullptr);
+};
 } // namespace MouseEventTests
