@@ -123,6 +123,8 @@ private:
         return {eacp::Time::MS {200}, eacp::Time::MS {300}};
     }
 
+    static eacp::Time::MS requestHeadTimeout() { return eacp::Time::MS {10000}; }
+
     static std::string lowercased(std::string text)
     {
         for (auto& character: text)
@@ -228,19 +230,14 @@ private:
     bool readRequestHead(Peer& peer)
     {
         auto headers = std::map<std::string, std::string>();
+        auto deadline = eacp::Time::Deadline {requestHeadTimeout()};
 
         for (auto line = 0; line < 64; ++line)
         {
             auto text = std::string();
 
-            try
-            {
-                text = peer.receiveLine();
-            }
-            catch (const eacp::TCP::Error&)
-            {
+            if (!readRequestLine(peer, text, deadline))
                 return false;
-            }
 
             if (text.empty())
             {
@@ -254,6 +251,33 @@ private:
             if (colon != std::string::npos)
                 headers[lowercased(trimmed(text.substr(0, colon)))] =
                     trimmed(text.substr(colon + 1));
+        }
+
+        return false;
+    }
+
+    // The I/O timeout is a slice to look at stopping between, not a limit:
+    // on a loaded machine the client can be accepted by the kernel well over
+    // a slice before it gets to send its request.
+    bool readRequestLine(Peer& peer,
+                         std::string& line,
+                         const eacp::Time::Deadline& deadline)
+    {
+        while (!stopping.load() && !deadline.expired())
+        {
+            try
+            {
+                line = peer.receiveLine();
+                return true;
+            }
+            catch (const eacp::TCP::TimeoutError&)
+            {
+                continue;
+            }
+            catch (const eacp::TCP::Error&)
+            {
+                return false;
+            }
         }
 
         return false;
