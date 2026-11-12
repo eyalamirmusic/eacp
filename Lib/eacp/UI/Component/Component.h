@@ -362,6 +362,11 @@ private:
 
     ComponentHost* findHost() const;
 
+    // Takes `child` out of the children. Leaving the host makes it forget every
+    // pointer it holds into the child's subtree; a move to another parent in the
+    // same tree only stops its animations, so a press or focus carries on.
+    void unlinkChild(Component& child, bool leavesHost);
+
     // What a SafePointer watches: made on first ask, so a component nobody
     // points at safely costs nothing, and released as the destructor starts.
     std::weak_ptr<bool> getLifetimeToken() const;

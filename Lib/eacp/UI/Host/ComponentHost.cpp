@@ -90,25 +90,7 @@ ComponentHost::~ComponentHost()
 // host about it again, and it would be animated or pressed after it is gone.
 void ComponentHost::componentDeleted(Component& component)
 {
-    if (isWithin(hoveredComponent, component))
-        hoveredComponent = nullptr;
-
-    if (isWithin(fileDragTarget, component))
-        fileDragTarget = nullptr;
-
-    if (isWithin(mouseDownTarget, component))
-    {
-        mouseDownTarget = nullptr;
-        touch = {};
-    }
-
-    // Dropped rather than moved on. Telling the next component in the focus
-    // order that it has the keyboard while a subtree is halfway through being
-    // destroyed is how a focusGained lands on something already gone.
-    if (isWithin(focusedComponent, component))
-        focusedComponent = nullptr;
-
-    forgetAnimationsIn(component);
+    subtreeDetached(component);
 
     if (root == &component)
     {
@@ -122,13 +104,46 @@ void ComponentHost::componentDeleted(Component& component)
     }
 }
 
+// No callbacks, only pointers dropped: this runs from a destructor too, where
+// the component's own overrides are already gone. The hover flag is a member of
+// the base, so it is put right for a component that lives on.
+void ComponentHost::subtreeDetached(Component& subtree)
+{
+    if (isWithin(hoveredComponent, subtree))
+    {
+        hoveredComponent->mouseOver = false;
+        hoveredComponent = nullptr;
+    }
+
+    if (isWithin(fileDragTarget, subtree))
+        fileDragTarget = nullptr;
+
+    if (isWithin(mouseDownTarget, subtree))
+    {
+        mouseDownTarget = nullptr;
+        touch = {};
+    }
+
+    // Dropped rather than moved on. Telling the next component in the focus
+    // order that it has the keyboard while a subtree is halfway through being
+    // destroyed is how a focusGained lands on something already gone.
+    if (isWithin(focusedComponent, subtree))
+        focusedComponent = nullptr;
+
+    forgetAnimationsIn(subtree);
+}
+
 void ComponentHost::setRootComponent(Component& newRoot)
 {
-    if (root != nullptr)
-    {
+    // The same root set again keeps what it had; a different one takes the old
+    // tree's hover, focus and press with it.
+    if (root == &newRoot)
         forgetAnimationsIn(*root);
+    else if (root != nullptr)
+        subtreeDetached(*root);
+
+    if (root != nullptr)
         root->host = nullptr;
-    }
 
     root = &newRoot;
     root->host = this;

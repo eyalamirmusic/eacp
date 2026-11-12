@@ -70,8 +70,8 @@ void Component::addChildComponent(Component& child)
     if (child.parent == this)
         return;
 
-    if (child.parent != nullptr)
-        child.parent->removeChildComponent(child);
+    if (auto* previous = child.parent)
+        previous->unlinkChild(child, previous->findHost() != findHost());
 
     child.parent = this;
     children.add(&child);
@@ -105,13 +105,22 @@ void Component::addChildren(Children childrenToAdd)
 
 void Component::removeChildComponent(Component& child)
 {
-    if (child.parent != this)
-        return;
+    if (child.parent == this)
+        unlinkChild(child, true);
+}
 
-    // A subtree leaving the host stops animating in it, since nothing would
-    // tell the host when one of those components is later destroyed.
+void Component::unlinkChild(Component& child, bool leavesHost)
+{
+    // A subtree leaving the host is forgotten by it -- its hover, focus, press
+    // and animations -- since nothing would tell the host when one of those
+    // components is later destroyed.
     if (auto* found = findHost())
-        found->forgetAnimationsIn(child);
+    {
+        if (leavesHost)
+            found->subtreeDetached(child);
+        else
+            found->forgetAnimationsIn(child);
+    }
 
     // A captured subtree leaving the tree is let go of rather than followed:
     // the layer drew it in its place below the owner, and there is no such
