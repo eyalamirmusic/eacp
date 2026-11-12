@@ -172,6 +172,10 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 
 - `DynamicLibrary` — `open`, `findSymbol`, `findFunction<F>`, `getFunctionNames`
 - `Plugins::unload(library, quiesce)` — close safely
+- `getCurrentModulePath()` / `getProductModulePath()` (`ModuleInfo.h`) — this
+  copy's own image, and the image that is the application
+- `EACP_CLAIM_COPY(address)` (`ClaimCopy.h`) + `eacp_claim_copy(target)` — a
+  launcher claims the eacp copy in a library it links as the application
 - `Reloadable` / `EACP_RELOADABLE` — hot reload (`Docs/HotReload.md`)
 
 ## HTTP — `Network/HTTP/`, `Network/HTTPServer/` (`eacp::HTTP`)

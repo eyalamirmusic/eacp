@@ -809,6 +809,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Core/ArgsTests.cpp`; `parse()` reads the stored command line, so a
   body needs no argc/argv), and `Console::print`/`printError`
   (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
+- Role: `Platform::isStandalone()`/`isDLL()`, decided from the loaded images
+  by address, never from paths: a copy in the executable is the application, a
+  copy in a library a guest unless the executable claims it with
+  `EACP_CLAIM_COPY` (`Plugins/ClaimCopy.h`). `Docs/Build.md`, "Who owns the
+  process"
 - Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
   message, `AlertIcon`, buttons, default and cancel button; returns at once
   from any thread, queues the alert (per eacp copy) so they come up one at a
@@ -1209,7 +1214,7 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   on Android); `appGroupContainerDirectory(id)` is
   `containerURLForSecurityApplicationGroupIdentifier` on Apple and empty
   elsewhere. `Files::applicationPath()` is `currentApplicationFile`: from
-  `Plugins::getCurrentModulePath()`, so a plugin answers for itself, and on
+  `Plugins::getProductModulePath()`, so a plugin answers for itself, and on
   macOS `Files::enclosingBundle` of it (the bundle when the binary sits in
   `<bundle>/Contents/MacOS/`, a pure string check) when that is not empty.
   `FileWriter` is neither copyable nor movable

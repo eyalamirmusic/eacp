@@ -346,6 +346,72 @@ sets it: on the command line, or as a normal variable or a cache entry, before
 or after eacp's setup runs, and an empty team included.
 `Tests/AppleSetup` checks each of those against the generated Xcode project.
 
+## Who owns the process
+
+Every statically linked eacp copy in a process (the executable's, and one per
+library that links eacp) answers three questions about itself
+(`Core/Plugins/ModuleInfo.h`):
+
+- **Identity**: the image the copy is compiled into, which keys the per-image
+  OS registrations that must not collide between copies, such as Win32 window
+  classes (`getCurrentModuleHandle`, `getCurrentModulePath`,
+  `getModuleIdentitySuffix`).
+- **Role**: is the copy the application, or a guest in a process someone else
+  owns (`Platform::isStandalone()`/`isDLL()`)? A guest does not run the loop in
+  `Apps::run<T>()`, defers alerts to its host, and on Linux attaches to an
+  eacp host's root loop and prefers X11.
+- **Product image**: the image that is the application to the user and the
+  OS: what `Files::applicationPath()` names, where the Windows icon is loaded
+  from, what the WebView2 data folder is named after (`getProductModulePath`,
+  `getProductModuleHandle`).
+
+A copy in the executable is the application and its product is the
+executable; a copy in a library is a guest and its product is its library.
+Both are decided from the loaded images by address (the executable's `HMODULE`
+on Windows, the Mach-O file type on macOS, the main program's `PT_LOAD`
+segments from `dl_iterate_phdr` on Linux), never from paths, so a bare name on
+`PATH`, a rewritten `argv[0]` or a `chdir` after a relative launch change
+nothing. On Linux the executable's path is `/proc/self/exe`, so under an
+explicitly invoked loader (`ld.so ./app`) `applicationPath()` names the loader.
+Android's app is a library NativeActivity loads, and `isDLL()` is false there.
+
+A thin launcher whose application, eacp included, lives in a library it links
+claims that library's copy, which then is the application with the launcher as
+its product, while its identity stays the library:
+
+```cpp
+// In the library
+EACP_PLUGIN_EXPORT const void* myAppModuleAddress()
+{
+    return eacp::Plugins::getCurrentModuleAddress();
+}
+
+// In the executable
+#include <eacp/Core/Plugins/ClaimCopy.h>
+
+extern "C" const void* myAppModuleAddress();
+EACP_CLAIM_COPY(myAppModuleAddress());
+```
+
+```cmake
+target_link_libraries(MyLauncher PRIVATE MyAppLibrary)
+eacp_claim_copy(MyLauncher)
+```
+
+The macro defines `eacpClaimedCopy`, which each copy looks up in the
+executable alone and compares by image with its own, so any other copy, such
+as a plugin the launcher loads, is still a guest. It is read in the copy's
+first static initialiser, before the executable's C runtime is up, so the
+expression must be a plain call into the library, not `&importedFunction`
+(on Windows the executable's import thunk). `eacp_claim_copy` exports the
+symbol on Linux (`--export-dynamic-symbol`: GNU ld 2.35+, gold, lld 11+, mold),
+and without it the macro's `static_assert` fails the build on every platform.
+The launcher must link the library rather than `dlopen` it, and should carry
+no eacp copy of its own, or two copies would both own the loop.
+`Tests/Core/ModuleRoleTests.cpp` covers the claim, and
+`ModuleInfoTests-Posix.cpp` launches a standalone binary every way that used
+to fool the Linux check.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables

@@ -31,6 +31,19 @@ function(eacp_add_plugin target)
     eacp_enable_unity_build(${target})
 endfunction()
 
+# For an executable whose source says EACP_CLAIM_COPY (Core/Plugins/ClaimCopy.h).
+# A Linux executable exports nothing unless asked, so the claim is named to the
+# linker (GNU ld 2.35+, gold, lld 11+, mold). The define satisfies the macro's
+# static_assert, so a forgotten call fails the build on every platform.
+function(eacp_claim_copy executable)
+    target_compile_definitions(${executable} PRIVATE EACP_CLAIM_COPY_LINKED=1)
+
+    if (LINUX)
+        target_link_options(${executable} PRIVATE
+                "LINKER:--export-dynamic-symbol=eacpClaimedCopy")
+    endif ()
+endfunction()
+
 function(eacp_collect_link_targets target out_var)
     set(found ${${out_var}})
     get_target_property(links ${target} LINK_LIBRARIES)

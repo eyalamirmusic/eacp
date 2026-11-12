@@ -237,8 +237,9 @@ FilePath revealFallbackDirectory(const FilePath& path);
 // The running process's executable. Empty if unresolvable.
 FilePath executablePath();
 
-// What a user sees as the application holding this code, resolved from the
-// code's own module (so a plugin answers for itself, not its host): the
+// What a user sees as the application holding this code, resolved from
+// Plugins::getProductModulePath (so a plugin answers for itself, not its host,
+// and a claimed library for its executable): the
 // enclosing .app (or .vst3, .component) bundle on macOS, the bundle directory
 // on iOS, the executable or library file elsewhere. Matches JUCE's
 // File::currentApplicationFile.
