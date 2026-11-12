@@ -1538,6 +1538,12 @@ void ComponentHost::mouseDown(const eacp::Graphics::MouseEvent& hostEvent)
         if (!touch.active)
             moveFocusToPressed(mouseDownTarget);
 
+        // Losing focus can delete the pressed component (a panel rebuilding its
+        // rows when a text box commits on blur), and componentDeleted then
+        // clears mouseDownTarget.
+        if (mouseDownTarget == nullptr)
+            return;
+
         setHoveredComponent(mouseDownTarget, event);
         mouseDownTarget->mouseDown(makeEvent(*mouseDownTarget, event));
     }
