@@ -53,10 +53,6 @@ bool isSameModuleFile(const std::string& reported, const std::string& expected)
 }
 } // namespace
 
-// A launcher with no eacp of its own claims the copy in the library it links:
-// that copy is the application, its product is the launcher, and its identity
-// is still the library. It decided so in its first static initialiser, before
-// the launcher's C runtime had started.
 auto tClaimedCopyIsStandalone = test("ModuleRole/claimedCopyIsStandalone") = []
 {
     auto report = runModuleRoleLauncher(EACP_MODULE_ROLE_LAUNCHER);
@@ -65,11 +61,9 @@ auto tClaimedCopyIsStandalone = test("ModuleRole/claimedCopyIsStandalone") = []
     check(report["linked.isDLLAtLoad"] == "0");
     check(isSameModuleFile(report["linked.product"], EACP_MODULE_ROLE_LAUNCHER));
     check(isSameModuleFile(report["linked.copy"], EACP_MODULE_ROLE_LIBRARY_A));
-
     check(isSameModuleFile(report["linked.application"], EACP_MODULE_ROLE_LAUNCHER));
 };
 
-// The same library, linked the same way, with no claim: a guest.
 auto tUnclaimedCopyIsDLL = test("ModuleRole/unclaimedLinkedCopyIsDLL") = []
 {
     auto report = runModuleRoleLauncher(EACP_MODULE_ROLE_LAUNCHER_UNCLAIMED);
@@ -80,8 +74,6 @@ auto tUnclaimedCopyIsDLL = test("ModuleRole/unclaimedLinkedCopyIsDLL") = []
     check(isSameModuleFile(report["linked.copy"], EACP_MODULE_ROLE_LIBRARY_A));
 };
 
-// The claim names one image. Another library's copy in the same process —
-// a plugin the launcher loads — stays a guest.
 auto tClaimLeavesOtherCopies = test("ModuleRole/claimLeavesOtherCopiesGuests") = []
 {
     auto report = runModuleRoleLauncher(EACP_MODULE_ROLE_LAUNCHER,
@@ -93,8 +85,6 @@ auto tClaimLeavesOtherCopies = test("ModuleRole/claimLeavesOtherCopiesGuests") =
     check(isSameModuleFile(report["loaded.copy"], EACP_MODULE_ROLE_LIBRARY_B));
 };
 
-// Loaded by this test binary, an eacp app that claims nothing: a plugin, while
-// this binary's own copy is standalone.
 auto tLoadedCopyIsDLL = test("ModuleRole/loadedByAnUnclaimingAppIsDLL") = []
 {
     auto library = Plugins::DynamicLibrary {FilePath {EACP_MODULE_ROLE_LIBRARY_A}};

@@ -14,17 +14,19 @@ bool copyIsInMainProgram()
     return Detail::isInMainProgram(getCurrentModuleAddress());
 }
 
-// The claim counts only when the executable itself defines it, and only for
-// the image it names: a plugin inside an eacp host that claims another copy is
-// still a plugin.
+const void* findImageClaimedByMainProgram()
+{
+    auto* claim = Detail::findClaimFunction();
+
+    if (claim == nullptr || !Detail::isInMainProgram(claim))
+        return nullptr;
+
+    return reinterpret_cast<ClaimFunction>(claim)();
+}
+
 bool copyIsClaimedByMainProgram()
 {
-    auto* symbol = Detail::findClaimFunction();
-
-    if (symbol == nullptr || !Detail::isInMainProgram(symbol))
-        return false;
-
-    const auto* claimed = reinterpret_cast<ClaimFunction>(symbol)();
+    const auto* claimed = findImageClaimedByMainProgram();
 
     return claimed != nullptr
            && Detail::isSameImage(claimed, getCurrentModuleAddress());

@@ -111,15 +111,14 @@ constexpr std::string_view architectureName()
 #endif
 }
 
-// The role of this eacp copy. isStandalone when it is the application: it is
-// compiled into the process executable, or into a library the executable
-// claims (Core/Plugins/ClaimCopy.h). isDLL when it is a guest in a process
-// someone else owns — a plugin. Decided at runtime from the loaded images
+// Role of this eacp copy: isStandalone when it is the application (compiled
+// into the process executable, or into a library the executable claims with
+// Plugins/ClaimCopy.h), isDLL when it is a guest in someone else's process (a
+// plugin). Resolved at runtime from the loaded images
 // (Plugins::isDynamicLibrary), so every statically linked eacp copy in a
 // process answers for itself, and so these cannot be constexpr. Apps::run<T>
-// uses it to decide loop ownership: a guest app is scheduled onto the host's
-// loop instead of running its own. An Android app is a library NativeActivity
-// loads and is standalone all the same.
+// uses it to decide loop ownership: a DLL app is scheduled onto the host's
+// loop instead of running its own.
 bool isStandalone();
 bool isDLL();
 

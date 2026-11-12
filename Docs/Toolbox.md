@@ -143,8 +143,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `isMac`, `isIOS`, `isApple`, `isWindows`, `isAndroid`, `isLinux`,
   `isLinuxFamily`, `isPosix`, `name()` — compile-time OS checks
 - `architectureName()` — `"arm64"` or `"x64"`
-- `isStandalone()` / `isDLL()` — this copy is the application, or a guest in
-  someone else's process (`Docs/Build.md`, "Who owns the process")
+- `isStandalone()` / `isDLL()` — app or plugin copy
 - `getAppName()`, `getCompanyName()`, `getAppVersion()` — from AppInfo
 - Not here: `isDebuggerAttached`
 

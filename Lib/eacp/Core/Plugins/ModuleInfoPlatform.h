@@ -1,18 +1,20 @@
 #pragma once
 
-// The per-platform primitives ModuleInfo.cpp decides a copy's role and product
-// image from. Every one of them compares images by address, never by path.
+#include "../Utils/FilePath.h"
+
 namespace eacp::Plugins::Detail
 {
-// True when address lies in the process executable's image. Answers true when
-// the platform cannot tell, so an unanswerable question leaves a copy
-// standalone.
+// True when the platform cannot tell, so the copy stays standalone.
 bool isInMainProgram(const void* address);
 
-// True when both addresses lie in one loaded image.
 bool isSameImage(const void* first, const void* second);
 
-// The address of the eacpClaimedCopy function the process can see, or null.
-// Not yet checked to be the executable's own: ModuleInfo.cpp does that.
+// The eacpClaimedCopy the process can see, from whichever image defines it.
 void* findClaimFunction();
+
+#ifndef _WIN32
+// The path dladdr reports for this copy's image, which for glibc's main
+// program is argv[0].
+FilePath loadedImagePath();
+#endif
 } // namespace eacp::Plugins::Detail

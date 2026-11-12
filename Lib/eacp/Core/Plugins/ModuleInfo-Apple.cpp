@@ -1,6 +1,5 @@
 #include "ModuleInfo.h"
 #include "ModuleInfoPlatform.h"
-#include "ModuleInfoPosix.h"
 
 #include <cstdint>
 #include <dlfcn.h>
@@ -8,8 +7,6 @@
 
 namespace eacp::Plugins
 {
-// A process has one MH_EXECUTE image, the executable: dylibs and bundles carry
-// other file types.
 bool Detail::isInMainProgram(const void* address)
 {
     auto info = Dl_info {};

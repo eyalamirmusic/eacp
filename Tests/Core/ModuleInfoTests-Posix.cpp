@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <spawn.h>
+#include <sstream>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -26,17 +27,10 @@ struct ModuleInfoReport
 ModuleInfoReport parseModuleInfoReport(const std::string& output)
 {
     auto report = ModuleInfoReport {};
-    const auto newline = output.find('\n');
+    auto lines = std::istringstream {output};
 
-    report.role = output.substr(0, newline);
-
-    if (newline != std::string::npos)
-    {
-        report.application = output.substr(newline + 1);
-
-        if (!report.application.empty() && report.application.back() == '\n')
-            report.application.pop_back();
-    }
+    std::getline(lines, report.role);
+    std::getline(lines, report.application);
 
     return report;
 }
@@ -64,8 +58,7 @@ ModuleInfoReport runModuleInfoHarnessAs(const std::string& executable,
     return runModuleInfoHarness(std::move(options));
 }
 
-// Processes::run always passes the executable as argv[0]; a launcher that
-// rewrites it (exec -a, login shells, wrappers) needs posix_spawn directly.
+// Processes::run always passes the executable as argv[0].
 ModuleInfoReport runModuleInfoHarnessWithArgv0(std::string argv0)
 {
     const auto output =
@@ -95,8 +88,7 @@ ModuleInfoReport runModuleInfoHarnessWithArgv0(std::string argv0)
     return parseModuleInfoReport(readTestFile(output));
 }
 
-// The role is decided from images on every platform. The path is checked on
-// Linux, where it used to be derived from argv[0]; macOS takes it from dyld.
+// Only Linux ever derived the path from argv[0]; macOS takes it from dyld.
 void checkModuleInfoStandalone(const ModuleInfoReport& report)
 {
     check(report.role == "standalone");
@@ -109,13 +101,8 @@ void checkModuleInfoStandalone(const ModuleInfoReport& report)
 }
 } // namespace
 
-// Spellings of one binary. A standalone executable is standalone whichever was
-// typed. Linux used to compare /proc/self/exe with the path dladdr reports,
-// which for the main program is argv[0], made absolute against the working
-// directory of the moment: `./harness` (before #50), a bare name found on PATH,
-// a rewritten argv[0] and a relative launch followed by a chdir all compared
-// unequal, run<T>() handed the event loop to a host that was not there and
-// returned, and the process exited at once with status 0.
+// One binary launched every way. Linux once compared /proc/self/exe with
+// argv[0] and took several of these for a plugin.
 auto tAbsolutePath = test("ModuleInfo/standaloneWhenLaunchedByAbsolutePath") = []
 { checkModuleInfoStandalone(runModuleInfoHarnessAs(harness.string())); };
 

@@ -1,7 +1,5 @@
-// Fixture for ModuleInfoTests: prints how this executable classifies its own
-// image, then the application path it reports. A separate process because both
-// once depended on how the program was launched, and only a launcher can vary
-// that. `--chdir <directory>` moves to the directory before asking anything.
+// Fixture for ModuleInfoTests: prints this executable's role and application
+// path, after `--chdir <directory>` when given one.
 #include <eacp/Core/Plugins/ModuleInfo.h>
 #include <eacp/Core/Utils/Files.h>
 

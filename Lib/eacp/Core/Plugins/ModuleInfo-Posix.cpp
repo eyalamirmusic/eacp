@@ -1,6 +1,5 @@
 #include "ModuleInfo.h"
 #include "ModuleInfoPlatform.h"
-#include "ModuleInfoPosix.h"
 
 #include <dlfcn.h>
 #include <filesystem>
@@ -9,8 +8,7 @@ namespace eacp::Plugins
 {
 namespace
 {
-// Internal linkage, so no other image can interpose it: its address is always
-// inside the image this copy is compiled into.
+// Internal linkage, so no other image can interpose it.
 const char moduleAnchor = 0;
 
 const void* imageBaseOf(const void* address)

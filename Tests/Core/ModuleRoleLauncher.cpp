@@ -1,8 +1,6 @@
-// Fixture for ModuleRoleTests: a thin launcher with no eacp copy of its own.
-// It links ModuleRoleLibraryA and, unless built as ModuleRoleLauncherUnclaimed
-// (EACP_MODULE_ROLE_UNCLAIMED), claims that library's copy. It prints what the
-// linked copy answers as key=value lines, then, given a library path as its
-// argument, loads that library at run time and prints what its copy answers.
+// Fixture for ModuleRoleTests: a launcher with no eacp of its own, so it loads
+// libraries with the OS calls. It prints what its linked library's copy
+// answers, then what the copy of the library named by its argument answers.
 #include <eacp/Core/Plugins/ClaimCopy.h>
 
 #include <cstdio>

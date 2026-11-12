@@ -1,6 +1,5 @@
 #include "ModuleInfo.h"
 #include "ModuleInfoPlatform.h"
-#include "ModuleInfoPosix.h"
 
 #include "../Platform/Platform.h"
 #include "../Utils/Files.h"
@@ -31,8 +30,7 @@ bool loadSegmentContains(const dl_phdr_info& image,
            && address - start < header.p_memsz;
 }
 
-// glibc, musl and bionic all report the main program first, so the first call
-// is the only one looked at.
+// glibc, musl and bionic all report the main program first.
 int probeMainProgram(dl_phdr_info* image, std::size_t, void* data)
 {
     auto& probe = *(MainProgramProbe*) data;
@@ -58,17 +56,13 @@ bool Detail::isInMainProgram(const void* address)
     return !probe.reported || probe.contains;
 }
 
-// RTLD_DEFAULT searches the whole global scope; ModuleInfo.cpp then refuses a
-// definition that is not the executable's own.
 void* Detail::findClaimFunction()
 {
     return dlsym(RTLD_DEFAULT, "eacpClaimedCopy");
 }
 
-// For the main program glibc's dladdr reports argv[0], which names the binary
-// only for some launches (not a bare name found on PATH, not a rewritten
-// argv[0]), so the kernel answers there. Android's main program is
-// app_process, never an eacp copy.
+// glibc's dladdr names the main program by argv[0], so the kernel answers
+// there. Android's main program is app_process, never an eacp copy.
 FilePath getCurrentModulePath()
 {
     if constexpr (!Platform::isAndroid())

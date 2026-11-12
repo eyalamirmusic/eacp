@@ -408,7 +408,7 @@ not: there is no 2D backend.
 compiled into every copy: which one a window gets is a runtime decision, not a
 build one. The neutral half: `Window/LinuxWindowSystem-Linux.{h,cpp}` decides
 the preferred backend once per copy (`EACP_WINDOW_SYSTEM=wayland|x11`
-overrides; else a guest copy — `Platform::isDLL()` — takes X11, a standalone
+overrides; else a plugin copy — `Platform::isDLL()` — takes X11, a standalone
 app takes Wayland when a compositor answers and X11 otherwise;
 `EACP_HEADLESS=1` gives none) and answers the process-wide questions with no
 window to hang off — the primary output's frame, scale and refresh for
@@ -809,17 +809,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Core/ArgsTests.cpp`; `parse()` reads the stored command line, so a
   body needs no argc/argv), and `Console::print`/`printError`
   (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
-- Role: `Platform::isStandalone()`/`isDLL()` say whether this eacp copy is
-  the application or a guest in a process it does not own, and `run<T>()`
-  owns the loop only in the application. Decided from the loaded images by
-  address, never from paths: a copy in the executable is the application, a
+- Role: `Platform::isStandalone()`/`isDLL()`, decided from the loaded images
+  by address, never from paths: a copy in the executable is the application, a
   copy in a library a guest unless the executable claims it with
-  `EACP_CLAIM_COPY` (`Plugins/ClaimCopy.h`) and `eacp_claim_copy(<target>)`.
-  Copy identity (`getCurrentModuleHandle`/`getCurrentModulePath`, per-image
-  registrations) is always the copy's own image; the product image
-  (`getProductModulePath`/`getProductModuleHandle`: `applicationPath`, the
-  Windows icon, the WebView2 folder) follows the role. `Docs/Build.md`, "Who
-  owns the process", is the account
+  `EACP_CLAIM_COPY` (`Plugins/ClaimCopy.h`). `Docs/Build.md`, "Who owns the
+  process"
 - Alerts: `showAlert(AlertOptions, onDismissed)` (`App/Alert.h`): title,
   message, `AlertIcon`, buttons, default and cancel button; returns at once
   from any thread, queues the alert (per eacp copy) so they come up one at a
@@ -1220,8 +1214,7 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   on Android); `appGroupContainerDirectory(id)` is
   `containerURLForSecurityApplicationGroupIdentifier` on Apple and empty
   elsewhere. `Files::applicationPath()` is `currentApplicationFile`: from
-  `Plugins::getProductModulePath()` — a plugin's own image, the executable
-  for a copy in it or in a library it claims (`Plugins/ClaimCopy.h`) — and on
+  `Plugins::getProductModulePath()`, so a plugin answers for itself, and on
   macOS `Files::enclosingBundle` of it (the bundle when the binary sits in
   `<bundle>/Contents/MacOS/`, a pure string check) when that is not empty.
   `FileWriter` is neither copyable nor movable

@@ -1,8 +1,5 @@
-// Fixture for ModuleRoleTests: a shared library carrying its own eacp copy,
-// reporting what that copy answers. Built twice, as ModuleRoleLibraryA (the
-// one ModuleRoleLauncher links and claims) and ModuleRoleLibraryB (one it only
-// loads). The role is also taken by a static initialiser, which on every
-// platform runs before the launcher's own C runtime is up.
+// Fixture for ModuleRoleTests: a library with its own eacp copy, reporting
+// what that copy answers, its role also as taken in a static initialiser.
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Plugins/ModuleInfo.h>
 #include <eacp/Core/Plugins/PluginExport.h>
@@ -14,7 +11,7 @@ namespace
 {
 const auto roleAtLoad = eacp::Platform::isDLL();
 
-const char* keep(std::string& slot, const eacp::FilePath& path)
+const char* storeIn(std::string& slot, const eacp::FilePath& path)
 {
     slot = path.str();
     return slot.c_str();
@@ -39,17 +36,17 @@ EACP_PLUGIN_EXPORT int eacpModuleRoleIsDLLAtLoad()
 EACP_PLUGIN_EXPORT const char* eacpModuleRoleCopyPath()
 {
     static auto slot = std::string {};
-    return keep(slot, eacp::Plugins::getCurrentModulePath());
+    return storeIn(slot, eacp::Plugins::getCurrentModulePath());
 }
 
 EACP_PLUGIN_EXPORT const char* eacpModuleRoleProductPath()
 {
     static auto slot = std::string {};
-    return keep(slot, eacp::Plugins::getProductModulePath());
+    return storeIn(slot, eacp::Plugins::getProductModulePath());
 }
 
 EACP_PLUGIN_EXPORT const char* eacpModuleRoleApplicationPath()
 {
     static auto slot = std::string {};
-    return keep(slot, eacp::Files::applicationPath());
+    return storeIn(slot, eacp::Files::applicationPath());
 }
