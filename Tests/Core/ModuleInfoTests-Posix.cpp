@@ -12,13 +12,8 @@ namespace
 {
 const auto harness = fs::path {EACP_MODULE_INFO_HARNESS};
 
-std::string classifyWhenLaunchedAs(const std::string& executable,
-                                   const std::string& workingDirectory = {})
+std::string classifyWhenLaunched(Proc::ProcessOptions options)
 {
-    auto options = Proc::ProcessOptions {};
-    options.executable = executable;
-    options.workingDirectory = workingDirectory;
-
     const auto result = Proc::run(std::move(options));
 
     check(result.launched);
@@ -27,13 +22,22 @@ std::string classifyWhenLaunchedAs(const std::string& executable,
 
     return result.output;
 }
+
+std::string classifyWhenLaunchedAs(const std::string& executable,
+                                   const std::string& workingDirectory = {})
+{
+    auto options = Proc::ProcessOptions {};
+    options.executable = executable;
+    options.workingDirectory = workingDirectory;
+
+    return classifyWhenLaunched(std::move(options));
+}
 } // namespace
 
-// Three spellings of one binary. A standalone executable is standalone whichever
-// was typed, and the relative one is what Linux used to answer "plugin" for:
-// /proc/self/exe is resolved and the path dladdr reports is not, so `./harness`
-// compared unequal to itself. run<T>() then handed the event loop to a host that
-// was not there and returned, so the process exited at once with status 0.
+// Four spellings of one binary. A standalone executable is standalone whichever
+// was typed. Linux used to answer "plugin" for the relative and bare-name ones,
+// so run<T>() returned without starting the event loop and the app exited at
+// once with status 0.
 auto tAbsolutePath = test("ModuleInfo/standaloneWhenLaunchedByAbsolutePath") = []
 { check(classifyWhenLaunchedAs(harness.string()) == "standalone\n"); };
 
@@ -61,4 +65,14 @@ auto tSymlink = test("ModuleInfo/standaloneWhenLaunchedThroughSymlink") = []
     check(classifyWhenLaunchedAs(link.string()) == "standalone\n");
 
     fs::remove(link, ec);
+};
+
+auto tBareName = test("ModuleInfo/standaloneWhenLaunchedByBareNameFromPath") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.executable = "/bin/sh";
+    options.arguments = {"-c", harness.filename().string()};
+    options.environment = {{"PATH", harness.parent_path().string()}};
+
+    check(classifyWhenLaunched(std::move(options)) == "standalone\n");
 };
