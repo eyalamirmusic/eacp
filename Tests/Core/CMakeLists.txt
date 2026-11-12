@@ -184,6 +184,14 @@ if (NOT IOS AND NOT ANDROID)
                 DEFINE_SYMBOL ""
                 POSITION_INDEPENDENT_CODE ON)
         set_default_target_setting(${library})
+
+        # A build with a hot-reload app compiles eacp at default visibility,
+        # and B's calls into its own eacp would then bind to A's, which the
+        # launcher loaded first into the global scope. Each library binds to
+        # its own copy, as it does at hidden visibility.
+        if (LINUX)
+            target_link_options(${library} PRIVATE "LINKER:-Bsymbolic")
+        endif ()
     endforeach ()
 
     foreach (launcher ModuleRoleLauncher ModuleRoleLauncherUnclaimed)
