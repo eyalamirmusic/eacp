@@ -260,6 +260,14 @@ private:
     // way out.
     void componentDeleted(Component& component);
 
+    // A subtree is leaving this tree: removed, moved under a parent outside it,
+    // or left behind by a new root. Drops every pointer the host holds into it
+    // -- the hover, the focus, the press capture, the file-drag target and its
+    // animations -- since nothing would tell the host when one of them is later
+    // destroyed, and one that stays alive is no longer in the tree to be sent
+    // anything.
+    void subtreeDetached(Component& subtree);
+
     void startAnimating(Component& component);
     void stopAnimating(Component& component);
     bool isAnimating(const Component& component) const;
