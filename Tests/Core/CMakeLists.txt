@@ -42,6 +42,7 @@ set(core_test_sources
         SourceWatcherTests.cpp
         StringsTests.cpp
         TemporaryFileTests.cpp
+        ThreadPoolTests.cpp
         ThreadTests.cpp
         TimerTests.cpp
         TimeTests.cpp

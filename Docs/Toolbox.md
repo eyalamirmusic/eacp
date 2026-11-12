@@ -162,7 +162,18 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `callAsync(func)` — run on the main thread
 - `callAfter(MS, func)` — run on the main thread later
 - `Timer(cb, MS | Hz)` — periodic callback
-- `Thread` — joining thread, `start`, `join`
+- `Thread` — joining thread, `start`, `join`; `ThreadOptions` name
+  ("EACP Thread"), priority (`Normal`) and `realtime` (`RealtimeOptions`,
+  `forAudio`), a refusal falling back to `High` and reported by `isRealtime()`
+- `setCurrentThreadRealtime(options)` (`ThreadUtils.h`) — realtime for the
+  calling thread, true if it took
+- `ThreadPool` / `ThreadPool::shared()` (`ThreadPool.h`) — worker threads,
+  `submit(work | PoolTask)`, `cancelPending`, `waitUntilIdle`, `stop`;
+  `ThreadPoolOptions::thread` is each thread's `ThreadOptions`, realtime included
+- `TaskGroup` (`ThreadPool.h`) — a pool's tasks waited on and cancelled together
+- `setCurrentThreadName(name)` (`ThreadUtils.h`) — name the calling thread
+- `setCurrentThreadPriority(priority)` (`ThreadUtils.h`) — `Low`, `Normal`,
+  `High`; on desktop Linux only drops an inherited realtime policy
 - `Async<T>` / `AsyncPromise<T>` — `then(onValue, onError)`, `resolve`, `reject`
 - `runEventLoopFor(MS)` / `runEventLoopUntil(predicate, ...)` — pump the loop
 - `BinarySemaphore` / `TaskSemaphore` (`TaskSemaphore.h`) — wait with timeout

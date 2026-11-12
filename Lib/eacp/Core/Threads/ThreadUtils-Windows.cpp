@@ -2,6 +2,7 @@
 
 #include "ThreadUtils-Windows.h"
 #include "../Utils/Singleton.h"
+#include "../Utils/Strings.h"
 
 #include <atomic>
 #include <cassert>
@@ -89,6 +90,95 @@ bool isMainThread()
 void assertMainThread()
 {
     assert(isMainThread() && "Must be accessed from Main Thread");
+}
+
+// Looked up rather than linked: SetThreadDescription is Windows 10 1607.
+void setCurrentThreadName(std::string_view name)
+{
+    using SetDescriptionFunction = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+    static const auto setDescription = procAddress<SetDescriptionFunction>(
+        GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription");
+
+    if (setDescription != nullptr)
+        setDescription(GetCurrentThread(), Strings::widen(name).c_str());
+}
+
+void setCurrentThreadPriority(ThreadPriority priority)
+{
+    auto level = THREAD_PRIORITY_NORMAL;
+
+    if (priority == ThreadPriority::Low)
+        level = THREAD_PRIORITY_BELOW_NORMAL;
+    else if (priority == ThreadPriority::High)
+        level = THREAD_PRIORITY_ABOVE_NORMAL;
+
+    SetThreadPriority(GetCurrentThread(), level);
+}
+
+namespace
+{
+using AvSetMmThreadCharacteristicsFunction = HANDLE(WINAPI*)(LPCWSTR, LPDWORD);
+using AvRevertMmThreadCharacteristicsFunction = BOOL(WINAPI*)(HANDLE);
+
+// Loaded by name so eacp-core links nothing for it, and never freed.
+struct ThreadMmcssLibrary
+{
+    ThreadMmcssLibrary()
+    {
+        auto* module =
+            LoadLibraryExW(L"avrt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+        if (module == nullptr)
+            return;
+
+        setCharacteristics = procAddress<AvSetMmThreadCharacteristicsFunction>(
+            module, "AvSetMmThreadCharacteristicsW");
+        revertCharacteristics = procAddress<AvRevertMmThreadCharacteristicsFunction>(
+            module, "AvRevertMmThreadCharacteristics");
+    }
+
+    bool isLoaded() const
+    {
+        return setCharacteristics != nullptr && revertCharacteristics != nullptr;
+    }
+
+    AvSetMmThreadCharacteristicsFunction setCharacteristics = nullptr;
+    AvRevertMmThreadCharacteristicsFunction revertCharacteristics = nullptr;
+};
+
+const ThreadMmcssLibrary& threadMmcssLibrary()
+{
+    static const auto library = ThreadMmcssLibrary {};
+    return library;
+}
+
+thread_local HANDLE threadMmcssHandle = nullptr;
+} // namespace
+
+bool setCurrentThreadRealtime(const RealtimeOptions&)
+{
+    const auto& mmcss = threadMmcssLibrary();
+
+    if (threadMmcssHandle == nullptr && mmcss.isLoaded())
+    {
+        auto taskIndex = DWORD {0};
+        threadMmcssHandle = mmcss.setCharacteristics(L"Pro Audio", &taskIndex);
+    }
+
+    if (threadMmcssHandle != nullptr)
+        return true;
+
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    return false;
+}
+
+void endCurrentThreadRealtime()
+{
+    if (threadMmcssHandle == nullptr)
+        return;
+
+    threadMmcssLibrary().revertCharacteristics(threadMmcssHandle);
+    threadMmcssHandle = nullptr;
 }
 
 } // namespace eacp::Threads

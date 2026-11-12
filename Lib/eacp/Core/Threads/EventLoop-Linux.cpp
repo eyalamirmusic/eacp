@@ -1,5 +1,6 @@
 #include "EventLoop-Linux.h"
 #include "CallAfter.h"
+#include "ThreadPool.h"
 #include "EventLoopWait-Linux.h"
 #include "ThreadUtils-Linux.h"
 #include "../Platform/Platform.h"
@@ -639,6 +640,7 @@ void attachCurrentThreadAsMain()
 void detachCurrentThreadAsMain()
 {
     stopCallAfterScheduler();
+    stopSharedThreadPool();
 
     auto& loop = getLoop();
     loop.detachFromRootLoop();

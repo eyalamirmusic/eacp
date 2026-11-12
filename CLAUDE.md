@@ -648,7 +648,7 @@ as `Plugins::unload`'s deferred one. The pid
 is part of the advertisement because a child process inherits the environment
 without the address space, and a magic/size pair refuses a copy built from
 another revision. Under a foreign host nothing advertises and the path is
-inert. `Tests/Core/RootLoopTests-Linux.cpp` (10 `RootLoop/` cases over the
+inert. `Tests/Core/RootLoopTests-Linux.cpp` (12 `RootLoop/` cases over the
 `RootLoopTestPlugin` fixture) covers it, and `Apps/Plugins/PluginHost` with
 `DemoPlugin` — both now a `GPUView` (`Apps/Plugins/SpinningTriangle.h`), so
 the pair builds wherever `EACP_HAS_GPU` does — is the demo: the plugin's
@@ -949,7 +949,46 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Timer`: periodic callbacks, taking either `Time::MS` or an integer Hz
 - `Thread` (`Threads/Thread.h`): a joining thread whose header keeps
   `<thread>` out of public headers; the only wrapper eacp has, so new worker
-  threads in headers use it
+  threads in headers use it. `ThreadOptions` (`name`, default "EACP Thread",
+  empty for unnamed; `priority`, default `Normal`) is applied on the new thread
+  before the body, through `setCurrentThreadName`/`setCurrentThreadPriority`
+  (`ThreadUtils.h`; Linux names fitted to 15 bytes keeping a trailing index by
+  `fitThreadName`). Priority follows JUCE: Apple QoS (`Normal` is
+  `QOS_CLASS_DEFAULT`), Windows `SetThreadPriority`, Android per-thread nice
+  (10/0/-2), and on desktop Linux no levels, only an inherited realtime policy
+  dropped back to `SCHED_OTHER`. `ThreadOptions::realtime`
+  (`RealtimeOptions`: period, processing time and deadline in fractional ms;
+  `forAudio(frames, rate)`) replaces the priority with
+  `setCurrentThreadRealtime` — Apple's time-constraint policy derived as JUCE
+  does (`Threads/ThreadRealtime.h`), MMCSS "Pro Audio" through `avrt.dll`
+  loaded by name and reverted when the body returns, `SCHED_RR |
+  SCHED_RESET_ON_FORK` at JUCE's mid level on desktop Linux (so no thread it
+  starts is born realtime), nothing on Android. A refusal leaves the thread
+  `High` (`TIME_CRITICAL` on Windows) and the body still runs; `isRealtime()`
+  says which, settled when `start()` returns
+- `ThreadPool` (`Threads/ThreadPool.h`): one mutex, one FIFO, `Thread`s started
+  lazily up to `ThreadPoolOptions::threadCount` (0 is one per logical core),
+  each from a copy of `ThreadPoolOptions::thread` (a `ThreadOptions`, default
+  name "EACP Pool") named `"<name> <index>"`, priority and realtime passed
+  through; a thread is started outside the pool lock, since a realtime start
+  waits for the thread to settle, and `realtimeThreadCount()` counts the grants.
+  `submit(Callback)` is work alone; `submit(PoolTask)` adds `onMainThread`,
+  delivered through one pool-owned `callAsync` poke, and `onCancelled`, which
+  `cancelPending` runs instead; a throwing `work` is logged and skips
+  `onMainThread`. A task is outstanding until its main-thread callback ran or
+  was dropped, and a `waitUntilIdle`/`TaskGroup::wait` on the main thread
+  delivers those callbacks itself, so it needs no running loop. `TaskGroup` is
+  a tag and a count on one pool: a wait on a thread of that pool runs the
+  group's queued tasks so nested waits cannot starve it, and its destructor
+  cancels what has not started, waits for what runs and drops its callbacks;
+  `waitUntilIdle`/`stop` from the pool's own thread asserts. `stop()` drops
+  the queue and undelivered callbacks, joins, and leaves the pool reusable;
+  nothing a task captured is destroyed under the pool lock, so a destructor
+  may call back into the pool.
+  `ThreadPool::shared()` is stopped by `Apps::run` after the app is destroyed
+  and by `detachCurrentThreadAsMain` (`stopSharedThreadPool`, a no-op when
+  nothing created it). `Tests/Core/ThreadPoolTests.cpp` (32 `ThreadPool/`
+  cases)
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
 - `FramePacer` (`Graphics/Helpers/FramePacer.h`): the frame-rate divider
   behind `DisplayLink::setMaxFps`, `ComponentHost::setAnimationMaxFps` and
