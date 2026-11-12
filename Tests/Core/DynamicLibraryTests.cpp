@@ -59,6 +59,19 @@ auto tMoveKeepsTheImage = test("DynamicLibrary/moveKeepsTheImage") = []
     check(pluginLoadCount() == 2);
 };
 
+auto tPluginIsDynamicLibrary =
+    test("DynamicLibrary/loadedPluginClassifiesItselfAsDynamicLibrary") = []
+{
+    auto library = Plugins::DynamicLibrary(EACP_TEST_PLUGIN);
+    check(library.isOpen());
+
+    auto isDynamicLibrary =
+        library.findFunction<bool (*)()>("eacpTestPluginIsDynamicLibrary");
+    check(isDynamicLibrary != nullptr);
+    check(isDynamicLibrary());
+    check(!Plugins::isDynamicLibrary());
+};
+
 auto tOpenFailure = test("DynamicLibrary/openFailure") = []
 {
     auto library = Plugins::DynamicLibrary(FilePath {"no/such/library.so"});
