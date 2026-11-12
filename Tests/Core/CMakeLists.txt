@@ -107,6 +107,11 @@ if (LINUX)
     list(APPEND core_test_sources FileLocationsTests-Linux.cpp)
 endif ()
 
+# Launches the ModuleRole fixtures below, which mobile builds leave out.
+if (NOT IOS AND NOT ANDROID)
+    list(APPEND core_test_sources ModuleRoleTests.cpp)
+endif ()
+
 nano_add_executable(CoreTests
         SOURCES ${core_test_sources}
         TARGETS eacp-core)
@@ -163,6 +168,47 @@ if (NOT WIN32)
     target_compile_definitions(CoreTests PRIVATE
             EACP_MODULE_INFO_HARNESS="$<TARGET_FILE:ModuleInfoHarness>")
     add_dependencies(CoreTests ModuleInfoHarness)
+endif ()
+
+# A copy's role and product image depend on the process around it, so
+# ModuleRoleTests start launchers: ModuleRoleLauncher carries no eacp, links
+# ModuleRoleLibraryA and claims its copy; ModuleRoleLauncherUnclaimed is the
+# same program without the claim; ModuleRoleLibraryB is the same library again,
+# which the launcher only loads. Each path is EACP_<NAME_IN_CAPITALS>.
+if (NOT IOS AND NOT ANDROID)
+    foreach (library ModuleRoleLibraryA ModuleRoleLibraryB)
+        add_library(${library} SHARED ModuleRoleLibrary.cpp)
+        target_link_libraries(${library} PRIVATE eacp-core)
+        set_target_properties(${library} PROPERTIES
+                PREFIX ""
+                DEFINE_SYMBOL ""
+                POSITION_INDEPENDENT_CODE ON)
+        set_default_target_setting(${library})
+    endforeach ()
+
+    foreach (launcher ModuleRoleLauncher ModuleRoleLauncherUnclaimed)
+        add_executable(${launcher} ModuleRoleLauncher.cpp)
+        target_link_libraries(${launcher} PRIVATE
+                ModuleRoleLibraryA ${CMAKE_DL_LIBS})
+        target_include_directories(${launcher} PRIVATE
+                $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)
+        set_default_target_setting(${launcher})
+    endforeach ()
+
+    eacp_claim_copy(ModuleRoleLauncher)
+    target_compile_definitions(ModuleRoleLauncherUnclaimed PRIVATE
+            EACP_MODULE_ROLE_UNCLAIMED)
+
+    foreach (fixture
+            ModuleRoleLibraryA ModuleRoleLibraryB
+            ModuleRoleLauncher ModuleRoleLauncherUnclaimed)
+        string(REGEX REPLACE "([a-z])([A-Z])" "\\1_\\2" define ${fixture})
+        string(TOUPPER ${define} define)
+
+        target_compile_definitions(CoreTests PRIVATE
+                EACP_${define}="$<TARGET_FILE:${fixture}>")
+        add_dependencies(CoreTests ${fixture})
+    endforeach ()
 endif ()
 
 # The fixture plugin's static initializer counts genuine loads in the

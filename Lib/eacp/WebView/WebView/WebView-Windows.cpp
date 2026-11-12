@@ -86,7 +86,7 @@ std::wstring defaultUserDataFolder(const std::string& suffix)
 
     wchar_t modulePath[MAX_PATH] = {};
     GetModuleFileNameW(
-        (HMODULE) eacp::Plugins::getCurrentModuleHandle(), modulePath, MAX_PATH);
+        (HMODULE) eacp::Plugins::getProductModuleHandle(), modulePath, MAX_PATH);
 
     auto moduleName = std::wstring {PathFindFileNameW(modulePath)};
     if (auto dot = moduleName.rfind(L'.'); dot != std::wstring::npos)

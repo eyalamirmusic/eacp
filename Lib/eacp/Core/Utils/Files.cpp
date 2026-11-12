@@ -703,7 +703,7 @@ bool matchesWildcard(std::string_view name, std::string_view pattern)
 
 FilePath applicationPath()
 {
-    auto module = Plugins::getCurrentModulePath();
+    auto module = Plugins::getProductModulePath();
 
     if (module.empty())
         return {};

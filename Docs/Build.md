@@ -346,6 +346,86 @@ sets it: on the command line, or as a normal variable or a cache entry, before
 or after eacp's setup runs, and an empty team included.
 `Tests/AppleSetup` checks each of those against the generated Xcode project.
 
+## Who owns the process
+
+Every statically linked eacp copy in a process — the executable's, and one
+per plugin or library that links eacp — answers three questions about itself
+(`Core/Plugins/ModuleInfo.h`):
+
+- **Copy identity**: the image the copy is compiled into. It keys the per-image
+  OS registrations that must not collide between copies — the `HINSTANCE`
+  every Win32 window class is registered against, the suffix in its name — and
+  it is always the copy's own image (`getCurrentModuleHandle`,
+  `getCurrentModulePath`, `getModuleIdentitySuffix`).
+- **Role**: is the copy the application, or a guest in a process someone else
+  owns? `Platform::isStandalone()` / `isDLL()` (`Plugins::isDynamicLibrary`).
+  A guest does not run the event loop in `Apps::run<T>()`, attaches to an eacp
+  host's root loop on Linux, defers alerts to its host and prefers X11 for its
+  windows on Linux.
+- **Product image**: the image that is the application as the user and the OS
+  see it — where the Windows icon resource is loaded from, what
+  `Files::applicationPath()` names, what the WebView2 data folder is named
+  after (`getProductModulePath`, `getProductModuleHandle` on Windows).
+
+A copy in the executable is the application and its product is the
+executable. A copy in a library is a guest and its product is its own
+library. Both are decided from the loaded images by address — the executable's
+`HMODULE` on Windows, the Mach-O file type on macOS, the main program's
+`PT_LOAD` segments from `dl_iterate_phdr` on Linux — never by comparing paths,
+so how the program was launched (a bare name on `PATH`, a rewritten `argv[0]`,
+a relative path and a later `chdir`) changes nothing.
+
+The one case that needs saying is an executable that owns a library's copy: a
+thin launcher whose application, eacp included, lives in a DLL, dylib or .so
+it links. Unclaimed, that copy is a guest — `run<T>()` returns at once, the icon
+is looked up in the DLL, and Linux picks X11. The executable claims it:
+
+```cpp
+// In the library
+EACP_PLUGIN_EXPORT const void* myAppModuleAddress()
+{
+    return eacp::Plugins::getCurrentModuleAddress();
+}
+
+// In the executable
+#include <eacp/Core/Plugins/ClaimCopy.h>
+
+extern "C" const void* myAppModuleAddress();
+EACP_CLAIM_COPY(myAppModuleAddress());
+```
+
+```cmake
+target_link_libraries(MyLauncher PRIVATE MyAppLibrary)
+eacp_claim_copy(MyLauncher)
+```
+
+The macro defines `eacpClaimedCopy`, a C function the executable exports
+returning an address inside the claimed image. Each copy looks for it in the
+executable only (a definition found anywhere else is ignored), calls it and
+compares the image it names with its own; the claimed copy is then the
+application and its product is the executable, while its identity stays its
+own library. Any other copy in the process — a plugin the launcher loads —
+is still a guest. The claim is read in the copy's first static initialiser,
+which runs before the executable's own C runtime is up, so the expression must
+be a plain call into the library and touch no static; and it must be a call
+rather than `&importedFunction`, which on Windows is the import thunk in the
+executable. `eacp_claim_copy` exports the symbol on Linux
+(`--export-dynamic-symbol`, GNU ld 2.35+, gold, lld 11+, mold); Windows
+exports it with `dllexport` and macOS from any executable. The macro's
+`static_assert` refuses to compile without the helper on every platform, so a
+launcher that would silently stay a plugin on Linux fails its build on a Mac or
+a PC too. The executable must link the library, not `dlopen` it, and should
+carry no eacp copy of its own: two copies that are both the application would
+both try to own the loop.
+
+No claim, no change: an app or a plugin built without one answers what it
+always did. Android is the exception it always was: its app is a library
+NativeActivity loads, and `Platform::isDLL()` is false there regardless.
+`Tests/Core/ModuleRoleTests.cpp` runs a claiming launcher, the same launcher
+unclaimed and a second library loaded beside the claimed one;
+`ModuleInfoTests-Posix.cpp` launches a standalone binary every way that used
+to fool the Linux test.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables

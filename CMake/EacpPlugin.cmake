@@ -31,6 +31,25 @@ function(eacp_add_plugin target)
     eacp_enable_unity_build(${target})
 endfunction()
 
+# An executable whose source says EACP_CLAIM_COPY (Core/Plugins/ClaimCopy.h),
+# claiming the eacp copy of a library it links as the application's own.
+# The claim must be visible to the loader: Windows exports it with dllexport
+# and macOS exports a default-visibility symbol from an executable anyway,
+# but a Linux executable puts nothing in .dynsym unless asked, so the symbol
+# is named to the linker (GNU ld 2.35+, gold, lld 11+, mold). The definition
+# is what the macro's static_assert checks, so a forgotten call fails the
+# build on every platform rather than leave the app a plugin on Linux alone.
+#
+#   eacp_claim_copy(MyLauncher)
+function(eacp_claim_copy executable)
+    target_compile_definitions(${executable} PRIVATE EACP_CLAIM_COPY_LINKED=1)
+
+    if (LINUX)
+        target_link_options(${executable} PRIVATE
+                "LINKER:--export-dynamic-symbol=eacpClaimedCopy")
+    endif ()
+endfunction()
+
 function(eacp_collect_link_targets target out_var)
     set(found ${${out_var}})
     get_target_property(links ${target} LINK_LIBRARIES)

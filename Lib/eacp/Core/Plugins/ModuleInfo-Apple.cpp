@@ -1,25 +1,34 @@
 #include "ModuleInfo.h"
+#include "ModuleInfoPlatform.h"
+#include "ModuleInfoPosix.h"
 
+#include <cstdint>
 #include <dlfcn.h>
 #include <mach-o/loader.h>
 
 namespace eacp::Plugins
 {
-bool isDynamicLibrary()
+// A process has one MH_EXECUTE image, the executable: dylibs and bundles carry
+// other file types.
+bool Detail::isInMainProgram(const void* address)
 {
-    static const auto result = []
-    {
-        auto info = Dl_info {};
+    auto info = Dl_info {};
 
-        if (dladdr((const void*) &isDynamicLibrary, &info) == 0
-            || info.dli_fbase == nullptr)
-            return false;
+    if (dladdr(address, &info) == 0 || info.dli_fbase == nullptr)
+        return true;
 
-        // filetype sits at the same offset in mach_header and mach_header_64.
-        return ((const mach_header*) info.dli_fbase)->filetype
-               != (std::uint32_t) MH_EXECUTE;
-    }();
+    // filetype sits at the same offset in mach_header and mach_header_64.
+    return ((const mach_header*) info.dli_fbase)->filetype
+           == (std::uint32_t) MH_EXECUTE;
+}
 
-    return result;
+void* Detail::findClaimFunction()
+{
+    return dlsym(RTLD_MAIN_ONLY, "eacpClaimedCopy");
+}
+
+FilePath getCurrentModulePath()
+{
+    return Detail::loadedImagePath();
 }
 } // namespace eacp::Plugins

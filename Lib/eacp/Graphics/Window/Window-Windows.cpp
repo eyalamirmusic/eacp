@@ -351,7 +351,7 @@ struct Window::Native
     // destructor releases.
     static HICON embeddedApplicationIcon()
     {
-        return LoadIconW((HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
+        return LoadIconW((HINSTANCE) eacp::Plugins::getProductModuleHandle(),
                          MAKEINTRESOURCEW(1));
     }
 
