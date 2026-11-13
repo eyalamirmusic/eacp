@@ -40,7 +40,6 @@ struct ThreadPoolCompletion
     TaskGroup::Tag* group = nullptr;
 };
 
-thread_local const void* threadPoolCurrentState = nullptr;
 std::atomic<bool> threadPoolSharedCreated {false};
 
 int threadPoolResolvedCount(int requested)
@@ -104,7 +103,13 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
         TaskGroup::Tag* group;
     };
 
-    bool isCurrentThreadOurs() const { return threadPoolCurrentState == this; }
+    // Not a thread_local: dyld never unloads an image holding one, and every
+    // module linking eacp-core would then stay mapped after its last close.
+    bool isCurrentThreadOurs() const
+    {
+        auto lock = ThreadPoolLock(mutex);
+        return workerIds.contains(std::this_thread::get_id());
+    }
 
     bool submit(ThreadPoolEntry entry)
     {
@@ -169,9 +174,9 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
 
     void runWorker()
     {
-        threadPoolCurrentState = this;
         auto lock = ThreadPoolLock(mutex);
         --startingThreads;
+        workerIds.add(std::this_thread::get_id());
 
         while (!exiting)
         {
@@ -187,6 +192,8 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
             queue.pop_front();
             runEntry(lock, std::move(entry));
         }
+
+        workerIds.removeAllMatches(std::this_thread::get_id());
     }
 
     // Nothing a task captured is destroyed with the lock held: its destructor
@@ -454,6 +461,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
     std::deque<ThreadPoolEntry> queue;
     std::deque<ThreadPoolCompletion> completions;
     Vector<Thread> threads;
+    Vector<std::thread::id> workerIds;
     int outstanding = 0;
     int idleThreads = 0;
     int reservedThreads = 0;
