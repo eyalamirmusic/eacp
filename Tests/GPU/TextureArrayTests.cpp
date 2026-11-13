@@ -101,7 +101,11 @@ float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
 
 float4 fragmentMain(float4 position : SV_Position) : SV_Target
 {
-    uint column = uint(position.x);
+    // Signed, because NVIDIA's D3D12 driver (RTX 5070 Ti) gets an array index
+    // of float(uint(x)) wrong: it rounds x to nearest even, so the pixel at
+    // 1.5 samples layer 2. A signed int compiles to round_z and is sampled
+    // correctly.
+    int column = int(position.x);
     return )"
            + dialects.hlslSample + R"(;
 }
