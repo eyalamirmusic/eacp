@@ -51,7 +51,11 @@ struct TimedView final : GPUView
 
 const FrameTimings& renderAndCollect(TimedView& view)
 {
-    view.setBounds({0.f, 0.f, 64.f, 64.f});
+    // Large enough that every pass's clear outlasts a timestamp tick. NVIDIA's
+    // tick is 32 ns, and on an RTX 5070 Ti a clear of a target already cleared
+    // this frame takes less than that at 64x64 and about 500 ns at 512x512, so
+    // at the smaller size the second pass usually read a span of exactly zero.
+    view.setBounds({0.f, 0.f, 512.f, 512.f});
 
     // Twice: the first frame is the one being measured, and the second is what
     // collects it. Nothing waits for the GPU to make that happen - a frame's

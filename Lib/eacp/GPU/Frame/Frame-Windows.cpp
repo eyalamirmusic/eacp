@@ -434,6 +434,12 @@ RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
     // two backends draw differently. Tests/GPU/StencilTests.cpp pins it.
     list->OMSetStencilRef(0);
 
+    // Timed from before the clears, which are the pass's load action and so
+    // part of its work, as they are inside Metal's encoder and after Vulkan's
+    // opening timestamp.
+    auto* encoder = new D3D12Encoder {impl->commands, {}};
+    impl->timePass(*encoder, descriptor.label);
+
     if (descriptor.clear)
     {
         const auto& color = descriptor.clearColor;
@@ -457,8 +463,6 @@ RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
                                     0,
                                     nullptr);
 
-    auto* encoder = new D3D12Encoder {impl->commands, {}};
-    impl->timePass(*encoder, descriptor.label);
     auto* queries = impl->countOcclusionInto(descriptor);
 
     // The pass carries the target's pixel size so it can clamp scissor rects.
@@ -583,6 +587,8 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
     // two backends draw differently. Tests/GPU/StencilTests.cpp pins it.
     list->OMSetStencilRef(0);
 
+    impl->timePass(*encoder, descriptor.label);
+
     for (auto index = std::size_t {0}; index < targets.size(); ++index)
     {
         if (!targets[index].clear)
@@ -604,7 +610,6 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
                                     0,
                                     nullptr);
 
-    impl->timePass(*encoder, descriptor.label);
     auto* queries = impl->countOcclusionInto(descriptor);
 
     return RenderPass(encoder, width, height, queries);
