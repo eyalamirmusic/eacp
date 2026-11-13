@@ -105,12 +105,15 @@ struct OriginFixture
         waitUntilPosted();
     }
 
+    // The first callJS queues behind the engine's creation and the first
+    // navigation, so its answer gets the first-navigation budget, not a
+    // live page's round trip.
     void waitUntilPosted()
     {
         auto posted = [this]
         {
             return webView.callJS("window.__posted === true ? 'yes' : 'no'")
-                       .waitFor(webViewResultTimeout)
+                       .waitFor(firstNavigationTimeout)
                    == "yes";
         };
         check(Threads::runEventLoopUntil(posted, firstNavigationTimeout));
