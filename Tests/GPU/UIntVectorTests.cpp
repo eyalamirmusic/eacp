@@ -685,22 +685,22 @@ auto tUIntVectorSharedRuns = test("UIntVector/sharedPairsCrossLanes") = []
 // themselves.
 auto tUIntVectorWideBitcastsRun = test("UIntVector/aQuadBitcastKeepsEveryBit") = []
 {
-    constexpr std::uint32_t patterns[] = {0x00000000u,
-                                          0x80000000u,
-                                          0x3f800000u,
-                                          0xbf800000u,
-                                          0x00000001u,
-                                          0x007fffffu,
-                                          0x7f800000u,
-                                          0xff800000u,
-                                          0x7fc00000u,
-                                          0x7f800001u,
-                                          0x12345678u,
-                                          0xdeadbeefu,
-                                          0x00800000u,
-                                          0xcafef00du,
-                                          0x40490fdbu,
-                                          0xffffffffu};
+    static constexpr std::uint32_t patterns[] = {0x00000000u,
+                                                 0x80000000u,
+                                                 0x3f800000u,
+                                                 0xbf800000u,
+                                                 0x00000001u,
+                                                 0x007fffffu,
+                                                 0x7f800000u,
+                                                 0xff800000u,
+                                                 0x7fc00000u,
+                                                 0x7f800001u,
+                                                 0x12345678u,
+                                                 0xdeadbeefu,
+                                                 0x00800000u,
+                                                 0xcafef00du,
+                                                 0x40490fdbu,
+                                                 0xffffffffu};
 
     constexpr auto elements = (int) std::size(patterns);
     constexpr auto threads = elements / 4;
