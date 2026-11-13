@@ -170,6 +170,7 @@ int run(const Callback& func)
             quit();
         });
 
+    Threads::stopSharedThreadPool();
     return getReturnValue();
 }
 

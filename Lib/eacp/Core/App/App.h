@@ -2,6 +2,7 @@
 
 #include "../Platform/Platform.h"
 #include "../Threads/EventLoop.h"
+#include "../Threads/ThreadPool.h"
 #include "../Utils/Common.h"
 #include "AppEnvironment.h"
 
@@ -275,6 +276,7 @@ int run(Args&&... args)
     // exited, so no native event delivery or nested pump can still be
     // referencing the views. Apps::quit() only stops the loop.
     destroyApp();
+    Threads::stopSharedThreadPool();
     return getReturnValue();
 }
 

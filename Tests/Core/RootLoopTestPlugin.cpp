@@ -6,10 +6,13 @@
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/Plugins/PluginExport.h>
 #include <eacp/Core/Threads/EventLoop-Linux.h>
+#include <eacp/Core/Threads/ThreadPool.h>
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Strings.h>
+#include <eacp/Core/Utils/Time.h>
 
+#include <atomic>
 #include <optional>
 #include <string>
 
@@ -86,6 +89,31 @@ EACP_PLUGIN_EXPORT void eacpRootLoopPluginRunApp(int* counter,
                                                  int quitWhenConstructed)
 {
     eacp::Apps::run<PluginApp>(counter, quitWhenConstructed);
+}
+
+// Two tasks on this copy's shared pool, both running when the plugin goes, with
+// main-thread callbacks that may never be delivered.
+EACP_PLUGIN_EXPORT void eacpRootLoopPluginSubmitToPool(std::atomic<int>* started,
+                                                       int workMs)
+{
+    auto& pool = eacp::Threads::ThreadPool::shared();
+
+    auto work = [started, workMs]
+    {
+        ++*started;
+        eacp::Time::sleepMS(workMs);
+    };
+
+    auto onMainThread = [started] { *started += 100; };
+
+    for (auto task = 0; task < 2; ++task)
+        pool.submit(
+            eacp::Threads::PoolTask {.work = work, .onMainThread = onMainThread});
+}
+
+EACP_PLUGIN_EXPORT void eacpRootLoopPluginDetach()
+{
+    eacp::Threads::detachCurrentThreadAsMain();
 }
 
 // Everything this copy owns, destroyed while its image is still mapped —

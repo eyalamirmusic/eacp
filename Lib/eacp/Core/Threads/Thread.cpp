@@ -1,11 +1,27 @@
 #include "Thread.h"
 
 #include <atomic>
+#include <future>
 #include <thread>
 
 namespace eacp::Threads
 {
 using AtomicId = std::atomic<std::thread::id>;
+
+namespace
+{
+bool threadApplyOptions(const ThreadOptions& options)
+{
+    if (!options.name.empty())
+        setCurrentThreadName(options.name);
+
+    if (options.realtime)
+        return setCurrentThreadRealtime(*options.realtime);
+
+    setCurrentThreadPriority(options.priority);
+    return false;
+}
+} // namespace
 
 struct Thread::Native
 {
@@ -13,16 +29,24 @@ struct Thread::Native
     {
         thread.swap(other.thread);
         id.swap(other.id);
+        std::swap(options, other.options);
+        realtime = other.realtime.exchange(realtime.load());
     }
 
     std::thread thread;
     std::shared_ptr<AtomicId> id = std::make_shared<AtomicId>();
+    ThreadOptions options;
+    std::atomic<bool> realtime {false};
 };
 
-Thread::Thread() = default;
-
-Thread::Thread(const Callback& body)
+Thread::Thread(const ThreadOptions& optionsToUse)
 {
+    setOptions(optionsToUse);
+}
+
+Thread::Thread(const Callback& body, const ThreadOptions& optionsToUse)
+{
+    setOptions(optionsToUse);
     start(body);
 }
 
@@ -52,24 +76,50 @@ void Thread::start(const Callback& body)
     join();
 
     auto id = std::make_shared<AtomicId>();
+    auto settled = std::make_shared<std::promise<bool>>();
+    auto outcome = settled->get_future();
 
-    auto run = [id, body]
+    auto run = [id, body, settled, options = impl->options]
     {
         id->store(std::this_thread::get_id());
+        settled->set_value(threadApplyOptions(options));
         body();
+
+        if (options.realtime)
+            endCurrentThreadRealtime();
     };
 
     impl->id = id;
     impl->thread = std::thread {run};
+
+    if (impl->options.realtime)
+        impl->realtime = outcome.get();
 }
 
 void Thread::join()
 {
-    if (!isJoinable())
-        return;
+    if (isJoinable())
+    {
+        assert(!isCurrentThread());
+        impl->thread.join();
+    }
 
-    assert(!isCurrentThread());
-    impl->thread.join();
+    impl->realtime = false;
+}
+
+void Thread::setOptions(const ThreadOptions& optionsToUse)
+{
+    impl->options = optionsToUse;
+}
+
+const ThreadOptions& Thread::options() const
+{
+    return impl->options;
+}
+
+bool Thread::isRealtime() const
+{
+    return impl->realtime;
 }
 
 bool Thread::isJoinable() const

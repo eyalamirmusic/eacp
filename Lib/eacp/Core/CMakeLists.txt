@@ -41,6 +41,7 @@ target_sources(eacp-core PRIVATE
         Threads/TaskSemaphore.cpp
         Threads/Thread.cpp
         Threads/ThreadId.cpp
+        Threads/ThreadPool.cpp
         Utils/Base64.cpp
         Utils/Console.cpp
         Utils/Environment.cpp

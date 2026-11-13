@@ -14,6 +14,7 @@
 #include "Process/BuildRunner.h"
 #include "Process/Process.h"
 #include "Threads/Thread.h"
+#include "Threads/ThreadPool.h"
 #include "Threads/Timer.h"
 #include "Utils/Base64.h"
 #include "Utils/Broadcaster.h"

@@ -2,6 +2,7 @@
 
 #include "EventLoop.h"
 #include "CallAfter.h"
+#include "ThreadPool.h"
 #include "ThreadUtils-Windows.h"
 #include "../App/App.h"
 #include "../Plugins/ModuleInfo.h"
@@ -547,6 +548,7 @@ void attachCurrentThreadAsMain()
 void detachCurrentThreadAsMain()
 {
     stopCallAfterScheduler();
+    stopSharedThreadPool();
     stopParentDeathWatchdog();
     stopLiveTimers();
     destroyMessageWindow();
