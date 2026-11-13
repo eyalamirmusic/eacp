@@ -17,8 +17,8 @@ struct ThreadOptions
 class Thread
 {
 public:
-    explicit Thread(const ThreadOptions& optionsToUse = {});
-    explicit Thread(const Callback& body, const ThreadOptions& optionsToUse = {});
+    Thread(const ThreadOptions& optionsToUse = {});
+    Thread(const Callback& body, const ThreadOptions& optionsToUse = {});
     ~Thread();
 
     Thread(Thread&& other) noexcept;
