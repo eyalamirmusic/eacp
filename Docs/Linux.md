@@ -107,6 +107,18 @@ is in, and `onUnhandledKey` is not called. Include
 `<eacp/Graphics/Window/NativeChildSurface.h>` directly: the `Graphics.h`
 umbrella keeps it under `EACP_HAS_CONTEXT`.
 
+A VST3 editor on Linux is measured in pixels: its `ViewRect`s and
+`IPlugViewContentScaleSupport::setContentScaleFactor` both want the scale of
+the container. `backingScale()` is that factor, native pixels per point: the X11
+window's scale, which is `Xft.dpi` over 96 for a toplevel and whatever
+`EmbeddedView::setPixelsPerPoint` said for an embedded surface, and 1 while the
+surface is in no window. `onBackingScaleChanged` fires when it would answer
+differently from the last time it was asked — the display's `Xft.dpi` changed,
+the embedder's scale changed, or the surface entered a window of another scale
+— so a host multiplies the view's bounds by it, tells the editor the new factor
+and resizes it in that callback. The same pair exists on macOS (the window's
+`backingScaleFactor`) and Windows (the window's DPI over 96).
+
 There is no X11 embedding inside a Wayland surface, so the handle exists only
 in an X11-backed window — a toplevel on the X11 backend, or an
 `EmbeddedView` — and is null in a Wayland window (logged once) or a headless

@@ -131,9 +131,17 @@ struct NativeChildSurface::Native final : LinuxNativeChild
         return reinterpret_cast<void*>((uintptr_t) container);
     }
 
+    // Every scale change reaches here: a toplevel's Xft.dpi, an EmbeddedView's
+    // setPixelsPerPoint and a move to another window all sync the view.
+    void sync() override
+    {
+        syncContainer();
+        owner.reportBackingScale();
+    }
+
     // Asks nothing of the X server until the view is in an X11 window, so a
     // Wayland app holding one of these never opens a connection for it.
-    void sync() override
+    void syncContainer()
     {
         auto* host = x11ChildHostOf(owner);
 
@@ -656,6 +664,21 @@ void NativeChildSurface::resized()
 void NativeChildSurface::visibilityChanged(bool)
 {
     impl->sync();
+}
+
+void NativeChildSurface::backingScaleChanged()
+{
+    View::backingScaleChanged();
+    reportBackingScale();
+}
+
+// The window's own scale, which is what the container is placed in, whatever
+// window system it is: a Wayland window has a scale and no handle.
+float NativeChildSurface::currentBackingScale() const
+{
+    auto* window = linuxWindowForView(const_cast<NativeChildSurface&>(*this));
+
+    return window != nullptr ? window->scale : linuxDefaultBackingScale;
 }
 
 } // namespace eacp::Graphics

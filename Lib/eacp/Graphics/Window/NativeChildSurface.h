@@ -73,8 +73,24 @@ public:
     // follows an ancestor's move by itself.
     void refreshPlacement();
 
+    // Native pixels per point of the container the handle names: what turns
+    // this view's bounds into the pixel size a plugin format measures an
+    // editor in (VST3's ViewRect on Windows and Linux, and its
+    // setContentScaleFactor). The window's DPI over 96 on Windows, the
+    // window's backingScaleFactor on macOS, and on Linux the X11 window's
+    // scale - Xft.dpi over 96 for a toplevel, setPixelsPerPoint for an
+    // EmbeddedView. 1 while the surface is in no window.
+    float backingScale() const;
+
+    // Fired when backingScale() would answer differently from the last time
+    // it was asked or reported: the window moved to a display with another
+    // scale, the display's scale changed, or the surface entered a window of
+    // another scale. Not called for a value nobody has seen differ.
+    std::function<void(float)> onBackingScaleChanged = [](float) {};
+
     void resized() override;
     void visibilityChanged(bool nowVisible) override;
+    void backingScaleChanged() override;
 
     // Not called on Linux, where a key the client does not select goes on up
     // the X11 tree to the window it is in, and so to the host's own views.
@@ -82,8 +98,33 @@ public:
         [](const NativeKeyEvent&) { return false; };
 
 private:
+    float currentBackingScale() const;
+
+    // Each platform calls it wherever the scale may have moved.
+    void reportBackingScale()
+    {
+        auto scale = currentBackingScale();
+
+        if (scale == reportedScale)
+            return;
+
+        auto seenBefore = reportedScale > 0.f;
+        reportedScale = scale;
+
+        if (seenBefore)
+            onBackingScaleChanged(scale);
+    }
+
+    mutable float reportedScale = 0.f;
+
     struct Native;
     Pimpl<Native> impl;
 };
+
+inline float NativeChildSurface::backingScale() const
+{
+    reportedScale = currentBackingScale();
+    return reportedScale;
+}
 
 } // namespace eacp::Graphics

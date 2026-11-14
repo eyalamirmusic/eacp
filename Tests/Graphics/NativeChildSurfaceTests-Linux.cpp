@@ -145,7 +145,7 @@ Geometry geometryOf(const Connection& connection, xcb_window_t window)
 {
     auto geometry = Geometry {};
 
-    if (window == XCB_NONE)
+    if (window == XCB_NONE || !connection.isValid())
         return geometry;
 
     auto* xcb = connection.connection;
@@ -169,7 +169,7 @@ bool hasGeometry(const Geometry& geometry, int x, int y, int width, int height)
 
 xcb_window_t parentOf(const Connection& connection, xcb_window_t window)
 {
-    if (window == XCB_NONE)
+    if (window == XCB_NONE || !connection.isValid())
         return XCB_NONE;
 
     auto* xcb = connection.connection;
@@ -188,7 +188,7 @@ xcb_window_t parentOf(const Connection& connection, xcb_window_t window)
 // that does not exist.
 std::optional<uint8_t> mapStateOf(const Connection& connection, xcb_window_t window)
 {
-    if (window == XCB_NONE)
+    if (window == XCB_NONE || !connection.isValid())
         return {};
 
     auto* xcb = connection.connection;
@@ -211,6 +211,9 @@ bool isViewable(const Connection& connection, xcb_window_t window)
 
 xcb_window_t focusedWindow(const Connection& connection)
 {
+    if (!connection.isValid())
+        return XCB_NONE;
+
     auto* xcb = connection.connection;
     auto* reply = xcb_get_input_focus_reply(xcb, xcb_get_input_focus(xcb), nullptr);
 
@@ -230,6 +233,9 @@ struct HostWindow
     HostWindow(Connection& connectionToUse, int width, int height)
         : connection(connectionToUse)
     {
+        if (!connection.isValid())
+            return;
+
         auto* screen = connection.screen();
         auto* xcb = connection.connection;
 
@@ -547,7 +553,7 @@ struct LogCapture
 auto tAServerIsPresentWhenRequired =
     test("NativeChildSurface/aServerIsPresentWhenRequired") = []
 {
-    const auto reachable = x11ServerReachable() && Connection {}.isValid();
+    const auto reachable = x11ServerReachable();
 
     LOG("X11 server: ", reachable ? getEnvValue("DISPLAY") : std::string {"none"});
 
@@ -685,6 +691,152 @@ auto tTheEmbeddersScaleIsThePixels =
             return hasGeometry(
                 geometryOf(scene.connection, client.window), 0, 0, 400, 200);
         }));
+};
+
+auto tTheEmbeddersScaleIsReported =
+    test("NativeChildSurface/theEmbeddersScaleIsReported") = []
+{
+    if (!x11ServerReachable())
+        return;
+
+    auto scene = Scene {};
+    auto reported = std::vector<float> {};
+
+    scene.surface.onBackingScaleChanged = [&](float scale)
+    { reported.push_back(scale); };
+
+    check(scene.surface.backingScale() == 1.f);
+
+    scene.embedded->setPixelsPerPoint(2.f);
+
+    check(scene.surface.backingScale() == 2.f);
+    check(reported == std::vector<float> {2.f});
+
+    // The same scale again is no change.
+    scene.embedded->setPixelsPerPoint(2.f);
+    scene.surface.refreshPlacement();
+
+    check(reported.size() == 1);
+
+    scene.embedded->setPixelsPerPoint(1.5f);
+
+    check(scene.surface.backingScale() == 1.5f);
+    check(reported == std::vector<float> {2.f, 1.5f});
+
+    // Out of every window it is 1, and going back into one says so.
+    scene.frame.removeSubview(scene.surface);
+
+    check(scene.surface.backingScale() == 1.f);
+
+    scene.frame.addSubview(scene.surface);
+
+    check(reported == std::vector<float> {2.f, 1.5f, 1.5f});
+    check(scene.surface.backingScale() == 1.5f);
+};
+
+auto tNoWindowIsScaleOne = test("NativeChildSurface/noWindowIsScaleOne") = []
+{
+    auto surface = NativeChildSurface {};
+    auto calls = 0;
+
+    surface.onBackingScaleChanged = [&](float) { ++calls; };
+    surface.refreshPlacement();
+
+    check(surface.backingScale() == 1.f);
+    check(calls == 0);
+};
+
+std::string resourceDatabaseOf(const Connection& connection)
+{
+    auto* xcb = connection.connection;
+    auto root = connection.screen()->root;
+
+    auto* reply = xcb_get_property_reply(
+        xcb,
+        xcb_get_property(
+            xcb, 0, root, XCB_ATOM_RESOURCE_MANAGER, XCB_ATOM_STRING, 0, 65536),
+        nullptr);
+
+    if (reply == nullptr)
+        return {};
+
+    auto database = std::string {(const char*) xcb_get_property_value(reply),
+                                 (size_t) xcb_get_property_value_length(reply)};
+
+    std::free(reply);
+
+    return database;
+}
+
+void writeResourceDatabase(const Connection& connection, const std::string& database)
+{
+    xcb_change_property(connection.connection,
+                        XCB_PROP_MODE_REPLACE,
+                        connection.screen()->root,
+                        XCB_ATOM_RESOURCE_MANAGER,
+                        XCB_ATOM_STRING,
+                        8,
+                        (uint32_t) database.size(),
+                        database.c_str());
+    xcb_flush(connection.connection);
+}
+
+// A toplevel's scale is the display's Xft.dpi, which only a server of this
+// suite's own may have rewritten: a desktop's resource database is the
+// desktop's.
+auto tAToplevelsDpiIsReported =
+    test("NativeChildSurface/aToplevelsDpiIsReported") = []
+{
+    if (!x11ServerReachable() || getEnvValue("EACP_XVFB_OUTPUT").empty())
+        return;
+
+    auto connection = Connection {};
+    auto pump = Pump {};
+
+    auto content = View {};
+    auto surface = NativeChildSurface {};
+    auto reported = std::vector<float> {};
+
+    surface.onBackingScaleChanged = [&](float scale) { reported.push_back(scale); };
+    surface.setBounds({10.f, 20.f, 100.f, 50.f});
+    content.addSubview(surface);
+
+    auto options = WindowOptions {};
+    options.width = 300;
+    options.height = 200;
+    options.title = "eacp native child surface scale";
+    options.isPrimary = false;
+
+    const auto original = resourceDatabaseOf(connection);
+
+    {
+        auto window = Window {options};
+        window.setContentView(content);
+
+        check(pump.until([&] { return window.isVisible(); }));
+
+        const auto before = surface.backingScale();
+        const auto handle =
+            (xcb_window_t) (uintptr_t) surface.getNativeParentHandle();
+
+        writeResourceDatabase(connection, "Xft.dpi:\t192\n");
+
+        check(pump.until([&] { return surface.backingScale() == 2.f; }),
+              "Xft.dpi 192 never reached the surface");
+        check(!reported.empty() && reported.back() == 2.f);
+        check(pump.until(
+            [&]
+            {
+                return hasGeometry(geometryOf(connection, handle), 20, 40, 200, 100);
+            }));
+
+        writeResourceDatabase(connection, original);
+
+        check(pump.until([&] { return surface.backingScale() == before; }));
+        check(reported.back() == before);
+    }
+
+    content.removeSubview(surface);
 };
 
 auto tHidingUnmapsAndShowingMapsAgain =
@@ -996,6 +1148,13 @@ int main(int argc, char* argv[])
     ::setenv("EACP_WINDOW_SYSTEM", "x11", 0);
 
     Threads::attachCurrentThreadAsMain();
+
+    // Held for the whole run: an Xvfb whose last client disconnects resets,
+    // and a connection eacp opens during the reset fails for the process.
+    auto keepServerUp = std::optional<NativeChildSurfaceTests::Connection> {};
+
+    if (NativeChildSurfaceTests::x11ServerReachable())
+        keepServerUp.emplace();
 
     return nano::run(argc, argv);
 }

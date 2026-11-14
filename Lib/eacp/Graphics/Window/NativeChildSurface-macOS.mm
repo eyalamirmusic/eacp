@@ -140,4 +140,22 @@ void NativeChildSurface::resized()
 // content under it — without being asked. Windows has no such tree.
 void NativeChildSurface::visibilityChanged(bool) {}
 
+// AppKit sends viewDidChangeBackingProperties when the view enters a window as
+// well as when the window's screen or scale changes.
+void NativeChildSurface::backingScaleChanged()
+{
+    View::backingScaleChanged();
+    reportBackingScale();
+}
+
+float NativeChildSurface::currentBackingScale() const
+{
+    auto* container = const_cast<NSView*>(impl->container.get());
+
+    if (NSWindow* window = container.window)
+        return (float) window.backingScaleFactor;
+
+    return 1.f;
+}
+
 } // namespace eacp::Graphics

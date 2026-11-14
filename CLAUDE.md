@@ -696,8 +696,13 @@ to the root before destroying the container, as XEmbed says an embedder
 ends, so a plugin's later `XDestroyWindow` is not a `BadWindow` (which Xlib's
 default handler turns into an exit). A host window the server reaped
 (`inferiorsGone`, or the container's own `DestroyNotify`) is never asked about
-again. `Tests/Graphics/NativeChildSurfaceTests-Linux.cpp` is the suite: 14
-cases in a plain-`main` binary like `EmbeddedViewTests`, a second xcb
+again. `backingScale()` is the window's `LinuxWindowSurface::scale` (1 in
+none), and `onBackingScaleChanged` is fired from `sync()`, which every scale
+change already reaches; the header's inline `reportBackingScale` is the
+cross-platform half, comparing against the last value asked for or reported,
+and macOS reports from `backingScaleChanged` while Windows reports on
+placement and on `WM_DPICHANGED_AFTERPARENT`.
+`Tests/Graphics/NativeChildSurfaceTests-Linux.cpp` is the suite: 17 cases in a plain-`main` binary like `EmbeddedViewTests`, a second xcb
 connection of the test's own playing the plugin, and
 `Wayland/aNativeChildSurfaceHasNoHandle` in `WaylandWindowTests`.
 
@@ -794,7 +799,7 @@ same override so the binary run by hand on a desktop still tests X11; the 9
 `X11/clipboard` ones in `X11ClipboardTests-Linux.cpp` drive a second xcb
 connection as another client, on a thread of its own where it has to own the
 selection while eacp blocks reading it), `EmbeddedViewTests` (17, the
-same default), `NativeChildSurfaceTests` (14, the same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
+same default), `NativeChildSurfaceTests` (17, the same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
 the X11 suites are filtered in and out; everything else already ran under
 Weston. `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
 without a display server, as
@@ -980,8 +985,10 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   Linux an X11 window id) a foreign toolkit parents its own editor into, for
   plugin hosts. The macOS container clips to its bounds since the macOS 14 SDK
   stopped doing so. Not in the `Graphics.h` umbrella (it sits under
-  `EACP_HAS_CONTEXT` there, which Linux lacks); include it directly. The Linux
-  one is described under "The Linux Backend"
+  `EACP_HAS_CONTEXT` there, which Linux lacks); include it directly.
+  `backingScale()`/`onBackingScaleChanged` (the GPUView pair's shape) are the
+  container's pixels per point, which a plugin format measuring editors in
+  pixels needs. The Linux one is described under "The Linux Backend"
 - `Window/KeyForwarding`, `KeyGrab`: `EmbedderKeyForwarder` sends the keys a
   hosted editor leaves unhandled back to the host's main window; on macOS it
   briefly makes that window key and dispatches through `NSApp` so a DAW's
