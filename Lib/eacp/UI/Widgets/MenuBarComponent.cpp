@@ -208,14 +208,13 @@ PopupMenu MenuBarComponent::toPopupMenu(const GraphicsMenu::Menu& menu)
 void MenuBarComponent::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
 
     g.setColour(theme.get(ThemeKeys::panel));
-    g.fillRect(bounds);
+    g.fillRect(area);
 
     g.setColour(theme.get(ThemeKeys::outline));
-    g.drawLine({bounds.x, bounds.bottom() - 0.5f},
-               {bounds.right(), bounds.bottom() - 0.5f});
+    g.drawLine({area.x, area.bottom() - 0.5f}, {area.right(), area.bottom() - 0.5f});
 
     if (menuOptions.style.font.has_value())
         g.setFont(*menuOptions.style.font);
