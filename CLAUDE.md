@@ -24,7 +24,7 @@ Core reuse map; `HotReload.md` for
 `Plugins::Reloadable`, `eacp_add_hot_reload` and the reload machinery under
 them) and beside the modules
 they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`,
-`Lib/eacp/UI/README.md`). New
+`Lib/eacp/UI/README.md`, `Lib/eacp/ExportList/README.md`). New
 implementation-level documentation goes there, not in the README.
 
 Platform coverage splits on whether a module draws, decided once in the
@@ -344,7 +344,10 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 
 - `EACP_HOT_RELOAD` (default `OFF`): dev or static mode for every app wired
   with `eacp_add_hot_reload` that passes no `HOT_RELOAD` of its own (both
-  in-tree examples pass `ON`; Windows, iOS and Android are always static).
+  in-tree examples pass `ON`; iOS and Android are always static, and Windows
+  is static under any generator but Ninja, since its dev mode links the app
+  with an export list of its whole closure, `eacp_add_export_list`, and in
+  Release unless `-DEACP_HOT_RELOAD=ON` turns link-time optimisation off).
   `eacp_add_hot_reload(<app> <library> SOURCES ...)` creates the library: a
   static one linked into the app in static mode, a module the app loads in
   dev mode, whose own links are routed to the app and reach it compile-only.
@@ -1189,8 +1192,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `BuildRunner` (`Process/BuildRunner.h`): one command rerun on demand on a
   background thread, stderr merged; `onOutput`/`onFinished` on the main thread;
   `run()` mid-run coalesces into exactly one rerun; a cancelled run finishes
-  with `exited == false` (cancel kills the direct child only, not ninja under
-  cmake)
+  with `exited == false`; cancelling or destroying it ends what the command
+  started too (`ProcessOptions::killDescendants`: a job object on Windows, a
+  process group on POSIX)
 - Hot reload (`Plugins/`): `Reloadable` with `EACP_RELOADABLE` is the
   interface (`Apps/UI/HotReload` reloads a layout function, `Apps/GPU/HotReload`
   a `GPUView` factory held in a `Graphics::OptionalView`, replaced inside

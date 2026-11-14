@@ -77,6 +77,7 @@ BuildRunner::BuildRunner(const ProcessOptions& commandToUse)
     command.captureOutput = true;
     command.mergeErrorOutput = true;
     command.detached = false;
+    command.killDescendants = true;
 }
 
 BuildRunner::~BuildRunner()

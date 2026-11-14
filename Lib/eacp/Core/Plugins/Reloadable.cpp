@@ -4,25 +4,91 @@
 
 namespace eacp::Plugins
 {
-std::string Detail::readableSignature(std::string_view signature)
+namespace
+{
+// Clang and GCC: "const char *eacp::...::signatureOf() [Signature = int ()]",
+// GCC writing "[with Signature = int()]".
+std::string_view prettyFunctionType(std::string_view signature)
 {
     constexpr auto marker = std::string_view {"Signature = "};
     auto start = signature.find(marker);
 
-    if (start != std::string_view::npos)
-    {
-        signature.remove_prefix(start + marker.size());
+    if (start == std::string_view::npos)
+        return signature;
 
-        if (signature.ends_with(']'))
-            signature.remove_suffix(1);
+    signature.remove_prefix(start + marker.size());
+
+    if (signature.ends_with(']'))
+        signature.remove_suffix(1);
+
+    return signature;
+}
+
+// MSVC: "const char *__cdecl eacp::...::signatureOf<int(void)>(void)".
+std::string_view funcsigType(std::string_view signature)
+{
+    constexpr auto marker = std::string_view {"signatureOf<"};
+    constexpr auto suffix = std::string_view {">(void)"};
+    auto start = signature.find(marker);
+
+    if (start == std::string_view::npos || !signature.ends_with(suffix))
+        return signature;
+
+    signature.remove_prefix(start + marker.size());
+    signature.remove_suffix(suffix.size());
+    return signature;
+}
+
+bool isIdentifierCharacter(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+           || c == '_';
+}
+
+bool startsKeywordAt(std::string_view text, std::size_t at, std::string_view word)
+{
+    return text.substr(at).starts_with(word)
+           && (at == 0 || !isIdentifierCharacter(text[at - 1]));
+}
+
+// MSVC names every class type with its keyword ("struct Object*(void)"),
+// which clang and GCC leave out.
+std::string withoutElaboratedTypeKeywords(std::string_view type)
+{
+    auto plain = std::string {};
+
+    for (auto at = std::size_t {0}; at < type.size();)
+    {
+        auto keyword = std::string_view {};
+
+        for (auto word: {"struct ", "class ", "union ", "enum "})
+            if (startsKeywordAt(type, at, word))
+                keyword = word;
+
+        if (!keyword.empty())
+        {
+            at += keyword.size();
+            continue;
+        }
+
+        plain += type[at++];
     }
 
-    return std::string {signature};
+    return plain;
+}
+} // namespace
+
+std::string Detail::readableSignature(std::string_view signature)
+{
+    if (signature.find("Signature = ") != std::string_view::npos)
+        return std::string {prettyFunctionType(signature)};
+
+    return withoutElaboratedTypeKeywords(funcsigType(signature));
 }
 
 namespace
 {
-using ReloadableTableFunction = ReloadableTable (*)();
+using ReloadableTableFunction = const ReloadableTable* (*)();
 
 ReloadableEntry::Erased findReloadable(const ReloadableTable& table,
                                        std::string_view signature)
@@ -177,7 +243,7 @@ std::string Reloadable::refusalOf(const DynamicLibrary& image) const
     if (!imageLoaded)
         return {};
 
-    return reloadRefusalFor(firstSignatures, table());
+    return reloadRefusalFor(firstSignatures, *table());
 }
 
 HotReloadLoop::Options Reloadable::loopOptions(const HotReloadTarget& target) const
@@ -261,7 +327,7 @@ void Reloadable::loadFirstImage()
 void Reloadable::useLoadedImage()
 {
     auto& library = loop->getLibrary();
-    loaded = library.findFunction<ReloadableTableFunction>(reloadableTableSymbol)();
+    loaded = *library.findFunction<ReloadableTableFunction>(reloadableTableSymbol)();
 
     if (imageLoaded)
         return;

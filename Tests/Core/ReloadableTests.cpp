@@ -152,8 +152,9 @@ struct Log
     eacp::Vector<std::string> lines;
 };
 
-ReloadableOptions
-    optionsFor(const HotReloadSandbox& sandbox, const std::string& script, Log& log)
+ReloadableOptions optionsFor(const HotReloadSandbox& sandbox,
+                             const HarnessScript& script,
+                             Log& log)
 {
     auto options = ReloadableOptions {};
     options.loop = sandbox.loopOptions(script);
@@ -247,7 +248,8 @@ auto tGenerationZero = test("Reloadable/generationZeroIsTheModule") = []
     sandbox.install(answerAndObject);
 
     auto log = Log {};
-    auto reloadable = Reloadable {devSetup(), optionsFor(sandbox, "true", log)};
+    auto reloadable =
+        Reloadable {devSetup(), optionsFor(sandbox, HarnessScript {}, log)};
 
     check(reloadable.getGeneration() == 0);
     check(reloadable.describeState() == "generation 0");
@@ -301,7 +303,7 @@ auto tCalledAtCreation = test("Reloadable/onReloadedRunsOnceAtCreation") = []
     sandbox.install(answerOne);
 
     auto log = Log {};
-    auto devOptions = optionsFor(sandbox, "true", log);
+    auto devOptions = optionsFor(sandbox, HarnessScript {}, log);
     devOptions.onReloaded = countReload;
 
     auto devReloadable = Reloadable {devSetup(), devOptions};
@@ -362,7 +364,8 @@ auto tIndependentObjects = test("Reloadable/createMakesIndependentObjects") = []
     sandbox.install(objectOne);
 
     auto log = Log {};
-    auto reloadable = Reloadable {devSetup(), optionsFor(sandbox, "true", log)};
+    auto reloadable =
+        Reloadable {devSetup(), optionsFor(sandbox, HarnessScript {}, log)};
 
     auto first = reloadable.create<Object>();
     auto second = reloadable.create<Object>();
@@ -461,7 +464,7 @@ auto tOutlivesTheReloadable =
 
     auto log = Log {};
     auto owner = std::optional<ObjectOwner> {};
-    owner.emplace(optionsFor(sandbox, "true", log));
+    owner.emplace(optionsFor(sandbox, HarnessScript {}, log));
 
     check(owner->current->value() == 1);
 

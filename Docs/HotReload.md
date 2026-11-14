@@ -256,7 +256,9 @@ the current one, two checks run:
 If either check fails, the module is refused. The previous generation stays,
 and the reason becomes `load failed: …`, naming what is wrong in the
 compiler's own spelling of the type (Clang's below; GCC writes
-`ReloadableTestObject*()` and `long int()`):
+`ReloadableTestObject*()` and `long int()`; clang-cl writes Clang's; MSVC,
+whose `__FUNCSIG__` is read with its `struct` and `class` keywords dropped,
+writes `ReloadableTestObject*(void)`, `int(void)` and `long(void)`):
 
 - a missing factory: `the module lacks ReloadableTestObject *()`
 - a changed type: changing `int answer()` to `long answer()` gives
@@ -284,9 +286,10 @@ build that loads becomes generation 0.
 
 ## The module rules
 
-In dev mode the module links nothing. Its references to eacp and to every
-other library it uses stay undefined and are resolved when it loads, against
-what the app exports. Both therefore share one eacp, built by one compiler,
+In dev mode the module links nothing of eacp. Its references to eacp and to
+every other library it uses are resolved when it loads, against what the app
+exports: left undefined on macOS and Linux, and bound through the import
+library made from the app's export list on Windows. Both therefore share one eacp, built by one compiler,
 and C++ types can cross between them. The rules follow from that.
 
 - **Only the table is exported.** `EACP_RELOADABLE` defines
@@ -307,15 +310,22 @@ and C++ types can cross between them. The rules follow from that.
 - **Objects die inside `onReloaded`.** Anything the module creates is handed
   to the app, which destroys or replaces it inside the next `onReloaded` at
   the latest.
+- **Never a unity build.** `eacp_add_hot_reload` sets `UNITY_BUILD OFF` on
+  the library in both modes, whatever `CMAKE_UNITY_BUILD`, `EACP_UNITY_BUILD`
+  or `EACP_UNITY_BUILD_TESTS` say. An edit then recompiles only the source
+  that changed, and that source is itself on the compile line, so Ninja and a
+  compiler cache see the edit directly rather than through a `unity_*.cxx`
+  that includes it, which ccache with clang-cl has been seen to serve stale.
+  Static mode follows suit so that a file-local name that would collide in
+  one translation unit does not fail one mode and pass the other.
 
 The table is a C++ struct, `ReloadableTable` (a pointer and a count of
-`ReloadableEntry {function, signature}`), returned from a C-linkage function.
-This is safe because the module and the app share a compiler.
-`ReloadableEntry.h` turns off clang's `-Wreturn-type-c-linkage` around the
-entry, and `eacp_add_hot_reload` sets `EACP_HOT_RELOAD_ABI` on the app and
-the library, which turns that warning off for any other exported entry point
-they write. The entries live in a local static of that non-inline function,
-so two images' copies are never merged by the loader.
+`ReloadableEntry {function, signature}`), and the C-linkage entry returns a
+pointer to it, `const ReloadableTable*`. This is safe because the module and
+the app share a compiler, and a pointer, unlike the struct by value, draws
+neither clang's `-Wreturn-type-c-linkage` nor MSVC's C4190. The table and its
+entries live in local statics of that non-inline function, so two images'
+copies are never merged by the loader.
 
 ## CMake: `eacp_add_hot_reload` and `EACP_HOT_RELOAD`
 
@@ -341,11 +351,29 @@ mode is decided like this:
 - With no `HOT_RELOAD`, or one whose value is empty (an unset variable, say),
   the app follows the `EACP_HOT_RELOAD` cache option (default `OFF`), read the
   same way.
-- iOS, Android and Windows are always static, whatever either says.
+- iOS and Android are always static, whatever either says.
+- Windows is static, whatever either says, where its dev mode cannot run:
+  under a generator other than Ninja (Visual Studio's and the Makefile
+  generators included), a compiler that is not `cl` or clang-cl, a target
+  other than x64 or ARM64, a cross-compile, which builds no export-list tool,
+  or the static C runtime. See "Windows" below.
+- On Windows a configuration with link-time optimisation (Release, which
+  eacp's libraries optimise at link time, or any configuration
+  `CMAKE_INTERPROCEDURAL_OPTIMIZATION[_<CONFIG>]` turns it on for) needs the
+  build directory to ask: `-DEACP_HOT_RELOAD=ON` turns link-time optimisation
+  off for the app's closure and gives dev mode, and an app's own
+  `HOT_RELOAD ON` alone leaves it static, so a Release build is never
+  de-optimised by an example. Debug, RelWithDebInfo and MinSizeRel have no
+  link-time optimisation and follow the rules above. A multi-config generator
+  is judged by every configuration it builds, so its default set, which has
+  Release, needs `-DEACP_HOT_RELOAD=ON` too.
+- An app has one hot-reload library: a second `eacp_add_hot_reload` for the
+  same app fails the configure, on every platform.
 
 Both in-tree examples pass `HOT_RELOAD ON`, so on macOS and Linux they are in
-dev mode in every build directory, and in static mode on Windows, iOS and
-Android:
+dev mode in every build directory, on Windows in every one that allows it
+(every Debug and RelWithDebInfo Ninja build, and Release with
+`-DEACP_HOT_RELOAD=ON`), and in static mode on iOS and Android:
 
 - `Apps/UI/HotReload` (`HotReload`, library `HotReloadLayout`) reloads a
   layout function.
@@ -353,7 +381,12 @@ Android:
   factory for a `GPUView`. The app holds the view in an `OptionalView` and
   replaces it inside `onReloaded`.
 
-A configure prints `<app>: hot reload ON` or `<app>: hot reload OFF`.
+A configure prints `<app>: hot reload ON` or `<app>: hot reload OFF`, the
+latter followed by the reason when Windows refused dev mode, as in
+`HotReload: hot reload OFF (Windows dev mode needs a Ninja generator, not
+Visual Studio 18 2026)` or `HotReload: hot reload OFF (Windows dev mode needs
+link-time optimisation off, which Release has on. Configure with
+-DEACP_HOT_RELOAD=ON to turn it off for the closure)`.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
@@ -369,8 +402,10 @@ the app the usual way. No module, watcher or build runner is built, and
 **Dev mode** does the following:
 
 - It makes `<library>` a `MODULE` and makes the app depend on it, so the
-  module exists before the app runs. The app does not link it and contains
-  none of its code.
+  module exists before the app runs (on Windows the app's link waits for it
+  instead; see "Windows"). The app does not link it and contains none of its
+  code. The module is compiled with `EACP_HOT_RELOAD_MODULE=1`,
+  which is what makes `EACP_HOT_RELOAD_EXPORT` export on Windows.
 - **It routes the library's dependencies through the app.** At the end of the
   configure, once every `target_link_libraries` has run, everything the
   library links is linked into the app instead, and the module keeps each
@@ -379,11 +414,11 @@ the app the usual way. No module, watcher or build runner is built, and
   uses, exists once, in the app.
 - It defines `EACP_HOT_RELOAD=1` and the module's path, the CMake executable,
   the build directory, the configuration, the library's target name, its
-  source directory and its source files on the app.
-  `Plugins::hotReloadTarget()` reads them back.
+  source directory and its source files on the app, and on Windows the
+  build environment file. `Plugins::hotReloadTarget()` reads them back.
 - It gives the app `ENABLE_EXPORTS`: `-export_dynamic` on Apple, and
   `--export-dynamic` on Linux, which keeps the exports alive under the
-  libraries' Release IPO.
+  libraries' Release IPO. Windows exports through a list instead.
 - It links every static library in the app's link closure whole-archive, the
   library's dependencies included, so the module can call code the app itself
   never calls.
@@ -394,6 +429,99 @@ the app the usual way. No module, watcher or build runner is built, and
   setting belongs to the library targets, so it applies to the whole build
   directory. `eacp_add_plugin` modules built there re-export eacp and lose
   their isolation, so do not mix the two in one build directory.
+
+### Windows
+
+A Windows executable exports nothing a module can bind to at load time, and
+`WINDOWS_EXPORT_ALL_SYMBOLS` covers only a target's own objects, never the
+static libraries it links. So on Windows dev mode adds, at the end of the
+configure, an export list (`eacp_add_export_list`,
+`Lib/eacp/ExportList/README.md`):
+
+- **The list.** `eacp-export-list-tool` reads the app's own objects and every
+  static library in its link closure and writes `<app>-hot-reload.def` beside
+  the app's build files. It drops the names a module never imports from the
+  app (`std` template code, COMDAT data, constants), which keeps the in-tree
+  examples near 13,500 of the 65,535 names a PE image may export, and fails
+  the build above that limit.
+- **The app** links with that list as its `/DEF:` and with every closure
+  archive whole (`/WHOLEARCHIVE`), so whatever the module calls is in the
+  exe.
+- **The module** links `<app>-hot-reload-exports.lib`, an import library
+  made from the list alone, never from the exe, and nothing else of the
+  closure's own code. It never depends on the app target, so a rebuild never
+  touches the running, locked exe. What the list cannot carry it still links
+  itself: every link item in its links' closure that is not a target
+  (`winmm`, `d3d12`, a path) and every imported or shared library target.
+  `$<LINK_ONLY:…>`, `$<BUILD_INTERFACE:…>` and `$<BUILD_LOCAL_INTERFACE:…>`
+  around a link are looked through; any other generator expression around a
+  target fails the configure, naming it, because whether that target is in
+  the closure is only known at generate time.
+- **Symbols.** The module is linked with `/PDBALTPATH:%_PDB%`, so the image
+  names only its PDB's file name, and the app is given the PDB's real path
+  (`$<TARGET_PDB_FILE:…>`, wherever `PDB_OUTPUT_DIRECTORY` or `PDB_NAME` put
+  it), which `ReloadableLibrary` copies beside each staged generation under
+  that name. A debugger then reads the copy and never holds the PDB the next
+  link writes.
+
+  What was measured: because the image records only the PDB's file name, each
+  staged generation carries its own copy beside its DLL. A debugger that
+  searches the image's directory, as Visual Studio does, reads that staged
+  copy and never holds the build directory's PDB, which is what keeps the
+  next link of the module from failing with LNK1201. A dbghelp client
+  attached to the running UI example with the image's directory as its
+  search path loaded the staged PDB for each of six generations, and all five
+  rebuilds in between linked. A dbghelp client with no search path set loads
+  exports only (it does not look beside the image), and must add the image's
+  directory to its symbol path to get symbols. The Visual Studio debugger
+  itself and lldb were not tested.
+- **Ordering.** The list is made after the app's objects compile, the module
+  after the list, and the app's link after both: it waits for the list and for
+  a stamp made once, after the module's first build, so a fresh build
+  directory builds both and a later module build relinks only the module. The
+  list is rewritten only when a name changes, so an edit to the app or eacp
+  that changes nothing exported relinks no module.
+- **The build environment.** Ninja with `cl` compiles in whatever environment
+  it runs in. The configure writes `INCLUDE`, `LIB`, `LIBPATH`,
+  `EXTERNAL_INCLUDE` and `PATH` as it found them to
+  `<build>/eacp-hot-reload-build.env`, and the rebuild runs with them on top
+  of the app's own environment, so an app started from Explorer or a plain
+  shell rebuilds as one started from a developer prompt does. The rebuild runs
+  with no console window (`ProcessOptions::noWindow`); a GUI app would
+  otherwise open one per save.
+- **Link-time optimisation is off** for the app, its module and every library
+  in the closure, in every configuration, because the list cannot be read
+  from `/GL` objects or LLVM bitcode. Like visibility, it is the whole build
+  directory's setting, which is why a configuration that has it needs
+  `-DEACP_HOT_RELOAD=ON` (above); the configure says so in a status line.
+- **The DLL C runtime (`/MD`) is required**, so the exe and the module share
+  one heap. An app on the static runtime, or a build directory whose flags ask
+  for it, stays in static mode with a status line; a library in the closure
+  that picks the static runtime itself is only seen once the closure is
+  known, and fails the configure, naming it.
+- **One module-definition file.** An app that links a `.def` of its own
+  (`/DEF:` in its link options or a `.def` source) fails the configure: a PE
+  image takes one, and dev mode supplies the export list.
+
+What this costs and what it cannot do:
+
+- **Ninja only.** The app's compiles, the list and the app's link interleave
+  across targets, which only Ninja's single build graph can order. Visual
+  Studio and Makefile generators stay in static mode with a status line.
+- **Only module sources reload.** A module that calls a function the running
+  exe lacks (because eacp or the app changed and was rebuilt since it started)
+  fails to load with Windows error 127; the log says to restart the app, and
+  the previous generation stays.
+- **State defined in a header forks.** Windows never merges inline or
+  template code across images, so a `static` local in an inline function, an
+  inline variable or a template's static member has one copy in the exe and
+  another in the module. None of eacp's state is reachable that way from the
+  two in-tree module kinds; a module that used WebView's `EACP_STATE` or kept
+  objects in app-owned per-device state would reach some.
+- **No `extern template` on `std` specialisations** in module code: the list
+  leaves `std` code to the module, which instantiates its own.
+- **A function's address** taken in the module is its import thunk, and can
+  differ from the same function's address taken in the exe.
 
 Only the library's own sources are watched: the files in the target's
 `SOURCES`, made absolute at generate time, so sources added later with
@@ -433,12 +561,17 @@ own table, `true` or `false`, and a `loop` in the options.
 
 ## Platform limits
 
-Hot reload runs on macOS and Linux. Everywhere else it is static:
+Hot reload runs on macOS, Linux and Windows. Everywhere else it is static:
 
-- **Windows.** `WINDOWS_EXPORT_ALL_SYMBOLS` never exports a static library's
-  symbols, so a module has no eacp of the app's to bind to. A module that
-  linked the executable instead would relink the locked, running exe on every
-  save. `EACP_HOT_RELOAD_EXPORT` is empty there.
+- **Windows** runs it under Ninja with `cl` or clang-cl, for x64 and ARM64,
+  with the limits listed under "Windows" above; every other Windows build
+  directory is static. `EACP_HOT_RELOAD_EXPORT` is
+  `extern "C" __declspec(dllexport)` there only in a target that defines
+  `EACP_HOT_RELOAD_MODULE` (a dev-mode module, and the Reloadable test
+  fixtures), and plain `extern "C"` everywhere else, so a static-mode
+  executable exports nothing. `Tests/HotReload` builds a small dev-mode app
+  through `eacp_add_hot_reload` and reloads it, as the `HotReloadEndToEnd`
+  test.
 - **iOS and Android.** The app runs on a device or simulator with no CMake to
   run and no source tree to watch.
 
@@ -454,7 +587,10 @@ A `Files::SourceWatcher`, a `Processes::BuildRunner` and a `ReloadableLibrary`
 combined into one object. It is built from `Options`, or from a
 `HotReloadTarget` and a required symbol. `hotReloadOptions(target)` returns
 the `Options` a target describes, and `hotReloadBuildCommand(target)`
-(`Plugins/HotReloadTarget.h`) returns the build command alone.
+(`Plugins/HotReloadTarget.h`) returns the build command alone: `cmake
+--build` for the library target, with the `NAME=value` lines of the target's
+`buildEnvironment` file added to its environment, and on Windows no console
+window of its own.
 
 - Each settled burst of changes starts a build. A change during a build
   causes exactly one more run, reported as a build of its own.
@@ -482,8 +618,9 @@ match from this list, in order:
 1. a compiler error with a file location (clang, GCC or MSVC)
 2. any `error:` line that is not the driver's or the linker's
 3. a `CMake Error`
-4. ninja's `FAILED:` line
-5. the last line of output
+4. an MSVC linker error (`error LNK…`, which has no `error:`)
+5. ninja's `FAILED:` line
+6. the last line of output
 
 With no output at all, the summary names the cause instead: the build did
 not start, it was cancelled, or it exited with the given code.
@@ -492,12 +629,23 @@ not start, it was cancelled, or it exited with the given code.
 
 A `DynamicLibrary` over a module file that is rebuilt while the app runs.
 
-- **Staged copies.** `reload()` copies the built file to
-  `<stem>-<gen>-<pid>-<serial>` in a staging directory and opens that copy,
-  never the built file itself. A new path for each load avoids the registry
-  handing back the old image, and keeps the built file free for the linker to
-  overwrite. Two running copies of an app never remove each other's staged
-  files.
+- **Staged copies.** `reload()` copies the built file, under its own file
+  name, into a folder of its own, `<stem>-<gen>-<pid>-<serial>`, in a staging
+  directory and opens that copy, never the built file itself. A new path for
+  each load avoids the registry handing back the old image, and keeps the
+  built file free for the linker to overwrite; the folder leaves room beside
+  the image for files that must keep their names next to it: the built
+  module's PDB, where there is one beside it, is staged as well, so a
+  debugger reads the copy and never holds the file the next link writes. A
+  staged copy is removed with its folder. Two running copies of an app never
+  remove each other's staged copies.
+- **The sweep.** On Windows a run that ends with an image loaded leaves its
+  folder behind. Constructing a `ReloadableLibrary` removes the folders an
+  earlier run left for the same module. A folder named for another process
+  that is still running is left alone, since that copy may have staged it and
+  not loaded it yet, and one whose image is loaded will not delete anyway.
+- **Symbols.** `symbolsPath` names the module's symbol file when it is not
+  the module's path with `.pdb`; it is staged under its own file name.
 - **The old image.** It goes to `Plugins::unload`, which unloads it one loop
   turn later when a loop is running. Every pointer that came from it is
   invalid after the next successful reload.
@@ -507,6 +655,12 @@ A `DynamicLibrary` over a module file that is rebuilt while the app runs.
   library for the rest of the current turn. Its staged copy is removed at
   destruction where the OS allows deleting a loaded file; Windows does not, so
   there it is removed on that later turn, and with no loop running it stays.
+  A replaced generation's copy goes the same way, on the turn its image is
+  unloaded.
+- **Load errors.** `lastError()` is the loader's message. When it says the
+  module calls a symbol the running app lacks (`undefined symbol`, `symbol
+  not found`, Windows' error 127), which happens when eacp or the app's own
+  code changed since the app started, it adds that only a restart helps.
 - **Refusals.** A module without `requiredSymbol` is refused with
   `lastError()` set to `no <symbol>`. A module that `validate` answers with a
   non-empty string is refused with that string as `lastError()`. Either way,
@@ -519,8 +673,18 @@ A `DynamicLibrary` over a module file that is rebuilt while the app runs.
 Runs one command again on demand, on a background thread, with stderr merged
 into stdout. `onOutput` and `onFinished` are called on the main thread. A
 `run()` during a run asks for exactly one more run. A cancelled run still
-finishes, with `exited == false`. Cancelling kills only the direct child, not
-ninja under cmake.
+finishes, with `exited == false`. The command runs with
+`ProcessOptions::killDescendants`, so cancelling, or destroying the runner,
+ends what the command started too and neither waits for the build to finish:
+on Windows the command and everything under it share a job object, which is
+ended whole, compilers in flight included. On macOS and Linux they share a
+process group, which is sent `SIGKILL`: that ends `cmake --build` and the
+ninja under it, but ninja runs each job in a process group of its own and is
+given no chance to end them, so compilers already running finish as orphans
+(they write to ninja's pipes, not to the runner's, so nothing waits for them).
+The group also takes the build out of the terminal's foreground group: Ctrl+C
+on the app no longer reaches a running build, and a build left running when
+the app dies without destroying its runner runs to completion as an orphan.
 
 ### `Files::SourceWatcher` (`Utils/SourceWatcher.h`)
 
