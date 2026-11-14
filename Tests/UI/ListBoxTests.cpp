@@ -36,10 +36,22 @@ struct Model final : ListBoxModel
 
     void rowDoubleClicked(int row) override { lastDoubleClicked = row; }
 
+    void rowClicked(int row, const MouseEvent& event) override
+    {
+        lastClicked = row;
+        lastClickPosition = event.position;
+        selectedWhenClicked = lastSelected;
+        ++clicks;
+    }
+
     int rows = 20;
     int lastSelected = -2;
     int selections = 0;
     int lastDoubleClicked = -1;
+    int lastClicked = -1;
+    Point lastClickPosition;
+    int selectedWhenClicked = -2;
+    int clicks = 0;
 };
 
 struct ListBoxHarness
@@ -120,8 +132,58 @@ auto tListDoubleClick = test("ListBox/aSecondClickOnARowIsADoubleClick") = []
     harness.click({50.f, 50.f}, 2);
 
     check(harness.model.lastDoubleClicked == 2);
+    check(harness.model.clicks == 2, "each press is a click as well");
     check(harness.model.selections == 1,
           "and selecting what is selected is not new");
+};
+
+auto tListRowClicked = test("ListBox/everyClickOnARowIsReported") = []
+{
+    auto harness = ListBoxHarness {};
+
+    harness.click({50.f, 50.f});
+
+    check(harness.model.clicks == 1 && harness.model.lastClicked == 2);
+    check(harness.model.selectedWhenClicked == 2, "after the selection moved");
+    check(harness.model.lastClickPosition == Point {50.f, 50.f});
+
+    harness.click({30.f, 55.f});
+
+    check(harness.model.clicks == 2 && harness.model.lastClicked == 2,
+          "the selected row is clicked again");
+    check(harness.model.selections == 1);
+
+    harness.model.rows = 2;
+    harness.list.updateContent();
+    harness.click({50.f, 90.f});
+
+    check(harness.model.clicks == 2, "a click under the last row is not reported");
+};
+
+auto tListRowClickedHeader = test("ListBox/aClickOnTheHeaderIsNotARowClick") = []
+{
+    auto harness = ListBoxHarness {};
+
+    harness.list.setColumns({{"name", 200.f}});
+    harness.click({50.f, 10.f});
+
+    check(harness.model.clicks == 0);
+};
+
+auto tListRowClickedTouch = test("ListBox/aFingerClicksARowOnTheRelease") = []
+{
+    auto harness = ListBoxHarness {};
+
+    auto touch = mouseAt({50.f, 50.f});
+    touch.fromTouch = true;
+
+    harness.host.mouseDown(touch);
+
+    check(harness.model.clicks == 0);
+
+    harness.host.mouseUp(touch);
+
+    check(harness.model.clicks == 1 && harness.model.lastClicked == 2);
 };
 
 auto tListUpdateContentClamps =
