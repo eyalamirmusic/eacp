@@ -179,10 +179,11 @@ jobs:
       # leaves the PCH off for the same reason - ccache cannot cache MSVC's at
       # all - and a hit saves the whole compile where the image saved a third.
       # No target uses C++20 modules; the scan pass is dead weight. Remove that
-      # flag if modules are ever adopted.
+      # flag if modules are ever adopted. Warnings are errors on every lane.
       - name: Configure
         run: >
           cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           ${{ runner.os == 'macOS' && '-DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache' || '' }}
@@ -262,6 +263,7 @@ jobs:
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
           -DEACP_CI_BUILD=ON
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
       - name: Build
         run: cmake --build build --config RelWithDebInfo -- -sdk iphonesimulator
@@ -294,7 +296,7 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-35"
 
       - name: Configure
-        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DEACP_ANDROID_NDK_VERSION=$NDK_VERSION -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DEACP_ANDROID_NDK_VERSION=$NDK_VERSION -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
 
       # What a configure that names nothing picks: the newest NDK and the
       # newest platform in the SDK, with no NDK variable to point elsewhere.

@@ -219,7 +219,7 @@ PlanBuilder::BlockResult
     if (!enterBlock(graphBlock))
         return {};
 
-    auto walk = BlockWalk {graphBlock, loopDepth, depth};
+    auto blockWalk = BlockWalk {graphBlock, loopDepth, depth};
     auto id = plan.blocks.size();
     plan.blocks.add(Plan::BlockRange {});
     plan.nesting = std::max(plan.nesting, depth);
@@ -229,15 +229,15 @@ PlanBuilder::BlockResult
     for (auto statementId: graph.block(graphBlock).statements)
     {
         if (failed() || !checkStatement(statementId))
-            return {id, walk.jumpsOut, walk.returns};
+            return {id, blockWalk.jumpsOut, blockWalk.returns};
 
         auto stepId = plan.steps.size();
         plan.steps.add(Plan::Step {});
         pending.add(PendingSchedule {});
         stepIds.add(stepId);
 
-        if (!buildStep(graph.statement(statementId), statementId, stepId, walk))
-            return {id, walk.jumpsOut, walk.returns};
+        if (!buildStep(graph.statement(statementId), statementId, stepId, blockWalk))
+            return {id, blockWalk.jumpsOut, blockWalk.returns};
     }
 
     auto& range = plan.blocks[id];
@@ -247,13 +247,13 @@ PlanBuilder::BlockResult
         plan.blockSteps.add(stepId);
 
     range.end = plan.blockSteps.size();
-    return {id, walk.jumpsOut, walk.returns};
+    return {id, blockWalk.jumpsOut, blockWalk.returns};
 }
 
 bool PlanBuilder::buildStep(const Statement& statement,
                             int statementId,
                             int stepId,
-                            BlockWalk& walk)
+                            BlockWalk& blockWalk)
 {
     using Entry = std::pair<StatementKind, StepBuilder>;
 
@@ -285,7 +285,7 @@ bool PlanBuilder::buildStep(const Statement& statement,
         Entry {StatementKind::SimdMatrixMultiplyAdd,
                &PlanBuilder::buildSimdMatrixMultiplyAddStep}};
 
-    auto draft = StepDraft {walk, statementId, {}, {}};
+    auto draft = StepDraft {blockWalk, statementId, {}, {}};
     draft.step.kind = statement.kind;
     draft.step.value = statement.value;
     draft.step.index = statement.index;
@@ -298,7 +298,7 @@ bool PlanBuilder::buildStep(const Statement& statement,
         return false;
 
     if (statement.kind != StatementKind::Store)
-        walk.pinned = -1;
+        blockWalk.pinned = -1;
 
     plan.steps[stepId] = draft.step;
     pending[stepId] = draft.schedule;
@@ -322,98 +322,100 @@ bool PlanBuilder::buildVariableStep(const Statement& statement, StepDraft& draft
 
 bool PlanBuilder::buildIfStep(const Statement& statement, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
     if (!checkCondition(statement.value))
         return false;
 
     auto& step = draft.step;
-    auto body = buildBlock(statement.body, walk.loopDepth, walk.depth + 1);
+    auto body = buildBlock(statement.body, blockWalk.loopDepth, blockWalk.depth + 1);
     step.body = body.id;
     step.bodiesJumpOut = body.jumpsOut;
-    walk.returns = walk.returns || body.returns;
+    blockWalk.returns = blockWalk.returns || body.returns;
 
     if (statement.elseBody >= 0)
     {
         auto elseBody =
-            buildBlock(statement.elseBody, walk.loopDepth, walk.depth + 1);
+            buildBlock(statement.elseBody, blockWalk.loopDepth, blockWalk.depth + 1);
         step.elseBody = elseBody.id;
         step.bodiesJumpOut = step.bodiesJumpOut || elseBody.jumpsOut;
-        walk.returns = walk.returns || elseBody.returns;
+        blockWalk.returns = blockWalk.returns || elseBody.returns;
     }
 
-    walk.jumpsOut = walk.jumpsOut || step.bodiesJumpOut;
+    blockWalk.jumpsOut = blockWalk.jumpsOut || step.bodiesJumpOut;
     draft.schedule.roots[0] = statement.value;
     return true;
 }
 
 bool PlanBuilder::buildLoopStep(const Statement& statement, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
     if (!checkCondition(statement.value))
         return false;
 
     auto& step = draft.step;
-    auto body = buildBlock(statement.body, walk.loopDepth + 1, walk.depth + 1);
+    auto body =
+        buildBlock(statement.body, blockWalk.loopDepth + 1, blockWalk.depth + 1);
     step.body = body.id;
 
     if (statement.continuing >= 0)
     {
         auto enclosing = continuingLoopDepth;
-        continuingLoopDepth = walk.loopDepth + 1;
-        auto continuing =
-            buildBlock(statement.continuing, walk.loopDepth + 1, walk.depth + 1);
+        continuingLoopDepth = blockWalk.loopDepth + 1;
+        auto continuing = buildBlock(
+            statement.continuing, blockWalk.loopDepth + 1, blockWalk.depth + 1);
         continuingLoopDepth = enclosing;
         step.continuing = continuing.id;
     }
 
     step.bodiesJumpOut = body.returns;
-    walk.jumpsOut = walk.jumpsOut || body.returns;
-    walk.returns = walk.returns || body.returns;
+    blockWalk.jumpsOut = blockWalk.jumpsOut || body.returns;
+    blockWalk.returns = blockWalk.returns || body.returns;
     draft.schedule.roots[0] = statement.value;
     return true;
 }
 
 bool PlanBuilder::buildJumpStep(const Statement& statement, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
-    if (walk.loopDepth == 0)
+    if (blockWalk.loopDepth == 0)
     {
         fail("statement {} outside a loop", Miro::enumToString(statement.kind));
         return false;
     }
 
-    if (walk.loopDepth == continuingLoopDepth)
+    if (blockWalk.loopDepth == continuingLoopDepth)
     {
         fail("statement {} inside a continuing block",
              Miro::enumToString(statement.kind));
         return false;
     }
 
-    walk.jumpsOut = true;
+    blockWalk.jumpsOut = true;
     return true;
 }
 
 bool PlanBuilder::buildBreakIfStep(const Statement& statement, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
-    if (!checkBreakIf(statement, draft.statementId, walk.graphBlock, walk.loopDepth))
+    if (!checkBreakIf(
+            statement, draft.statementId, blockWalk.graphBlock, blockWalk.loopDepth))
         return false;
 
-    if (walk.depth + 1 > plan.nesting)
-        plan.nesting = walk.depth + 1;
+    if (blockWalk.depth + 1 > plan.nesting)
+        plan.nesting = blockWalk.depth + 1;
 
-    walk.jumpsOut = true;
+    blockWalk.jumpsOut = true;
     draft.schedule.roots[0] = statement.value;
     return true;
 }
 
 bool PlanBuilder::buildSwitchStep(const Statement& statement, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
     if (!checkSwitch(statement))
         return false;
@@ -421,22 +423,23 @@ bool PlanBuilder::buildSwitchStep(const Statement& statement, StepDraft& draft)
     auto& step = draft.step;
     auto enclosingCases = casesBlock;
     casesBlock = statement.body;
-    auto cases = buildBlock(statement.body, walk.loopDepth, walk.depth + 1);
+    auto cases =
+        buildBlock(statement.body, blockWalk.loopDepth, blockWalk.depth + 1);
     casesBlock = enclosingCases;
     step.body = cases.id;
     step.isDefault = hasDefaultClause(statement.body);
     step.bodiesJumpOut = cases.jumpsOut;
-    walk.jumpsOut = walk.jumpsOut || cases.jumpsOut;
-    walk.returns = walk.returns || cases.returns;
+    blockWalk.jumpsOut = blockWalk.jumpsOut || cases.jumpsOut;
+    blockWalk.returns = blockWalk.returns || cases.returns;
     draft.schedule.roots[0] = statement.value;
     return true;
 }
 
 bool PlanBuilder::buildCaseStep(const Statement& statement, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
-    if (walk.graphBlock != casesBlock)
+    if (blockWalk.graphBlock != casesBlock)
     {
         fail("statement Case outside a switch's clause list");
         return false;
@@ -451,17 +454,17 @@ bool PlanBuilder::buildCaseStep(const Statement& statement, StepDraft& draft)
     for (auto value: labels.values)
         plan.caseLabelWords.add(static_cast<Word>(value));
 
-    auto body = buildBlock(statement.body, walk.loopDepth, walk.depth);
+    auto body = buildBlock(statement.body, blockWalk.loopDepth, blockWalk.depth);
     step.body = body.id;
     step.bodiesJumpOut = body.jumpsOut;
-    walk.jumpsOut = walk.jumpsOut || body.jumpsOut;
-    walk.returns = walk.returns || body.returns;
+    blockWalk.jumpsOut = blockWalk.jumpsOut || body.jumpsOut;
+    blockWalk.returns = blockWalk.returns || body.returns;
     return true;
 }
 
 bool PlanBuilder::buildReturnStep(const Statement&, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
     if (continuingLoopDepth >= 0)
     {
@@ -469,8 +472,8 @@ bool PlanBuilder::buildReturnStep(const Statement&, StepDraft& draft)
         return false;
     }
 
-    walk.jumpsOut = true;
-    walk.returns = true;
+    blockWalk.jumpsOut = true;
+    blockWalk.returns = true;
     return true;
 }
 
@@ -501,7 +504,7 @@ bool PlanBuilder::buildCallStep(const Statement& statement, StepDraft& draft)
 
 bool PlanBuilder::buildStoreStep(const Statement& statement, StepDraft& draft)
 {
-    auto& walk = draft.walk;
+    auto& blockWalk = draft.walk;
 
     if (isStructSlot(statement.slot))
     {
@@ -520,25 +523,25 @@ bool PlanBuilder::buildStoreStep(const Statement& statement, StepDraft& draft)
 
     if (statement.record < 0)
     {
-        walk.pinned = -1;
+        blockWalk.pinned = -1;
         return true;
     }
 
     if (!checkNode(statement.record))
         return false;
 
-    if (walk.pinned == statement.record)
+    if (blockWalk.pinned == statement.record)
     {
         draft.schedule.pinned = statement.record;
     }
     else
     {
         draft.schedule.roots[2] = statement.record;
-        walk.pinned = statement.record;
+        blockWalk.pinned = statement.record;
     }
 
     if (statement.recordComponentsLeft <= 0)
-        walk.pinned = -1;
+        blockWalk.pinned = -1;
 
     return true;
 }
