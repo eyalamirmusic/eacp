@@ -92,11 +92,12 @@ if (APPLE AND NOT IOS)
     list(APPEND core_test_sources AppTerminationTests.cpp)
 endif ()
 
-# Threads::addLoopSource and the hosted pump live in EventLoop-Linux.h and
-# nowhere else.
+# Threads::addLoopSource, FdWatcher and the hosted pump live in
+# EventLoop-Linux.h and nowhere else.
 if (LINUX)
     list(APPEND core_test_sources
             EventLoopSourceTests-Linux.cpp
+            FdWatcherTests-Linux.cpp
             HostedLoopTests-Linux.cpp
             RootLoopTests-Linux.cpp)
 endif ()

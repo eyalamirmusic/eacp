@@ -227,11 +227,11 @@ HandleCounts handlesAcrossDetachInLoopExitHarness()
     auto result = eacp::Processes::run(EACP_LOOP_EXIT_HARNESS, {"detach"});
     auto counts = HandleCounts {};
 
-    std::sscanf(result.output.c_str(),
-                "handles watching %d detached %d again %d",
-                &counts.watching,
-                &counts.detached,
-                &counts.again);
+    sscanf_s(result.output.c_str(),
+             "handles watching %d detached %d again %d",
+             &counts.watching,
+             &counts.detached,
+             &counts.again);
 
     return counts;
 }

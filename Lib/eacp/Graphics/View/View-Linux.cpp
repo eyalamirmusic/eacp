@@ -68,12 +68,18 @@ View& linuxRootOf(View& view)
     return *root;
 }
 
-LinuxWindowSurface* linuxWindowForView(View& view)
+std::unordered_map<View*, LinuxNativeChild*>& linuxNativeChildren()
 {
-    auto& windows = linuxContentViewWindows();
-    auto found = windows.find(&linuxRootOf(view));
+    static auto children = std::unordered_map<View*, LinuxNativeChild*> {};
+    return children;
+}
 
-    return found == windows.end() ? nullptr : found->second;
+LinuxNativeChild* linuxFindNativeChild(View& view)
+{
+    auto& children = linuxNativeChildren();
+    auto found = children.find(&view);
+
+    return found == children.end() ? nullptr : found->second;
 }
 
 bool linuxEffectivelyVisible(View& view)
@@ -89,7 +95,7 @@ bool linuxEffectivelyVisible(View& view)
 // the menu bar's would cover an open menu: the bar's go back above it.
 void linuxKeepMenuBarOnTop(View& view,
                            LinuxWindowSurface& window,
-                           const ViewSurface& created)
+                           const NativeSurfaceHandle& created)
 {
     auto* bar = window.menuBarView;
 
@@ -98,7 +104,7 @@ void linuxKeepMenuBarOnTop(View& view,
 
     for (auto& [other, state]: linuxViewRecords())
         if (state->native != nullptr && &linuxRootOf(*other) == bar)
-            state->native->placeAbove(created.handle);
+            state->native->placeAbove(created);
 }
 
 void linuxCreateViewSurface(LinuxViewRecord& state,
@@ -110,7 +116,7 @@ void linuxCreateViewSurface(LinuxViewRecord& state,
     if (state.native == nullptr)
         return;
 
-    linuxKeepMenuBarOnTop(view, window, state.record);
+    linuxKeepMenuBarOnTop(view, window, state.record.handle);
 
     state.record.frameCallbackPending = false;
     state.record.onAvailable();
@@ -137,6 +143,9 @@ void linuxDestroyViewSurface(LinuxViewRecord& state)
 
 void linuxSyncOneViewSurface(View& view)
 {
+    if (auto* child = linuxFindNativeChild(view))
+        child->sync();
+
     auto* state = linuxFindViewRecord(view);
 
     if (state == nullptr)
@@ -175,6 +184,9 @@ void linuxSyncViewSurfaces(View& view)
 
 void linuxReleaseViewSurfaceTree(View& view)
 {
+    if (auto* child = linuxFindNativeChild(view))
+        child->release();
+
     if (auto* state = linuxFindViewRecord(view))
         linuxDestroyViewSurface(*state);
 
@@ -215,6 +227,7 @@ View::~View()
         linuxDestroyViewSurface(*state);
 
     linuxViewRecords().erase(this);
+    linuxNativeChildren().erase(this);
 
     // A root dying first would leave the window holding a pointer.
     auto& windows = linuxContentViewWindows();
@@ -453,6 +466,30 @@ void linuxWindowSurfaceStateChanged(View& contentView)
 
     for (auto* root: roots)
         linuxSyncViewSurfaces(*root);
+}
+
+LinuxWindowSurface* linuxWindowForView(View& view)
+{
+    auto& windows = linuxContentViewWindows();
+    auto found = windows.find(&linuxRootOf(view));
+
+    return found == windows.end() ? nullptr : found->second;
+}
+
+void linuxRegisterNativeChild(View& view, LinuxNativeChild& child)
+{
+    linuxNativeChildren()[&view] = &child;
+}
+
+void linuxUnregisterNativeChild(View& view)
+{
+    linuxNativeChildren().erase(&view);
+}
+
+void linuxKeepMenuBarAbove(View& view, const NativeSurfaceHandle& created)
+{
+    if (auto* window = linuxWindowForView(view))
+        linuxKeepMenuBarOnTop(view, *window, created);
 }
 
 Point linuxViewOriginInWindow(const View& view)
