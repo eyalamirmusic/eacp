@@ -35,6 +35,11 @@ struct ListBoxModel
 
     virtual void selectedRowChanged(int);
     virtual void rowDoubleClicked(int);
+
+    // Every click that lands on a row, the row already selected included, told
+    // after the selection has moved to it. `event.position` is in the ListBox's
+    // own coordinates, the space getRowBounds answers in.
+    virtual void rowClicked(int row, const MouseEvent& event);
 };
 
 // A scrolling list of rows painted by a model, with an optional header that
