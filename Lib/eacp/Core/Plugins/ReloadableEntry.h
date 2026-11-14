@@ -69,21 +69,9 @@ std::array<ReloadableEntry, sizeof...(Functions)>
 } // namespace Detail
 } // namespace eacp::Plugins
 
-// The entry returns a C++ type from a C-linkage function, which module and app
+// The entry returns a pointer to the table, a C++ type that module and app
 // share since both are one eacp built by one compiler.
-#if defined(__clang__)
-#define EACP_RELOADABLE_ENTRY_BEGIN                                                 \
-    _Pragma("clang diagnostic push")                                                \
-        _Pragma("clang diagnostic ignored \"-Wreturn-type-c-linkage\"")
-#define EACP_RELOADABLE_ENTRY_END _Pragma("clang diagnostic pop")
-#else
-#define EACP_RELOADABLE_ENTRY_BEGIN
-#define EACP_RELOADABLE_ENTRY_END
-#endif
-
-EACP_RELOADABLE_ENTRY_BEGIN
-EACP_HOT_RELOAD_EXPORT eacp::Plugins::ReloadableTable eacpReloadableTable();
-EACP_RELOADABLE_ENTRY_END
+EACP_HOT_RELOAD_EXPORT const eacp::Plugins::ReloadableTable* eacpReloadableTable();
 
 #define EACP_RELOADABLE_STRINGIZE(name) #name
 
@@ -98,11 +86,12 @@ inline constexpr auto reloadableTableSymbol =
 // anonymous namespace). The table is a local static of this non-inline
 // function, so the app's copy and the module's never merge.
 #define EACP_RELOADABLE(...)                                                        \
-    EACP_RELOADABLE_ENTRY_BEGIN                                                     \
-    EACP_HOT_RELOAD_EXPORT eacp::Plugins::ReloadableTable eacpReloadableTable()     \
+    EACP_HOT_RELOAD_EXPORT const eacp::Plugins::ReloadableTable*                    \
+        eacpReloadableTable()                                                       \
     {                                                                               \
         static const auto entries =                                                 \
             eacp::Plugins::Detail::reloadableEntries(__VA_ARGS__);                  \
-        return {entries.data(), static_cast<int>(entries.size())};                  \
-    }                                                                               \
-    EACP_RELOADABLE_ENTRY_END
+        static const auto table = eacp::Plugins::ReloadableTable {                  \
+            entries.data(), static_cast<int>(entries.size())};                      \
+        return &table;                                                              \
+    }

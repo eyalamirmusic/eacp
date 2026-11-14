@@ -18,6 +18,16 @@ endif ()
 
 add_subdirectory(Network)
 
+if (TARGET eacp-export-list)
+    add_subdirectory(ExportList)
+endif ()
+
+# Windows dev mode through eacp_add_hot_reload itself; macOS and Linux are
+# covered by the lower layers' suites and the in-tree examples.
+if (WIN32)
+    add_subdirectory(HotReload)
+endif ()
+
 add_subdirectory(Spirv)
 
 if (EACP_HAS_DRAW)

@@ -160,6 +160,10 @@ DWORD creationFlags(const ProcessOptions& options, const std::wstring& environme
     if (options.newProcessGroup)
         flags |= CREATE_NEW_PROCESS_GROUP;
 
+    // Held until the job is assigned, so nothing it starts escapes the job.
+    if (options.killDescendants)
+        flags |= CREATE_SUSPENDED;
+
     return flags;
 }
 
@@ -171,6 +175,23 @@ DWORD creationFlags(const ProcessOptions& options, const std::wstring& environme
 bool canReceiveConsoleBreak(const ProcessOptions& options)
 {
     return options.newProcessGroup && !options.noWindow && !options.detached;
+}
+
+// The job is the child's and its descendants' alone: ending it ends them all.
+// Without one (a job this process is in may refuse to nest one) the child runs
+// on its own, and terminating it reaches it alone.
+HANDLE startInJobOfItsOwn(const PROCESS_INFORMATION& info)
+{
+    auto job = CreateJobObjectW(nullptr, nullptr);
+
+    if (job != nullptr && !AssignProcessToJobObject(job, info.hProcess))
+    {
+        CloseHandle(job);
+        job = nullptr;
+    }
+
+    ResumeThread(info.hThread);
+    return job;
 }
 
 struct ChildStdHandles
@@ -256,6 +277,7 @@ struct Process::Native
 {
     explicit Native(ProcessOptions options)
         : detached(options.detached)
+        , killsDescendants(options.killDescendants && !options.detached)
         , receivesConsoleBreak(canReceiveConsoleBreak(options))
         , onOutput(std::move(options.onOutput))
     {
@@ -265,12 +287,20 @@ struct Process::Native
     ~Native()
     {
         // A detached child is deliberately left running; just drop our handles.
-        if (!detached && isRunning())
-            ::TerminateProcess(processHandle, 1);
+        if (!detached && isStillOwedAnEnd())
+            terminate();
 
         closeInput();
         joinReaders();
         closeHandles();
+    }
+
+    // A child waited for is done with. One that was not is ended, and with
+    // killsDescendants so is what it started, even if the child itself has
+    // exited: they may still hold the captured output open.
+    bool isStillOwedAnEnd() const
+    {
+        return killsDescendants ? !waitedFor : isRunning();
     }
 
     bool launched() const { return processHandle != nullptr; }
@@ -288,12 +318,15 @@ struct Process::Native
     {
         joinReaders();
         reap(true);
+        waitedFor = true;
         return exitCode();
     }
 
     void terminate()
     {
-        if (processHandle != nullptr)
+        if (job != nullptr)
+            TerminateJobObject(job, 1);
+        else if (processHandle != nullptr)
             ::TerminateProcess(processHandle, 1);
     }
 
@@ -416,9 +449,7 @@ private:
             return;
         }
 
-        processHandle = info.hProcess;
-        threadHandle = info.hThread;
-        processId = info.dwProcessId;
+        adopt(info);
         inputWrite = inWrite;
 
         outReader =
@@ -464,9 +495,17 @@ private:
         if (!created)
             return;
 
+        adopt(info);
+    }
+
+    void adopt(const PROCESS_INFORMATION& info)
+    {
         processHandle = info.hProcess;
         threadHandle = info.hThread;
         processId = info.dwProcessId;
+
+        if (killsDescendants)
+            job = startInJobOfItsOwn(info);
     }
 
     void launchDetached(const ProcessOptions& options)
@@ -568,6 +607,12 @@ private:
 
     void closeHandles()
     {
+        if (job != nullptr)
+        {
+            CloseHandle(job);
+            job = nullptr;
+        }
+
         if (threadHandle != nullptr)
         {
             CloseHandle(threadHandle);
@@ -583,8 +628,10 @@ private:
 
     HANDLE processHandle = nullptr;
     HANDLE threadHandle = nullptr;
+    HANDLE job = nullptr;
     DWORD processId = 0;
     const bool detached;
+    const bool killsDescendants;
     const bool receivesConsoleBreak;
     const std::function<void(std::string_view)> onOutput;
     HANDLE inputWrite = nullptr;
@@ -599,6 +646,7 @@ private:
     mutable std::mutex reapMutex;
     mutable bool reaped = false;
     mutable DWORD exitStatus = 0;
+    bool waitedFor = false;
 };
 
 Process::Process(ProcessOptions options)

@@ -8,6 +8,8 @@ set(core_test_sources
         AsyncCoroutineTests.cpp
         AsyncTests.cpp
         Base64Tests.cpp
+        # Each build command is ScriptHarness, so these run the same everywhere.
+        BuildRunnerTests.cpp
         # Touches the real system clipboard, and restores whatever was there.
         ClipboardTests.cpp
         # Runs ConsoleHarness as a child: runConsole's exit codes and streams.
@@ -32,12 +34,15 @@ set(core_test_sources
         FormatTests.cpp
         GeometryTests.cpp
         HashTests.cpp
+        HotReloadLoopTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
         PlatformTests.cpp
         PluginObjectTests.cpp
+        ProcessDescendantsTests.cpp
         RangeTests.cpp
         ReloadableLibraryTests.cpp
+        ReloadableTests.cpp
         Sha256Tests.cpp
         SourceWatcherTests.cpp
         StringsTests.cpp
@@ -47,12 +52,6 @@ set(core_test_sources
         TimerTests.cpp
         TimeTests.cpp
         ZipTests.cpp)
-
-# These drive POSIX commands (/bin/sh, ...), so they only run on macOS and Linux.
-if (NOT WIN32)
-    list(APPEND core_test_sources
-            BuildRunnerTests.cpp HotReloadLoopTests.cpp ReloadableTests.cpp)
-endif ()
 
 # The file/folder picker seam is Windows-only (App-Windows-FilePicker.h), and
 # so are the wide-path conversions FilePathTests-Windows.cpp covers, and the
@@ -146,6 +145,17 @@ target_compile_definitions(CoreTests PRIVATE
         EACP_CONSOLE_HARNESS="$<TARGET_FILE:ConsoleHarness>")
 add_dependencies(CoreTests ConsoleHarness)
 
+# The build command BuildRunnerTests, HotReloadLoopTests and ReloadableTests
+# run, and the child ProcessDescendantsTests starts: a list of steps (print,
+# sleep, copy a file, ...) in place of a shell script, so the same command
+# works on every platform (HarnessScript.h).
+add_executable(ScriptHarness ScriptHarness.cpp)
+target_link_libraries(ScriptHarness PRIVATE eacp-core)
+
+target_compile_definitions(CoreTests PRIVATE
+        EACP_SCRIPT_HARNESS="$<TARGET_FILE:ScriptHarness>")
+add_dependencies(CoreTests ScriptHarness)
+
 # A short-lived program that runs the loop and prints how many threads it
 # left, which EventLoopTests-Windows.cpp reads. It has to be a process of its
 # own: only the first pass of the loop in a process starts its watchdog.
@@ -236,6 +246,10 @@ foreach (fixture
     eacp_add_plugin(${fixture} ${fixture}.cpp)
     target_include_directories(${fixture} PRIVATE
             $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)
+
+    # A module, as eacp_add_hot_reload's is in dev mode, so its
+    # EACP_RELOADABLE table is exported on Windows too.
+    target_compile_definitions(${fixture} PRIVATE EACP_HOT_RELOAD_MODULE=1)
 
     string(REGEX REPLACE "([a-z])([A-Z])" "\\1_\\2" define ${fixture})
     string(TOUPPER ${define} define)

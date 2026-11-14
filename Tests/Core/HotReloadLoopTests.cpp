@@ -36,7 +36,7 @@ void pumpFor(MS duration)
 
 struct Sandbox : HotReloadSandbox
 {
-    HotReloadLoop::Options options(const std::string& buildScript) const
+    HotReloadLoop::Options options(const HarnessScript& buildScript) const
     {
         auto answerOptions = loopOptions(buildScript);
         answerOptions.requiredSymbol = answerSymbol;
@@ -156,7 +156,8 @@ auto tNextGeneration = test("HotReloadLoop/aRebuildLoadsTheNextGeneration") = []
 auto tCoalescedRerun = test("HotReloadLoop/aChangeMidBuildRebuildsAsBuilding") = []
 {
     auto sandbox = Sandbox {};
-    auto script = "sleep 0.3; " + sandbox.copyInTurnScript(fixtureA, fixtureB);
+    auto script = HarnessScript {}.sleep(300).then(
+        sandbox.copyInTurnScript(fixtureA, fixtureB));
 
     auto loop = HotReloadLoop {sandbox.options(script)};
     auto events = Events {loop};
@@ -177,9 +178,11 @@ auto tCoalescedRerun = test("HotReloadLoop/aChangeMidBuildRebuildsAsBuilding") =
 auto tFailedBuild = test("HotReloadLoop/aFailedBuildKeepsTheGeneration") = []
 {
     auto sandbox = Sandbox {};
-    auto script = std::string {"echo 'compiling'; "
-                               "echo 'Layout.cpp:3:1: error: expected ;'; "
-                               "echo '1 error generated.'; exit 1"};
+    auto script = HarnessScript {}
+                      .print("compiling")
+                      .print("Layout.cpp:3:1: error: expected ;")
+                      .print("1 error generated.")
+                      .exit(1);
 
     auto loop = HotReloadLoop {sandbox.options(script)};
     auto events = Events {loop};
@@ -200,7 +203,7 @@ auto tFailedBuild = test("HotReloadLoop/aFailedBuildKeepsTheGeneration") = []
 auto tFailedLoad = test("HotReloadLoop/anUnloadableModuleKeepsTheGeneration") = []
 {
     auto sandbox = Sandbox {};
-    auto script = "echo junk > " + quotedPath(sandbox.modulePath());
+    auto script = HarnessScript {}.write(sandbox.modulePath(), "junk");
 
     auto loop = HotReloadLoop {sandbox.options(script)};
     auto events = Events {loop};
@@ -240,7 +243,8 @@ auto tDestroyedMidBuild = test("HotReloadLoop/destroyingMidBuildCallsNothing") =
 {
     auto sandbox = Sandbox {};
     auto loop = std::optional<HotReloadLoop> {};
-    loop.emplace(sandbox.options("sleep 1; " + sandbox.copyScript(fixtureA)));
+    loop.emplace(sandbox.options(
+        HarnessScript {}.sleep(1000).then(sandbox.copyScript(fixtureA))));
     auto events = Events {*loop};
 
     loop->rebuild();
@@ -257,7 +261,7 @@ auto tExcludesOutputs =
     test("HotReloadLoop/outputsInsideTheSourcesAreNotWatched") = []
 {
     auto sandbox = Sandbox {};
-    auto options = sandbox.options("true");
+    auto options = sandbox.options(HarnessScript {});
     options.stagingDirectory = sandbox.sources() / "Staging";
 
     auto loop = HotReloadLoop {options};
@@ -322,6 +326,20 @@ auto tCMakeSummary = test("HotReloadLoop/summaryReadsACMakeError") = []
     check(summaryOf(output) == "CMake Error at CMakeLists.txt:4 (add_library):");
 };
 
+auto tMsvcLinkSummary = test("HotReloadLoop/summaryReadsAnMsvcLinkerError") = []
+{
+    auto output = "[2/2] Linking CXX shared module Layout.dll\n"
+                  "FAILED: Layout.dll\n"
+                  "Layout.cpp.obj : error LNK2019: unresolved external symbol "
+                  "foo referenced in function bar\n"
+                  "Layout.dll : fatal error LNK1120: 1 unresolved externals\n"
+                  "ninja: build stopped: subcommand failed.\n";
+
+    check(summaryOf(output)
+          == "Layout.cpp.obj : error LNK2019: unresolved external symbol foo "
+             "referenced in function bar");
+};
+
 auto tNinjaSummary = test("HotReloadLoop/summaryFallsBackToNinjasFailedLine") = []
 {
     auto output = "[1/2] Linking CXX shared module Layout.so\n"
@@ -367,5 +385,46 @@ auto tTargetSources = test("HotReloadLoop/aTargetsSourcesAreTheWatchedFiles") = 
 
     target.sources = "";
     check(eacp::Plugins::hotReloadOptions(target).sources.files.empty());
+};
+
+auto tBuildCommand = test("HotReloadLoop/theBuildCommandBuildsTheLibraryAlone") = []
+{
+    auto target = eacp::Plugins::HotReloadTarget {};
+    target.cmake = "/tools/cmake";
+    target.buildDirectory = "/build";
+    target.config = "Debug";
+    target.target = "Views";
+
+    auto command = eacp::Plugins::hotReloadBuildCommand(target);
+
+    check(command.executable == "/tools/cmake");
+    check(command.arguments
+          == eacp::Vector<std::string> {
+              "--build", "/build", "--config", "Debug", "--target", "Views"});
+    check(command.environment.empty());
+    check(command.noWindow);
+};
+
+auto tBuildEnvironment =
+    test("HotReloadLoop/theBuildRunsInTheEnvironmentTheTargetNames") = []
+{
+    auto file = eacp::TemporaryFile {".env"};
+    auto text = std::string_view {
+        "INCLUDE=C:/sdk/include;C:/vc/include\r\n\nnot a line\nPATH=\n"};
+    eacp::Files::writeFileAtomically(file.path(), text);
+
+    auto target = eacp::Plugins::HotReloadTarget {};
+    target.buildEnvironment = file.path().str();
+
+    auto environment = eacp::Plugins::hotReloadBuildCommand(target).environment;
+
+    check(environment.size() == 2);
+    check(environment[0].name == "INCLUDE");
+    check(environment[0].value == "C:/sdk/include;C:/vc/include");
+    check(environment[1].name == "PATH");
+    check(environment[1].value.empty());
+
+    target.buildEnvironment = file.sibling("missing.env").str();
+    check(eacp::Plugins::hotReloadBuildCommand(target).environment.empty());
 };
 } // namespace HotReloadLoopTests

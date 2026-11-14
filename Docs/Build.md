@@ -142,7 +142,15 @@ its README.
   `<library>`, configured afterwards like any target: a static library linked
   into the app in static mode, a module the app loads in dev mode. An app's
   `HOT_RELOAD` wins over the option either way, and both in-tree examples
-  pass `ON`. iOS, Android and Windows are always static. A configure prints
+  pass `ON`. iOS and Android are always static. Windows dev mode needs a
+  Ninja generator, `cl` or clang-cl, x64 or ARM64 and the DLL C runtime
+  (`/MD`); any other Windows build directory is static, and the configure
+  line says why. It links the app with an export list of its own objects and
+  every static library in its closure (`eacp_add_export_list`,
+  `Lib/eacp/ExportList/README.md`), and turns link-time optimisation off for
+  that closure in the whole build directory, so in a configuration that has
+  it (Release) only `-DEACP_HOT_RELOAD=ON` gives dev mode; an app's own
+  `HOT_RELOAD ON` leaves Release static and optimised. A configure prints
   `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
   `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
 
@@ -482,7 +490,12 @@ the network backend included, then configures once
 more with no NDK named, which exercises the newest-installed path. The two
 Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
 run their npm installs inside configure, several times slower on the ARM
-runners, and the x64 lanes cover the WebView2 backend. Every lane
+runners, and the x64 lanes cover the WebView2 backend. The Windows lanes
+build the two hot-reload examples in dev mode, as every RelWithDebInfo Ninja
+build with `cl` or clang-cl does, and run `HotReloadEndToEnd`, which rebuilds
+and reloads a module of its own through `eacp_add_hot_reload`; a CI build in
+which that app came out static fails the configure rather than skip the
+test. Every lane
 configures with `EACP_CI_BUILD=ON` and builds `RelWithDebInfo`: the tests run
 optimized code, as a shipped build does, while the link-time optimization
 eacp's targets take under `Release` stays off — it roughly tripled the macOS

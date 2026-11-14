@@ -1,4 +1,5 @@
 #include "HotReloadLoop.h"
+#include "../Utils/Files.h"
 
 namespace eacp::Plugins
 {
@@ -140,6 +141,13 @@ bool isCMakeError(std::string_view line)
     return line.find("CMake Error") != std::string_view::npos;
 }
 
+// link.exe's own errors ("x.obj : error LNK2019: ...", "LINK : fatal error
+// LNK1201: ...") have no "error:".
+bool isMsvcLinkerError(std::string_view line)
+{
+    return line.find("error LNK") != std::string_view::npos;
+}
+
 bool isNinjaFailure(std::string_view line)
 {
     return line.starts_with("FAILED:");
@@ -149,8 +157,11 @@ std::string summaryOf(std::string_view output)
 {
     auto lines = nonEmptyLines(output);
 
-    for (auto matches:
-         {isLocatedCompilerError, isOtherError, isCMakeError, isNinjaFailure})
+    for (auto matches: {isLocatedCompilerError,
+                        isOtherError,
+                        isCMakeError,
+                        isMsvcLinkerError,
+                        isNinjaFailure})
         for (auto line: lines)
             if (matches(line))
                 return std::string {line};
@@ -225,7 +236,40 @@ Files::SourceWatcher::Options
 
     return sources;
 }
+
+Vector<Processes::EnvironmentVariable> environmentFromFile(const FilePath& file)
+{
+    auto environment = Vector<Processes::EnvironmentVariable> {};
+
+    if (file.empty() || !Files::isFile(file))
+        return environment;
+
+    auto text = Files::readFile(file);
+
+    for (auto line: nonEmptyLines(text))
+        if (auto equals = line.find('=');
+            equals != std::string_view::npos && equals > 0)
+            environment.add({std::string {line.substr(0, equals)},
+                             std::string {line.substr(equals + 1)}});
+
+    return environment;
+}
 } // namespace
+
+Processes::ProcessOptions hotReloadBuildCommand(const HotReloadTarget& target)
+{
+    auto options = Processes::ProcessOptions {};
+    options.executable = std::string {target.cmake};
+    options.arguments = {"--build",
+                         std::string {target.buildDirectory},
+                         "--config",
+                         std::string {target.config},
+                         "--target",
+                         std::string {target.target}};
+    options.environment = environmentFromFile(FilePath {target.buildEnvironment});
+    options.noWindow = true;
+    return options;
+}
 
 HotReloadLoop::Options hotReloadOptions(const HotReloadTarget& target)
 {
@@ -234,6 +278,7 @@ HotReloadLoop::Options hotReloadOptions(const HotReloadTarget& target)
     options.sources.files = hotReloadSourceFiles(target.sources);
     options.buildCommand = hotReloadBuildCommand(target);
     options.modulePath = FilePath {target.library};
+    options.symbolsPath = FilePath {target.symbols};
     return options;
 }
 
@@ -261,6 +306,7 @@ HotReloadLoop::HotReloadLoop(const Options& options)
     runner.onOutput = forwardOutput;
     runner.onFinished = finished;
     library.validate = options.validate;
+    library.symbolsPath = options.symbolsPath;
 }
 
 HotReloadLoop::HotReloadLoop(const HotReloadTarget& target,

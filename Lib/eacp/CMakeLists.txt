@@ -1,6 +1,12 @@
 add_subdirectory(Core)
 add_subdirectory(Network)
 
+# The build-time tool that lists what a Windows hot-reload app exports to its
+# module (CMake/EacpExportList.cmake), and the library its tests link.
+if (WIN32 AND NOT CMAKE_CROSSCOMPILING)
+    add_subdirectory(ExportList)
+endif ()
+
 # Always added: it builds the shader codegen library (eacp-gpu-codegen), which
 # is pure string generation, and returns before eacp-gpu when there is no GPU.
 add_subdirectory(GPU)
