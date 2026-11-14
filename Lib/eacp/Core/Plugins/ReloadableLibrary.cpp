@@ -87,20 +87,20 @@ bool belongsToAnotherRunningCopy(long long processId)
 void removeCopiesLeftByEarlierRuns(const FilePath& builtPath,
                                    const FilePath& stagingDirectory)
 {
-    if constexpr (Platform::isWindows())
+    if constexpr (!Platform::isWindows())
+        return;
+
+    auto stem = builtPath.stem();
+
+    for (const auto& entry: Files::listDirectory(stagingDirectory))
     {
-        auto stem = builtPath.stem();
+        if (entry.kind != Files::EntryKind::directory)
+            continue;
 
-        for (const auto& entry: Files::listDirectory(stagingDirectory))
-        {
-            if (entry.kind != Files::EntryKind::directory)
-                continue;
+        auto process = stagingFolderProcess(entry.path.fileName(), stem);
 
-            auto process = stagingFolderProcess(entry.path.fileName(), stem);
-
-            if (process && !belongsToAnotherRunningCopy(*process))
-                removeStaged(entry.path / builtPath.fileName());
-        }
+        if (process && !belongsToAnotherRunningCopy(*process))
+            removeStaged(entry.path / builtPath.fileName());
     }
 }
 
