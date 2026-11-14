@@ -296,12 +296,16 @@ public:
             case KeyCode::RightArrow:
                 if (highlighted >= 0 && isOpenable(itemsOf(depth)[highlighted]))
                     openSubMenu(depth, highlighted, true);
+                else
+                    sideStep(1);
 
                 return true;
 
             case KeyCode::LeftArrow:
                 if (depth > 0)
                     closeFrom(depth);
+                else
+                    sideStep(-1);
 
                 return true;
 
@@ -406,6 +410,13 @@ private:
         float startScroll = 0.f;
         bool dragged = false;
     };
+
+    // Last wherever it is called: it may close this menu.
+    void sideStep(int direction)
+    {
+        if (auto step = options.onSideStep)
+            step(direction);
+    }
 
     static bool isOpenable(const Item& item)
     {
@@ -807,6 +818,11 @@ private:
         {
             pending = {};
             setHighlighted(deepest, -1, false);
+
+            // Last: it may close this menu.
+            if (auto outside = options.onPointerOutside)
+                outside(position);
+
             return;
         }
 

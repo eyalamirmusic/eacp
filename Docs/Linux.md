@@ -73,7 +73,8 @@ inside one `GPUView` through the coverage rasterizer and the glyph atlas.
 What Linux still does not have is the platform's own 2D tier. There is no
 `Graphics::Context` and no `Graphics::Font` — `Path` exists, but only as
 recorded geometry — so the retained `ShapeLayer`/`TextLayer` and the views over
-them, `TextInput`, menus and the tray are absent or honest stubs. The image
+them, `TextInput` and the tray are absent or honest stubs, and the menu bar is
+drawn by the component tier (below). The image
 codecs are there all the same: `Image/Image-Linux.cpp` decodes and encodes PNG
 and JPEG through stb_image and stb_image_write (`CMake/FindStb.cmake`, fetched
 by CPM), so `Image::decode`, `load`, `encode` and `save` behave as on the other
@@ -84,6 +85,60 @@ Mesa's lavapipe with no display server at all; the window and present tests run
 for real under a headless Weston, and again under an Xvfb for X11, which is
 where input is exercised — Weston's headless backend has no seat and Xvfb has
 one.
+
+## Menu bar
+
+Neither Wayland nor X11 has a menu protocol, so `setApplicationMenuBar` draws
+the bar in the window, under the title bar, the way Qt and GTK applications
+draw their own. The `Graphics::MenuBar` is the one handed to macOS and Windows.
+
+The halves split on text. `eacp-graphics` has none on Linux, so it owns
+everything that is not drawing (`Menu/Menu-Linux.cpp`, `Menu/LinuxMenuBar-Linux.h`):
+the bar's view is a second root bound to the window beside the content view
+(`LinuxWindowSurface::menuBarView`), and `LinuxWindowSurface` routes pointer
+events between the two by position, in each root's own coordinates, a press
+keeping its root until the release. The content view is laid out
+`contentTop` points down, and every size the app sees — `WindowOptions::width`
+and `height`, `Window::getSize` and `setSize`, `onResize`, `sizeConstraint`,
+the minimum — is the content's, so installing a bar grows the window by its
+height rather than shrinking the content, as on Windows; a maximised or full
+screen window keeps its size and the content gives. The minimum and the pin on
+a fixed-size window are told to libdecor and to `WM_NORMAL_HINTS` in surface
+terms; the X11 aspect hint is dropped under a bar, `sizeConstraint` still
+holding the ratio. `eacp-ui` draws: `UI/Widgets/MenuBarPresenter-Linux.cpp`
+registers a presenter with `setLinuxMenuBarPresenterFactory` at static
+initialisation, and the target's `--undefined=eacpUILinuxMenuBar` link option
+keeps that file in every program that links `eacp-ui`. Its view is a
+transparent `ComponentHost` holding a `UI::MenuBarComponent`. A program with no
+`eacp-ui` gets the shortcuts and no bar.
+
+Each menu becomes a `PopupMenu` as it opens, so ticks and greying are read at
+that moment. While one is open the pointer crossing another title opens it,
+Left and Right step across menus (`PopupMenuOptions::onPointerOutside` and
+`onSideStep`), Escape closes it, and so does a click anywhere else: the window
+treats the menu as modal (`menuBarModal`), so that click reaches nothing
+beneath, and the window losing focus closes it too. The menu is drawn inside
+the window — the bar's tree grows down over the content while it is open, as
+far as the open menu and its submenus need — so it cannot reach past the window's edge, and
+in a short window it scrolls. On Wayland the content shows through the
+transparent tree around the menu. On X11 it does not: a presenting view is a
+child window of the toplevel's own visual, and child windows are not blended,
+so the band beside an open menu shows the tree's clear colour until the menu
+closes. Popup surfaces (`xdg_popup`, an override-redirect window) would lift
+both limits and are not built yet.
+
+Shortcuts are bound by the window, not by the focused view: every key goes
+through `LinuxWindowSurface::keyFilter` before the content sees it, an open menu
+takes every key, and otherwise `findShortcutItem` (`Menu/MenuCommands.h`) picks
+the first enabled item whose shortcut matches, read as `acceleratorText` prints
+it — `command` is Ctrl here, while `Keyboard` keeps reporting Super as
+`command` everywhere else — and runs it in place of the key. A single
+character is matched against the key's unmodified character, so a shortcut on a
+non-Latin layout does not fire. `standardApplicationMenu` is "File" holding
+Quit (Ctrl+Q), and `standardEditMenu` is empty, so the bar leaves it out.
+`Tests/Graphics/MenuBarTests-Linux.cpp` covers the window half with a stand-in
+presenter, `Tests/UI/MenuBarComponentTests.cpp` the bar, and
+`Apps/UI/MenuBarDemo` shows one.
 
 ## Hosting a plugin's editor
 

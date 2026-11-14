@@ -126,8 +126,7 @@ struct X11WindowNative final
 
     ~X11WindowNative() override
     {
-        if (contentView != nullptr)
-            linuxUnbindWindowFromContentView(*contentView);
+        linuxUnbindWindow(*this);
 
         auto* connection = x11Connection();
 
@@ -316,8 +315,8 @@ struct X11WindowNative final
 
         xcb_icccm_size_hints_set_size(&hints, 1, width, height);
 
-        auto minWidth = x11PixelSize((float) std::max(state.minWidth, 1), scale);
-        auto minHeight = x11PixelSize((float) std::max(state.minHeight, 1), scale);
+        auto minWidth = x11PixelSize((float) state.minimumSurfaceWidth(), scale);
+        auto minHeight = x11PixelSize((float) state.minimumSurfaceHeight(), scale);
 
         // Pinned rather than merely unset, the way the Wayland frame is: min
         // equal to max is the only way X11 says "this window does not resize".
@@ -331,7 +330,9 @@ struct X11WindowNative final
 
         xcb_icccm_size_hints_set_min_size(&hints, minWidth, minHeight);
 
-        if (state.aspectRatioHint)
+        // The ratio is the content's, which a menu bar puts out of step with
+        // the window's; sizeConstraint holds it either way.
+        if (state.aspectRatioHint && contentTop == 0.f)
         {
             const auto numerator =
                 (int32_t) std::lround(state.aspectRatioHint->x * x11AspectPrecision);
@@ -510,7 +511,12 @@ struct X11WindowNative final
         // reads it rather than the one it replaces.
         linuxWindowSurfaceStateChanged(*contentView);
         notifyBackingScaleChanged(*contentView);
+
+        if (menuBarView != nullptr)
+            notifyBackingScaleChanged(*menuBarView);
     }
+
+    void sizeHintsChanged() override { applySizeHints(); }
 
     void mapNotify(const xcb_map_notify_event_t& event)
     {

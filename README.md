@@ -91,7 +91,8 @@ explains how a frame is built.
   recorded once and replayed through batched shape, mesh, image and glyph
   renderers. A tree that changed nothing records nothing.
 - **Widgets** — labels, buttons, checkboxes, text editors, sliders, knobs,
-  scroll panels, viewports, lists, combo boxes, tabs and popup menus, a theme,
+  scroll panels, viewports, lists, combo boxes, tabs, popup menus and a menu
+  bar, a theme,
   keyboard focus with tab order, drag and drop within the tree and file drops
   from outside it, and finger scrolling that coasts when flung.
 - **Layers and animation** — a subtree captured into a texture is clipped,
@@ -177,7 +178,9 @@ input, the camera behind a runtime permission prompt, and networking over the
 platform's own HTTP and TLS stack; the configure writes an Android Studio
 project, and [`Apps/Android/README.md`](Apps/Android/README.md) is the guide.
 Linux is a real Wayland or X11 window with input, clipboard, fractional
-scaling and mouse lock, and can run every window and GPU test with no display
+scaling and mouse lock, shows the menu bar an app hands to macOS and Windows
+inside the window with its shortcuts bound, and can run every window and GPU
+test with no display
 server at all; [`Docs/Linux.md`](Docs/Linux.md) is the full account.
 
 CI builds and tests macOS, Windows x64 and ARM64, and Linux (including the

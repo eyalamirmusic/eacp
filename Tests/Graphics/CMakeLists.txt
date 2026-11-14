@@ -58,11 +58,14 @@ endif ()
 # The Linux tables with no portable half: the commands a Path records, the
 # framework's KeyCodes against the kernel's evdev numbering, and the evdev
 # gamepad mapping (with a uinput pad driven through the whole backend where
-# /dev/uinput is the user's to write).
+# /dev/uinput is the user's to write). And the window half of the in-window
+# menu bar (MenuBarTests-Linux): layout, size, routing and shortcuts, with a
+# stand-in for the bar eacp-ui draws.
 if (LINUX)
     list(APPEND graphics_test_sources
             GameInputTests-Linux.cpp
             KeyCodeTests-Linux.cpp
+            MenuBarTests-Linux.cpp
             PathTests-Linux.cpp)
 endif ()
 

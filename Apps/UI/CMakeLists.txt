@@ -35,6 +35,11 @@ add_subdirectory(AspectLock)
 # because a row is something a model paints rather than something the tree holds.
 add_subdirectory(WidgetGallery)
 
+# One Graphics::MenuBar through setApplicationMenuBar, its items greying and
+# ticking from state the window prints: the system bar on macOS, the window's
+# on Windows, and on Linux a bar drawn in the window above the content.
+add_subdirectory(MenuBarDemo)
+
 # The OnlineResources registry as a list: DownloadAndPlay's clips, each with
 # whether it is on disk, a progress bar while one is fetched, and one button
 # that empties the folder both apps share.

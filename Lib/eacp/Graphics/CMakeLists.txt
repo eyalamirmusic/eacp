@@ -155,7 +155,7 @@ elseif (ANDROID)
             Image/Image-Android.cpp
             Input/GameInput-Default.cpp
             Layers/Layer-Linux.cpp
-            Menu/Menu-Linux.cpp
+            Menu/Menu-Android.cpp
             Primitives/Path-Linux.cpp
             Tray/TrayIcon-Linux.cpp
             View/AndroidViewSurface-Android.cpp
@@ -163,6 +163,7 @@ elseif (ANDROID)
             Window/AndroidEnvironment-Android.cpp
             Window/AndroidMain-Android.c
             Window/Display-Android.cpp
+            Window/LinuxWindowSurface-Linux.cpp
             Window/Window-Android.cpp)
 
     # The glue is the NDK's own source, not clean under eacp's warning set.
@@ -203,6 +204,7 @@ elseif (UNIX)
             Window/HeadlessWindow-Linux.cpp
             Window/LinuxInput-Linux.cpp
             Window/LinuxWindowNative-Linux.cpp
+            Window/LinuxWindowSurface-Linux.cpp
             Window/LinuxWindowSystem-Linux.cpp
             Window/NativeChildSurface-Linux.cpp
             Window/WaylandClipboard-Linux.cpp

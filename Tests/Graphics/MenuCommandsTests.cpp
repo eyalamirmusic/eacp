@@ -378,3 +378,166 @@ auto tSubmenuLabelIsJustTheTitle =
     check(menuItemLabel(MenuItem::withSubmenu("Open Recent", std::move(inner)))
           == "Open Recent");
 };
+
+// --- shortcuts --------------------------------------------------------------
+//
+// What a bar that prints acceleratorText binds: Ctrl for command, and the key
+// the key types with nothing held.
+
+namespace
+{
+KeyEvent shortcutPress(std::string key, ModifierKeys modifiers)
+{
+    auto event = KeyEvent {};
+    event.type = KeyEventType::Down;
+    event.characters = key;
+    event.charactersIgnoringModifiers = std::move(key);
+    event.modifiers = modifiers;
+
+    return event;
+}
+
+ModifierKeys ctrlHeld()
+{
+    auto modifiers = ModifierKeys {};
+    modifiers.control = true;
+
+    return modifiers;
+}
+} // namespace
+
+auto tCommandMatchesAsCtrl = test("MenuCommands/commandMatchesAsCtrl") = []
+{
+    check(matchesShortcut(commandKey("s"), shortcutPress("s", ctrlHeld())));
+
+    // Spelled control, it is the same key.
+    auto control = KeyEquivalent {"s", {}};
+    control.modifiers.control = true;
+    check(matchesShortcut(control, shortcutPress("s", ctrlHeld())));
+
+    // No Ctrl, no match.
+    check(!matchesShortcut(commandKey("s"), shortcutPress("s", {})));
+};
+
+// Super is what Keyboard reports as command off Apple; it is not Ctrl, and
+// held beside Ctrl it makes a different chord.
+auto tSuperIsNotCtrl = test("MenuCommands/superIsNotCtrl") = []
+{
+    auto super = ModifierKeys {};
+    super.command = true;
+    check(!matchesShortcut(commandKey("s"), shortcutPress("s", super)));
+
+    auto both = ctrlHeld();
+    both.command = true;
+    check(!matchesShortcut(commandKey("s"), shortcutPress("s", both)));
+};
+
+auto tShiftAndAltMustAgree = test("MenuCommands/shiftAndAltMustAgree") = []
+{
+    auto shifted = ctrlHeld();
+    shifted.shift = true;
+
+    check(matchesShortcut(commandShiftKey("z"), shortcutPress("z", shifted)));
+    check(!matchesShortcut(commandKey("z"), shortcutPress("z", shifted)));
+    check(!matchesShortcut(commandShiftKey("z"), shortcutPress("z", ctrlHeld())));
+
+    auto alted = ctrlHeld();
+    alted.alt = true;
+
+    check(matchesShortcut(commandAltKey("h"), shortcutPress("h", alted)));
+    check(!matchesShortcut(commandKey("h"), shortcutPress("h", alted)));
+};
+
+auto tKeyIsCaseBlindAndSingle = test("MenuCommands/keyIsCaseBlindAndSingle") = []
+{
+    check(matchesShortcut(commandKey("S"), shortcutPress("s", ctrlHeld())));
+    check(matchesShortcut(commandKey(","), shortcutPress(",", ctrlHeld())));
+    check(!matchesShortcut(commandKey("s"), shortcutPress("d", ctrlHeld())));
+
+    // A named key is printed, never matched.
+    check(
+        !matchesShortcut(commandKey("escape"), shortcutPress("escape", ctrlHeld())));
+};
+
+auto tFindsTheEnabledItemNow = test("MenuCommands/findsTheEnabledItemNow") = []
+{
+    auto saved = 0;
+    auto available = false;
+
+    auto recent = Menu {"Recent"};
+    recent.add(MenuItem::withAction("Reopen", [] {}, commandKey("r")));
+
+    auto file = Menu {"File"};
+    file.add(MenuItem::withAction(
+        "Save",
+        [&saved] { ++saved; },
+        commandKey("s"),
+        [&available] { return available; }));
+    file.add(MenuItem::withSubmenu("Open Recent", std::move(recent)));
+
+    auto bar = MenuBar {};
+    bar.add(std::move(file));
+
+    // Greyed: the key goes on to the view.
+    check(findShortcutItem(bar, shortcutPress("s", ctrlHeld())) == nullptr);
+
+    available = true;
+    const auto* save = findShortcutItem(bar, shortcutPress("s", ctrlHeld()));
+
+    check(save != nullptr && save->title == "Save");
+    save->action();
+    check(saved == 1);
+
+    const auto* reopen = findShortcutItem(bar, shortcutPress("r", ctrlHeld()));
+    check(reopen != nullptr && reopen->title == "Reopen");
+
+    auto release = shortcutPress("s", ctrlHeld());
+    release.type = KeyEventType::Up;
+    check(findShortcutItem(bar, release) == nullptr);
+};
+
+auto tResponderItemsHaveNoShortcut =
+    test("MenuCommands/responderItemsHaveNoShortcut") = []
+{
+    auto edit = Menu {"Edit"};
+    edit.add(MenuItem::withResponderSelector("Copy", "copy:", commandKey("c")));
+
+    auto bar = MenuBar {};
+    bar.add(std::move(edit));
+
+    check(findShortcutItem(bar, shortcutPress("c", ctrlHeld())) == nullptr);
+};
+
+auto tVisibleBarDropsWhatCannotBeChosen =
+    test("MenuCommands/visibleBarDropsWhatCannotBeChosen") = []
+{
+    auto empty = Menu {"Edit"};
+
+    auto responders = Menu {"Format"};
+    responders.add(MenuItem::withResponderSelector("Bold", "toggleBold:"));
+    responders.addSeparator();
+
+    auto file = Menu {"File"};
+    file.add(MenuItem::withAction("Open"));
+    file.add(MenuItem::withResponderSelector("Copy", "copy:"));
+    file.addSeparator();
+    file.add(MenuItem::withSubmenu("Nothing", Menu {"Nothing"}));
+    file.add(MenuItem::withAction("Quit"));
+
+    auto bar = MenuBar {};
+    bar.add(std::move(empty));
+    bar.add(std::move(responders));
+    bar.add(std::move(file));
+
+    const auto visible = visibleMenuBar(bar);
+
+    check(visible.menus.size() == 1);
+    check(visible.menus[0].title == "File");
+
+    const auto& items = visible.menus[0].items;
+
+    check(items.size() == 3);
+    check(items[0].title == "Open");
+    check(items[1].isSeparator);
+    check(items[2].title == "Quit");
+};

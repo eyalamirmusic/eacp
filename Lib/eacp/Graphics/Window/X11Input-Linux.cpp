@@ -346,7 +346,7 @@ void X11Input::deliverKey(uint32_t code, bool down, bool isRepeat)
     event.characters = keyboardState.textForKey(code);
     event.charactersIgnoringModifiers = keyboardState.plainTextForKey(code);
 
-    keyboardWindow->contentView->dispatchKeyEvent(event);
+    keyboardWindow->dispatchKeyEvent(event);
 }
 
 // A grab is a menu or a drag taking the keyboard for a moment, and
@@ -463,7 +463,7 @@ void X11Input::pointerLeaving(
         exited.modifiers = getModifiers();
         exited.timestamp = linuxTimestamp(time);
 
-        window.contentView->dispatchMouseEvent(exited);
+        window.dispatchMouseEvent(exited);
     }
 
     setPointerWindow(nullptr);
@@ -645,7 +645,7 @@ void X11Input::dispatchWheel(uint32_t time)
         return;
 
     if (event.delta.x != 0.f || event.delta.y != 0.f)
-        pointerWindow->contentView->dispatchMouseEvent(event);
+        pointerWindow->dispatchMouseEvent(event);
 }
 
 void X11Input::dispatchMouse(MouseEvent event)
@@ -657,7 +657,7 @@ void X11Input::dispatchMouse(MouseEvent event)
                         ? event.pos
                         : pointerState.getDownPosition();
 
-    pointerWindow->contentView->dispatchMouseEvent(event);
+    pointerWindow->dispatchMouseEvent(event);
 }
 
 void X11Input::setPointerWindow(X11WindowSurface* window)
@@ -680,10 +680,7 @@ void X11Input::refreshCursor()
         || pointerWindow->contentView == nullptr)
         return;
 
-    auto* contentView = pointerWindow->contentView;
-    auto* hit = contentView->hitTest(pointerState.getPosition());
-    auto shape = hit != nullptr ? hit->getMouseCursor().getShape()
-                                : contentView->getMouseCursor().getShape();
+    auto shape = pointerWindow->cursorShapeAt(pointerState.getPosition());
 
     if (cursor.setShape(shape))
         applyCursor();
