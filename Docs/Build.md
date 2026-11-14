@@ -496,12 +496,13 @@ build with `cl` or clang-cl does, and run `HotReloadEndToEnd`, which rebuilds
 and reloads a module of its own through `eacp_add_hot_reload`; a CI build in
 which that app came out static fails the configure rather than skip the
 test. Every lane
-configures with `EACP_CI_BUILD=ON` and builds `RelWithDebInfo`: the tests run
-optimized code, as a shipped build does, while the link-time optimization
-eacp's targets take under `Release` stays off — it roughly tripled the macOS
-and MSVC build steps for a few seconds of test time. The `NDEBUG`-only paths —
-the D3D12 debug layer, `Device::assertOwningThread`, the Android JNI
-local-reference check — are exercised by a local Debug build, not by CI.
+configures with `EACP_CI_BUILD=ON` and `CMAKE_COMPILE_WARNING_AS_ERROR=ON`, so
+a warning in any compiled target fails the lane, and builds `RelWithDebInfo`:
+the tests run optimized code, as a shipped build does, while the link-time
+optimization eacp's targets take under `Release` stays off — it roughly
+tripled the macOS and MSVC build steps for a few seconds of test time. The
+`NDEBUG`-only paths — the D3D12 debug layer, `Device::assertOwningThread`, the
+Android JNI local-reference check — are exercised by a local Debug build, not by CI.
 
 Every lane of the build matrix compiles through [ccache](https://ccache.dev)
 (`hendrikmuhs/ccache-action`, which installs it and keeps its directory in the
