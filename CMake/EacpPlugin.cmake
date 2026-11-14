@@ -575,6 +575,7 @@ function(eacp_add_hot_reload app library)
     if (NOT enabled)
         message(STATUS "${app}: hot reload OFF${refusal}")
         add_library(${library} STATIC ${ARG_SOURCES})
+        set_target_properties(${library} PROPERTIES UNITY_BUILD OFF)
         set_default_warnings_level(${library})
         target_link_libraries(${app} PRIVATE ${library})
         target_compile_definitions(${app} PRIVATE EACP_HOT_RELOAD=0)
@@ -603,6 +604,7 @@ function(eacp_add_hot_reload app library)
 
     eacp_set_default_visibility(${library})
     set_target_properties(${library} PROPERTIES
+            UNITY_BUILD OFF
             INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 
     if (APPLE)

@@ -310,6 +310,14 @@ and C++ types can cross between them. The rules follow from that.
 - **Objects die inside `onReloaded`.** Anything the module creates is handed
   to the app, which destroys or replaces it inside the next `onReloaded` at
   the latest.
+- **Never a unity build.** `eacp_add_hot_reload` sets `UNITY_BUILD OFF` on
+  the library in both modes, whatever `CMAKE_UNITY_BUILD`, `EACP_UNITY_BUILD`
+  or `EACP_UNITY_BUILD_TESTS` say. An edit then recompiles only the source
+  that changed, and that source is itself on the compile line, so Ninja and a
+  compiler cache see the edit directly rather than through a `unity_*.cxx`
+  that includes it, which ccache with clang-cl has been seen to serve stale.
+  Static mode follows suit so that a file-local name that would collide in
+  one translation unit does not fail one mode and pass the other.
 
 The table is a C++ struct, `ReloadableTable` (a pointer and a count of
 `ReloadableEntry {function, signature}`), and the C-linkage entry returns a

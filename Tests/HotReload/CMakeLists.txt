@@ -25,13 +25,6 @@ target_link_libraries(HotReloadEndToEndModule PRIVATE eacp-core winmm)
 target_include_directories(HotReloadEndToEndModule PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}")
 
-# Every edit the test makes must reach the compiler. CI compiles through ccache,
-# whose clang-cl rebuilds of this module served the previous generation's object
-# after an edit, so the module goes without the build directory's launcher.
-set_target_properties(HotReloadEndToEndModule PROPERTIES
-        C_COMPILER_LAUNCHER ""
-        CXX_COMPILER_LAUNCHER "")
-
 # A test killed mid-edit leaves a broken copy behind; every build of the module
 # puts the template back first, except the test's own.
 add_custom_target(HotReloadEndToEndModuleSource
