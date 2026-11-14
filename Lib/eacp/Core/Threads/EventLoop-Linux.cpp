@@ -70,6 +70,10 @@ struct LoopSource
     short events = 0;
     Callback callback;
     Callback prepare;
+
+    // Zero for addLoopSource's one entry per descriptor, an FdWatcher's own
+    // otherwise.
+    uint64_t watchId = 0;
 };
 
 // What the copy running the process's root loop offers every other copy in
@@ -226,6 +230,7 @@ struct LoopState
 
     std::mutex sourceMutex;
     Vector<LoopSource> sources;
+    uint64_t lastWatchId = 0;
 
     // Root side: the hosted copies attached to this loop.
     std::mutex guestMutex;
@@ -290,26 +295,74 @@ void runSourcePrepares(LoopState& loop)
         prepare();
 }
 
-// By descriptor, so a source removed earlier in the round is not found.
+// Under sourceMutex. A descriptor is polled for everything its entries want,
+// and leaves the epoll set with its last entry.
+void rewatchLoopFd(LoopState& loop, int fd)
+{
+    auto events = short {};
+    auto watched = false;
+
+    for (const auto& source: loop.sources)
+    {
+        if (source.fd == fd)
+        {
+            events = (short) (events | source.events);
+            watched = true;
+        }
+    }
+
+    if (watched)
+        watchLoopFd(loop.epollFd, fd, events);
+    else
+        unwatchLoopFd(loop.epollFd, fd);
+}
+
+bool sourceWantsReadiness(const LoopSource& source, uint32_t ready)
+{
+    auto wanted = epollEventsFromPollEvents(source.events) | EPOLLHUP | EPOLLERR;
+    return (ready & wanted) != 0;
+}
+
+struct DueSource
+{
+    int fd = -1;
+    uint64_t watchId = 0;
+};
+
+// Looked up again just before each call, so a source removed earlier in the
+// round is not found.
 void dispatchReadySources(LoopState& loop)
 {
     auto ready = Array<epoll_event, maxReadySourcesPerPump> {};
     auto count = ::epoll_wait(loop.epollFd, ready.data(), ready.size(), 0);
 
-    for (auto i = 0; i < count; ++i)
+    auto due = Vector<DueSource> {};
+
     {
-        auto fd = ready[i].data.fd;
+        auto lock = std::lock_guard(loop.sourceMutex);
 
-        if (fd == loop.waker.readFd)
-            continue;
+        for (auto i = 0; i < count; ++i)
+        {
+            auto fd = ready[i].data.fd;
 
+            if (fd == loop.waker.readFd)
+                continue;
+
+            for (const auto& source: loop.sources)
+                if (source.fd == fd && sourceWantsReadiness(source, ready[i].events))
+                    due.add({fd, source.watchId});
+        }
+    }
+
+    for (const auto& entry: due)
+    {
         auto callback = Callback {};
 
         {
             auto lock = std::lock_guard(loop.sourceMutex);
 
             for (const auto& source: loop.sources)
-                if (source.fd == fd)
+                if (source.fd == entry.fd && source.watchId == entry.watchId)
                     callback = source.callback;
         }
 
@@ -574,13 +627,14 @@ void addLoopSource(int fd, short events, Callback callback, Callback prepare)
     {
         auto lock = std::lock_guard(loop.sourceMutex);
 
-        loop.sources.removeIndexesMatching([fd](const LoopSource& source)
-                                           { return source.fd == fd; });
+        loop.sources.removeIndexesMatching(
+            [fd](const LoopSource& source)
+            { return source.fd == fd && source.watchId == 0; });
 
         loop.sources.add(
             LoopSource {fd, events, std::move(callback), std::move(prepare)});
 
-        watchLoopFd(loop.epollFd, fd, events);
+        rewatchLoopFd(loop, fd);
     }
 
     attachToRootLoop(loop);
@@ -599,13 +653,53 @@ void removeLoopSource(int fd)
     {
         auto lock = std::lock_guard(loop.sourceMutex);
 
-        unwatchLoopFd(loop.epollFd, fd);
+        loop.sources.removeIndexesMatching(
+            [fd](const LoopSource& source)
+            { return source.fd == fd && source.watchId == 0; });
 
-        loop.sources.removeIndexesMatching([fd](const LoopSource& source)
-                                           { return source.fd == fd; });
+        rewatchLoopFd(loop, fd);
     }
 
     loop.waker.wake();
+}
+
+FdWatcher::FdWatcher(int fdToWatch, Callback onReadable)
+    : fd(fdToWatch)
+{
+    auto& loop = getLoop();
+
+    {
+        auto lock = std::lock_guard(loop.sourceMutex);
+
+        id = ++loop.lastWatchId;
+        loop.sources.add(LoopSource {fd, POLLIN, std::move(onReadable), {}, id});
+
+        rewatchLoopFd(loop, fd);
+    }
+
+    attachToRootLoop(loop);
+    loop.waker.wake();
+}
+
+// The callback is destroyed outside the lock: whatever it captured may remove
+// a source of its own on the way out.
+FdWatcher::~FdWatcher()
+{
+    auto& loop = getLoop();
+    auto released = Callback {};
+
+    {
+        auto lock = std::lock_guard(loop.sourceMutex);
+
+        for (auto& source: loop.sources)
+            if (source.watchId == id)
+                released = std::move(source.callback);
+
+        loop.sources.removeIndexesMatching([this](const LoopSource& source)
+                                           { return source.watchId == id; });
+
+        rewatchLoopFd(loop, fd);
+    }
 }
 
 void scheduleStartup(const Callback& func)

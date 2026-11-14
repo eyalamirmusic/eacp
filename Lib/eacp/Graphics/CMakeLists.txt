@@ -204,6 +204,7 @@ elseif (UNIX)
             Window/LinuxInput-Linux.cpp
             Window/LinuxWindowNative-Linux.cpp
             Window/LinuxWindowSystem-Linux.cpp
+            Window/NativeChildSurface-Linux.cpp
             Window/WaylandClipboard-Linux.cpp
             Window/WaylandDisplay-Linux.cpp
             Window/WaylandInput-Linux.cpp
