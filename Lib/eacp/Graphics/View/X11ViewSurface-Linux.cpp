@@ -288,6 +288,24 @@ public:
         return changed;
     }
 
+    void placeAbove(const NativeSurfaceHandle& sibling) override
+    {
+        auto* connection = x11Connection();
+
+        if (child == XCB_NONE || sibling.window == XCB_NONE || connection == nullptr
+            || !connection->isConnected())
+            return;
+
+        const uint32_t values[] = {sibling.window, XCB_STACK_MODE_ABOVE};
+
+        xcb_configure_window(connection->getConnection(),
+                             child,
+                             XCB_CONFIG_WINDOW_SIBLING
+                                 | XCB_CONFIG_WINDOW_STACK_MODE,
+                             values);
+        connection->flush();
+    }
+
     void requestFrame() override
     {
         record.frameCallbackPending = true;

@@ -18,6 +18,7 @@ nano_add_executable(UITests
             ListBoxTests.cpp
             MagnifyTests.cpp
             MaskCacheTests.cpp
+            MenuBarComponentTests.cpp
             LayerTests.cpp
             ModuleShaderTests.cpp
             MouseEventTests.cpp

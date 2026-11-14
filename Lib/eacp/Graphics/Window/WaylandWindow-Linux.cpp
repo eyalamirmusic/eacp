@@ -27,8 +27,7 @@ struct WaylandWindowNative final
 
     ~WaylandWindowNative() override
     {
-        if (contentView != nullptr)
-            linuxUnbindWindowFromContentView(*contentView);
+        linuxUnbindWindow(*this);
 
         destroyFrame();
 
@@ -104,9 +103,9 @@ struct WaylandWindowNative final
         libdecor_frame_set_title(frame, state.title.c_str());
         libdecor_frame_set_app_id(frame, linuxDefaultAppId);
 
-        if (state.minWidth > 0 || state.minHeight > 0)
+        if (state.minWidth > 0 || state.minHeight > 0 || contentTop > 0.f)
             libdecor_frame_set_min_content_size(
-                frame, std::max(state.minWidth, 1), std::max(state.minHeight, 1));
+                frame, state.minimumSurfaceWidth(), state.minimumSurfaceHeight());
 
         // Pinned as well as unset: a compositor may configure a size no client
         // asked for.
@@ -310,8 +309,10 @@ struct WaylandWindowNative final
 
     // A maximised or full screen window's size is the compositor's, so there
     // is nothing to ask for. A frame is committed outside a configure when
-    // there is one; with no frame yet the size is simply taken, and
-    // createFrame maps it.
+    // the window is mapped; before its first configure - a size set as the
+    // window is built, a menu bar installed - the size is simply taken, and
+    // the configure that maps it uses it. A buffer attached before that is a
+    // protocol error that costs the connection.
     void setSize(Point newSize) override
     {
         if (state.hasSystemManagedSize())
@@ -330,14 +331,19 @@ struct WaylandWindowNative final
                 libdecor_frame_set_max_content_size(frame, width, height);
             }
 
-            auto* newState = libdecor_state_new(width, height);
-            libdecor_frame_commit(frame, newState, nullptr);
-            libdecor_state_free(newState);
+            if (mapped)
+            {
+                auto* newState = libdecor_state_new(width, height);
+                libdecor_frame_commit(frame, newState, nullptr);
+                libdecor_state_free(newState);
+            }
         }
 
         state.resizeTo({(float) width, (float) height});
         floatingSize = contentSize;
-        present();
+
+        if (mapped)
+            present();
     }
 
     void setTitle(const std::string& newTitle) override
@@ -440,6 +446,29 @@ struct WaylandWindowNative final
         // size with it, so nothing else reports either.
         linuxWindowSurfaceStateChanged(*contentView);
         notifyBackingScaleChanged(*contentView);
+
+        if (menuBarView != nullptr)
+            notifyBackingScaleChanged(*menuBarView);
+    }
+
+    void sizeHintsChanged() override
+    {
+        if (frame == nullptr)
+            return;
+
+        if (state.resizable)
+        {
+            libdecor_frame_set_min_content_size(
+                frame, state.minimumSurfaceWidth(), state.minimumSurfaceHeight());
+            return;
+        }
+
+        auto pinned = state.surfaceSizeFor(state.getContentSize());
+        auto width = std::max((int) std::lround(pinned.x), 1);
+        auto height = std::max((int) std::lround(pinned.y), 1);
+
+        libdecor_frame_set_min_content_size(frame, width, height);
+        libdecor_frame_set_max_content_size(frame, width, height);
     }
 
     void setMouseLocked(bool locked) override

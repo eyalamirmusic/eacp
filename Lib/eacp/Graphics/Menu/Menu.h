@@ -114,9 +114,25 @@ class Window;
 // has to be told which one. An app with several windows calls this per window
 // on Windows and once on macOS — passing any of them.
 //
-// Ignored entirely on iOS, which has no menu bar of either kind.
+// Linux is per window too. No window system there has a menu protocol, so the
+// bar is drawn in the window under the title bar, as a Qt or GTK app draws its
+// own, and needs eacp-ui linked to draw it (without it the shortcuts still
+// work and no bar is shown). Like the Windows one, it adds to the window: the
+// content keeps the size it was given and is laid out below the bar, and
+// Window::getSize, onResize and the size constraint all leave the bar out. The
+// shortcuts are bound there, ahead of the focused view, with command meaning
+// Ctrl (see matchesShortcut in MenuCommands.h). A menu opens inside the
+// window, so near the bottom of a short window it scrolls.
+//
+// Ignored entirely on iOS and Android, which have no menu bar of either kind.
 void setApplicationMenuBar(const MenuBar& bar, Window& window);
 
+// The menu an app puts first. On macOS, the application menu titled
+// `applicationName` (About, Hide, Quit). On Linux, "File" holding Quit
+// (Ctrl+Q), since no Linux desktop has an application menu: an app with File
+// items of its own adds them to this one. On Windows, an empty menu carrying the
+// name, which the bar leaves out. The title is a plain field, so an app wanting
+// another sets it.
 Menu standardApplicationMenu(std::string applicationName);
 
 // The standard Edit menu. An app that hosts a WebView needs this in its menu

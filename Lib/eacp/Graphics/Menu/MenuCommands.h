@@ -91,4 +91,25 @@ std::string acceleratorText(const KeyEquivalent& shortcut);
 // "Save\tCtrl+S", or just "Save" when there is no shortcut. The tab is what
 // makes Win32 right-align the accelerator column.
 std::string menuItemLabel(const MenuItem& item);
+
+// Whether `event` is the keystroke `shortcut` names, read the way
+// acceleratorText prints it: `command` and `control` are both the Ctrl key,
+// which must be down, and the Super / Windows key (which eacp's Keyboard
+// reports as `command` off Apple) must be up. Alt and Shift must be exactly as
+// the shortcut says. The key is the character the key types with no modifier
+// held, case aside, so Ctrl+Shift+Z matches "z" with shift; only a
+// single-character key ever matches.
+bool matchesShortcut(const KeyEquivalent& shortcut, const KeyEvent& event);
+
+// The item a key press runs: the first in `bar`, depth-first in the order a
+// menu shows them, whose shortcut matches and which is enabled now. Asked at
+// the press, so a greyed item lets the key through to the focused view. Null
+// for a key release and when nothing matches. Responder-selector items are
+// skipped, as classifyMenuEntry skips them.
+const MenuItem* findShortcutItem(const MenuBar& bar, const KeyEvent& event);
+
+// The bar as a backend with no responder chain shows it: responder-selector
+// items left out, and a menu or submenu left with nothing to choose dropped.
+// Separators stay as they are, for the drawing code to tidy.
+MenuBar visibleMenuBar(const MenuBar& bar);
 } // namespace eacp::Graphics

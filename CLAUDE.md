@@ -464,8 +464,16 @@ into `Core`'s `Clipboard` through the backend hook in
 keyboard focus on one of our windows), a compositor disconnect that fires
 `onLost` on every view surface and leaves the process headless, the PNG/JPEG
 codec (`Image/Image-Linux.cpp` over stb_image and stb_image_write, linked
-PRIVATE and kept out of the unity batches), and stubs for menus, tray and
-system appearance.
+PRIVATE and kept out of the unity batches), and stubs for the tray and system
+appearance. The menu bar is drawn in the window (`Docs/Linux.md`, "Menu bar"):
+`Menu/Menu-Linux.cpp` keeps the window half — the bar's view as a second root
+bound beside the content (`LinuxWindowSurface::menuBarView`), the content laid
+out `contentTop` lower with every app-facing size leaving the bar out, pointer
+routing between the two roots, and the shortcuts run from
+`LinuxWindowSurface::keyFilter` ahead of the focused view with command as
+Ctrl — and `eacp-ui` registers the presenter that draws it
+(`UI/Widgets/MenuBarPresenter-Linux.cpp`, kept in every link by
+`--undefined=eacpUILinuxMenuBar`).
 
 The X11 half is its twin, on xcb with no Xlib symbol anywhere.
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
