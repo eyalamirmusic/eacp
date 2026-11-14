@@ -1,8 +1,10 @@
 #include "../DComp-Windows.h"
+#include "SharedDevices.h"
 
 #include "../Common.h"
 
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Singleton.h>
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -24,6 +26,12 @@ void rebuildAllCompositionHosts();
 namespace
 {
 Vector<std::function<void()>>& renderingDeviceReplacedListeners()
+{
+    static auto listeners = Vector<std::function<void()>> {};
+    return listeners;
+}
+
+Vector<std::function<void()>>& sharedDevicesReleaseListeners()
 {
     static auto listeners = Vector<std::function<void()>> {};
     return listeners;
@@ -97,13 +105,32 @@ void addRenderingDeviceReplacedListener(std::function<void()> listener)
     renderingDeviceReplacedListeners().add(std::move(listener));
 }
 
+// Registers what releaseSharedDevices runs before it releases the compositor:
+// eacp-gpu's release of its D3D12 device. The same rules as above.
+void addSharedDevicesReleaseListener(std::function<void()> listener)
+{
+    sharedDevicesReleaseListeners().add(std::move(listener));
+}
+
 class DCompCompositor
 {
 public:
     static DCompCompositor& instance()
     {
-        static auto instance = DCompCompositor();
-        return instance;
+        auto& compositor = holder();
+
+        if (!compositor)
+            compositor.emplace();
+
+        return *compositor;
+    }
+
+    // Built again on the next use. A retry still scheduled finds its token
+    // superseded and does nothing.
+    static void release()
+    {
+        ++retryToken;
+        holder().reset();
     }
 
     void retryRecoveryIfDue()
@@ -159,7 +186,6 @@ public:
             recoverFromDeviceLoss(hr);
     }
 
-private:
     // Three tiers, each needing the one before it and each more likely to be
     // missing than the last:
     //
@@ -211,6 +237,17 @@ private:
     }
 
     ~DCompCompositor() { releaseAll(); }
+
+private:
+    // Never destroyed. eacp links statically into plug-in modules, whose static
+    // destructors run on the host's FreeLibrary, under the loader lock, and
+    // releasing a device there makes the driver wait for its worker threads to
+    // exit, which they need that lock to do: the host hangs. A module unloaded
+    // without releaseSharedDevices leaks the devices instead.
+    static std::optional<DCompCompositor>& holder()
+    {
+        return Singleton::getImmortal<std::optional<DCompCompositor>>();
+    }
 
     static void logCompositionUnavailable(HRESULT hr)
     {
@@ -472,7 +509,9 @@ private:
     bool recoveryFailing = false;
     std::chrono::milliseconds retryDelay = firstRetryDelay;
     std::optional<Clock::time_point> retryDue;
-    uint64_t retryToken = 0;
+    // Shared by every instance, so a release cannot hand a later instance a
+    // token an earlier one's pending retry still holds.
+    static inline uint64_t retryToken = 0;
 
     ComPtr<ID3D11Device> d3dDevice;
     ComPtr<IDXGIDevice> dxgiDevice;
@@ -551,6 +590,14 @@ void retryDeviceRecoveryIfDue()
 void resumeDeviceRecovery()
 {
     DCompCompositor::instance().resumeRecovery();
+}
+
+void releaseSharedDevices()
+{
+    for (auto& release: sharedDevicesReleaseListeners())
+        release();
+
+    DCompCompositor::release();
 }
 
 } // namespace eacp::Graphics
