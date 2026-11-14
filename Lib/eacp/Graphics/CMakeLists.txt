@@ -33,6 +33,11 @@ endif ()
 # per-source -O2 also broke the Xcode generator, which the iOS build uses.)
 target_link_libraries(eacp-graphics PUBLIC eacp-core ESIMD)
 
+# Only Windows has shared devices whose release at unload hangs the host.
+if (NOT WIN32)
+    target_sources(eacp-graphics PRIVATE Graphics/SharedDevices-Default.cpp)
+endif ()
+
 # PUBLIC so the capability is a compile-time fact for every consumer, not just
 # a CMake variable: Graphics.h leaves the 2D-tier headers out where there is no
 # 2D tier, and a caller that reaches for one gets a compile error rather than a

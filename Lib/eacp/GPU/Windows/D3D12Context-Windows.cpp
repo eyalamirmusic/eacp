@@ -7,6 +7,7 @@
 #include "../Device/Device.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Core/Utils/Singleton.h>
 #include <eacp/Core/Utils/Strings.h>
 
 #include <d3dcompiler.h>
@@ -530,6 +531,7 @@ namespace eacp::Graphics
 {
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
 void addRenderingDeviceReplacedListener(std::function<void()> listener);
+void addSharedDevicesReleaseListener(std::function<void()> listener);
 } // namespace eacp::Graphics
 
 namespace eacp::GPU
@@ -542,37 +544,55 @@ void CommandContext::rewindUploads()
     uploadCursor = 0;
 }
 
-D3D12Shared::D3D12Shared()
+D3D12Shared::D3D12Shared(std::uint64_t firstGeneration)
+    : generation(firstGeneration)
 {
     createAll();
-
-    // A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
-    // together. The graphics layer's recovery fires this listener after it
-    // re-established its own device; if ours died too (or never existed),
-    // rebuild it and every GPUView swapchain. The 2D layer also replaces its
-    // device voluntarily, so a healthy D3D12 device is left alone.
-    //
-    // Registered here rather than by Device, because there is one of these and
-    // there may be any number of Devices â€” a listener each would rebuild the
-    // swapchains once per Device.
-    Graphics::addRenderingDeviceReplacedListener(
-        []
-        {
-            auto& shared = getD3D12Shared();
-
-            if (shared.isValid()
-                && SUCCEEDED(shared.getDevice()->GetDeviceRemovedReason()))
-                return;
-
-            shared.recreateAfterDeviceLoss();
-
-            // The shared Device's context is what the swapchains below are
-            // rebuilt against, so it is renewed here and now. Every other
-            // Device renews on its own thread, at its next acquire().
-            getD3D12Context(Device::shared()).renewForNewDevice();
-            refreshAllGPUViewsForNewDevice();
-        });
 }
+
+namespace
+{
+// A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
+// together. The graphics layer's recovery fires this listener after it
+// re-established its own device; if ours died too (or never existed), rebuild
+// it and every GPUView swapchain. The 2D layer also replaces its device
+// voluntarily, so a healthy D3D12 device is left alone.
+//
+// Registered once per image rather than by Device, because there is one
+// D3D12Shared and there may be any number of Devices — a listener each would
+// rebuild the swapchains once per Device — and rather than by D3D12Shared,
+// which a release builds again.
+void rebuildIfRenderingDeviceReplacedOursToo()
+{
+    auto& shared = getD3D12Shared();
+
+    if (shared.isValid() && SUCCEEDED(shared.getDevice()->GetDeviceRemovedReason()))
+        return;
+
+    shared.recreateAfterDeviceLoss();
+
+    // The shared Device's context is what the swapchains below are rebuilt
+    // against, so it is renewed here and now. Every other Device renews on its
+    // own thread, at its next acquire().
+    getD3D12Context(Device::shared()).renewForNewDevice();
+    refreshAllGPUViewsForNewDevice();
+}
+
+void listenToTheGraphicsLayer()
+{
+    Graphics::addRenderingDeviceReplacedListener(
+        rebuildIfRenderingDeviceReplacedOursToo);
+    Graphics::addSharedDevicesReleaseListener(releaseSharedGPUDevice);
+}
+
+ReleasableShared<D3D12Shared>& d3d12SharedHolder()
+{
+    return Singleton::getImmortal<ReleasableShared<D3D12Shared>>();
+}
+
+// Carried across a release; see the D3D12Shared constructor.
+std::uint64_t nextD3D12SharedGeneration = 1;
+} // namespace
 
 void D3D12Shared::createAll()
 {
@@ -1118,8 +1138,24 @@ void D3D12Shared::recreateAfterDeviceLoss()
 
 D3D12Shared& getD3D12Shared()
 {
-    static auto shared = D3D12Shared();
-    return shared;
+    return d3d12SharedHolder().get(
+        [](std::optional<D3D12Shared>& shared)
+        {
+            [[maybe_unused]] static const auto listening =
+                (listenToTheGraphicsLayer(), true);
+
+            shared.emplace(nextD3D12SharedGeneration);
+        });
+}
+
+void releaseD3D12Shared()
+{
+    auto& holder = d3d12SharedHolder();
+
+    if (auto* shared = holder.find())
+        nextD3D12SharedGeneration = shared->getGeneration() + 1;
+
+    holder.release();
 }
 
 D3D12Context::D3D12Context(D3D12_COMMAND_LIST_TYPE type)

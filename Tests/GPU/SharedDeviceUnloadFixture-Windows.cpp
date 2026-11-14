@@ -6,6 +6,7 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/DComp-Windows.h>
+#include <eacp/Graphics/Graphics/SharedDevices.h>
 
 namespace
 {
@@ -31,6 +32,11 @@ EACP_PLUGIN_EXPORT int eacpSharedDevicesBringUp()
         up |= compositionDeviceUp;
 
     return up;
+}
+
+EACP_PLUGIN_EXPORT void eacpSharedDevicesRelease()
+{
+    eacp::Graphics::releaseSharedDevices();
 }
 
 EACP_PLUGIN_EXPORT void eacpSharedDevicesModuleExit()

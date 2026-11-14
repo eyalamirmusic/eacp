@@ -92,4 +92,10 @@ auto tModuleUnloads =
 auto tModuleReloads =
     test("SharedDeviceUnload/aModuleUnloadedOnceLoadsAndUnloadsAgain") = []
 { checkHostUnloads("exit", 2); };
+
+// Graphics::releaseSharedDevices from the module exit, as a plug-in format's
+// does: the devices go before the unload, and the next use builds them anew.
+auto tReleasedModuleReloads =
+    test("SharedDeviceUnload/aModuleReleasingTheDevicesBuildsThemAgainAndUnloads") =
+        [] { checkHostUnloads("release", 2); };
 } // namespace SharedDeviceUnloadTests
