@@ -33,9 +33,19 @@ public:
     ~NativeChildSurface() override;
 
     // The handle a foreign toolkit parents its own view into: an NSView* on
-    // macOS, a child HWND on Windows — which are the two things a plugin format
-    // names as its platform view type, so this is what goes straight into
-    // IPlugView::attached() beside kPlatformTypeNSView / kPlatformTypeHWND.
+    // macOS, a child HWND on Windows, an X11 window id widened into the
+    // pointer on Linux — which are the things a plugin format names as its
+    // platform view type, so this is what goes straight into
+    // IPlugView::attached() beside kPlatformTypeNSView, kPlatformTypeHWND or
+    // kPlatformTypeX11EmbedWindowID.
+    //
+    // On Linux the id is an XEmbed embedder: a client parented into it, or
+    // created inside it, is sized to fill it, mapped as its _XEMBED_INFO says,
+    // sent XEMBED_EMBEDDED_NOTIFY and given the X focus it asks for. It exists
+    // only in an X11-backed window — a toplevel on the X11 backend, or an
+    // EmbeddedView — because nothing can be parented into a Wayland surface,
+    // and in a Wayland window this is null. A host that shows X11 editors runs
+    // on the X11 backend: EACP_WINDOW_SYSTEM=x11, set before the first window.
     //
     // Deliberately not View::getHandle(), which is the handle eacp draws
     // through and is an IDCompositionVisual2 on Windows — nothing foreign can
@@ -43,8 +53,10 @@ public:
     // purpose and only this one is a parent.
     //
     // Null until the surface has a native window to sit in, which on Windows
-    // means until this view is in a Window or an EmbeddedView: a child window
-    // needs a parent window at creation, unlike an NSView. Ask for it once the
+    // and Linux means until this view is in a Window or an EmbeddedView: a
+    // child window needs a parent window at creation, unlike an NSView. The
+    // Linux id then stays the same for the surface's life, through hiding and
+    // moving to another window. Ask for it once the
     // view is parented — an Editor's onAttached(), which is exactly when a
     // plugin format wants it — and not from a constructor.
     void* getNativeParentHandle();
@@ -57,12 +69,15 @@ public:
     // coordinates rather than a subview of its parent: an *ancestor* moving
     // while this view keeps the same bounds moves the surface without resizing
     // it, and there is no notification for that. A container that shifts its
-    // children without changing their size calls this afterwards.
+    // children without changing their size calls this afterwards. Linux
+    // follows an ancestor's move by itself.
     void refreshPlacement();
 
     void resized() override;
     void visibilityChanged(bool nowVisible) override;
 
+    // Not called on Linux, where a key the client does not select goes on up
+    // the X11 tree to the window it is in, and so to the host's own views.
     std::function<bool(const NativeKeyEvent&)> onUnhandledKey =
         [](const NativeKeyEvent&) { return false; };
 

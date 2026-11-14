@@ -50,4 +50,25 @@ void linuxWindowSurfaceStateChanged(View& contentView);
 
 // In the window's content points.
 Point linuxViewOriginInWindow(const View& view);
+
+// The window `view` is in, through its root; null while it is in none.
+LinuxWindowSurface* linuxWindowForView(View& view);
+
+// A view that keeps a native window of its own in step with the tree, which is
+// what a NativeChildSurface's container is. Unlike a presenting view's child,
+// it is never destroyed on the way: a foreign client is parented into it.
+class LinuxNativeChild
+{
+public:
+    virtual ~LinuxNativeChild() = default;
+
+    // The view's bounds, visibility, window or scale may have changed.
+    virtual void sync() = 0;
+
+    // The view is leaving its window, which is still alive.
+    virtual void release() = 0;
+};
+
+void linuxRegisterNativeChild(View& view, LinuxNativeChild& child);
+void linuxUnregisterNativeChild(View& view);
 } // namespace eacp::Graphics

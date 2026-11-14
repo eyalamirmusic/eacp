@@ -182,6 +182,16 @@ if (LINUX)
         target_compile_definitions(EmbeddedViewTests PRIVATE EACP_HAS_XTEST=1)
     endif ()
 
+    # The other direction: a foreign client parented into one of our layouts,
+    # played by a second connection of the test's own.
+    nano_add_executable(NativeChildSurfaceTests
+            NO_MAIN
+            SOURCES
+                NativeChildSurfaceTests-Linux.cpp
+            TARGETS eacp-graphics)
+
+    target_link_libraries(NativeChildSurfaceTests PRIVATE eacp-x11)
+
     nano_add_executable(DisplayLinkTests
             NO_MAIN
             SOURCES
@@ -208,6 +218,8 @@ if (LINUX AND NOT CMAKE_CROSSCOMPILING)
             "set_tests_properties(X11 PROPERTIES\n"
             "        RESOURCE_LOCK \"eacp-linux-display;eacp-system-clipboard\")\n"
             "set_tests_properties(EmbeddedView PROPERTIES\n"
+            "        RESOURCE_LOCK eacp-linux-display)\n"
+            "set_tests_properties(NativeChildSurface PROPERTIES\n"
             "        RESOURCE_LOCK eacp-linux-display)\n")
 
     set_property(DIRECTORY APPEND PROPERTY

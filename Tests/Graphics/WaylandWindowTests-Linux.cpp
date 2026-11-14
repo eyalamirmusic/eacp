@@ -4,6 +4,7 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Graphics/View/View-Linux.h>
+#include <eacp/Graphics/Window/NativeChildSurface.h>
 
 #include <wayland-client.h>
 
@@ -534,6 +535,32 @@ auto tMovingTheViewResizesItsSurface =
     const auto resizesAfterMove = presenter.resized;
     presenter.setBounds({80.f, 90.f, 160.f, 120.f});
     check(presenter.resized == resizesAfterMove);
+};
+
+// Nothing X11 can be parented into a Wayland surface, so the surface offers no
+// handle rather than one that would not work, and stays safe to lay out.
+auto tNativeChildSurfaceHasNoHandle =
+    test("Wayland/aNativeChildSurfaceHasNoHandle") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto host = CompositorWindow {640, 400};
+    auto surface = NativeChildSurface {};
+
+    surface.setBounds({20.f, 30.f, 200.f, 100.f});
+    host.content.addSubview(surface);
+
+    check(surface.getNativeParentHandle() == nullptr);
+
+    surface.setBounds({40.f, 50.f, 300.f, 150.f});
+    surface.setVisible(false);
+    surface.setVisible(true);
+    surface.refreshPlacement();
+
+    check(surface.getNativeParentHandle() == nullptr);
+
+    host.content.removeSubview(surface);
 };
 
 auto tHidingTheViewTakesItsSurfaceAway =

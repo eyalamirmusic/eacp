@@ -85,6 +85,46 @@ for real under a headless Weston, and again under an Xvfb for X11, which is
 where input is exercised — Weston's headless backend has no seat and Xvfb has
 one.
 
+## Hosting a plugin's editor
+
+The other direction from `EmbeddedView` is a host showing somebody else's
+editor in its own layout, which on Linux means an X11 window: VST3 hands an
+editor `kPlatformTypeX11EmbedWindowID`, and CLAP's GUI API names `x11`. Two
+things in eacp cover it.
+
+`NativeChildSurface` is a `View` whose `getNativeParentHandle()` is an X11
+window id (widened into the pointer) for the editor to parent its own window
+into. The id is an XEmbed embedder: a client created inside it or reparented
+into it is sized to fill it, mapped or unmapped as the `XEMBED_MAPPED` bit of
+its `_XEMBED_INFO` says, sent `XEMBED_EMBEDDED_NOTIFY`, and given the X focus
+when it sends `XEMBED_REQUEST_FOCUS`. The container follows the view's bounds
+(an ancestor's move included), its visibility and its window's scale, stays the
+same id when the view is hidden or moved to another window, and lets a client
+still inside go — unmapped, reparented to the root — when it is destroyed, so
+an editor torn down after it can still destroy its own window. Presses the
+client leaves unselected stop at the container; keys go on up to the window it
+is in, and `onUnhandledKey` is not called. Include
+`<eacp/Graphics/Window/NativeChildSurface.h>` directly: the `Graphics.h`
+umbrella keeps it under `EACP_HAS_CONTEXT`.
+
+There is no X11 embedding inside a Wayland surface, so the handle exists only
+in an X11-backed window — a toplevel on the X11 backend, or an
+`EmbeddedView` — and is null in a Wayland window (logged once) or a headless
+one. A standalone app takes Wayland when a compositor answers, so a host that
+shows X11 editors asks for the X11 backend with `EACP_WINDOW_SYSTEM=x11`,
+either in its launch environment or with `setEnv`
+(`Core/Utils/Environment.h`) at the top of `main`, before its first window;
+under a Wayland session that is XWayland, which is how Linux plugin hosts run
+today. VST 3.8's native Wayland embedding is not implemented.
+
+`Threads::FdWatcher` (`Threads/EventLoop-Linux.h`) is the run-loop half: it
+calls back on eacp's loop thread whenever a descriptor is readable, from
+construction to destruction, which is VST3's
+`IRunLoop::registerEventHandler`/`unregisterEventHandler`. Several watchers
+may share one descriptor — two instances of a plugin sharing one display
+connection do — and destroying one leaves the others. `IRunLoop::registerTimer`
+is a `Threads::Timer` built with `Time::MS`.
+
 ## Gamepads
 
 `GameInput`'s gamepads come from evdev (`Input/GameInput-Linux.cpp`), with no

@@ -68,12 +68,18 @@ View& linuxRootOf(View& view)
     return *root;
 }
 
-LinuxWindowSurface* linuxWindowForView(View& view)
+std::unordered_map<View*, LinuxNativeChild*>& linuxNativeChildren()
 {
-    auto& windows = linuxContentViewWindows();
-    auto found = windows.find(&linuxRootOf(view));
+    static auto children = std::unordered_map<View*, LinuxNativeChild*> {};
+    return children;
+}
 
-    return found == windows.end() ? nullptr : found->second;
+LinuxNativeChild* linuxFindNativeChild(View& view)
+{
+    auto& children = linuxNativeChildren();
+    auto found = children.find(&view);
+
+    return found == children.end() ? nullptr : found->second;
 }
 
 bool linuxEffectivelyVisible(View& view)
@@ -119,6 +125,9 @@ void linuxDestroyViewSurface(LinuxViewRecord& state)
 
 void linuxSyncOneViewSurface(View& view)
 {
+    if (auto* child = linuxFindNativeChild(view))
+        child->sync();
+
     auto* state = linuxFindViewRecord(view);
 
     if (state == nullptr)
@@ -157,6 +166,9 @@ void linuxSyncViewSurfaces(View& view)
 
 void linuxReleaseViewSurfaceTree(View& view)
 {
+    if (auto* child = linuxFindNativeChild(view))
+        child->release();
+
     if (auto* state = linuxFindViewRecord(view))
         linuxDestroyViewSurface(*state);
 
@@ -197,6 +209,7 @@ View::~View()
         linuxDestroyViewSurface(*state);
 
     linuxViewRecords().erase(this);
+    linuxNativeChildren().erase(this);
 
     // A content view dying first would leave the window holding a pointer.
     auto& windows = linuxContentViewWindows();
@@ -394,6 +407,24 @@ void linuxUnbindWindowFromContentView(View& contentView)
 void linuxWindowSurfaceStateChanged(View& contentView)
 {
     linuxSyncViewSurfaces(contentView);
+}
+
+LinuxWindowSurface* linuxWindowForView(View& view)
+{
+    auto& windows = linuxContentViewWindows();
+    auto found = windows.find(&linuxRootOf(view));
+
+    return found == windows.end() ? nullptr : found->second;
+}
+
+void linuxRegisterNativeChild(View& view, LinuxNativeChild& child)
+{
+    linuxNativeChildren()[&view] = &child;
+}
+
+void linuxUnregisterNativeChild(View& view)
+{
+    linuxNativeChildren().erase(&view);
 }
 
 Point linuxViewOriginInWindow(const View& view)
