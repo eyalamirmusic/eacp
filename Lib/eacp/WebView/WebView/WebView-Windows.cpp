@@ -2,11 +2,13 @@
 #include <algorithm>
 
 #include "WebView.h"
+#include "MessageOrigin.h"
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
 #include "FileDrag-Windows.h"
 #include <eacp/Graphics/View/FileDragOut-Windows.h>
 #include <eacp/Graphics/DComp-Windows.h>
+#include <eacp/Core/Utils/Format.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
 
@@ -84,7 +86,7 @@ std::wstring defaultUserDataFolder(const std::string& suffix)
 
     wchar_t modulePath[MAX_PATH] = {};
     GetModuleFileNameW(
-        (HMODULE) eacp::Plugins::getCurrentModuleHandle(), modulePath, MAX_PATH);
+        (HMODULE) eacp::Plugins::getProductModuleHandle(), modulePath, MAX_PATH);
 
     auto moduleName = std::wstring {PathFindFileNameW(modulePath)};
     if (auto dot = moduleName.rfind(L'.'); dot != std::wstring::npos)
@@ -519,9 +521,7 @@ struct WebView::Native
 
     static std::string hresultHex(HRESULT hr)
     {
-        char buf[16];
-        std::snprintf(buf, sizeof buf, "%08lx", static_cast<unsigned long>(hr));
-        return buf;
+        return Strings::format("{:08x}", static_cast<unsigned long>(hr));
     }
 
     Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> buildEnvironmentOptions()
@@ -956,6 +956,20 @@ struct WebView::Native
                 .Get());
     }
 
+    // WebMessageReceived fires for the top-level document only, and Source is
+    // that document's URI. NavigateToString (loadHTML without a base URL) puts
+    // the page at about:blank.
+    bool isFromTrustedSender(ICoreWebView2WebMessageReceivedEventArgs* args)
+    {
+        CoTaskMemString sourceRaw;
+
+        if (FAILED(args->get_Source(&sourceRaw)))
+            return false;
+
+        auto source = sourceRaw.toString();
+        return originPolicy.admit(detail::originOf(source), source == "about:blank");
+    }
+
     void setupEventHandlers()
     {
         if (!webView)
@@ -1051,6 +1065,9 @@ struct WebView::Native
                 [this](ICoreWebView2*,
                        ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT
                 {
+                    if (!isFromTrustedSender(args))
+                        return S_OK;
+
                     CoTaskMemString messageRaw;
                     args->get_WebMessageAsJson(&messageRaw);
                     if (!messageRaw)
@@ -1274,9 +1291,9 @@ struct WebView::Native
     // back, because it can change while the controller is still initializing —
     // and because a window that has never been shown is not thereby hidden:
     // an offscreen snapshot of one still needs the page rendering.
-    void setControllerVisible(bool visible)
+    void setControllerVisible(bool visibleToUse)
     {
-        hostVisible = visible;
+        hostVisible = visibleToUse;
         applyControllerVisibility();
     }
 
@@ -1284,9 +1301,9 @@ struct WebView::Native
     // ancestor. Tracked apart from the host window's state because either one
     // alone is enough to hide the page, and neither may undo the other — a
     // parked service view must stay hidden when its window is shown again.
-    void setViewVisible(bool visible)
+    void setViewVisible(bool visibleToUse)
     {
-        viewVisible = visible;
+        viewVisible = visibleToUse;
         applyControllerVisibility();
     }
 
@@ -1424,7 +1441,7 @@ struct WebView::Native
         if (paths.empty() || !hostHwnd)
             return;
 
-        auto ownerWindow = hostHwnd;
+        auto hostWindow = hostHwnd;
         auto dpiScale = getDpiScale();
         auto onDragStarted = owner.onFileDragStarted;
         auto onDragMoved = owner.onFileDragMoved;
@@ -1440,15 +1457,15 @@ struct WebView::Native
             if (onDragStarted)
                 onDragStarted();
 
-            if (IsWindow(ownerWindow))
+            if (IsWindow(hostWindow))
             {
                 // Attach (not construct-from-raw) so the source keeps the
                 // single ref it is born with; the ComPtr releases it — and
                 // deletes the object — when the drag returns.
                 ComPtr<IDropSource> dropSource;
                 dropSource.Attach(new FileDragSource(
-                    [ownerWindow, dpiScale]
-                    { return fileDragPointFromCursor(ownerWindow, dpiScale); },
+                    [hostWindow, dpiScale]
+                    { return fileDragPointFromCursor(hostWindow, dpiScale); },
                     onDragMoved));
 
                 // Register our own window as a drop target for the length
@@ -1459,21 +1476,21 @@ struct WebView::Native
                 ComPtr<IDropTarget> dropTarget;
                 dropTarget.Attach(new FileDragTarget());
                 auto registered =
-                    SUCCEEDED(RegisterDragDrop(ownerWindow, dropTarget.Get()));
+                    SUCCEEDED(RegisterDragDrop(hostWindow, dropTarget.Get()));
 
                 DWORD effect = DROPEFFECT_NONE;
-                SHDoDragDrop(ownerWindow,
+                SHDoDragDrop(hostWindow,
                              dataObject.Get(),
                              dropSource.Get(),
                              DROPEFFECT_COPY,
                              &effect);
 
                 if (registered)
-                    RevokeDragDrop(ownerWindow);
+                    RevokeDragDrop(hostWindow);
 
                 // The modal loop is over: report the release point so the
                 // app can file the drop (or stand its filing UI down).
-                onDragEnded(fileDragPointFromCursor(ownerWindow, dpiScale));
+                onDragEnded(fileDragPointFromCursor(hostWindow, dpiScale));
             }
         }
 
@@ -1575,6 +1592,7 @@ struct WebView::Native
 
     WebView& owner;
     WebView::Options options;
+    detail::MessageOriginPolicy originPolicy {options};
     HWND hostHwnd = nullptr;
     ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
@@ -1702,6 +1720,9 @@ void WebView::loadURL(const std::string& url)
 
 void WebView::loadHTML(const std::string& html, const std::string& baseURL)
 {
+    if (baseURL.empty())
+        impl->originPolicy.trustInlineDocument();
+
     impl->ensureInitialized();
     impl->queueOperation(
         [this, html, baseURL]()
@@ -1905,8 +1926,8 @@ void WebView::takeSnapshot(SnapshotCallback callback)
                         }
 
                         Threads::callAsync(
-                            [callback, bytes = std::move(bytes), error]() mutable
-                            { callback(std::move(bytes), error); });
+                            [callback, pngBytes = std::move(bytes), error]() mutable
+                            { callback(std::move(pngBytes), error); });
                         return S_OK;
                     })
                     .Get());
@@ -1978,14 +1999,14 @@ void WebView::hostWindowMoved()
     impl->notifyParentWindowMoved();
 }
 
-void WebView::hostWindowVisibilityChanged(bool visible)
+void WebView::hostWindowVisibilityChanged(bool visibleToUse)
 {
-    impl->setControllerVisible(visible);
+    impl->setControllerVisible(visibleToUse);
 }
 
-void WebView::visibilityChanged(bool visible)
+void WebView::visibilityChanged(bool visibleToUse)
 {
-    impl->setViewVisible(visible);
+    impl->setViewVisible(visibleToUse);
 }
 
 // Visual hosting gives the WebView no input HWND of its own, and the key-focus

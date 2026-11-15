@@ -40,6 +40,30 @@ auto tAtomicKeepsPermissions = test("Files/atomicKeepsPermissions") = []
     std::filesystem::remove_all(dir);
 };
 
+// rename(2) asks the directory, not the file, so a read-only file is
+// replaced, and the bits carried over keep the replacement read-only. The
+// Windows half (FilesTests-Windows.cpp) holds the same line.
+auto tAtomicReplacesReadOnlyFile = test("Files/atomicReplacesReadOnlyFile") = []
+{
+    auto dir = scratchDirectory("files-read-only");
+    auto path = dir / "doc.txt";
+
+    writeTestFile(path, "old");
+
+    const auto readOnly = std::filesystem::perms::owner_read
+                          | std::filesystem::perms::group_read
+                          | std::filesystem::perms::others_read;
+
+    std::filesystem::permissions(path, readOnly);
+
+    writeAtomically(path, "new");
+
+    check(readTestFile(path) == "new");
+    check(std::filesystem::status(path).permissions() == readOnly);
+
+    std::filesystem::remove_all(dir);
+};
+
 auto tAtomicFollowsSymlinks = test("Files/atomicFollowsSymlinks") = []
 {
     auto dir = scratchDirectory("files-symlink");
@@ -293,3 +317,36 @@ auto tFinderHidden = test("Files/aFinderHiddenFileIsHiddenWithoutADot") = []
     std::filesystem::remove_all(dir);
 };
 #endif
+
+auto tSetExecutableAddsExecuteBits =
+    test("Files/setExecutable adds execute bits") = []
+{
+    auto dir = scratchDirectory("files-set-executable");
+    auto path = dir / "tool.sh";
+    writeTestFile(path, "#!/bin/sh\n");
+
+    const auto readWrite =
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write;
+    const auto executeForEveryone = std::filesystem::perms::owner_exec
+                                    | std::filesystem::perms::group_exec
+                                    | std::filesystem::perms::others_exec;
+    std::filesystem::permissions(path, readWrite);
+
+    check(eacp::Files::setExecutable(FilePath {path}));
+    check(std::filesystem::status(path).permissions()
+          == (readWrite | executeForEveryone));
+    check(!eacp::Files::setExecutable(FilePath {dir / "missing.sh"}));
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tReadSymlinkGivesTarget = test("Files/readSymlink gives the link's text") = []
+{
+    auto dir = scratchDirectory("files-readlink");
+    writeTestFile(dir / "target.txt", "x");
+    std::filesystem::create_symlink("target.txt", dir / "link.txt");
+
+    check(eacp::Files::readSymlink(FilePath {dir / "link.txt"}) == "target.txt");
+
+    std::filesystem::remove_all(dir);
+};

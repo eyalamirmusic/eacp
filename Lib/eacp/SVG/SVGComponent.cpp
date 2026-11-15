@@ -1219,21 +1219,20 @@ void SVGComponent::buildPatternFill(const SVGElement& element,
     if (fillPath.isEmpty() || depth >= maxUseDepth)
         return;
 
-    auto bounds = fillPath.getBounds();
+    auto box = fillPath.getBounds();
 
     auto length = [&](const std::string& name, LengthAxis axis)
     { return lengthAttr(element, name, style.viewport, axis); };
 
-    auto tile =
-        element.attr("patternUnits") == "userSpaceOnUse"
-            ? Graphics::Rect {length("x", LengthAxis::Horizontal),
-                              length("y", LengthAxis::Vertical),
-                              length("width", LengthAxis::Horizontal),
-                              length("height", LengthAxis::Vertical)}
-            : Graphics::Rect {bounds.x + bounds.w * boxFraction(element, "x"),
-                              bounds.y + bounds.h * boxFraction(element, "y"),
-                              bounds.w * boxFraction(element, "width"),
-                              bounds.h * boxFraction(element, "height")};
+    auto tile = element.attr("patternUnits") == "userSpaceOnUse"
+                    ? Graphics::Rect {length("x", LengthAxis::Horizontal),
+                                      length("y", LengthAxis::Vertical),
+                                      length("width", LengthAxis::Horizontal),
+                                      length("height", LengthAxis::Vertical)}
+                    : Graphics::Rect {box.x + box.w * boxFraction(element, "x"),
+                                      box.y + box.h * boxFraction(element, "y"),
+                                      box.w * boxFraction(element, "width"),
+                                      box.h * boxFraction(element, "height")};
 
     if (tile.isEmpty())
         return;
@@ -1247,7 +1246,7 @@ void SVGComponent::buildPatternFill(const SVGElement& element,
             {0.f, 0.f, tile.w, tile.h},
             parsePreserveAspectRatio(element.attr("preserveAspectRatio")));
     else if (element.attr("patternContentUnits") == "objectBoundingBox")
-        content = GPUWidgets::AffineTransform::scaling(bounds.w, bounds.h);
+        content = GPUWidgets::AffineTransform::scaling(box.w, box.h);
 
     auto patternTransform = parseTransformMatrix(element.attr("patternTransform"));
 
@@ -1255,7 +1254,7 @@ void SVGComponent::buildPatternFill(const SVGElement& element,
         return;
 
     auto patternToComponent = patternTransform.then(style.transform);
-    auto covered = patternTransform.inverted().apply(bounds);
+    auto covered = patternTransform.inverted().apply(box);
 
     auto firstColumn = (int) std::floor((covered.x - tile.x) / tile.w);
     auto lastColumn = (int) std::ceil((covered.right() - tile.x) / tile.w);
@@ -1337,13 +1336,13 @@ int SVGComponent::findOrAddClip(const std::string& reference,
     if (placedAgainstBox && (objectBounds.w <= 0.f || objectBounds.h <= 0.f))
         return -1;
 
-    auto bounds = placedAgainstBox ? objectBounds : Graphics::Rect {};
+    auto placementBounds = placedAgainstBox ? objectBounds : Graphics::Rect {};
 
     auto matches = [&](const Clip& clip)
     {
         return clip.reference == reference && clip.transform == transform
                && clip.viewport == viewport
-               && UI::sameRect(clip.objectBounds, bounds);
+               && UI::sameRect(clip.objectBounds, placementBounds);
     };
 
     for (auto i = 0; i < clips.size(); ++i)
@@ -1356,7 +1355,7 @@ int SVGComponent::findOrAddClip(const std::string& reference,
         return -1;
 
     auto region = resolveClipPath(
-        reference, elementsById, bounds, viewport, fillFlatness() / scale);
+        reference, elementsById, placementBounds, viewport, fillFlatness() / scale);
 
     // Not a clipPath, or a reference to nothing at all: ignored, and the element
     // draws unclipped. A clipPath that *is* one and holds no geometry is the
@@ -1370,7 +1369,7 @@ int SVGComponent::findOrAddClip(const std::string& reference,
 
     clip.reference = reference;
     clip.transform = transform;
-    clip.objectBounds = bounds;
+    clip.objectBounds = placementBounds;
     clip.viewport = viewport;
 
     return index;

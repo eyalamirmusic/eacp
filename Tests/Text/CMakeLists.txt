@@ -29,6 +29,18 @@ if (WIN32)
     target_sources(TextTests PRIVATE FontResolution-WindowsTests.cpp)
 endif ()
 
+# Text and off-screen snapshots with no DirectComposition device, the state a
+# session with no desktop compositor (a service, a CI runner, session 0 over
+# ssh) is in. Its own binary, because its main has to set
+# EACP_DCOMP_UNAVAILABLE before the process-wide compositor is first built.
+if (WIN32)
+    nano_add_executable(NoCompositionTests
+            NO_MAIN
+            SOURCES
+                NoComposition-WindowsTests.cpp
+            TARGETS eacp-text)
+endif ()
+
 # Which face the emoji property makes the rasterizer choose, and the visual
 # order the bidi pass shapes a mixed-direction line in, are the Linux backend's
 # own rules; CoreText and DirectWrite decide both for themselves.

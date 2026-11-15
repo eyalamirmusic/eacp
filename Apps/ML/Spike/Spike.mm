@@ -3,6 +3,7 @@
 #include <Accelerate/Accelerate.h>
 
 #include "MILWriter.h"
+#include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/FilePath.h>
 
 #include <algorithm>
@@ -20,11 +21,7 @@
 // softmax package through MILWriter, compile it at run time, load it per compute
 // unit setting, read the compute plan, predict from plain and IOSurface-backed
 // fp16 arrays, and compare against an fp32 reference. Given a package path it
-// measures that package instead.
-//
-//   MLSpike [--op linear|matmul] [--variant blob|inline|enum]... [--rows N]...
-//           [--runs N] [--plan-only] [--keep-compiled]
-//   MLSpike <model.mlpackage | model.mlmodelc> --weights raw_f16.bin [...]
+// measures that package instead. MLSpike --help lists the options.
 namespace
 {
 using Clock = std::chrono::steady_clock;
@@ -37,8 +34,8 @@ struct Options
     std::string package;
     std::string weights;
     std::string op = "linear";
-    std::vector<std::string> variants;
-    std::vector<int> rows;
+    eacp::Vector<std::string> variants {"blob", "inline", "enum"};
+    eacp::Vector<int> rows;
     int runs = 20;
     bool planOnly = false;
     bool keepCompiled = false;
@@ -83,52 +80,37 @@ double msSince(Clock::time_point start)
     std::exit(1);
 }
 
-[[noreturn]] void usage()
+std::optional<int> parseOptions(int argc, const char* argv[], Options& options)
 {
-    std::fprintf(stderr,
-                 "usage: MLSpike [--op linear|matmul] [--variant blob|inline|enum]"
-                 "... [--rows N]... [--runs N] [--plan-only] [--keep-compiled]\n"
-                 "       MLSpike <model.mlpackage | model.mlmodelc> --weights "
-                 "raw_f16.bin [--rows N]... [--runs N] [--plan-only]\n");
-    std::exit(2);
-}
+    auto cli = eacp::Args::Parser {
+        "MLSpike",
+        "Writes linear (or matmul) + softmax packages, compiles and loads them "
+        "per compute unit setting, reads the compute plan and times "
+        "predictions against an fp32 reference."};
+    cli.positional(options.package,
+                   "package",
+                   "an .mlpackage or .mlmodelc to measure instead");
+    cli.option("--op", options.op, "the generated layer")
+        .choices({"linear", "matmul"});
+    cli.option("--variant", options.variants, "how the weights are stored")
+        .choices({"blob", "inline", "enum"})
+        .unique();
+    cli.option("--rows", options.rows, "an input row count to predict")
+        .atLeast(1)
+        .defaultText("the variant's or the model's own");
+    cli.option("--runs", options.runs, "predictions timed per row count")
+        .atLeast(1);
+    cli.option("--weights", options.weights, "the package's fp16 weights")
+        .hint("<file>")
+        .defaultText("the end of the package's weight.bin");
+    cli.flag("--plan-only", options.planOnly, "read the plan, skip predicting");
+    cli.flag("--keep-compiled",
+             options.keepCompiled,
+             "reuse the compiled model an earlier run kept");
+    cli.epilogue("--op and --variant apply to the generated packages, "
+                 "--weights to a given one.");
 
-Options parseOptions(int argc, const char* argv[])
-{
-    auto options = Options {};
-
-    for (auto i = 1; i < argc; ++i)
-    {
-        auto arg = std::string {argv[i]};
-        auto hasValue = i + 1 < argc;
-
-        if (arg == "--rows" && hasValue)
-            options.rows.push_back(std::atoi(argv[++i]));
-        else if (arg == "--runs" && hasValue)
-            options.runs = std::atoi(argv[++i]);
-        else if (arg == "--keep-compiled")
-            options.keepCompiled = true;
-        else if (arg == "--plan-only")
-            options.planOnly = true;
-        else if (arg == "--weights" && hasValue)
-            options.weights = argv[++i];
-        else if (arg == "--op" && hasValue)
-            options.op = argv[++i];
-        else if (arg == "--variant" && hasValue)
-            options.variants.push_back(argv[++i]);
-        else if (arg.starts_with("--"))
-            usage();
-        else
-            options.package = arg;
-    }
-
-    if (options.op != "linear" && options.op != "matmul")
-        usage();
-
-    if (options.variants.empty())
-        options.variants = {"blob", "inline", "enum"};
-
-    return options;
+    return cli.exitCodeFor(cli.parse(argc, argv));
 }
 
 std::vector<char> readFile(const std::string& path)
@@ -202,9 +184,6 @@ Variant makeVariant(const std::string& name)
                 ConstStorage::Blob,
                 {{1500, columns}, {448, columns}, {512, columns}, {1024, columns}},
                 {1500, 448}};
-
-    if (name != "blob")
-        usage();
 
     return {name, ConstStorage::Blob, {{1500, columns}}, {1500}};
 }
@@ -704,7 +683,7 @@ void measure(NSURL* package,
         if (options.planOnly)
             continue;
 
-        auto rows = !options.rows.empty() ? options.rows
+        auto rows = !options.rows.empty() ? options.rows.getVector()
                     : !variantRows.empty() ? variantRows
                                            : defaultRows(model);
 
@@ -749,7 +728,10 @@ int main(int argc, const char* argv[])
 {
     @autoreleasepool
     {
-        auto options = parseOptions(argc, argv);
+        auto options = Options {};
+
+        if (auto code = parseOptions(argc, argv, options))
+            return *code;
 
         if (options.package.empty())
         {

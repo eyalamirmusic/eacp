@@ -4,7 +4,7 @@
 
 // Internal seam between the cross-platform Image logic (Image.cpp) and
 // the per-platform codecs (Image-Apple.mm, Image-Windows.cpp,
-// Image-Android.cpp; Image-Linux.cpp has none). Not part of the public
+// Image-Android.cpp, and Image-Linux.cpp over stb). Not part of the public
 // Graphics surface.
 namespace eacp::Graphics::detail
 {

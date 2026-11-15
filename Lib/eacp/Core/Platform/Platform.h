@@ -101,9 +101,20 @@ constexpr std::string_view name()
     return "Unknown";
 }
 
-// Linkage of this eacp copy: isStandalone when it is compiled into the
-// process executable, isDLL when it lives in a dynamic library (a
-// runtime-loaded plugin). Resolved at runtime from this copy's own image
+// The CPU architecture this binary was built for: "arm64" or "x64".
+constexpr std::string_view architectureName()
+{
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return "arm64";
+#else
+    return "x64";
+#endif
+}
+
+// Role of this eacp copy: isStandalone when it is the application (compiled
+// into the process executable, or into a library the executable claims with
+// Plugins/ClaimCopy.h), isDLL when it is a guest in someone else's process (a
+// plugin). Resolved at runtime from the loaded images
 // (Plugins::isDynamicLibrary), so every statically linked eacp copy in a
 // process answers for itself, and so these cannot be constexpr. Apps::run<T>
 // uses it to decide loop ownership: a DLL app is scheduled onto the host's

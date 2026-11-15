@@ -18,13 +18,6 @@ enum class ShaderStage
     Compute
 };
 
-enum class ResourceKind
-{
-    Buffer,
-    Texture,
-    Sampler
-};
-
 // The threadgroup a kernel is dispatched in, chosen by its author. A default
 // shape means the stock one for the kernel's rank - 64 threads in 1D, 8x8 in
 // 2D, 4x4x4 in 3D - which is what ComputePass::threadGroupWidth and its two
@@ -39,20 +32,12 @@ struct ThreadGroupShape
     int z = 1;
 };
 
-// An explicit shader resource binding. Kept as plain data (never inferred via
-// runtime reflection) so a future C++ shader EDSL can populate the exact same
-// description it generated the source for.
-struct ResourceBinding
-{
-    ResourceKind kind = ResourceKind::Buffer;
-    ShaderStage stage = ShaderStage::Vertex;
-    int index = 0;
-    std::string name;
-};
-
 // Native shader source plus the metadata a pipeline needs. The whole GPU layer
-// downstream of this type consumes only this struct, so the planned shader EDSL
-// becomes "a factory that returns a ShaderSource" with no call-site changes.
+// downstream of this type consumes only this struct, so the shader EDSL is "a
+// factory that returns a ShaderSource" with no call-site changes. What a
+// source binds is not described here: the EDSL reflects its own shaders from
+// the graph they were emitted from (GeneratedShader::reflection), and a
+// hand-written source is taken as it is.
 struct ShaderSource
 {
     static ShaderSource msl(std::string sourceToUse);
@@ -84,7 +69,12 @@ struct ShaderSource
     // the stock shape for the dispatch's rank is used.
     ShaderSource& withThreadGroup(ThreadGroupShape shape);
 
-    ShaderSource& withBinding(ResourceBinding binding);
+    // Marks a source that declares pipeline-overridable constants
+    // (PipelineConstants.h): Metal function constants, Vulkan specialization
+    // constants or, on D3D, EACP_OVERRIDE_<id> macros. A pipeline built from it
+    // specialises it, with the values it is given or the shader's defaults.
+    // The EDSL sets it for a shader with an override.
+    ShaderSource& withPipelineConstants();
 
     ShaderBackend backend = ShaderBackend::Metal;
     std::string source;
@@ -92,6 +82,6 @@ struct ShaderSource
     std::string fragmentEntry = "fragmentMain";
     std::string computeEntry; // empty unless this is a compute source
     ThreadGroupShape threadGroup;
-    Vector<ResourceBinding> bindings;
+    bool hasPipelineConstants = false;
 };
 } // namespace eacp::GPU

@@ -2,6 +2,7 @@
 
 #include "ThreadUtils-Windows.h"
 #include "../Utils/Singleton.h"
+#include "../Utils/Strings.h"
 
 #include <atomic>
 #include <cassert>
@@ -19,6 +20,7 @@ namespace eacp::Threads
 struct MainThreadState
 {
     std::atomic<DWORD> mainThreadId {GetCurrentThreadId()};
+    std::atomic<bool> keepsWindowsErrorReportingOn {false};
 };
 
 static MainThreadState& getMainThreadState()
@@ -35,6 +37,23 @@ void setCurrentThreadAsMainFallback()
     getMainThreadState().mainThreadId = GetCurrentThreadId();
 }
 
+UINT getMainThreadErrorMode()
+{
+    constexpr auto quietMode =
+        UINT {SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX};
+
+    if (getMainThreadState().keepsWindowsErrorReportingOn.load())
+        return quietMode;
+
+    return quietMode | SEM_NOGPFAULTERRORBOX;
+}
+
+void keepWindowsErrorReportingOn()
+{
+    getMainThreadState().keepsWindowsErrorReportingOn.store(true);
+    SetErrorMode(GetErrorMode() & ~UINT {SEM_NOGPFAULTERRORBOX});
+}
+
 void initMainThread()
 {
     // Suppress Windows Error Reporting + the JIT-debugger pop-up that otherwise
@@ -42,8 +61,7 @@ void initMainThread()
     // during DLL detach at shutdown. Lives here — the loop owner's bootstrap —
     // rather than at static init, so merely dlopen-loading an eacp plugin doesn't
     // overwrite the host process's error mode.
-    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
-                 | SEM_NOOPENFILEERRORBOX);
+    SetErrorMode(getMainThreadErrorMode());
 
     // A failed assert() is the same problem one layer down: the debug CRT
     // answers it with a modal dialog, so a test binary that trips one stops
@@ -72,6 +90,95 @@ bool isMainThread()
 void assertMainThread()
 {
     assert(isMainThread() && "Must be accessed from Main Thread");
+}
+
+// Looked up rather than linked: SetThreadDescription is Windows 10 1607.
+void setCurrentThreadName(std::string_view name)
+{
+    using SetDescriptionFunction = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+    static const auto setDescription = procAddress<SetDescriptionFunction>(
+        GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription");
+
+    if (setDescription != nullptr)
+        setDescription(GetCurrentThread(), Strings::widen(name).c_str());
+}
+
+void setCurrentThreadPriority(ThreadPriority priority)
+{
+    auto level = THREAD_PRIORITY_NORMAL;
+
+    if (priority == ThreadPriority::Low)
+        level = THREAD_PRIORITY_BELOW_NORMAL;
+    else if (priority == ThreadPriority::High)
+        level = THREAD_PRIORITY_ABOVE_NORMAL;
+
+    SetThreadPriority(GetCurrentThread(), level);
+}
+
+namespace
+{
+using AvSetMmThreadCharacteristicsFunction = HANDLE(WINAPI*)(LPCWSTR, LPDWORD);
+using AvRevertMmThreadCharacteristicsFunction = BOOL(WINAPI*)(HANDLE);
+
+// Loaded by name so eacp-core links nothing for it, and never freed.
+struct ThreadMmcssLibrary
+{
+    ThreadMmcssLibrary()
+    {
+        auto* module =
+            LoadLibraryExW(L"avrt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+        if (module == nullptr)
+            return;
+
+        setCharacteristics = procAddress<AvSetMmThreadCharacteristicsFunction>(
+            module, "AvSetMmThreadCharacteristicsW");
+        revertCharacteristics = procAddress<AvRevertMmThreadCharacteristicsFunction>(
+            module, "AvRevertMmThreadCharacteristics");
+    }
+
+    bool isLoaded() const
+    {
+        return setCharacteristics != nullptr && revertCharacteristics != nullptr;
+    }
+
+    AvSetMmThreadCharacteristicsFunction setCharacteristics = nullptr;
+    AvRevertMmThreadCharacteristicsFunction revertCharacteristics = nullptr;
+};
+
+const ThreadMmcssLibrary& threadMmcssLibrary()
+{
+    static const auto library = ThreadMmcssLibrary {};
+    return library;
+}
+
+thread_local HANDLE threadMmcssHandle = nullptr;
+} // namespace
+
+bool setCurrentThreadRealtime(const RealtimeOptions&)
+{
+    const auto& mmcss = threadMmcssLibrary();
+
+    if (threadMmcssHandle == nullptr && mmcss.isLoaded())
+    {
+        auto taskIndex = DWORD {0};
+        threadMmcssHandle = mmcss.setCharacteristics(L"Pro Audio", &taskIndex);
+    }
+
+    if (threadMmcssHandle != nullptr)
+        return true;
+
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    return false;
+}
+
+void endCurrentThreadRealtime()
+{
+    if (threadMmcssHandle == nullptr)
+        return;
+
+    threadMmcssLibrary().revertCharacteristics(threadMmcssHandle);
+    threadMmcssHandle = nullptr;
 }
 
 } // namespace eacp::Threads

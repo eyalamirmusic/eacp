@@ -91,12 +91,12 @@ struct AnimatedDisc final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        auto bounds = getLocalBounds();
-        auto size = std::min(bounds.w, bounds.h) * 0.18f;
+        auto area = getLocalBounds();
+        auto size = std::min(area.w, area.h) * 0.18f;
 
         g.setColour(UI::Color {1.f, 0.5f, 0.f}.withAlpha(opacity));
         g.fillRoundedRect(
-            {x * bounds.w - size * 0.5f, bounds.h * 0.5f - size * 0.5f, size, size},
+            {x * area.w - size * 0.5f, area.h * 0.5f - size * 0.5f, size, size},
             size * 0.5f);
     }
 
@@ -113,20 +113,20 @@ struct GradientPanel final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
         // Placed in this component's own points, and resolved once for the fill
         // that follows: the ramp is shared, so a second panel with these colours
         // would cost nothing more than this one.
         auto gradient = UI::Gradient {};
         gradient.start = {0.f, 0.f};
-        gradient.end = {bounds.w, bounds.h};
+        gradient.end = {area.w, area.h};
         gradient.stops.add({{0.2f, 0.4f, 0.9f, 1.f}, 0.f});
         gradient.stops.add({{0.9f, 0.2f, 0.5f, 1.f}, 0.5f});
         gradient.stops.add({{0.9f, 0.6f, 0.1f, 1.f}, 1.f});
 
         g.setGradient(gradient);
-        g.fillRoundedRect(bounds, 12.f);
+        g.fillRoundedRect(area, 12.f);
         g.clearGradient();
     }
 };

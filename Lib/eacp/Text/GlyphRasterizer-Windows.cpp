@@ -491,7 +491,8 @@ struct GlyphRasterizer::Native
         auto index = UINT32 {};
         auto exists = BOOL {};
 
-        return SUCCEEDED(collection->FindFamilyName(name.c_str(), &index, &exists))
+        return collection
+               && SUCCEEDED(collection->FindFamilyName(name.c_str(), &index, &exists))
                && exists;
     }
 
@@ -499,6 +500,13 @@ struct GlyphRasterizer::Native
     {
         auto index = UINT32 {};
         auto exists = BOOL {};
+
+        // A rasterizer that resolved nothing (no collection, no family) still
+        // gets asked for faces: metrics, shape and rasterize all come through
+        // here whether or not isValid(). It answers no face, which they treat
+        // as nothing to measure or draw.
+        if (!collection || family.empty())
+            return {};
 
         if (FAILED(collection->FindFamilyName(family.c_str(), &index, &exists))
             || !exists)
@@ -847,7 +855,7 @@ struct GlyphRasterizer::Native
 
     GlyphBitmap rasterize(GlyphKey key,
                           const FontVariant& variant,
-                          const RasterRequest& request) const
+                          const RasterRequest& requestToUse) const
     {
         auto result = GlyphBitmap {};
         const auto at = faceOf(key, variant);
@@ -875,7 +883,7 @@ struct GlyphRasterizer::Native
         // CoreGraphics's does, so the request's lightText has nothing to say
         // here.
         if (!drawColorGlyph(run, result))
-            drawMask(run, result, request.subpixelX);
+            drawMask(run, result, requestToUse.subpixelX);
 
         return result;
     }

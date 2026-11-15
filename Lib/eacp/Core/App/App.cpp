@@ -1,8 +1,13 @@
 #include "App.h"
 #include "AppEnvironment.h"
+#include "CommandLine.h"
+#include "../Utils/Console.h"
+#include "../Utils/FilePath.h"
 #include "../Utils/Singleton.h"
 
+#include <algorithm>
 #include <atomic>
+#include <exception>
 
 namespace eacp::Apps
 {
@@ -21,13 +26,26 @@ AppEnvironment& getAppEnvironment()
     return Singleton::get<AppEnvironment>();
 }
 
+Vector<std::string> utf8Arguments(int argc, const char* const* argv)
+{
+    auto args = Vector<std::string> {};
+    args.reserve(std::max(argc, 0));
+
+    for (auto i = 0; i < argc; ++i)
+        args.emplace_back(argv[i] != nullptr ? argv[i] : "");
+
+    Detail::recoverUtf8Arguments(args);
+    return args;
+}
+
 void setCommandLineArgs(int argc, char* argv[])
 {
-    auto& args = getAppEnvironment().commandLineArgs;
-    args.clear();
-    args.reserve(argc);
-    for (auto i = 0; i < argc; ++i)
-        args.emplace_back(argv[i]);
+    getAppEnvironment().commandLineArgs = utf8Arguments(argc, argv);
+}
+
+const Vector<std::string>& commandLineArgs()
+{
+    return getAppEnvironment().commandLineArgs;
 }
 
 void setHeadless(bool headless)
@@ -152,7 +170,53 @@ int run(const Callback& func)
             quit();
         });
 
+    Threads::stopSharedThreadPool();
     return getReturnValue();
+}
+
+namespace
+{
+std::string programName()
+{
+    const auto& args = getAppEnvironment().commandLineArgs;
+
+    if (args.empty())
+        return "program";
+
+    auto path = FilePath {args.front()};
+    return path.hasExtension("exe") ? path.stem() : path.fileName();
+}
+
+int runConsoleBody(const std::function<int()>& body)
+{
+    try
+    {
+        return body();
+    }
+    catch (const std::exception& e)
+    {
+        Console::printError(Strings::concat(programName(), ": ", e.what()));
+        return 1;
+    }
+}
+} // namespace
+
+int runConsole(int argc, char* argv[], const std::function<int()>& body)
+{
+    setCommandLineArgs(argc, argv);
+    return runConsole(body);
+}
+
+int runConsole(const std::function<int()>& body)
+{
+    // run(func) quits once the callback returns and hands back the return
+    // value, so setting it here is the quit(code) of an app-shaped program.
+    return run(
+        [&body]
+        {
+            setDockIconVisible(false);
+            setReturnValue(runConsoleBody(body));
+        });
 }
 
 void restart()
@@ -172,7 +236,8 @@ void restart()
 void Detail::runChooserLater(std::function<std::optional<std::string>()> chooser,
                              FileChosenCallback onChosen)
 {
-    Threads::callAsync([chooser = std::move(chooser), onChosen = std::move(onChosen)]
-                       { onChosen(chooser()); });
+    Threads::callAsync(
+        [chooseFile = std::move(chooser), notifyChosen = std::move(onChosen)]
+        { notifyChosen(chooseFile()); });
 }
 } // namespace eacp::Apps

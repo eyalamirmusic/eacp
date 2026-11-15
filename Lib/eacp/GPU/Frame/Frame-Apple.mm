@@ -5,6 +5,8 @@
 
 #include "../CommandBuffer/CopyPlan.h"
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
+#include "../Timing/PassSamples-Apple.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Utils/Logging.h>
@@ -96,6 +98,7 @@ void point(MTLRenderPassAttachmentDescriptor* attachment, const AttachmentImage&
 void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
                         id<MTLTexture> depth,
                         id<MTLTexture> resolved,
+                        float clearDepth,
                         unsigned char clearStencil,
                         DepthAction action,
                         const ColorTarget& at = {})
@@ -115,7 +118,7 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
     point(depthAttachment, image);
     depthAttachment.loadAction = load;
     depthAttachment.storeAction = store;
-    depthAttachment.clearDepth = 1.0;
+    depthAttachment.clearDepth = (double) clearDepth;
 
     if (resolved != nil)
     {
@@ -210,15 +213,17 @@ struct Frame::Native
             return;
 
         if (auto queue = (__bridge id<MTLCommandQueue>) device->nativeQueue())
+        {
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
+            Detail::reportFailureOf((id<MTLCommandBuffer>) commandBuffer.get());
+        }
     }
 
     // Points a pass descriptor's samples at this frame's slot in the timer.
     //
-    // Only the two outer stage boundaries are sampled: a render pass starts at
-    // the top of its vertex work and ends at the bottom of its fragment work,
-    // and the two in between would say where the middle was rather than how
-    // long the whole took.
+    // All four stage boundaries, not only the outer two: a tile-based GPU runs
+    // a pass's vertex stage while the passes before it are still shading, so
+    // its start and end alone would span their time as well as its own.
     void timeRenderPass(MTLRenderPassDescriptor* passDescriptor,
                         std::string_view label) const
     {
@@ -236,13 +241,7 @@ struct Frame::Native
         if (samples == nil)
             return;
 
-        auto attachment = passDescriptor.sampleBufferAttachments[0];
-
-        attachment.sampleBuffer = samples;
-        attachment.startOfVertexSampleIndex = (NSUInteger) (pass * 2);
-        attachment.endOfVertexSampleIndex = MTLCounterDontSample;
-        attachment.startOfFragmentSampleIndex = MTLCounterDontSample;
-        attachment.endOfFragmentSampleIndex = (NSUInteger) (pass * 2 + 1);
+        PassSamples::attach(passDescriptor, samples, pass);
     }
 
     // Names the set's buffer as the pass's visibility results, which Metal only
@@ -310,6 +309,37 @@ Graphics::Point Frame::nativePixelSize() const
     return {(float) target.width, (float) target.height};
 }
 
+namespace
+{
+// A layer that presents with the transaction needs its buffer scheduled before
+// the present, or the transaction shows the drawable before anything is in it.
+// The wait is bounded because the compositor never schedules work for a window
+// it is not showing, and an unbounded waitUntilScheduled hung the main thread.
+constexpr auto maximumScheduleWait = 100 * NSEC_PER_MSEC;
+
+void presentInTransaction(id<MTLCommandBuffer> buffer, id<CAMetalDrawable> drawable)
+{
+    auto scheduled = dispatch_semaphore_create(0);
+
+    [buffer addScheduledHandler:^(id<MTLCommandBuffer>) {
+      dispatch_semaphore_signal(scheduled);
+    }];
+    [buffer commit];
+
+    const auto deadline = dispatch_time(DISPATCH_TIME_NOW, maximumScheduleWait);
+    dispatch_semaphore_wait(scheduled, deadline);
+    dispatch_release(scheduled);
+
+    [drawable present];
+}
+
+void presentAsynchronously(id<MTLCommandBuffer> buffer, id<CAMetalDrawable> drawable)
+{
+    [buffer presentDrawable:drawable];
+    [buffer commit];
+}
+} // namespace
+
 Frame::~Frame()
 {
     auto buffer = impl->commandBuffer.get();
@@ -333,11 +363,12 @@ Frame::~Frame()
 
     if (target != nil)
     {
-        // The layer presents with transaction, so commit, wait for the buffer to
-        // be scheduled, then present the drawable inside the CATransaction.
-        [buffer commit];
-        [buffer waitUntilScheduled];
-        [(id<CAMetalDrawable>) target present];
+        auto drawable = (id<CAMetalDrawable>) target;
+
+        if (((CAMetalLayer*) drawable.layer).presentsWithTransaction)
+            presentInTransaction(buffer, drawable);
+        else
+            presentAsynchronously(buffer, drawable);
     }
     else
     {
@@ -407,6 +438,7 @@ RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
         attachDepthStencil(passDescriptor,
                            (id<MTLTexture>) depth,
                            nil,
+                           descriptor.clearDepth,
                            descriptor.clearStencil,
                            descriptor.depthAction);
 
@@ -459,6 +491,7 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
             passDescriptor,
             depth,
             (__bridge id<MTLTexture>) depthOwner.nativeResolvedDepthTexture(),
+            descriptor.clearDepth,
             descriptor.clearStencil,
             descriptor.depthAction,
             depthFrom);
@@ -477,9 +510,9 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
                       queries);
 }
 
-// A compute pass samples at the encoder's own boundaries rather than at a
-// vertex and a fragment stage, which is the same pair of numbers by another
-// name: when the work started and when it finished.
+// A compute pass samples at the encoder's own boundaries, since it has no
+// vertex and fragment stage to split: when the work started and when it
+// finished.
 ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
 {
     auto buffer = impl->commandBuffer.get();
@@ -501,13 +534,7 @@ ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
         {
             if (auto samples =
                     (__bridge id<MTLCounterSampleBuffer>) timer.nativeSamples())
-            {
-                auto attachment = passDescriptor.sampleBufferAttachments[0];
-
-                attachment.sampleBuffer = samples;
-                attachment.startOfEncoderSampleIndex = (NSUInteger) (pass * 2);
-                attachment.endOfEncoderSampleIndex = (NSUInteger) (pass * 2 + 1);
-            }
+                PassSamples::attach(passDescriptor, samples, pass);
         }
     }
 

@@ -3,6 +3,7 @@ nano_add_executable(UITests
             ClipMaskTests.cpp
             ClippedFillTests.cpp
             ComboBoxTests.cpp
+            ComponentRemovalTests.cpp
             CoverageAtlasTests.cpp
             CursorTests.cpp
             DrawListTests.cpp
@@ -17,6 +18,7 @@ nano_add_executable(UITests
             ListBoxTests.cpp
             MagnifyTests.cpp
             MaskCacheTests.cpp
+            MenuBarComponentTests.cpp
             LayerTests.cpp
             ModuleShaderTests.cpp
             MouseEventTests.cpp
@@ -29,6 +31,7 @@ nano_add_executable(UITests
             SliderTests.cpp
             TabsTests.cpp
             TextEditorTests.cpp
+            ThemeTests.cpp
             TouchScrollTests.cpp
             ViewportTests.cpp
         TARGETS eacp-ui eacp-sprites eacp-ui-network)

@@ -71,11 +71,11 @@ public:
 // text. This is exactly what WebViewBridge::onMessage hands to runCommand.
 auto dispatchInvoke(Miro::Bridge& bridge, std::string command, std::string text)
 {
-    return [&bridge, command = std::move(command), text = std::move(text)](
+    return [&bridge, name = std::move(command), message = std::move(text)](
                Miro::Resolve resolve)
     {
-        auto payload = Miro::toJSON(EchoRequest {text});
-        bridge.dispatchAsync(command, payload, resolve);
+        auto payload = Miro::toJSON(EchoRequest {message});
+        bridge.dispatchAsync(name, payload, resolve);
     };
 }
 

@@ -90,25 +90,7 @@ ComponentHost::~ComponentHost()
 // host about it again, and it would be animated or pressed after it is gone.
 void ComponentHost::componentDeleted(Component& component)
 {
-    if (isWithin(hoveredComponent, component))
-        hoveredComponent = nullptr;
-
-    if (isWithin(fileDragTarget, component))
-        fileDragTarget = nullptr;
-
-    if (isWithin(mouseDownTarget, component))
-    {
-        mouseDownTarget = nullptr;
-        touch = {};
-    }
-
-    // Dropped rather than moved on. Telling the next component in the focus
-    // order that it has the keyboard while a subtree is halfway through being
-    // destroyed is how a focusGained lands on something already gone.
-    if (isWithin(focusedComponent, component))
-        focusedComponent = nullptr;
-
-    forgetAnimationsIn(component);
+    subtreeDetached(component);
 
     if (root == &component)
     {
@@ -122,13 +104,46 @@ void ComponentHost::componentDeleted(Component& component)
     }
 }
 
+// No callbacks, only pointers dropped: this runs from a destructor too, where
+// the component's own overrides are already gone. The hover flag is a member of
+// the base, so it is put right for a component that lives on.
+void ComponentHost::subtreeDetached(Component& subtree)
+{
+    if (isWithin(hoveredComponent, subtree))
+    {
+        hoveredComponent->mouseOver = false;
+        hoveredComponent = nullptr;
+    }
+
+    if (isWithin(fileDragTarget, subtree))
+        fileDragTarget = nullptr;
+
+    if (isWithin(mouseDownTarget, subtree))
+    {
+        mouseDownTarget = nullptr;
+        touch = {};
+    }
+
+    // Dropped rather than moved on. Telling the next component in the focus
+    // order that it has the keyboard while a subtree is halfway through being
+    // destroyed is how a focusGained lands on something already gone.
+    if (isWithin(focusedComponent, subtree))
+        focusedComponent = nullptr;
+
+    forgetAnimationsIn(subtree);
+}
+
 void ComponentHost::setRootComponent(Component& newRoot)
 {
-    if (root != nullptr)
-    {
+    // The same root set again keeps what it had; a different one takes the old
+    // tree's hover, focus and press with it.
+    if (root == &newRoot)
         forgetAnimationsIn(*root);
+    else if (root != nullptr)
+        subtreeDetached(*root);
+
+    if (root != nullptr)
         root->host = nullptr;
-    }
 
     root = &newRoot;
     root->host = this;
@@ -623,20 +638,21 @@ void ComponentHost::playSubtree(Component& component,
     // by everything its ancestors left of them -- or, for one painting
     // unclipped, everything they left whatever its bounds.
     auto own = Rect {position.x, position.y, bounds.w, bounds.h};
-    auto visible = component.isPaintingUnclipped() ? clip : clip.intersection(own);
+    auto visibleArea =
+        component.isPaintingUnclipped() ? clip : clip.intersection(own);
 
     // A component scrolled out of its parent, or entirely behind an opaque
     // ancestor's clip, costs nothing at all. The whole subtree goes with it,
     // since a child cannot escape this clip.
-    if (visible.isEmpty())
+    if (visibleArea.isEmpty())
         return;
 
-    player.play(component.paintList, position, visible);
+    player.play(component.paintList, position, visibleArea);
 
     for (auto* child: component.getChildren())
-        playComponent(*child, player, position, visible);
+        playComponent(*child, player, position, visibleArea);
 
-    player.play(component.overList, position, visible);
+    player.play(component.overList, position, visibleArea);
 }
 
 void ComponentHost::markAllPathsDirty(Component& component)
@@ -744,18 +760,19 @@ void ComponentHost::renderLayers(Component& component,
 
     auto reach = component.capturingLayer != nullptr ? everywhere() : clip;
 
-    auto visible = component.isPaintingUnclipped() ? reach : reach.intersection(own);
+    auto visibleArea =
+        component.isPaintingUnclipped() ? reach : reach.intersection(own);
 
     // Walked whether or not anything of it is visible: a culled GPUComponent
     // still has to hear that it is, and every other layer renders as it did.
     for (auto* child: component.getChildren())
-        renderLayers(*child, frame, position, visible);
+        renderLayers(*child, frame, position, visibleArea);
 
-    auto visibleLocal = visible.isEmpty() ? Rect {}
-                                          : Rect {visible.x - position.x,
-                                                  visible.y - position.y,
-                                                  visible.w,
-                                                  visible.h};
+    auto visibleLocal = visibleArea.isEmpty() ? Rect {}
+                                              : Rect {visibleArea.x - position.x,
+                                                      visibleArea.y - position.y,
+                                                      visibleArea.w,
+                                                      visibleArea.h};
 
     // An onRender layer samples whatever it likes, and what it is most likely
     // to sample is a layer registered before it -- so one rendering again is
@@ -1536,6 +1553,12 @@ void ComponentHost::mouseDown(const eacp::Graphics::MouseEvent& hostEvent)
         if (!touch.active)
             moveFocusToPressed(mouseDownTarget);
 
+        // Losing focus can delete the pressed component (a panel rebuilding its
+        // rows when a text box commits on blur), and componentDeleted then
+        // clears mouseDownTarget.
+        if (mouseDownTarget == nullptr)
+            return;
+
         setHoveredComponent(mouseDownTarget, event);
         mouseDownTarget->mouseDown(makeEvent(*mouseDownTarget, event));
     }
@@ -1746,6 +1769,32 @@ Component* ComponentHost::getRootComponent() const
 const Font& ComponentHost::getFont() const
 {
     return font;
+}
+
+void ComponentHost::setTheme(const Theme& themeToUse)
+{
+    theme = themeToUse;
+
+    // The two things the host draws with itself, taken only from a theme that
+    // holds them, so a theme of a few colours leaves the face and the backdrop
+    // as they were.
+    if (auto* face = theme.find(ThemeKeys::font))
+        setFont(*face);
+
+    if (auto* backdrop = theme.find(ThemeKeys::background))
+        background = *backdrop;
+
+    // Every widget recorded its colours from the theme it found, so all of them
+    // have to paint again, as for a change of face.
+    if (root != nullptr)
+        markTreeDirty(*root);
+
+    repaint();
+}
+
+const Theme& ComponentHost::getTheme() const
+{
+    return theme;
 }
 
 ImageCache& ComponentHost::getImageCache()

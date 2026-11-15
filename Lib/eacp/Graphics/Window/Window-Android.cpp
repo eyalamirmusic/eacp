@@ -704,6 +704,14 @@ void Window::minimize() {}
 
 void Window::toggleMaximize() {}
 
+// The activity's window is the screen; there's nothing to switch.
+void Window::setFullScreen(bool) {}
+
+bool Window::isFullScreen() const
+{
+    return true;
+}
+
 void Window::setMouseLocked(bool) {}
 
 bool Window::isMouseLocked() const

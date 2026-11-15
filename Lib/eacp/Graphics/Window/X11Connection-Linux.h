@@ -27,6 +27,14 @@ class X11Input;
 int16_t x11ClampPosition(long value);
 uint16_t x11ClampSize(long value);
 
+// libxcb writes with writev and no MSG_NOSIGNAL, and Linux has no per-socket
+// SO_NOSIGPIPE, so a request flushed after the server has closed the
+// connection - by us, by Mesa's WSI on the same connection - raises SIGPIPE,
+// whose default disposition kills the process before xcb can report the loss.
+// Ignored here only while it is still the default: a host that installed a
+// handler or a mask of its own keeps it.
+void x11IgnoreBrokenPipesUnlessHandled();
+
 // A Window on this connection: the neutral half plus the toplevel id every
 // piece of X11 glue starts from.
 struct X11WindowSurface : LinuxWindowSurface
@@ -126,6 +134,10 @@ struct X11Atoms
     xcb_atom_t netWmWindowType = XCB_ATOM_NONE;
     xcb_atom_t netWmWindowTypeNormal = XCB_ATOM_NONE;
 
+    // What a NativeChildSurface speaks to the foreign client inside it.
+    xcb_atom_t xembed = XCB_ATOM_NONE;
+    xcb_atom_t xembedInfo = XCB_ATOM_NONE;
+
     // The property a conversion of ours is delivered into, on the clipboard's
     // own window: named after this framework so no other client's transfer can
     // land on it.
@@ -215,6 +227,16 @@ public:
     void watchForeignWindow(const X11WindowTarget& watcher);
     void unwatchForeignWindow(const X11WindowSurface& surface);
 
+    // Every core event, before it is routed to a window: for what has to hear
+    // about windows that are in no map at all - the foreign clients a
+    // NativeChildSurface holds, whose substructure events name the client
+    // rather than the container. One per owner; an observer may remove itself,
+    // or another, from inside its own call.
+    using EventObserver = std::function<void(const xcb_generic_event_t&)>;
+
+    void addEventObserver(const void* owner, EventObserver observer);
+    void removeEventObserver(const void* owner);
+
     void flush();
 
     // Dispatches this connection's events, exactly as the loop source would,
@@ -258,6 +280,7 @@ private:
     void dispatch(const xcb_generic_event_t& event);
     bool dispatchXinput(const xcb_generic_event_t& event);
     void dispatchToWatchers(const xcb_generic_event_t& event, xcb_window_t window);
+    void dispatchToObservers(const xcb_generic_event_t& event);
     void reportError(const xcb_generic_error_t& error);
 
     // Fired once, when a poll or a flush says the server has gone.
@@ -277,6 +300,14 @@ private:
 
     Vector<X11WindowTarget> windows;
     Vector<X11WindowTarget> watchers;
+
+    struct ObserverEntry
+    {
+        const void* owner = nullptr;
+        EventObserver observer;
+    };
+
+    Vector<ObserverEntry> observers;
 
     float scale = 1.f;
 

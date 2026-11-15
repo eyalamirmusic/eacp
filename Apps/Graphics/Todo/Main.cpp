@@ -104,7 +104,7 @@ struct TodoRow final : UI::Component
         if (!isMouseOver() && !editing)
             return;
 
-        g.setColour(UI::defaultTheme().hover);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::hover));
         g.fillRoundedRect(getLocalBounds(), 6.f);
     }
 
@@ -130,7 +130,7 @@ struct TodoRow final : UI::Component
         auto captionLeft = padding + 26.f;
         auto width = measureText(itemText, getHostFont());
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawLine({captionLeft, getHeight() * 0.5f},
                    {captionLeft + width, getHeight() * 0.5f},
                    1.f);
@@ -150,7 +150,7 @@ struct TodoList final : UI::Component
         title.setFontSize(22.f);
         title.setFontStyle(UI::FontStyle::Bold);
 
-        hint.setColour(UI::defaultTheme().dimText);
+        hint.setThemeColour(UI::ThemeKeys::dimText);
 
         addChildren({title, hint});
 

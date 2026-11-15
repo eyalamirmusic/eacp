@@ -445,6 +445,33 @@ bool probeLayeredRendering(VkPhysicalDevice candidate, bool coreFloor)
     return features12.shaderOutputLayer == VK_TRUE;
 }
 
+// f16 arithmetic and f16 storage buffers, which the EDSL's Half needs together:
+// a HalfInputBuffer is a float16_t array under GL_EXT_shader_16bit_storage.
+// Below 1.2 the arithmetic is VK_KHR_shader_float16_int8's; the 16-bit storage
+// feature is core from 1.1 on.
+bool probeShaderFloat16(VkPhysicalDevice candidate, bool coreFloor)
+{
+    if (!coreFloor
+        && !hasDeviceExtension(candidate, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME))
+        return false;
+
+    VkPhysicalDeviceShaderFloat16Int8Features float16 = {};
+    float16.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
+
+    VkPhysicalDevice16BitStorageFeatures storage16 = {};
+    storage16.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+    storage16.pNext = &float16;
+
+    VkPhysicalDeviceFeatures2 features = {};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.pNext = &storage16;
+
+    vkGetPhysicalDeviceFeatures2(candidate, &features);
+
+    return float16.shaderFloat16 == VK_TRUE
+           && storage16.storageBuffer16BitAccess == VK_TRUE;
+}
+
 bool aliasDrawIndirectCount()
 {
     vkCmdDrawIndirectCount = vkCmdDrawIndirectCountKHR;
@@ -579,11 +606,11 @@ bool makePipelineLayouts(VkDevice device,
     return false;
 }
 
-// Decoded from the index, which must agree with samplingIndex's packing.
 VkSampler makeSampler(VkDevice device, int index)
 {
-    const auto linear = (index & 2) != 0;
-    const auto repeat = (index & 1) != 0;
+    const auto sampling = samplingConfiguration(index);
+    const auto linear = sampling.filter == TextureFilter::Linear;
+    const auto repeat = sampling.addressMode == TextureAddressMode::Repeat;
 
     const auto filter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     const auto address = repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT
@@ -600,6 +627,12 @@ VkSampler makeSampler(VkDevice device, int index)
     info.addressModeW = address;
     info.maxLod = VK_LOD_CLAMP_NONE;
     info.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+
+    if (sampling.compare == TextureCompare::LessEqual)
+    {
+        info.compareEnable = VK_TRUE;
+        info.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    }
 
     auto sampler = VkSampler {VK_NULL_HANDLE};
 
@@ -622,6 +655,7 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
         return bindings;
 
     constexpr auto opTypeImage = std::uint32_t {25};
+    constexpr auto opTypeSampler = std::uint32_t {26};
     constexpr auto opTypeSampledImage = std::uint32_t {27};
     constexpr auto opTypePointer = std::uint32_t {32};
     constexpr auto opVariable = std::uint32_t {59};
@@ -642,7 +676,8 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
         unknown,
         sampledImage, // OpTypeSampledImage: a combined image sampler
         storageImage, // OpTypeImage with Sampled = 2
-        readImage // OpTypeImage with Sampled = 1, unpaired
+        readImage, // OpTypeImage with Sampled = 1, unpaired
+        sampler // OpTypeSampler: a sampler binding of its own
     };
 
     auto kinds = Vector<IdKind> {};
@@ -696,6 +731,11 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
         {
             kinds[static_cast<int>(words[index + 1])] = IdKind::sampledImage;
         }
+        else if (opcode == opTypeSampler && wordCount >= 2
+                 && inRange(words[index + 1]))
+        {
+            kinds[static_cast<int>(words[index + 1])] = IdKind::sampler;
+        }
         else if (opcode == opTypePointer && wordCount >= 4
                  && inRange(words[index + 1]))
         {
@@ -733,6 +773,10 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
 
             case IdKind::readImage:
                 bindings.add(slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+                break;
+
+            case IdKind::sampler:
+                bindings.add(slot, VK_DESCRIPTOR_TYPE_SAMPLER);
                 break;
 
             case IdKind::unknown:
@@ -774,6 +818,16 @@ bool VulkanShared::supportsPreciseOcclusionQueries() const
 bool VulkanShared::supportsLayeredRendering() const
 {
     return layeredRenderingSupported;
+}
+
+bool VulkanShared::supportsShaderFloat16() const
+{
+    return shaderFloat16Supported;
+}
+
+bool VulkanShared::supportsSampleRateShading() const
+{
+    return features.sampleRateShading == VK_TRUE;
 }
 
 VkSampler VulkanShared::getSampler(const TextureSampling& sampling) const
@@ -1039,6 +1093,7 @@ bool VulkanShared::selectPhysicalDevice()
     renderPassPath = !coreFloor || forcesRenderPasses();
     indirectCountSupported = probeDrawIndirectCount(physicalDevice, coreFloor);
     layeredRenderingSupported = probeLayeredRendering(physicalDevice, coreFloor);
+    shaderFloat16Supported = probeShaderFloat16(physicalDevice, coreFloor);
 
     if (coreFloor)
         spirvTarget = Spirv::Target::vulkan13Spirv16;
@@ -1067,11 +1122,26 @@ bool VulkanShared::createDevice()
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
 
-    // Exactly the five probeFeatures asked about.
+    // f16 storage, chained on either path where probeShaderFloat16 found it;
+    // the arithmetic is Vulkan 1.2's shaderFloat16 on the core floor and the
+    // extension's structure below it, which may not sit beside the 1.2 one.
+    VkPhysicalDevice16BitStorageFeatures storage16 = {};
+    storage16.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+    storage16.storageBuffer16BitAccess = VK_TRUE;
+
+    VkPhysicalDeviceShaderFloat16Int8Features float16 = {};
+    float16.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
+    float16.pNext = &storage16;
+    float16.shaderFloat16 = VK_TRUE;
+
+    // The five probeFeatures asked about, plus demotion: every 1.3 device has
+    // it, and glslang lowers GLSL's discard to it when targeting SPIR-V 1.6.
     VkPhysicalDeviceVulkan13Features features13 = {};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    features13.pNext = shaderFloat16Supported ? &storage16 : nullptr;
     features13.synchronization2 = VK_TRUE;
     features13.dynamicRendering = VK_TRUE;
+    features13.shaderDemoteToHelperInvocation = VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features features12 = {};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -1080,10 +1150,12 @@ bool VulkanShared::createDevice()
     features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.drawIndirectCount = indirectCountSupported ? VK_TRUE : VK_FALSE;
     features12.shaderOutputLayer = layeredRenderingSupported ? VK_TRUE : VK_FALSE;
+    features12.shaderFloat16 = shaderFloat16Supported ? VK_TRUE : VK_FALSE;
 
     VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
     synchronization2.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
+    synchronization2.pNext = shaderFloat16Supported ? &float16 : nullptr;
     synchronization2.synchronization2 = VK_TRUE;
 
     VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures = {};
@@ -1109,6 +1181,10 @@ bool VulkanShared::createDevice()
     enabled.features.multiDrawIndirect = features.multiDrawIndirect;
     enabled.features.drawIndirectFirstInstance = features.drawIndirectFirstInstance;
     enabled.features.occlusionQueryPrecise = features.occlusionQueryPrecise;
+    enabled.features.depthBiasClamp = features.depthBiasClamp;
+    enabled.features.sampleRateShading = features.sampleRateShading;
+    enabled.features.shaderStorageImageExtendedFormats =
+        features.shaderStorageImageExtendedFormats;
 
     // Absent rather than fatal; GPUView then stays on the off-screen path.
     auto extensions = Vector<const char*> {};
@@ -1129,6 +1205,9 @@ bool VulkanShared::createDevice()
 
         if (layeredRenderingSupported)
             extensions.add(VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
+
+        if (shaderFloat16Supported)
+            extensions.add(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
     }
 
     const auto swapchainOffered =
@@ -2120,6 +2199,10 @@ VkDescriptorSet VulkanContext::allocateDescriptorSet(CommandContext& commands,
          vulkanSetsPerDescriptorPool
              * static_cast<std::uint32_t>(RenderPass::maxStageTextureSlots)},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+         vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+         vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
+        {VK_DESCRIPTOR_TYPE_SAMPLER,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, vulkanSetsPerDescriptorPool}};
 

@@ -40,6 +40,11 @@ using Microsoft::WRL::ComPtr;
 
 constexpr auto hundredNanosPerSecond = 10'000'000.0;
 
+constexpr auto firstVideoStream =
+    static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+constexpr auto allStreams = static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS);
+constexpr auto mediaSource = static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE);
+
 // COM is per-thread state: initialised on every thread that calls into Media
 // Foundation and released on that same thread. This decoder is driven from two
 // — open() by whoever opened the stream, nextFrame() and seek() by FrameStream's
@@ -204,8 +209,8 @@ struct WindowsDecoder final : Decoder
                 MFCreateSourceReaderFromURL(url.c_str(), attributes.Get(), &reader)))
             return false;
 
-        reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
-        reader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+        reader->SetStreamSelection(allStreams, FALSE);
+        reader->SetStreamSelection(firstVideoStream, TRUE);
 
         ComPtr<IMFMediaType> outputType;
         if (FAILED(MFCreateMediaType(&outputType)))
@@ -221,7 +226,7 @@ struct WindowsDecoder final : Decoder
         outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
 
         if (FAILED(reader->SetCurrentMediaType(
-                MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get())))
+                firstVideoStream, nullptr, outputType.Get())))
             return false;
 
         return readTrackInfo();
@@ -247,12 +252,8 @@ struct WindowsDecoder final : Decoder
             LONGLONG timestamp = 0;
             ComPtr<IMFSample> sample;
 
-            if (FAILED(reader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                                          0,
-                                          nullptr,
-                                          &flags,
-                                          &timestamp,
-                                          &sample)))
+            if (FAILED(reader->ReadSample(
+                    firstVideoStream, 0, nullptr, &flags, &timestamp, &sample)))
                 return false;
 
             if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
@@ -347,8 +348,7 @@ private:
     bool readTrackInfo()
     {
         ComPtr<IMFMediaType> currentType;
-        if (FAILED(reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                                               &currentType)))
+        if (FAILED(reader->GetCurrentMediaType(firstVideoStream, &currentType)))
             return false;
 
         UINT32 width = 0;
@@ -404,7 +404,7 @@ private:
         PropVariantInit(&durationValue);
 
         if (SUCCEEDED(reader->GetPresentationAttribute(
-                MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &durationValue)))
+                mediaSource, MF_PD_DURATION, &durationValue)))
         {
             LONGLONG hundredNanos = 0;
             if (SUCCEEDED(PropVariantToInt64(durationValue, &hundredNanos)))

@@ -6,6 +6,7 @@
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Core/Utils/File.h>
 
 #include <fstream>
 #include <memory>
@@ -506,6 +507,21 @@ void waitForTask(NSURLSessionTask* task,
 }
 } // namespace
 
+// An explicit Content-Length keeps NSURLSession from sending the stream
+// chunked, which a server that needs the size up front would refuse.
+void streamBodyFromFile(NSMutableURLRequest* request, const std::string& filePath)
+{
+    auto file = File(FilePath(filePath));
+
+    if (!file.isRegularFile())
+        throw std::runtime_error("Cannot read the body file " + filePath);
+
+    request.HTTPBodyStream =
+        [NSInputStream inputStreamWithFileAtPath:Strings::toNSString(filePath)];
+    [request setValue:Strings::toNSString(std::to_string(file.size()))
+        forHTTPHeaderField:@"Content-Length"];
+}
+
 NSMutableURLRequest* getRequest(const Request& req)
 {
     if (req.url.empty())
@@ -540,6 +556,9 @@ NSMutableURLRequest* getRequest(const Request& req)
 
     if (!req.body.empty())
         request.HTTPBody = Strings::toNSData(req.body);
+
+    if (!req.bodyFilePath.empty())
+        streamBodyFromFile(request, req.bodyFilePath);
 
     auto idle = idleLimit(req);
 

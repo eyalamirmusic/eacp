@@ -1,11 +1,11 @@
 #include "ShaderBuilder.h"
 
-#include "ShaderEmitter.h"
+// Everywhere else the native shader source is GLSL, compiled to SPIR-V.
 
 namespace eacp::GPU::detail
 {
-ShaderSource nativeShaderSource(const ShaderGraph& graph)
+ShaderBackend nativeShaderBackend()
 {
-    return ShaderSource::glsl(emitGlsl(graph));
+    return ShaderBackend::Vulkan;
 }
 } // namespace eacp::GPU::detail

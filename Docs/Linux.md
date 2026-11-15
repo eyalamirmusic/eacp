@@ -17,7 +17,9 @@ toplevel decorated by libdecor, the view tree, hit-testing and input routing are
 the portable ones with the seat's pointer and keyboard translated into them
 through xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its
 bounds and scaled by the compositor's fractional scale, `Display` reports the
-first output, mouse lock goes through pointer-constraints, the clipboard is a
+first output, mouse lock goes through pointer-constraints, `setFullScreen` is
+libdecor's full screen (the xdg-shell request) with `isFullScreen` read back
+from the configure that grants it, the clipboard is a
 `wl_data_device` on the seat (text and `text/uri-list`, installed into
 `Core`'s `Clipboard` through a backend hook so `eacp-core` still links no
 Wayland), a compositor that goes away mid-session tears every window down
@@ -29,7 +31,9 @@ position, a raise, an icon — and the file says so where it matters. On X11 a
 properties a window manager reads, with an `xcb_create_window` child per
 presenting view, the keymap taken from the server through `xkbcommon-x11` so
 layouts and dead keys behave as they do on Wayland, mouse lock as a pointer
-grab and a warp to the centre, and frames paced by a timer at the RandR mode's
+grab and a warp to the centre, full screen as a `_NET_WM_STATE_FULLSCREEN`
+request that only a window manager grants (a bare Xvfb leaves the window a
+window), and frames paced by a timer at the RandR mode's
 rate because X11 has no frame callback — re-rated when a RandR change moves
 that rate; a position is a real one there, the display's scale is `Xft.dpi`
 over 96 read from the root's `RESOURCE_MANAGER` and followed when it changes,
@@ -69,15 +73,151 @@ inside one `GPUView` through the coverage rasterizer and the glyph atlas.
 What Linux still does not have is the platform's own 2D tier. There is no
 `Graphics::Context` and no `Graphics::Font` — `Path` exists, but only as
 recorded geometry — so the retained `ShapeLayer`/`TextLayer` and the views over
-them, `TextInput`, the image codecs (an `Image` is a pixel container there, and
-loading a file yields an invalid one), menus and the tray are absent or honest
-stubs. `SVG` loses nothing to that: its one renderer on every platform is
+them, `TextInput` and the tray are absent or honest stubs, and the menu bar is
+drawn by the component tier (below). The image
+codecs are there all the same: `Image/Image-Linux.cpp` decodes and encodes PNG
+and JPEG through stb_image and stb_image_write (`CMake/FindStb.cmake`, fetched
+by CPM), so `Image::decode`, `load`, `encode` and `save` behave as on the other
+platforms. `SVG` loses nothing to that: its one renderer on every platform is
 `SVGComponent`, and the recorded `Path` is what its path parser builds. Under `EACP_HEADLESS=1`, or with neither display server to
 reach, every window is built and never shown and every GPU test still runs on
 Mesa's lavapipe with no display server at all; the window and present tests run
 for real under a headless Weston, and again under an Xvfb for X11, which is
 where input is exercised — Weston's headless backend has no seat and Xvfb has
 one.
+
+## Menu bar
+
+Neither Wayland nor X11 has a menu protocol, so `setApplicationMenuBar` draws
+the bar in the window, under the title bar, the way Qt and GTK applications
+draw their own. The `Graphics::MenuBar` is the one handed to macOS and Windows.
+
+The halves split on text. `eacp-graphics` has none on Linux, so it owns
+everything that is not drawing (`Menu/Menu-Linux.cpp`, `Menu/LinuxMenuBar-Linux.h`):
+the bar's view is a second root bound to the window beside the content view
+(`LinuxWindowSurface::menuBarView`), and `LinuxWindowSurface` routes pointer
+events between the two by position, in each root's own coordinates, a press
+keeping its root until the release. The content view is laid out
+`contentTop` points down, and every size the app sees — `WindowOptions::width`
+and `height`, `Window::getSize` and `setSize`, `onResize`, `sizeConstraint`,
+the minimum — is the content's, so installing a bar grows the window by its
+height rather than shrinking the content, as on Windows; a maximised or full
+screen window keeps its size and the content gives. The minimum and the pin on
+a fixed-size window are told to libdecor and to `WM_NORMAL_HINTS` in surface
+terms; the X11 aspect hint is dropped under a bar, `sizeConstraint` still
+holding the ratio. `eacp-ui` draws: `UI/Widgets/MenuBarPresenter-Linux.cpp`
+registers a presenter with `setLinuxMenuBarPresenterFactory` at static
+initialisation, and the target's `--undefined=eacpUILinuxMenuBar` link option
+keeps that file in every program that links `eacp-ui`. Its view is a
+transparent `ComponentHost` holding a `UI::MenuBarComponent`. A program with no
+`eacp-ui` gets the shortcuts and no bar.
+
+Each menu becomes a `PopupMenu` as it opens, so ticks and greying are read at
+that moment. While one is open the pointer crossing another title opens it,
+Left and Right step across menus (`PopupMenuOptions::onPointerOutside` and
+`onSideStep`), Escape closes it, and so does a click anywhere else: the window
+treats the menu as modal (`menuBarModal`), so that click reaches nothing
+beneath, and the window losing focus closes it too. The menu is drawn inside
+the window — the bar's tree grows down over the content while it is open, as
+far as the open menu and its submenus need — so it cannot reach past the window's edge, and
+in a short window it scrolls. On Wayland the content shows through the
+transparent tree around the menu. On X11 it does not: a presenting view is a
+child window of the toplevel's own visual, and child windows are not blended,
+so the band beside an open menu shows the tree's clear colour until the menu
+closes. Popup surfaces (`xdg_popup`, an override-redirect window) would lift
+both limits and are not built yet.
+
+Shortcuts are bound by the window, not by the focused view: every key goes
+through `LinuxWindowSurface::keyFilter` before the content sees it, an open menu
+takes every key, and otherwise `findShortcutItem` (`Menu/MenuCommands.h`) picks
+the first enabled item whose shortcut matches, read as `acceleratorText` prints
+it — `command` is Ctrl here, while `Keyboard` keeps reporting Super as
+`command` everywhere else — and runs it in place of the key. A single
+character is matched against the key's unmodified character, so a shortcut on a
+non-Latin layout does not fire. `standardApplicationMenu` is "File" holding
+Quit (Ctrl+Q), and `standardEditMenu` is empty, so the bar leaves it out.
+`Tests/Graphics/MenuBarTests-Linux.cpp` covers the window half with a stand-in
+presenter, `Tests/UI/MenuBarComponentTests.cpp` the bar, and
+`Apps/UI/MenuBarDemo` shows one.
+
+## Hosting a plugin's editor
+
+The other direction from `EmbeddedView` is a host showing somebody else's
+editor in its own layout, which on Linux means an X11 window: VST3 hands an
+editor `kPlatformTypeX11EmbedWindowID`, and CLAP's GUI API names `x11`. Two
+things in eacp cover it.
+
+`NativeChildSurface` is a `View` whose `getNativeParentHandle()` is an X11
+window id (widened into the pointer) for the editor to parent its own window
+into. The id is an XEmbed embedder: a client created inside it or reparented
+into it is sized to fill it, mapped or unmapped as the `XEMBED_MAPPED` bit of
+its `_XEMBED_INFO` says, sent `XEMBED_EMBEDDED_NOTIFY`, and given the X focus
+when it sends `XEMBED_REQUEST_FOCUS`. The container follows the view's bounds
+(an ancestor's move included), its visibility and its window's scale, stays the
+same id when the view is hidden or moved to another window, and lets a client
+still inside go — unmapped, reparented to the root — when it is destroyed, so
+an editor torn down after it can still destroy its own window. Presses the
+client leaves unselected stop at the container; keys go on up to the window it
+is in, and `onUnhandledKey` is not called. Include
+`<eacp/Graphics/Window/NativeChildSurface.h>` directly: the `Graphics.h`
+umbrella keeps it under `EACP_HAS_CONTEXT`.
+
+A VST3 editor on Linux is measured in pixels: its `ViewRect`s and
+`IPlugViewContentScaleSupport::setContentScaleFactor` both want the scale of
+the container. `backingScale()` is that factor, native pixels per point: the X11
+window's scale, which is `Xft.dpi` over 96 for a toplevel and whatever
+`EmbeddedView::setPixelsPerPoint` said for an embedded surface, and 1 while the
+surface is in no window. `onBackingScaleChanged` fires when it would answer
+differently from the last time it was asked — the display's `Xft.dpi` changed,
+the embedder's scale changed, or the surface entered a window of another scale
+— so a host multiplies the view's bounds by it, tells the editor the new factor
+and resizes it in that callback. The same pair exists on macOS (the window's
+`backingScaleFactor`) and Windows (the window's DPI over 96).
+
+There is no X11 embedding inside a Wayland surface, so the handle exists only
+in an X11-backed window — a toplevel on the X11 backend, or an
+`EmbeddedView` — and is null in a Wayland window (logged once) or a headless
+one. A standalone app takes Wayland when a compositor answers, so a host that
+shows X11 editors asks for the X11 backend with `EACP_WINDOW_SYSTEM=x11`,
+either in its launch environment or with `setEnv`
+(`Core/Utils/Environment.h`) at the top of `main`, before its first window;
+under a Wayland session that is XWayland, which is how Linux plugin hosts run
+today. VST 3.8's native Wayland embedding is not implemented.
+
+`Threads::FdWatcher` (`Threads/EventLoop-Linux.h`) is the run-loop half: it
+calls back on eacp's loop thread whenever a descriptor is readable, from
+construction to destruction, which is VST3's
+`IRunLoop::registerEventHandler`/`unregisterEventHandler`. Several watchers
+may share one descriptor — two instances of a plugin sharing one display
+connection do — and destroying one leaves the others. `IRunLoop::registerTimer`
+is a `Threads::Timer` built with `Time::MS`.
+
+## Gamepads
+
+`GameInput`'s gamepads come from evdev (`Input/GameInput-Linux.cpp`), with no
+new dependency: one reader thread per process opens every `/dev/input/event*`
+that reports `BTN_GAMEPAD`, follows hotplug through an inotify watch on
+`/dev/input`, and feeds every `GameInput` as XInput's poll thread does on
+Windows. Keys and mouse stay the window's. The buttons are the kernel's
+positional codes from its gamepad protocol, with the face buttons swapped back
+for the drivers that send them by label (xpad, xpadneo, and an Xbox pad over
+Bluetooth); the right stick and the triggers are found among the axis pairs the
+drivers use (`ABS_RX/RY` or `ABS_Z/RZ`, `ABS_Z/RZ` or `ABS_BRAKE/GAS`, and
+`BTN_TL2/TR2` as on-or-off triggers where there is no analog one, as on a
+Switch Pro Controller); the d-pad is the hat or the `BTN_DPAD_*` buttons. The
+axes are raw, normalised over the range the driver reports, with no deadzone,
+as on the other platforms. Pads that the kernel presents as a joystick
+(`BTN_TRIGGER` and no `BTN_GAMEPAD`, some generic USB pads) are not picked up.
+
+A process can read a pad only if the node is the user's to open. A desktop
+session grants that through systemd's uaccess ACL, which udev applies to
+everything it classifies as a joystick; without a session (over ssh, a
+service, a kiosk) the user has to be in the group that owns the nodes, usually
+`input` (`sudo usermod -aG input $USER`, then log in again). A pad that is
+there but cannot be opened is logged once, naming the node, and otherwise
+ignored. `GameInputTests-Linux.cpp` drives a virtual pad through `/dev/uinput`
+when that is writable and skips otherwise; a desktop session grants it where a
+udev rule tags `uinput` for uaccess, as KDE Connect's and Steam's do.
 
 ## Dependencies
 
@@ -98,7 +238,12 @@ pkg-config` on Debian/Ubuntu,
 `with-xvfb` in the image) with `libxcb-xtest0-dev` for the X11 suite's own
 synthetic input, and fonts for the text tests to resolve —
 `fonts-dejavu-core fonts-dejavu-extra
-fonts-droid-fallback fonts-noto-color-emoji`. `EACP_REQUIRE_DISPLAY=1` does for
+fonts-droid-fallback fonts-noto-color-emoji`. Bitmap (CBDT/sbix) and COLRv0
+colour fonts draw in colour through FreeType; a COLRv1-only one, such as
+Fedora's Noto Color Emoji, needs HarfBuzz 13 or later with its `harfbuzz-raster`
+library, which `CMake/FindLinuxText.cmake` links when pkg-config finds it
+(`-DEACP_USE_HB_RASTER=OFF` declines it) — without it those glyphs come back
+as masks, empty for Noto. `EACP_REQUIRE_DISPLAY=1` does for
 the display server what `EACP_REQUIRE_GPU=1` does for the device, and
 `EACP_REQUIRE_FONTS=1` does it for the fonts, which is the third way a suite can
 report green by skipping everything.

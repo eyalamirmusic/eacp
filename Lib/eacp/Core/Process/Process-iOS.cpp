@@ -24,6 +24,7 @@ struct Process::Native
     int wait() { return -1; }
     void terminate() {}
     void kill() {}
+    bool requestStop() { return false; }
 
     std::string output() const { return {}; }
     std::string errorOutput() const { return {}; }
@@ -70,6 +71,10 @@ void Process::terminate()
 void Process::kill()
 {
     impl->kill();
+}
+bool Process::requestStop()
+{
+    return impl->requestStop();
 }
 
 std::string Process::output() const

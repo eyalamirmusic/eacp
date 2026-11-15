@@ -1,4 +1,5 @@
 #include "EventLoop.h"
+#include "EventLoop-macOS.h"
 #include "../App/App.h"
 #include "../ObjC/ObjC.h"
 #include "../ObjC/RuntimeClass.h"
@@ -6,13 +7,35 @@
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
+#include <atomic>
+#include <vector>
+
 namespace eacp::Threads
 {
 namespace
 {
-bool s_inRootRunLoop = false;
-int s_nestedDepth = 0;
+// Atomic because isEventLoopRunning() is asked from any thread.
+std::atomic<bool> s_inRootRunLoop = false;
+std::atomic<int> s_nestedDepth = 0;
 bool s_quitRequested = false;
+bool s_appLaunching = false;
+
+std::vector<Callback>& getLaunchFinishedCallbacks()
+{
+    static auto callbacks = std::vector<Callback>();
+    return callbacks;
+}
+
+void applicationDidFinishLaunching(id, SEL, NSNotification*)
+{
+    s_appLaunching = false;
+
+    auto callbacks = std::move(getLaunchFinishedCallbacks());
+    getLaunchFinishedCallbacks().clear();
+
+    for (auto& callback: callbacks)
+        callback();
+}
 
 // terminate: (Cmd+Q, Dock ▸ Quit, quit Apple Events) calls exit() without
 // unwinding run<T>(); cancel it and put the request to the app instead
@@ -57,6 +80,8 @@ id createAppTerminationBridge()
         auto builder =
             new ObjC::RuntimeClass<NSObject>("EacpAppTerminationBridge");
         builder->addProtocol(@protocol(NSApplicationDelegate));
+        builder->addMethod(@selector(applicationDidFinishLaunching:),
+                           applicationDidFinishLaunching);
         builder->addMethod(@selector(applicationShouldTerminate:),
                            applicationShouldTerminate);
         builder->addMethod(
@@ -99,6 +124,7 @@ void configureAppForLoopOwnership()
     static auto once = []
     {
         auto* application = getApp();
+        s_appLaunching = ! application.running;
         [application setActivationPolicy:activationPolicyFromBundle()];
 
         static auto delegate = ObjC::Ptr<NSObject>(createAppTerminationBridge());
@@ -218,6 +244,36 @@ void EventLoop::quit()
         [getApp() stop:nil];
 
     [getApp() postEvent:makeWakeEvent() atStart:YES];
+}
+
+bool Detail::isRootQuitPending()
+{
+    return s_quitRequested && s_nestedDepth == 0 && s_inRootRunLoop;
+}
+
+bool Detail::isAppLaunching()
+{
+    return s_appLaunching;
+}
+
+void Detail::callWhenAppFinishedLaunching(const Callback& func)
+{
+    if (! s_appLaunching)
+    {
+        func();
+        return;
+    }
+
+    getLaunchFinishedCallbacks().push_back(func);
+}
+
+void Detail::resumeQuitAfterModal()
+{
+    if (isRootQuitPending())
+    {
+        [getApp() stop:nil];
+        [getApp() postEvent:makeWakeEvent() atStart:YES];
+    }
 }
 
 bool isEventLoopRunning()

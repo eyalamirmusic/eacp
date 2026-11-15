@@ -58,8 +58,12 @@ function(eacp_webview_add_vite TARGET)
         if (NOT EXISTS "${ARG_SOURCE_DIR}/node_modules")
             message(STATUS
                     "eacp_webview_add_vite(${TARGET}): running ${ARG_PACKAGE_MANAGER} install")
+            set(INSTALL_CMD ${PM_EXECUTABLE} install)
+            if (ARG_PACKAGE_MANAGER STREQUAL "npm")
+                list(APPEND INSTALL_CMD --no-audit --no-fund)
+            endif ()
             execute_process(
-                    COMMAND ${PM_EXECUTABLE} install
+                    COMMAND ${INSTALL_CMD}
                     WORKING_DIRECTORY "${ARG_SOURCE_DIR}"
                     RESULT_VARIABLE PM_INSTALL_RESULT)
             if (NOT PM_INSTALL_RESULT EQUAL 0)

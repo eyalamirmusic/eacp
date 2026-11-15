@@ -3,7 +3,9 @@
 #include "CommandBuffer.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Timing/CommandTimer.h"
+#include "../Timing/PassSamples-Apple.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/EventLoop.h>
@@ -18,7 +20,10 @@ struct CommandBuffer::Native
         : device(&deviceToUse)
     {
         if (auto queue = (__bridge id<MTLCommandQueue>) device->nativeQueue())
+        {
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
+            Detail::reportFailureOf((id<MTLCommandBuffer>) commandBuffer.get());
+        }
     }
 
     // The buffer to submit, or nil once something already submitted it. Both
@@ -75,13 +80,7 @@ ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder or
     {
         if (auto samples =
                 (__bridge id<MTLCounterSampleBuffer>) impl->timer.nativeSamples())
-        {
-            auto attachment = passDescriptor.sampleBufferAttachments[0];
-
-            attachment.sampleBuffer = samples;
-            attachment.startOfEncoderSampleIndex = (NSUInteger) (pass * 2);
-            attachment.endOfEncoderSampleIndex = (NSUInteger) (pass * 2 + 1);
-        }
+            PassSamples::attach(passDescriptor, samples, pass);
     }
 
     return ComputePass((__bridge void*)

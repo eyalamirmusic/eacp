@@ -111,8 +111,7 @@ struct Buffer::Native
         // A buffer whose initial data never reached it is not a buffer, and
         // isValid() is how the caller finds out rather than drawing from
         // whatever the heap happened to hold.
-        if (bufferData.resource != nullptr && data != nullptr
-            && !stage(context, data, bytes))
+        if (bufferData.resource != nullptr && data != nullptr && !stage(data, bytes))
             bufferData.resource = nullptr;
     }
 
@@ -190,10 +189,8 @@ struct Buffer::Native
     // it correct: the copy lands in order, before the draw or dispatch that
     // wanted the bytes, so two flushes of the same program in one frame each read
     // what they were given.
-    bool stage(D3D12Context& context,
-               const void* data,
-               std::size_t bytes,
-               std::size_t destinationOffset = 0)
+    bool
+        stage(const void* data, std::size_t bytes, std::size_t destinationOffset = 0)
     {
         if (bufferData.resource == nullptr)
             return false;
@@ -207,7 +204,7 @@ struct Buffer::Native
         if (commands == nullptr)
             return false;
 
-        auto copied = copyInto(context, *commands, data, bytes, destinationOffset);
+        auto copied = copyInto(*commands, data, bytes, destinationOffset);
 
         if (!ownsRecording)
             return copied;
@@ -220,8 +217,7 @@ struct Buffer::Native
         return copied;
     }
 
-    bool copyInto(D3D12Context& context,
-                  CommandContext& commands,
+    bool copyInto(CommandContext& commands,
                   const void* data,
                   std::size_t bytes,
                   std::size_t destinationOffset)
@@ -280,7 +276,7 @@ struct Buffer::Native
         // resource of its own: an update that lands while a frame is recording
         // goes onto that recording, in order ahead of the work that reads it,
         // instead of acquiring and submitting a list per call.
-        stage(context, data, count, offset);
+        stage(data, count, offset);
     }
 
     // The Device beside it, for the thread rule alone - see

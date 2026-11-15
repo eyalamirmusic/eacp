@@ -46,7 +46,10 @@ public:
 
 private:
     int getNumRows() override;
-    void paintRow(Graphics& g, int row, const Rect& bounds, bool selected) override;
+    void paintRow(Graphics& g,
+                  int row,
+                  const Rect& rowBounds,
+                  bool selected) override;
     void selectedRowChanged(int row) override;
     void rowDoubleClicked(int row) override;
 

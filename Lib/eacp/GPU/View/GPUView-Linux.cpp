@@ -6,6 +6,7 @@
 #include "../Vulkan/VulkanSurface.h"
 #include "../Vulkan/VulkanTypes.h"
 
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Graphics/Helpers/DisplayLink.h>
 #include <eacp/Graphics/Image/Image.h>
 #include <eacp/Graphics/View/View-Linux.h>
@@ -137,8 +138,42 @@ struct GPUView::Native
 
     void frameCallbackArrived()
     {
+        ++skippedTickGeneration;
+        watchdogTickUnanswered = false;
+
         if (continuous)
             continuousTick(false);
+    }
+
+    // A skipped tick's request rides on a commit with nothing new in it, and
+    // Weston 15 can let one arriving just after a repaint go unanswered, which
+    // would end a paced loop for good. Unanswered past the next due frame, the
+    // tick runs anyway, and its commit starts the compositor's repaints again.
+    // Once only until a callback comes: a hidden or occluded surface is not
+    // answered either, and must stay idle as it always has.
+    void watchSkippedTick()
+    {
+        if (watchdogTickUnanswered)
+            return;
+
+        const auto generation = ++skippedTickGeneration;
+        const auto alive = std::weak_ptr<int> {lifetime};
+        const auto margin = Time::MS {50};
+        const auto interval = Time::MS {1000 / std::max(maxFps, 1)};
+
+        Threads::callAfter(interval + margin,
+                           [this, alive, generation]
+                           {
+                               if (alive.expired()
+                                   || generation != skippedTickGeneration)
+                                   return;
+
+                               if (!continuous || !record.frameCallbackPending)
+                                   return;
+
+                               watchdogTickUnanswered = true;
+                               continuousTick(false);
+                           });
     }
 
     float surfaceScale() const
@@ -182,6 +217,7 @@ struct GPUView::Native
     {
         stampedTick = [] {};
         pacingStarted = false;
+        ++skippedTickGeneration;
     }
 
     // The half-tick grace keeps 60 on a 120 Hz compositor from missing the
@@ -232,6 +268,7 @@ struct GPUView::Native
         if (!force && !tickIsDue())
         {
             record.requestFrameCallback();
+            watchSkippedTick();
             return;
         }
 
@@ -867,6 +904,10 @@ struct GPUView::Native
     float backingScale = 0.f;
 
     Callback stampedTick = [] {};
+
+    int skippedTickGeneration = 0;
+    bool watchdogTickUnanswered = false;
+    std::shared_ptr<int> lifetime = std::make_shared<int>(0);
 
     std::chrono::steady_clock::time_point lastTick;
     double accumulated = 0.0;

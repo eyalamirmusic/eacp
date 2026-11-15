@@ -1,42 +1,79 @@
 #include "ModuleInfo.h"
+#include "ModuleInfoPlatform.h"
 
-#include "../Utils/StdPath.h"
+#include "../Platform/Platform.h"
+#include "../Utils/Files.h"
 
-#include <filesystem>
+#include <algorithm>
+#include <dlfcn.h>
+#include <link.h>
+#include <span>
 
 namespace eacp::Plugins
 {
-bool isDynamicLibrary()
+namespace
 {
-    static const auto result = []
+struct MainProgramProbe
+{
+    ElfW(Addr) address = 0;
+    bool reported = false;
+    bool contains = false;
+};
+
+bool loadSegmentContains(const dl_phdr_info& image,
+                         const ElfW(Phdr) & header,
+                         ElfW(Addr) address)
+{
+    const auto start = image.dlpi_addr + header.p_vaddr;
+
+    return header.p_type == PT_LOAD && address >= start
+           && address - start < header.p_memsz;
+}
+
+// glibc, musl and bionic all report the main program first.
+int probeMainProgram(dl_phdr_info* image, std::size_t, void* data)
+{
+    auto& probe = *(MainProgramProbe*) data;
+    const auto headers =
+        std::span {image->dlpi_phdr, (std::size_t) image->dlpi_phnum};
+
+    probe.reported = true;
+    probe.contains =
+        std::any_of(headers.begin(),
+                    headers.end(),
+                    [&](const ElfW(Phdr) & header)
+                    { return loadSegmentContains(*image, header, probe.address); });
+
+    return 1;
+}
+} // namespace
+
+bool Detail::isInMainProgram(const void* address)
+{
+    auto probe = MainProgramProbe {(ElfW(Addr)) address};
+    dl_iterate_phdr(probeMainProgram, &probe);
+
+    return !probe.reported || probe.contains;
+}
+
+void* Detail::findClaimFunction()
+{
+    return dlsym(RTLD_DEFAULT, "eacpClaimedCopy");
+}
+
+// glibc's dladdr names the main program by argv[0], so the kernel answers
+// there. Android's main program is app_process, never an eacp copy.
+FilePath getCurrentModulePath()
+{
+    if constexpr (!Platform::isAndroid())
     {
-        // A PIE executable and a shared object are both ET_DYN, so the ELF
-        // header can't tell them apart; compare images instead -- resolved on
-        // both sides, because /proc/self/exe always is and the path dladdr
-        // reports is the one the program was invoked with. Launched as `./app`
-        // they differ, and a standalone app taken for a plugin returns from
-        // run<T>() without ever starting its event loop.
-        auto ec = std::error_code();
-        const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (Detail::isInMainProgram(getCurrentModuleAddress()))
+        {
+            if (auto executable = Files::executablePath(); !executable.empty())
+                return executable;
+        }
+    }
 
-        if (ec)
-            return false;
-
-        const auto module = toStdPath(getCurrentModulePath());
-
-        if (module.empty())
-            return false;
-
-        const auto resolved = std::filesystem::weakly_canonical(module, ec);
-
-        // Unresolvable is answered the same way an unreadable /proc/self/exe
-        // is, above: standalone.
-        if (ec)
-            return false;
-
-        return FilePath {exe} != FilePath {resolved};
-    }();
-
-    return result;
+    return Detail::loadedImagePath();
 }
 } // namespace eacp::Plugins

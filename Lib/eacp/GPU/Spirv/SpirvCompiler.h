@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace eacp::GPU::Spirv
 {
@@ -21,7 +22,28 @@ enum class Target
     vulkan13Spirv16
 };
 
-// The log is empty on a clean compile.
+// The target as a precompiled shader's resource name spells it. Inline, so a
+// build where eacp-spirv is not built can still name one.
+constexpr std::string_view targetName(Target target)
+{
+    switch (target)
+    {
+        case Target::vulkan11Spirv13:
+            return "vk11spv13";
+        case Target::vulkan11Spirv14:
+            return "vk11spv14";
+        case Target::vulkan13Spirv16:
+            return "vk13spv16";
+    }
+
+    return {};
+}
+
+// The log is empty on a clean compile, and holds glslang's warnings beside a
+// successful one as well as its errors beside a failure. Its diagnostics carry
+// a column as well
+// as a line - `ERROR: 0:12:5: 'name' : text` - for parseGlslangLog
+// (Shader/CompilationInfo.h).
 struct CompileResult
 {
     bool succeeded() const;

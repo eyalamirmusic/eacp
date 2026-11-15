@@ -20,6 +20,7 @@
 #include <iterator>
 #include <limits>
 #include <poll.h>
+#include <signal.h>
 #include <string>
 #include <string_view>
 
@@ -353,6 +354,26 @@ uint16_t x11ClampSize(long value)
     return (uint16_t) std::clamp(value, 1L, highest);
 }
 
+void x11IgnoreBrokenPipesUnlessHandled()
+{
+    struct sigaction current {};
+
+    if (::sigaction(SIGPIPE, nullptr, &current) != 0)
+        return;
+
+    const auto hasHandler =
+        (current.sa_flags & SA_SIGINFO) != 0 || current.sa_handler != SIG_DFL;
+
+    if (hasHandler)
+        return;
+
+    struct sigaction ignore {};
+    ignore.sa_handler = SIG_IGN;
+    ::sigemptyset(&ignore.sa_mask);
+
+    ::sigaction(SIGPIPE, &ignore, nullptr);
+}
+
 X11WindowSurface::X11WindowSurface()
 {
     viewSurfaces = makeX11ViewSurfaceBackend(*this);
@@ -380,6 +401,8 @@ void X11WindowSurface::scaleChanged(float) {}
 
 X11Connection::X11Connection()
 {
+    x11IgnoreBrokenPipesUnlessHandled();
+
     auto* opened = xcb_connect(nullptr, &screenNumber);
 
     if (xcb_connection_has_error(opened) != 0)
@@ -471,6 +494,8 @@ void X11Connection::internAtoms()
         {"EACP_SELECTION", &X11Atoms::eacpSelection},
         {"_NET_WM_WINDOW_TYPE", &X11Atoms::netWmWindowType},
         {"_NET_WM_WINDOW_TYPE_NORMAL", &X11Atoms::netWmWindowTypeNormal},
+        {"_XEMBED", &X11Atoms::xembed},
+        {"_XEMBED_INFO", &X11Atoms::xembedInfo},
     };
 
     constexpr auto count = std::size(requests);
@@ -840,6 +865,9 @@ void X11Connection::dispatch(const xcb_generic_event_t& event)
         }
     }
 
+    if (!observers.empty())
+        dispatchToObservers(event);
+
     const auto window = x11EventWindow(event);
 
     if (window == XCB_NONE)
@@ -897,6 +925,40 @@ void X11Connection::dispatchToWatchers(const xcb_generic_event_t& event,
     for (auto watching = watchers; const auto& watcher: watching)
         if (watcher.window == window && watchers.contains(watcher))
             watcher.windowSurface->handleEvent(event);
+}
+
+// By owner, looked up again before each call: an observer removed by an
+// earlier one in the same event is not called.
+void X11Connection::dispatchToObservers(const xcb_generic_event_t& event)
+{
+    auto owners = Vector<const void*> {};
+
+    for (const auto& entry: observers)
+        owners.add(entry.owner);
+
+    for (const auto* owner: owners)
+    {
+        auto observer = EventObserver {};
+
+        for (const auto& entry: observers)
+            if (entry.owner == owner)
+                observer = entry.observer;
+
+        if (observer)
+            observer(event);
+    }
+}
+
+void X11Connection::addEventObserver(const void* owner, EventObserver observer)
+{
+    removeEventObserver(owner);
+    observers.add({owner, std::move(observer)});
+}
+
+void X11Connection::removeEventObserver(const void* owner)
+{
+    observers.removeIndexesMatching([owner](const ObserverEntry& entry)
+                                    { return entry.owner == owner; });
 }
 
 void X11Connection::checkForConnectionLoss()

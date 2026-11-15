@@ -1,7 +1,9 @@
 #pragma once
 
+#include "Format.h"
 #include "Strings.h"
 
+#include <string>
 #include <string_view>
 
 namespace eacp
@@ -23,9 +25,21 @@ void LOG(const Args&... args)
     logMessage(Strings::concat(args...));
 }
 
+// Logs a brace pattern - e.g. LOGF("hr = 0x{:08X}", code) - through
+// Strings::format, for the lines LOG's plain concatenation cannot spell:
+// widths, precision, hex.
+template <typename... Args>
+void LOGF(std::string_view pattern, const Args&... args)
+{
+    logMessage(Strings::format(pattern, args...));
+}
+
 // Routes future LOG() calls to also append to `path` (directory created on
 // demand). Pass an empty string to stop file logging. Useful when stdout
 // isn't reachable (CI, GUI-only sessions).
 void setLogFile(std::string_view path);
+
+// The path setLogFile stored; empty when none.
+std::string getLogFile();
 
 } // namespace eacp

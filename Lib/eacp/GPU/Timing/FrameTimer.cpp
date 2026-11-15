@@ -125,9 +125,9 @@ void FrameTimer::drainCompleted(const Device& device)
         if (!entry.pending || !timestamps.isSlotComplete(slot, device))
             continue;
 
-        double milliseconds[GpuTimestamps::maxTimedPasses] = {};
+        PassActivity activity[GpuTimestamps::maxTimedPasses] = {};
         const auto frameTime =
-            timestamps.resolveSlot(slot, entry.passCount, milliseconds);
+            timestamps.resolveSlot(slot, entry.passCount, activity);
 
         entry.pending = false;
 
@@ -138,6 +138,11 @@ void FrameTimer::drainCompleted(const Device& device)
         if (entry.frameIndex < latest.frameIndex)
             continue;
 
+        double shares[GpuTimestamps::maxTimedPasses] = {};
+        double spans[GpuTimestamps::maxTimedPasses] = {};
+        sharePassTimes<GpuTimestamps::maxTimedPasses>(
+            activity, entry.passCount, shares, spans);
+
         latest.frameIndex = entry.frameIndex;
         latest.milliseconds = frameTime;
         latest.passes.resize(entry.passCount);
@@ -145,7 +150,8 @@ void FrameTimer::drainCompleted(const Device& device)
         for (auto pass = 0; pass < entry.passCount; ++pass)
         {
             latest.passes[pass].label = entry.labels[pass];
-            latest.passes[pass].milliseconds = milliseconds[pass];
+            latest.passes[pass].milliseconds = shares[pass];
+            latest.passes[pass].spanMilliseconds = spans[pass];
         }
     }
 }

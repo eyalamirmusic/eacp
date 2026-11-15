@@ -18,4 +18,26 @@ double platformBackingScale(GPUView& view)
 
     return scale > 0.0 ? scale : 1.0;
 }
+
+ViewVisibility platformViewVisibility(GPUView& view)
+{
+    auto* nativeView = (__bridge UIView*) view.getHandle();
+
+    if (nativeView.window == nil || nativeView.hidden)
+        return ViewVisibility::NotInVisibleWindow;
+
+    return ViewVisibility::Visible;
+}
+
+bool platformIsInLiveResize(GPUView&)
+{
+    return false;
+}
+
+void* platformObserveWindowVisibility(const Callback&)
+{
+    return nullptr;
+}
+
+void platformStopObservingWindowVisibility(void*) {}
 } // namespace eacp::GPU

@@ -215,7 +215,7 @@ bool GpuTimestamps::isSlotComplete(int slot, const Device& device) const
     return entry.submitted && getD3D12Context(device).hasCompleted(entry.fenceValue);
 }
 
-double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
+double GpuTimestamps::resolveSlot(int slot, int passCount, PassActivity* activity)
 {
     const auto& entry = impl->slots[slot];
 
@@ -232,12 +232,18 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
         return (double) (end - start) * 1000.0 / (double) impl->frequency;
     };
 
-    for (auto pass = 0; pass < passCount; ++pass)
-        milliseconds[pass] =
-            toMilliseconds(entry.results[pass * 2], entry.results[pass * 2 + 1]);
-
     const auto frameStart = entry.results[frameStartQuery];
     const auto frameEnd = entry.results[frameEndQuery];
+
+    for (auto pass = 0; pass < passCount; ++pass)
+    {
+        const auto start = entry.results[pass * 2];
+        const auto end = entry.results[pass * 2 + 1];
+
+        if (start != 0 && end > start)
+            activity[pass].add(toMilliseconds(frameStart, start),
+                               toMilliseconds(frameStart, end));
+    }
 
     // Where an adapter that only claimed to support timestamps is found out.
     // These two are absolute GPU tick counts, taken on the command list outside

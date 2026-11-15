@@ -178,9 +178,9 @@ UI::Gradient resolveGradient(const std::string& id,
         if (value.empty())
             return defaultFraction * across;
 
-        auto number = Strings::parseFloatOr(value, defaultFraction * across);
+        auto parsed = Strings::parseFloatOr(value, defaultFraction * across);
 
-        return value.back() == '%' ? number * 0.01f * across : number;
+        return value.back() == '%' ? parsed * 0.01f * across : parsed;
     };
 
     if (radial)

@@ -20,6 +20,8 @@ namespace eacp::Graphics
 {
 namespace
 {
+constexpr uint32_t x11NetWmStateRemove = 0;
+constexpr uint32_t x11NetWmStateAdd = 1;
 constexpr uint32_t x11NetWmStateToggle = 2;
 
 // _NET_WM_STATE's source indication: 1 is an ordinary application, which is
@@ -124,8 +126,7 @@ struct X11WindowNative final
 
     ~X11WindowNative() override
     {
-        if (contentView != nullptr)
-            linuxUnbindWindowFromContentView(*contentView);
+        linuxUnbindWindow(*this);
 
         auto* connection = x11Connection();
 
@@ -314,8 +315,8 @@ struct X11WindowNative final
 
         xcb_icccm_size_hints_set_size(&hints, 1, width, height);
 
-        auto minWidth = x11PixelSize((float) std::max(state.minWidth, 1), scale);
-        auto minHeight = x11PixelSize((float) std::max(state.minHeight, 1), scale);
+        auto minWidth = x11PixelSize((float) state.minimumSurfaceWidth(), scale);
+        auto minHeight = x11PixelSize((float) state.minimumSurfaceHeight(), scale);
 
         // Pinned rather than merely unset, the way the Wayland frame is: min
         // equal to max is the only way X11 says "this window does not resize".
@@ -329,7 +330,9 @@ struct X11WindowNative final
 
         xcb_icccm_size_hints_set_min_size(&hints, minWidth, minHeight);
 
-        if (state.aspectRatioHint)
+        // The ratio is the content's, which a menu bar puts out of step with
+        // the window's; sizeConstraint holds it either way.
+        if (state.aspectRatioHint && contentTop == 0.f)
         {
             const auto numerator =
                 (int32_t) std::lround(state.aspectRatioHint->x * x11AspectPrecision);
@@ -494,7 +497,7 @@ struct X11WindowNative final
 
         applySizeHints();
 
-        if (!state.maximized)
+        if (!state.hasSystemManagedSize())
         {
             lastSizeRequest.reset();
             resizeWindowTo(x11WholePoints(contentSize.x),
@@ -508,7 +511,12 @@ struct X11WindowNative final
         // reads it rather than the one it replaces.
         linuxWindowSurfaceStateChanged(*contentView);
         notifyBackingScaleChanged(*contentView);
+
+        if (menuBarView != nullptr)
+            notifyBackingScaleChanged(*menuBarView);
     }
+
+    void sizeHintsChanged() override { applySizeHints(); }
 
     void mapNotify(const xcb_map_notify_event_t& event)
     {
@@ -520,6 +528,12 @@ struct X11WindowNative final
 
         if (contentView != nullptr)
             linuxWindowSurfaceStateChanged(*contentView);
+
+        // A window manager takes _NET_WM_STATE messages only for a window it
+        // manages, so a request made before the map is made again now. An add
+        // or a remove, never a toggle: asking twice is harmless.
+        if (state.fullScreenRequested != state.fullScreen)
+            requestFullScreen(state.fullScreenRequested);
     }
 
     void unmapNotify(const xcb_unmap_notify_event_t& event)
@@ -549,8 +563,9 @@ struct X11WindowNative final
         auto width = givenWidth;
         auto height = givenHeight;
 
-        // A maximised toplevel is being given a ceiling, not dragged.
-        state.applyConstraints(width, height, state.maximized);
+        // A maximised or full screen toplevel is being given a ceiling, not
+        // dragged.
+        state.applyConstraints(width, height, state.hasSystemManagedSize());
 
         // Nothing negotiates a size on X11: the server has resized already, so
         // a constraint that disagrees is asked for back rather than agreed in
@@ -732,18 +747,20 @@ struct X11WindowNative final
         if (event.atom != connection->getAtoms().netWmState)
             return;
 
-        state.maximized = readMaximized();
+        readWmState();
     }
 
     // Whatever the property could not answer leaves the state as it was: an
     // absent or malformed _NET_WM_STATE says nothing about the window, and
     // reading it as "not maximized" would be an unmaximize nobody asked for.
-    bool readMaximized()
+    // A window manager deletes it when the window is withdrawn, which is
+    // where a full screen window put away stops being one.
+    void readWmState()
     {
         auto* connection = liveConnection();
 
         if (connection == nullptr)
-            return state.maximized;
+            return;
 
         auto* xcb = connection->getConnection();
         const auto& atoms = connection->getAtoms();
@@ -755,9 +772,7 @@ struct X11WindowNative final
             nullptr);
 
         if (reply == nullptr)
-            return state.maximized;
-
-        auto maximized = state.maximized;
+            return;
 
         if (reply->type == XCB_ATOM_ATOM && reply->format == 32)
         {
@@ -767,20 +782,25 @@ struct X11WindowNative final
 
             auto horizontal = false;
             auto vertical = false;
+            auto fullScreen = false;
 
             for (auto i = 0; i < count; ++i)
             {
                 horizontal =
                     horizontal || values[i] == atoms.netWmStateMaximizedHorz;
                 vertical = vertical || values[i] == atoms.netWmStateMaximizedVert;
+                fullScreen = fullScreen || values[i] == atoms.netWmStateFullscreen;
             }
 
-            maximized = horizontal && vertical;
+            state.maximized = horizontal && vertical;
+            state.fullScreen = fullScreen;
+        }
+        else if (reply->type == XCB_ATOM_NONE)
+        {
+            state.fullScreen = false;
         }
 
         std::free(reply);
-
-        return maximized;
     }
 
     void setVisible(bool shouldBeVisible) override
@@ -808,11 +828,16 @@ struct X11WindowNative final
     }
 
     // Eagerly, unlike the map: the view surfaces have to go before the request
-    // reaches the server, and the UnmapNotify that follows finds it done.
+    // reaches the server, and the UnmapNotify that follows finds it done. The
+    // window manager forgets the full screen of a withdrawn window, so the
+    // window remembers it, and asks again when it is mapped.
     void unmap()
     {
         auto wasMapped = mapped;
         mapped = false;
+
+        if (wasMapped)
+            state.fullScreenRequested = state.fullScreen;
 
         if (contentView != nullptr)
             linuxWindowSurfaceStateChanged(*contentView);
@@ -832,16 +857,16 @@ struct X11WindowNative final
             state.notifyHostVisibility(false);
     }
 
-    // A maximised toplevel holds the size the window manager gave it, so
-    // there is nothing to ask for. Otherwise the content size is taken first
-    // - the hints are derived from it, and a non-resizable window is pinned
-    // to the old size until they are rewritten - and the server is then asked
-    // to catch up. The ConfigureNotify that answers carries this same size,
-    // where resizeTo is silent, or the size a window manager insisted on
-    // instead, which is a real resize and reports itself.
+    // A maximised or full screen toplevel holds the size the window manager
+    // gave it, so there is nothing to ask for. Otherwise the content size is
+    // taken first - the hints are derived from it, and a non-resizable
+    // window is pinned to the old size until they are rewritten - and the
+    // server is then asked to catch up. The ConfigureNotify that answers
+    // carries this same size, where resizeTo is silent, or the size a window
+    // manager insisted on instead, which is a real resize and reports itself.
     void setSize(Point newSize) override
     {
-        if (state.maximized)
+        if (state.hasSystemManagedSize())
             return;
 
         auto width = std::max((int) std::lround(newSize.x), 1);
@@ -901,6 +926,31 @@ struct X11WindowNative final
                                atoms.netWmStateMaximizedVert,
                                x11ClientSourceApplication,
                                0});
+    }
+
+    // Answered, where a window manager grants it, by a _NET_WM_STATE that
+    // names the full screen (propertyNotify) and the monitor's size
+    // (configureNotify). A window not yet managed is asked again at its map.
+    void setFullScreen(bool shouldBeFullScreen) override
+    {
+        state.fullScreenRequested = shouldBeFullScreen;
+        requestFullScreen(shouldBeFullScreen);
+    }
+
+    void requestFullScreen(bool shouldBeFullScreen)
+    {
+        auto* connection = x11Connection();
+
+        if (connection == nullptr)
+            return;
+
+        sendRootClientMessage(
+            connection->getAtoms().netWmState,
+            {shouldBeFullScreen ? x11NetWmStateAdd : x11NetWmStateRemove,
+             connection->getAtoms().netWmStateFullscreen,
+             0,
+             x11ClientSourceApplication,
+             0});
     }
 
     // Everything a window manager acts on is a message to the root, where its

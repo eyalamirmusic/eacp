@@ -10,12 +10,13 @@ if (NOT EACP_HAS_WEBVIEW)
     return ()
 endif ()
 
-# Pure-logic suites: Range header resolution, the file provider and the async
-# bridge. They link eacp-webview but never construct a WebView, so they build
-# wherever the library does.
+# Pure-logic suites: Range header resolution, the file provider, the async
+# bridge and the page-message sender rule. They link eacp-webview but never
+# construct a WebView, so they build wherever the library does.
 set(webview_test_sources
         AsyncBridgeTests.cpp
         FileProviderTests.cpp
+        MessageOriginPolicyTests.cpp
         StreamingRangeTests.cpp)
 
 # The drag-out drop source/target that stream onFileDragMoved / onFileDragEnded
@@ -36,6 +37,8 @@ endif ()
 #   WebViewCallTests        the C++ -> page call path
 #   CommandDispatchTests    page -> C++ dispatch: per-command execution mode
 #                           (main vs worker thread) and async Completer handlers
+#   MessageOriginTests      page -> C++ dispatch refusing senders outside
+#                           Options::trustedOrigins, framework handlers included
 #   WindowDragTests         window-drag.js classification (installWindowDragSupport
 #                           in WebView-Shared.cpp injects it on both desktop
 #                           backends; WebKit-specific assertions guard themselves
@@ -57,6 +60,7 @@ endif ()
 if (TARGET eacp-webview-test-main)
     list(APPEND webview_test_sources
             CommandDispatchTests.cpp
+            MessageOriginTests.cpp
             OffscreenAnimationTests.cpp
             RenderToImageAsyncTests.cpp
             SnapshotDeadlineTests.cpp

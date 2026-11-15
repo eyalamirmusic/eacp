@@ -67,6 +67,18 @@ LRESULT CALLBACK nativeChildWindowProc(HWND hwnd,
     if (msg == WM_ERASEBKGND)
         return 1;
 
+    // WM_DPICHANGED_AFTERPARENT, by number: the header names it only for
+    // WINVER 0x0605 and up. The top-level window has already moved to its new
+    // DPI, so the child is placed in it again and the new scale reported.
+    constexpr auto dpiChangedAfterParent = UINT {0x02E3};
+
+    if (msg == dpiChangedAfterParent)
+    {
+        if (auto* surface = reinterpret_cast<NativeChildSurface*>(
+                GetWindowLongPtrW(hwnd, GWLP_USERDATA)))
+            surface->refreshPlacement();
+    }
+
     if (isPlainKeyMessage(msg) && offerUnhandledKey(hwnd, msg, wParam, lParam))
         return 0;
 
@@ -286,12 +298,16 @@ NativeChildSurface::~NativeChildSurface() = default;
 
 void* NativeChildSurface::getNativeParentHandle()
 {
-    return impl->ensureWindow();
+    auto* handle = impl->ensureWindow();
+    reportBackingScale();
+
+    return handle;
 }
 
 void NativeChildSurface::refreshPlacement()
 {
     impl->ensureWindow();
+    reportBackingScale();
 }
 
 void NativeChildSurface::resized()
@@ -306,6 +322,18 @@ void NativeChildSurface::resized()
 void NativeChildSurface::visibilityChanged(bool nowVisible)
 {
     impl->setVisible(nowVisible);
+}
+
+void NativeChildSurface::backingScaleChanged()
+{
+    View::backingScaleChanged();
+    refreshPlacement();
+}
+
+// The DPI the container is placed at, which is its top-level window's.
+float NativeChildSurface::currentBackingScale() const
+{
+    return impl->dpiScale();
 }
 
 } // namespace eacp::Graphics

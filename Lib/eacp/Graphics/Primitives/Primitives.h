@@ -1,110 +1,16 @@
 #pragma once
 
 #include "../Common.h"
+#include <eacp/Core/Geometry/Geometry.h>
 
 #include <cstdint>
 #include <initializer_list>
 
 namespace eacp::Graphics
 {
-struct Point
-{
-    Point() = default;
-    Point(float xToUse, float yToUse);
-
-    float length() const;
-    float distanceTo(const Point& other) const;
-    Point normalized() const;
-
-    float x = 0.f;
-    float y = 0.f;
-};
-
-Point operator+(const Point& a, const Point& b);
-
-Point operator-(const Point& a, const Point& b);
-
-// A border of four thicknesses, one per edge, in points. Every side defaults
-// to zero so a caller names only the edges it means: `Insets {.top = 56.f}`.
-struct Insets
-{
-    // The width and height the four sides add up to.
-    Point size() const;
-
-    float top = 0.f;
-    float left = 0.f;
-    float bottom = 0.f;
-    float right = 0.f;
-};
-
-// An axis-aligned rectangle in a **y-down** space: y grows downward, so y = 0
-// is the top edge and `fromTop` returns the slice against it.
-//
-// That is what the rest of eacp means by y. The backing views set isFlipped, so
-// View::setBounds and MouseEvent::pos are both measured from the top, and the
-// sprite, glyph and scissor paths all map y = 0 to the top of their target. The
-// splitters below came from JUCE, where views really are y-up, and keeping that
-// sense here meant `removeFromTop` handed you the bottom slice — a header laid
-// out with it landed along the bottom edge of its window, which is silent
-// because it still compiles and still draws something.
-struct Rect
-{
-    Rect() = default;
-    Rect(float xToUse, float yToUse, float wToUse, float hToUse);
-
-    Rect getRelative(const Rect& ratio) const;
-    Point getRelativePoint(const Point& point) const;
-
-    bool contains(const Point& point) const;
-
-    // A rect with no area. Both an explicitly empty rect and one whose width or
-    // height has gone negative — which is what oversized insets and splitters
-    // produce — count, so callers can test the result of either.
-    bool isEmpty() const;
-
-    bool intersects(const Rect& other) const;
-
-    // The overlap, or an empty rect when there is none. Nesting clip regions is
-    // the reason this exists: the GPU has exactly one scissor rect and no stack,
-    // so a child's clip has to be intersected with its parent's on the way down
-    // rather than replacing it.
-    Rect intersection(const Rect& other) const;
-
-    Rect inset(float amount) const;
-    Rect inset(float horizontal, float vertical) const;
-    Rect inset(const Insets& insets) const;
-
-    Rect withX(float newX) const;
-    Rect withY(float newY) const;
-    Rect withWidth(float newW) const;
-    Rect withHeight(float newH) const;
-    Rect withPosition(float newX, float newY) const;
-    Rect withSize(float newW, float newH) const;
-
-    Rect fromLeft(float width, float margin = 0.f) const;
-    Rect fromRight(float width, float margin = 0.f) const;
-    Rect fromTop(float height, float margin = 0.f) const;
-    Rect fromBottom(float height, float margin = 0.f) const;
-
-    Rect removeFromLeft(float amount);
-    Rect removeFromRight(float amount);
-    Rect removeFromTop(float amount);
-    Rect removeFromBottom(float amount);
-
-    Point center() const;
-
-    // Edge coordinates. `top` is the smaller y and `bottom` the larger, so
-    // top <= bottom for any rect with a non-negative height.
-    float left() const;
-    float right() const;
-    float top() const;
-    float bottom() const;
-
-    float x = 0.f;
-    float y = 0.f;
-    float w = 0.f;
-    float h = 0.f;
-};
+using Point = Geometry::Point<float>;
+using Insets = Geometry::Insets<float>;
+using Rect = Geometry::Rectangle<float>;
 
 // Corners bigger than the rect they round are out of contract for the platform
 // path builders, so every rounded-rect call site fits the radius first.

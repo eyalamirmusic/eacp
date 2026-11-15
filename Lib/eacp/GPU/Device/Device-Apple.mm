@@ -155,18 +155,14 @@ struct Device::Native
         }
     }
 
-    // Every sampling configuration gets its state up front: there are four of
+    // Every sampling configuration gets its state up front: there are eight of
     // them, they are cheap, and building them here keeps nativeSampler() a
     // const lookup that any thread can make without a lazy-init race.
     void buildSamplers()
     {
-        for (auto filter: {TextureFilter::Nearest, TextureFilter::Linear})
-            for (auto mode: {TextureAddressMode::Clamp, TextureAddressMode::Repeat})
-            {
-                const auto sampling = TextureSampling {filter, mode};
-                samplers[samplingIndex(sampling)] =
-                    makeMetalSampler(device.get(), SamplerDescriptor::from(sampling));
-            }
+        for (auto index = 0; index < samplingConfigurations; ++index)
+            samplers[index] = makeMetalSampler(
+                device.get(), SamplerDescriptor::from(samplingConfiguration(index)));
     }
 
     ObjC::Ptr<NSObject<MTLDevice>> device;
@@ -365,6 +361,16 @@ bool readWritesAtTierTwo(TextureFormat format)
     }
 }
 } // namespace
+
+bool Device::supportsShaderFloat16() const
+{
+    return isValid();
+}
+
+bool Device::supportsSampleRateShading() const
+{
+    return isValid();
+}
 
 bool Device::supportsComputeReadWrite(TextureFormat format) const
 {

@@ -5,6 +5,8 @@
 #include "../Windows/D3D12Context.h"
 #include "../Windows/D3D12Types.h"
 
+#include <eacp/Core/Utils/Singleton.h>
+
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -140,19 +142,33 @@ Device::Device()
 {
 }
 
+namespace
+{
+// Never destroyed, for the reason ReleasableShared gives.
+ReleasableShared<Device>& sharedDeviceHolder()
+{
+    return Singleton::getImmortal<ReleasableShared<Device>>();
+}
+} // namespace
+
 Device& Device::shared()
 {
-    static Device instance;
-
     // The process-wide Device is created lazily but belongs to the main thread
     // regardless of which thread asked for it first — every GPUView and every
     // Frame drives it from there. See D3D12Context::followMainThread.
-    [[maybe_unused]] static const auto boundToMainThread =
-        (instance.followMainThread(),
-         instance.impl->context.followMainThread(),
-         true);
+    return sharedDeviceHolder().get(
+        [](std::optional<Device>& device)
+        {
+            device.emplace();
+            device->followMainThread();
+            device->impl->context.followMainThread();
+        });
+}
 
-    return instance;
+void releaseSharedGPUDevice()
+{
+    sharedDeviceHolder().release();
+    releaseD3D12Shared();
 }
 
 D3D12Context& getD3D12Context(const Device& device)
@@ -326,6 +342,19 @@ bool Device::supportsComputeReadWrite(TextureFormat format) const
 {
     return supportsComputeWrite(format)
            && (formatSupport2(format) & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) != 0;
+}
+
+// The emitted HLSL holds f16 in float and rounds it with integer arithmetic and
+// f16tof32, which every shader model eacp compiles for has.
+bool Device::supportsShaderFloat16() const
+{
+    return isValid();
+}
+
+// SV_SampleIndex and the sample interpolation modifier are ps_4_1 and up.
+bool Device::supportsSampleRateShading() const
+{
+    return isValid();
 }
 
 // eacp's box-filter kernel reads one level and writes the next through two

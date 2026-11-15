@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <typeinfo>
 
 namespace eacp::Graphics
 {
@@ -138,6 +139,11 @@ public:
     RenderPipeline makeRenderPipeline(const RenderPipelineDescriptor& descriptor);
 
     ComputePipeline makeComputePipeline(const ShaderLibrary& library);
+
+    // The kernel specialised with its pipeline-overridable constants
+    // (PipelineConstants.h).
+    ComputePipeline makeComputePipeline(const ShaderLibrary& library,
+                                        const PipelineConstants& constants);
 
     CommandBuffer makeCommandBuffer();
 
@@ -289,9 +295,32 @@ public:
     // those shapes, and no tier takes a two-channel, packed or 16-bit unorm
     // format. D3D12 asks D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD, which the
     // R32 formats always have and the rest have on most hardware; Vulkan
-    // answers as for a write. Reading through setInputTexture needs none of
-    // this: any format a texture has is readable there.
+    // answers as for a write, and for a format past SPIR-V's base storage
+    // formats (rgba8, rgba16f, rgba32f, r32f and the four-channel and r32
+    // integer ones) also asks shaderStorageImageExtendedFormats, which its
+    // qualifier needs. Reading through setInputTexture needs none of this:
+    // any format a texture has is readable there.
     bool supportsComputeReadWrite(TextureFormat format) const;
+
+    // Whether a shader may compute in f16 - WGSL's `enable f16`, the EDSL's
+    // Half, its vectors and matrices, and HalfInputBuffer/HalfOutputBuffer.
+    // Every Metal device has half. Vulkan needs shaderFloat16 and
+    // storageBuffer16BitAccess (VK_KHR_shader_float16_int8 and
+    // VK_KHR_16bit_storage below 1.2), both enabled at device creation where
+    // offered. D3D12 always answers yes: FXC's SM5 has no 16-bit type, so the
+    // emitted HLSL holds each f16 in a float and rounds every result to the
+    // nearest half - WGSL's values at a float's cost, not a half's. An
+    // invalid Device answers no. ComputeProgram::prepare and
+    // ShaderProgram::prepare refuse a program using f16 where this is false.
+    bool supportsShaderFloat16() const;
+
+    // Whether a fragment stage may run once per sample - WGSL's sample_index
+    // and @interpolate(..., sample), the EDSL's sampleIndex() and
+    // InterpolationSampling::Sample. Every Metal and D3D12 device has it;
+    // Vulkan needs sampleRateShading, enabled at device creation where
+    // offered. An invalid Device answers no. ShaderProgram::prepare refuses a
+    // program asking for it where this is false.
+    bool supportsSampleRateShading() const;
 
     // Whether Frame::generateMipmaps (and CommandBuffer's) can fill a
     // texture of this format's chain on the GPU. Never a block-compressed or
@@ -464,6 +493,23 @@ public:
     // real storage.
     void noteBufferCreated();
 
+    // This Device's own T: one, made on first use and destroyed with the
+    // Device, before the backend device. For state that is only valid on this
+    // Device - a kernel prepared for it - and so must neither outlive it nor be
+    // found again by a later Device at the same address, which a static keyed
+    // by the Device's address would do. The lookup is safe from any thread;
+    // guarding T's own state is T's business. T is constructed under the
+    // Device's lock, so a slow constructor holds up every other perDevice
+    // lookup on this Device until it returns. T's constructor may ask for
+    // another perDevice object, which then outlives it: they are destroyed
+    // newest first.
+    template <typename T>
+    T& perDevice()
+    {
+        auto make = []() -> std::shared_ptr<void> { return std::make_shared<T>(); };
+        return *static_cast<T*>(findOrMakePerDevice(typeid(T), make));
+    }
+
 private:
     // Makes this Device follow the main thread rather than the one that
     // constructed it. Private because Device::shared() is the only caller and
@@ -494,5 +540,13 @@ private:
 
     Frame* openFrame = nullptr;
     int openFrames = 0;
+
+    struct PerDeviceObjects;
+    static std::shared_ptr<PerDeviceObjects> makePerDeviceObjects();
+    void* findOrMakePerDevice(const std::type_info& type,
+                              std::shared_ptr<void> (*make)());
+
+    // Last, so destroyed first: before the backend device in impl.
+    std::shared_ptr<PerDeviceObjects> perDeviceObjects = makePerDeviceObjects();
 };
 } // namespace eacp::GPU

@@ -63,7 +63,12 @@ const void* ComputeKernel::packedUniforms(int width, int height, int depth)
 
 DispatchRank ComputeKernel::dispatchRank() const
 {
-    return generated.dispatchRank;
+    return generated.dispatchRank();
+}
+
+const ShaderReflection& ComputeKernel::reflection() const
+{
+    return generated.reflection;
 }
 
 ThreadGroupShape ComputeKernel::groupShape() const
@@ -117,6 +122,11 @@ UInt3 ComputeKernel::threadId3()
 Float ComputeKernel::constant(float value)
 {
     return builder.constant(value);
+}
+
+Half ComputeKernel::halfConstant(float value)
+{
+    return builder.halfConstant(value);
 }
 
 UInt ComputeKernel::unsignedInteger(unsigned value)
@@ -192,6 +202,26 @@ UInt ComputeKernel::gridHeight()
 UInt ComputeKernel::gridDepth()
 {
     return builder.gridDepth();
+}
+
+UInt ComputeKernel::localIndex()
+{
+    return builder.localIndex();
+}
+
+UInt3 ComputeKernel::groupCount()
+{
+    return builder.groupCount();
+}
+
+UInt ComputeKernel::simdLaneIndex()
+{
+    return builder.simdLaneIndex();
+}
+
+UInt ComputeKernel::simdGroupSize()
+{
+    return builder.simdGroupSize();
 }
 
 void ComputeKernel::barrier()
@@ -311,34 +341,6 @@ void ComputeKernel::multiplyAccumulate(const SimdMatrix& accumulator,
     builder.multiplyAccumulate(accumulator, left, right);
 }
 
-UInt ComputeKernel::atomicAdd(const AtomicBuffer& buffer,
-                              const UInt& index,
-                              const UInt& value)
-{
-    return builder.atomicAdd(buffer, index, value);
-}
-
-UInt ComputeKernel::atomicAdd(const AtomicBuffer& buffer,
-                              unsigned index,
-                              const UInt& value)
-{
-    return builder.atomicAdd(buffer, index, value);
-}
-
-UInt ComputeKernel::atomicAdd(const AtomicBuffer& buffer,
-                              const UInt& index,
-                              unsigned value)
-{
-    return builder.atomicAdd(buffer, index, value);
-}
-
-UInt ComputeKernel::atomicAdd(const AtomicBuffer& buffer,
-                              unsigned index,
-                              unsigned value)
-{
-    return builder.atomicAdd(buffer, index, value);
-}
-
 Var<Float> ComputeKernel::var(float initialValue)
 {
     return builder.var(initialValue);
@@ -367,6 +369,16 @@ void ComputeKernel::breakLoop()
 void ComputeKernel::continueLoop()
 {
     builder.continueLoop();
+}
+
+void ComputeKernel::breakLoopIf(const Bool& condition)
+{
+    builder.breakLoopIf(condition);
+}
+
+void ComputeKernel::returnEarly()
+{
+    builder.returnEarly();
 }
 
 void ComputeKernel::write(const OutputBuffer& buffer,
@@ -582,28 +594,112 @@ void ComputeKernel::write4(const UIntOutputBuffer& buffer,
     builder.write4(buffer, index, value);
 }
 
-void ComputeKernel::write(const AtomicBuffer& buffer,
+void ComputeKernel::write(const IntOutputBuffer& buffer,
                           const UInt& index,
-                          const UInt& value)
+                          const Int& value)
 {
     builder.write(buffer, index, value);
 }
 
-void ComputeKernel::write(const AtomicBuffer& buffer,
+void ComputeKernel::write(const IntOutputBuffer& buffer,
                           const UInt& index,
-                          unsigned value)
+                          int value)
 {
     builder.write(buffer, index, value);
 }
 
-void ComputeKernel::write(const AtomicBuffer& buffer,
+void ComputeKernel::write(const IntOutputBuffer& buffer,
                           unsigned index,
-                          const UInt& value)
+                          const Int& value)
 {
     builder.write(buffer, index, value);
 }
 
-void ComputeKernel::write(const AtomicBuffer& buffer, unsigned index, unsigned value)
+void ComputeKernel::write(const IntOutputBuffer& buffer, unsigned index, int value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const IntOutputBuffer& buffer,
+                          const UInt& index,
+                          const Int2& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const IntOutputBuffer& buffer,
+                          const UInt& index,
+                          const Int3& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const IntOutputBuffer& buffer,
+                          const UInt& index,
+                          const Int4& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write2(const IntOutputBuffer& buffer,
+                           const UInt& index,
+                           const Int2& value)
+{
+    builder.write2(buffer, index, value);
+}
+
+void ComputeKernel::write3(const IntOutputBuffer& buffer,
+                           const UInt& index,
+                           const Int3& value)
+{
+    builder.write3(buffer, index, value);
+}
+
+void ComputeKernel::write4(const IntOutputBuffer& buffer,
+                           const UInt& index,
+                           const Int4& value)
+{
+    builder.write4(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          float value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          unsigned index,
+                          const Half& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half2& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half3& value)
+{
+    builder.write(buffer, index, value);
+}
+
+void ComputeKernel::write(const HalfOutputBuffer& buffer,
+                          const UInt& index,
+                          const Half4& value)
 {
     builder.write(buffer, index, value);
 }

@@ -5,9 +5,11 @@
 namespace eacp
 {
 
-// Reads an environment variable, or nullopt when it is unset. Implemented per
-// platform (Environment-Windows.cpp uses _dupenv_s to avoid the deprecated
-// getenv on MSVC; Environment-Posix.cpp uses std::getenv).
+// Reads an environment variable, or nullopt when it is unset. Names and values
+// are UTF-8 on every platform. Implemented per platform: Environment-Windows.cpp
+// reads the process's environment block with GetEnvironmentVariableW, and
+// setEnv/unsetEnv write it and the C runtime's copy together;
+// Environment-Posix.cpp uses std::getenv.
 std::optional<std::string> getEnv(std::string_view name);
 
 // Reads an environment variable, or an empty string when it is unset, for

@@ -67,7 +67,8 @@ struct Rgb
     int b = -1;
 };
 
-Rgb clientCenterPixel(HWND hwnd)
+// The pixel at a fraction of the client area's width and height.
+Rgb clientPixelAt(HWND hwnd, float x, float y)
 {
     RECT client {};
     GetClientRect(hwnd, &client);
@@ -83,7 +84,10 @@ Rgb clientCenterPixel(HWND hwnd)
 
     auto printed =
         PrintWindow(hwnd, memoryDc, PW_CLIENTONLY | printWindowFullContent);
-    auto color = printed ? GetPixel(memoryDc, width / 2, height / 2) : CLR_INVALID;
+    auto color = printed ? GetPixel(memoryDc,
+                                    static_cast<int>(static_cast<float>(width) * x),
+                                    static_cast<int>(static_cast<float>(height) * y))
+                         : CLR_INVALID;
 
     SelectObject(memoryDc, previousBitmap);
     DeleteObject(bitmap);
@@ -94,6 +98,11 @@ Rgb clientCenterPixel(HWND hwnd)
         return {};
 
     return {GetRValue(color), GetGValue(color), GetBValue(color)};
+}
+
+Rgb clientCenterPixel(HWND hwnd)
+{
+    return clientPixelAt(hwnd, 0.5f, 0.5f);
 }
 
 void pumpPendingMessages()
@@ -111,6 +120,108 @@ bool isGreen(const Rgb& pixel)
     return pixel.g > 200 && pixel.r >= 0 && pixel.r < 60 && pixel.b >= 0
            && pixel.b < 60;
 }
+
+bool isRed(const Rgb& pixel)
+{
+    return pixel.r > 200 && pixel.g >= 0 && pixel.g < 60 && pixel.b >= 0
+           && pixel.b < 60;
+}
+
+// DWM picks the committed visual tree up asynchronously, so poll: the deadline
+// only matters when the backend is broken.
+template <typename Predicate>
+bool composedWithin(Predicate composed, int attempts = 60)
+{
+    for (auto attempt = 0; attempt < attempts; ++attempt)
+    {
+        pumpPendingMessages();
+
+        if (composed())
+            return true;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    return false;
+}
+
+void report(const char* where, const Rgb& pixel)
+{
+    std::cout << where << " pixel: r=" << pixel.r << " g=" << pixel.g
+              << " b=" << pixel.b << "\n";
+}
+
+// A real window for the length of a case, in a suite that runs headless.
+struct OnScreen
+{
+    OnScreen() { Apps::getAppEnvironment().headless = false; }
+    ~OnScreen() { Apps::getAppEnvironment().headless = previous; }
+
+    bool previous = Apps::getAppEnvironment().headless;
+};
+
+// Red underneath, and a green view added on top of it while hidden.
+struct HiddenViewOnTop final : View
+{
+    HiddenViewOnTop()
+    {
+        addSubview(background);
+        hidden.setVisible(false);
+        addSubview(hidden);
+    }
+
+    void resized() override
+    {
+        background.setBounds(getLocalBounds());
+        hidden.setBounds(getLocalBounds());
+    }
+
+    FilledView background {{1.f, 0.f, 0.f}};
+    FilledView hidden {{0.f, 1.f, 0.f}};
+};
+
+// Red underneath, and a green view on top of it.
+struct GreenOnRed final : View
+{
+    GreenOnRed() { addChildren({background, removed}); }
+
+    void resized() override
+    {
+        background.setBounds(getLocalBounds());
+        removed.setBounds(getLocalBounds());
+    }
+
+    FilledView background {{1.f, 0.f, 0.f}};
+    FilledView removed {{0.f, 1.f, 0.f}};
+};
+
+// Two red halves. A green view is hidden in the left one, moved to the right
+// one while hidden, and shown there.
+struct HiddenViewMoved final : View
+{
+    HiddenViewMoved()
+    {
+        addChildren({left, right});
+
+        left.addSubview(moved);
+        moved.setVisible(false);
+        left.removeSubview(moved);
+        right.addSubview(moved);
+        moved.setVisible(true);
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds();
+        left.setBounds({0.f, 0.f, bounds.w / 2.f, bounds.h});
+        right.setBounds({bounds.w / 2.f, 0.f, bounds.w / 2.f, bounds.h});
+        moved.setBounds(right.getLocalBounds());
+    }
+
+    FilledView left {{1.f, 0.f, 0.f}};
+    FilledView right {{1.f, 0.f, 0.f}};
+    FilledView moved {{0.f, 1.f, 0.f}};
+};
 } // namespace
 
 auto tLaterSiblingWinsPixels = test("Composition/laterSiblingWinsPixels") = []
@@ -158,4 +269,137 @@ auto tLaterSiblingWinsPixels = test("Composition/laterSiblingWinsPixels") = []
     }
 
     environment.headless = previousHeadless;
+};
+
+// DirectComposition has no hidden flag, so a hidden view is one kept out of
+// the visual tree. Adding it to a parent must not put it in.
+auto tHiddenViewStaysHidden =
+    test("Composition/aHiddenViewAddedToAParentStaysHidden") = []
+{
+    if (!isCompositorInitialized())
+    {
+        check(true);
+        return;
+    }
+
+    auto onScreen = OnScreen {};
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+
+    auto window = Window {options};
+    auto content = HiddenViewOnTop {};
+    window.setContentView(content);
+
+    auto hwnd = static_cast<HWND>(window.getHandle());
+    auto pixel = Rgb {};
+
+    auto showsTheBackground = composedWithin(
+        [&]
+        {
+            pixel = clientCenterPixel(hwnd);
+            return isRed(pixel);
+        });
+
+    if (!showsTheBackground)
+        report("center", pixel);
+
+    check(showsTheBackground);
+
+    auto turnedGreen = composedWithin(
+        [&]
+        {
+            pixel = clientCenterPixel(hwnd);
+            return isGreen(pixel);
+        },
+        10);
+
+    if (turnedGreen)
+        report("center", pixel);
+
+    check(!turnedGreen);
+    check(!content.hidden.isVisible());
+};
+
+// A hidden view forgets the parent it was hidden in when it is removed, so
+// showing it afterwards does not put it back in that parent's visual tree.
+auto tRemovedHiddenViewStaysOut =
+    test("Composition/aHiddenViewRemovedThenShownStaysOutOfItsOldParent") = []
+{
+    if (!isCompositorInitialized())
+    {
+        check(true);
+        return;
+    }
+
+    auto onScreen = OnScreen {};
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+
+    auto window = Window {options};
+    auto content = GreenOnRed {};
+    window.setContentView(content);
+
+    auto hwnd = static_cast<HWND>(window.getHandle());
+    auto pixel = Rgb {};
+    auto sample = [&]
+    {
+        pixel = clientCenterPixel(hwnd);
+        return pixel;
+    };
+
+    // Composited once first, so its layer has pixels to show if it comes back.
+    check(composedWithin([&] { return isGreen(sample()); }));
+
+    content.removed.setVisible(false);
+    check(composedWithin([&] { return isRed(sample()); }));
+
+    content.removeSubview(content.removed);
+    content.removed.setVisible(true);
+
+    auto cameBack = composedWithin([&] { return isGreen(sample()); }, 20);
+
+    if (cameBack)
+        report("center", pixel);
+
+    check(!cameBack);
+    check(content.removed.getParent() == nullptr);
+};
+
+// And showing it after a move puts it in its new parent.
+auto tHiddenViewShowsInItsNewParent =
+    test("Composition/aHiddenViewMovedToAnotherParentShowsThere") = []
+{
+    if (!isCompositorInitialized())
+    {
+        check(true);
+        return;
+    }
+
+    auto onScreen = OnScreen {};
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+
+    auto window = Window {options};
+    auto content = HiddenViewMoved {};
+    window.setContentView(content);
+
+    auto hwnd = static_cast<HWND>(window.getHandle());
+    auto leftPixel = Rgb {};
+    auto rightPixel = Rgb {};
+
+    auto composed = composedWithin(
+        [&]
+        {
+            leftPixel = clientPixelAt(hwnd, 0.25f, 0.5f);
+            rightPixel = clientPixelAt(hwnd, 0.75f, 0.5f);
+            return isRed(leftPixel) && isGreen(rightPixel);
+        });
+
+    if (!composed)
+    {
+        report("left", leftPixel);
+        report("right", rightPixel);
+    }
+
+    check(composed);
 };

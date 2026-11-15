@@ -52,9 +52,12 @@ const char* stagePreamble(Stage stage)
     return "";
 }
 
+// The column beside the line in every diagnostic (`0:12:5:`), which is what
+// a ShaderLibrary's compilation info reads; it changes only the log's text.
 EShMessages spirvMessages()
 {
-    return static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules);
+    return static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules
+                                    | EShMsgDisplayErrorColumn);
 }
 
 void appendTo(std::string& log, const char* text)
@@ -125,9 +128,14 @@ CompileResult compileGlsl(Stage stage, const std::string& source, Target target)
     shader.setEnvClient(glslang::EShClientVulkan, clientVersion(target));
     shader.setEnvTarget(glslang::EShTargetSpv, spirvVersion(target));
 
-    if (!shader.parse(GetDefaultResources(), glslVersion, false, spirvMessages()))
+    const auto parsed =
+        shader.parse(GetDefaultResources(), glslVersion, false, spirvMessages());
+
+    // A successful parse's log is its warnings.
+    appendTo(result.log, shader.getInfoLog());
+
+    if (!parsed)
     {
-        appendTo(result.log, shader.getInfoLog());
         appendTo(result.log, shader.getInfoDebugLog());
         return result;
     }
@@ -135,9 +143,11 @@ CompileResult compileGlsl(Stage stage, const std::string& source, Target target)
     auto program = glslang::TProgram {};
     program.addShader(&shader);
 
-    if (!program.link(spirvMessages()))
+    const auto linked = program.link(spirvMessages());
+    appendTo(result.log, program.getInfoLog());
+
+    if (!linked)
     {
-        appendTo(result.log, program.getInfoLog());
         appendTo(result.log, program.getInfoDebugLog());
         return result;
     }

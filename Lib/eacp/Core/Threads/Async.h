@@ -174,16 +174,18 @@ public:
     void then(OnValueCallback onValue, OnErrorCallback onError = {}) const
     {
         auto s = state;
-        auto cont = [s, onValue = std::move(onValue), onError = std::move(onError)]
+        auto cont = [s,
+                     valueCallback = std::move(onValue),
+                     errorCallback = std::move(onError)]
         {
             if (s->status == detail::AsyncState<T>::Status::Resolved)
             {
-                if (onValue)
-                    invokeValue(*s, onValue);
+                if (valueCallback)
+                    invokeValue(*s, valueCallback);
             }
-            else if (onError)
+            else if (errorCallback)
             {
-                onError(s->error);
+                errorCallback(s->error);
             }
         };
 

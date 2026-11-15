@@ -26,4 +26,14 @@ ThreadGroupShape ShaderLibrary::threadGroupShape() const
 {
     return groupShape;
 }
+
+bool ShaderLibrary::hasPipelineConstants() const
+{
+    return pipelineConstants;
+}
+
+const CompilationInfo& ShaderLibrary::compilationInfo() const
+{
+    return compilation;
+}
 } // namespace eacp::GPU

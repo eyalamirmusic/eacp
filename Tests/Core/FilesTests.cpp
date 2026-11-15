@@ -508,3 +508,14 @@ auto tDeleteWhileVisiting = test("Files/aVisitorMayDeleteWhatItIsShown") = []
 
     std::filesystem::remove_all(dir);
 };
+
+auto tWriteFileTakesText = test("Files/writeFileTakesTextAndMakesParents") = []
+{
+    const auto directory = eacp::TemporaryFile {};
+    const auto path = directory.path() / "nested" / "report.json";
+    eacp::Files::writeFile(path, std::string_view {"{\"id\":\"a\"}\n\0x", 13});
+    check(eacp::Files::readFile(path) == std::string {"{\"id\":\"a\"}\n\0x", 13});
+
+    eacp::Files::writeFile(path, std::string {"short"});
+    check(eacp::Files::readFile(path) == "short");
+};

@@ -166,6 +166,11 @@ private:
 Bytes compress(Span<const std::uint8_t> bytes, Level level = Level::normal);
 Bytes compress(std::string_view text, Level level = Level::normal);
 
+// A single blob as a gzip member (RFC 1952), what an HTTP upload or a .gz file
+// carries.
+Bytes gzip(Span<const std::uint8_t> bytes, Level level = Level::normal);
+Bytes gzip(std::string_view text, Level level = Level::normal);
+
 // The reverse. Nullopt when the stream is not a valid zlib stream.
 std::optional<Bytes> decompress(Span<const std::uint8_t> stream);
 std::optional<std::string> decompressText(Span<const std::uint8_t> stream);

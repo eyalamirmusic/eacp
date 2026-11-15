@@ -1,16 +1,44 @@
 #include "ModuleInfo.h"
+#include "ModuleInfoPlatform.h"
 
 #include <dlfcn.h>
 #include <filesystem>
 
 namespace eacp::Plugins
 {
-FilePath getCurrentModulePath()
+namespace
+{
+// Internal linkage, so no other image can interpose it.
+const char moduleAnchor = 0;
+
+const void* imageBaseOf(const void* address)
 {
     auto info = Dl_info {};
 
-    if (dladdr((const void*) &getCurrentModulePath, &info) == 0
-        || info.dli_fname == nullptr)
+    if (dladdr(address, &info) == 0)
+        return nullptr;
+
+    return info.dli_fbase;
+}
+} // namespace
+
+const void* getCurrentModuleAddress()
+{
+    return &moduleAnchor;
+}
+
+bool Detail::isSameImage(const void* first, const void* second)
+{
+    const auto* base = imageBaseOf(first);
+
+    return base != nullptr && base == imageBaseOf(second);
+}
+
+FilePath Detail::loadedImagePath()
+{
+    auto info = Dl_info {};
+
+    if (dladdr(getCurrentModuleAddress(), &info) == 0 || info.dli_fname == nullptr)
         return {};
 
     auto ec = std::error_code();
@@ -21,12 +49,7 @@ FilePath getCurrentModulePath()
 
 std::string getModuleIdentitySuffix()
 {
-    auto info = Dl_info {};
-
-    if (dladdr((const void*) &getCurrentModulePath, &info) == 0)
-        return {};
-
-    auto value = (std::uintptr_t) info.dli_fbase;
+    auto value = (std::uintptr_t) imageBaseOf(getCurrentModuleAddress());
     auto result = std::string();
 
     while (value != 0)

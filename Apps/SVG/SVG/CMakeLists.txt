@@ -1,7 +1,6 @@
 eacp_add_app(SVG Main.cpp)
 target_link_libraries(SVG PRIVATE eacp-svg)
 
-find_package(ResEmbed REQUIRED)
 res_embed_add(SVG
         FILES example.svg
         NAMESPACE SVGAssets

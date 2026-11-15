@@ -2,6 +2,7 @@
 #include "HttpProtocol.h"
 
 #include <eacp/Core/Android/Jni.h>
+#include <eacp/Core/Utils/File.h>
 
 #include <algorithm>
 #include <atomic>
@@ -23,6 +24,8 @@ namespace eacp::HTTP
 
 namespace
 {
+
+constexpr auto fileUploadSliceSize = std::size_t {64 * 1024};
 
 constexpr auto chunkSize = jsize {64 * 1024};
 
@@ -390,23 +393,70 @@ private:
 
     void send(const Request& req)
     {
+        if (!req.bodyFilePath.empty())
+        {
+            sendFromFile(req.bodyFilePath);
+            return;
+        }
+
         if (req.body.empty())
             return;
 
-        env->CallVoidMethod(connection, java.setDoOutput, JNI_TRUE);
-        env->CallVoidMethod(
-            connection, java.setFixedLengthStreamingMode, (jlong) req.body.size());
-        check();
+        auto* stream = openOutput((jlong) req.body.size());
 
         auto* bytes = Jni::toJavaBytes(env, req.body);
         check();
 
-        auto* stream = env->CallObjectMethod(connection, java.getOutputStream);
+        env->CallVoidMethod(stream, java.write, bytes);
+        closeOutput(stream, Jni::takeException(env));
+    }
+
+    void sendFromFile(const std::string& filePath)
+    {
+        auto file = File(FilePath(filePath));
+
+        if (!file.isRegularFile())
+            throw std::runtime_error("Cannot read the body file " + filePath);
+
+        auto* stream = openOutput((jlong) file.size());
+        auto slice = std::vector<std::uint8_t>(fileUploadSliceSize);
+        auto offset = std::uint64_t {0};
+        auto message = std::string();
+
+        while (message.empty())
+        {
+            auto readCount = file.read(offset, Span<std::uint8_t>(slice));
+
+            if (readCount <= 0)
+                break;
+
+            auto* sliceStart = reinterpret_cast<const char*>(slice.data());
+            auto* bytes = Jni::toJavaBytes(
+                env, std::string_view(sliceStart, (std::size_t) readCount));
+            check();
+
+            env->CallVoidMethod(stream, java.write, bytes);
+            message = Jni::takeException(env);
+            env->DeleteLocalRef(bytes);
+            offset += (std::uint64_t) readCount;
+        }
+
+        closeOutput(stream, message);
+    }
+
+    jobject openOutput(jlong bodyLength)
+    {
+        env->CallVoidMethod(connection, java.setDoOutput, JNI_TRUE);
+        env->CallVoidMethod(connection, java.setFixedLengthStreamingMode, bodyLength);
         check();
 
-        env->CallVoidMethod(stream, java.write, bytes);
-        auto message = Jni::takeException(env);
+        auto* stream = env->CallObjectMethod(connection, java.getOutputStream);
+        check();
+        return stream;
+    }
 
+    void closeOutput(jobject stream, std::string message)
+    {
         env->CallVoidMethod(stream, java.closeOutput);
 
         if (message.empty())
