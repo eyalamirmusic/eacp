@@ -496,38 +496,57 @@ auto tThreadPoolModeAssignsDistinctRemotePorts =
     auto server = Server(opts);
     auto port = 0;
 
+    constexpr auto clients = 4;
+
     auto remotePortsMutex = std::mutex();
     auto remotePorts = Vector<int>();
+    auto arrived = std::atomic<int> {0};
+    auto allOpenAtOnce = std::atomic<bool> {false};
 
-    auto ok = server.listen(0,
-                            [&](const Request& req)
-                            {
-                                {
-                                    auto lock = std::lock_guard(remotePortsMutex);
-                                    remotePorts.push_back(req.remotePort);
-                                }
-                                auto res = Response();
-                                res.statusCode = 200;
-                                res.content = "ok";
-                                return res;
-                            });
+    // The server closes each connection once it has answered, and a closed
+    // client's port is free for the next connect, so ports are only distinct
+    // among connections open together: every handler holds its connection
+    // until all of them have arrived.
+    auto holdUntilAllArrive = [&](const Request& req)
+    {
+        {
+            auto lock = std::lock_guard(remotePortsMutex);
+            remotePorts.push_back(req.remotePort);
+        }
+
+        arrived.fetch_add(1);
+        auto deadline = eacp::Time::Deadline {eacp::Time::MS {10000}};
+        while (arrived.load() < clients && !deadline.expired())
+            eacp::Time::sleepMS(1);
+
+        if (arrived.load() >= clients)
+            allOpenAtOnce.store(true);
+
+        auto res = Response();
+        res.statusCode = 200;
+        res.content = "ok";
+        return res;
+    };
+
+    auto ok = server.listen(0, holdUntilAllArrive);
     check(ok);
     port = server.boundPort();
 
     auto requests = Vector<Request>();
-    for (auto i = 0; i < 6; ++i)
+    for (auto i = 0; i < clients; ++i)
         requests.emplace_back(baseUrl(port) + "/multi");
 
     auto out = ParallelExchange();
     performParallelExchange(server, requests, out);
 
     check(out.completed);
-    check(out.responses.size() == 6);
+    check(allOpenAtOnce.load());
+    check(out.responses.size() == clients);
     for (auto& r: out.responses)
         check(r.statusCode == 200);
 
     auto lock = std::lock_guard(remotePortsMutex);
-    check(remotePorts.size() == 6);
+    check(remotePorts.size() == clients);
     for (auto p: remotePorts)
         check(p > 0 && p != port);
     auto sorted = remotePorts;

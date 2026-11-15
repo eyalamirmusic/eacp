@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace eacp::Processes
 {
@@ -63,6 +64,20 @@ std::wstring buildCommandLine(const std::string& executable,
         line.append(quoteArgument(Strings::widen(arg)));
     }
 
+    return line;
+}
+
+// A caller's own command line goes to CreateProcessW exactly as written, the
+// way JUCE's ChildProcess::start(String) passes it, so cmd sees its own syntax
+// (`a.bat && b.exe "x y"`) rather than CommandLineToArgvW escaping. The result
+// is null-terminated and writable, as CreateProcessW requires.
+std::wstring commandLineFor(const ProcessOptions& options)
+{
+    auto line = options.commandLine.empty()
+                    ? buildCommandLine(options.executable, options.arguments)
+                    : Strings::widen(options.commandLine);
+
+    line.push_back(L'\0');
     return line;
 }
 
@@ -142,7 +157,119 @@ DWORD creationFlags(const ProcessOptions& options, const std::wstring& environme
     if (options.noWindow)
         flags |= CREATE_NO_WINDOW;
 
+    if (options.newProcessGroup)
+        flags |= CREATE_NEW_PROCESS_GROUP;
+
+    // Held until the job is assigned, so nothing it starts escapes the job.
+    if (options.killDescendants)
+        flags |= CREATE_SUSPENDED;
+
     return flags;
+}
+
+// GenerateConsoleCtrlEvent reaches the processes of one group attached to the
+// caller's console, so the child must lead a group of its own and share that
+// console: a noWindow child gets a console of its own, a detached one none. An
+// id that leads no group can reach every process on the console, this one
+// included, which is why a child without its own group is refused.
+bool canReceiveConsoleBreak(const ProcessOptions& options)
+{
+    return options.newProcessGroup && !options.noWindow && !options.detached;
+}
+
+// The job is the child's and its descendants' alone: ending it ends them all.
+// Without one (a job this process is in may refuse to nest one) the child runs
+// on its own, and terminating it reaches it alone.
+HANDLE startInJobOfItsOwn(const PROCESS_INFORMATION& info)
+{
+    auto job = CreateJobObjectW(nullptr, nullptr);
+
+    if (job != nullptr && !AssignProcessToJobObject(job, info.hProcess))
+    {
+        CloseHandle(job);
+        job = nullptr;
+    }
+
+    ResumeThread(info.hThread);
+    return job;
+}
+
+struct ChildStdHandles
+{
+    HANDLE input = nullptr;
+    HANDLE output = nullptr;
+    HANDLE error = nullptr;
+};
+
+std::vector<HANDLE> getDistinctHandles(const ChildStdHandles& handles)
+{
+    auto distinct = std::vector<HANDLE> {};
+
+    for (auto handle: {handles.input, handles.output, handles.error})
+        if (handle != nullptr
+            && std::ranges::find(distinct, handle) == distinct.end())
+            distinct.push_back(handle);
+
+    return distinct;
+}
+
+// Passes exactly the child's std handles through PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+// so a Process started concurrently on another thread never inherits them.
+bool createProcessWithStdHandles(const ProcessOptions& options,
+                                 const ChildStdHandles& handles,
+                                 PROCESS_INFORMATION& info)
+{
+    auto inherited = getDistinctHandles(handles);
+
+    for (auto handle: inherited)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+
+    auto attributeListSize = SIZE_T {0};
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeListSize);
+    auto attributeListStorage = std::vector<char>(attributeListSize);
+    auto attributeList =
+        reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeListStorage.data());
+
+    if (!InitializeProcThreadAttributeList(attributeList, 1, 0, &attributeListSize))
+        return false;
+
+    const auto inheritsHandles = !inherited.empty();
+
+    if (inheritsHandles)
+        UpdateProcThreadAttribute(attributeList,
+                                  0,
+                                  PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                  inherited.data(),
+                                  inherited.size() * sizeof(HANDLE),
+                                  nullptr,
+                                  nullptr);
+
+    STARTUPINFOEXW startup {};
+    startup.StartupInfo.cb = sizeof startup;
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = handles.input;
+    startup.StartupInfo.hStdOutput = handles.output;
+    startup.StartupInfo.hStdError = handles.error;
+    startup.lpAttributeList = attributeList;
+
+    auto commandLine = commandLineFor(options);
+    auto workingDir = Strings::widen(options.workingDirectory);
+    auto environment = buildEnvironmentBlock(options.environment);
+
+    auto created = CreateProcessW(
+        nullptr,
+        commandLine.data(),
+        nullptr,
+        nullptr,
+        inheritsHandles ? TRUE : FALSE,
+        creationFlags(options, environment) | EXTENDED_STARTUPINFO_PRESENT,
+        environment.empty() ? nullptr : (LPVOID) environment.data(),
+        workingDir.empty() ? nullptr : workingDir.c_str(),
+        &startup.StartupInfo,
+        &info);
+
+    DeleteProcThreadAttributeList(attributeList);
+    return created != FALSE;
 }
 } // namespace
 
@@ -150,6 +277,9 @@ struct Process::Native
 {
     explicit Native(ProcessOptions options)
         : detached(options.detached)
+        , killsDescendants(options.killDescendants && !options.detached)
+        , receivesConsoleBreak(canReceiveConsoleBreak(options))
+        , onOutput(std::move(options.onOutput))
     {
         launch(std::move(options));
     }
@@ -157,12 +287,20 @@ struct Process::Native
     ~Native()
     {
         // A detached child is deliberately left running; just drop our handles.
-        if (!detached && isRunning())
-            ::TerminateProcess(processHandle, 1);
+        if (!detached && isStillOwedAnEnd())
+            terminate();
 
         closeInput();
         joinReaders();
         closeHandles();
+    }
+
+    // A child waited for is done with. One that was not is ended, and with
+    // killsDescendants so is what it started, even if the child itself has
+    // exited: they may still hold the captured output open.
+    bool isStillOwedAnEnd() const
+    {
+        return killsDescendants ? !waitedFor : isRunning();
     }
 
     bool launched() const { return processHandle != nullptr; }
@@ -180,16 +318,28 @@ struct Process::Native
     {
         joinReaders();
         reap(true);
+        waitedFor = true;
         return exitCode();
     }
 
     void terminate()
     {
-        if (processHandle != nullptr)
+        if (job != nullptr)
+            TerminateJobObject(job, 1);
+        else if (processHandle != nullptr)
             ::TerminateProcess(processHandle, 1);
     }
 
     void kill() { terminate(); }
+
+    // Fails by itself when this process has no console to send it through.
+    bool requestStop()
+    {
+        if (!receivesConsoleBreak || !isRunning())
+            return false;
+
+        return GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, processId) != FALSE;
+    }
 
     bool writeToInput(const std::string& data)
     {
@@ -252,25 +402,24 @@ private:
             return;
         }
 
-        SECURITY_ATTRIBUTES inherit {};
-        inherit.nLength = sizeof inherit;
-        inherit.bInheritHandle = TRUE;
-
         HANDLE inRead = nullptr, inWrite = nullptr;
         HANDLE outRead = nullptr, outWrite = nullptr;
         HANDLE errRead = nullptr, errWrite = nullptr;
 
-        if (!CreatePipe(&inRead, &inWrite, &inherit, 0))
+        if (!CreatePipe(&inRead, &inWrite, nullptr, 0))
             return;
 
-        if (!CreatePipe(&outRead, &outWrite, &inherit, 0))
+        if (!CreatePipe(&outRead, &outWrite, nullptr, 0))
         {
             CloseHandle(inRead);
             CloseHandle(inWrite);
             return;
         }
 
-        if (!CreatePipe(&errRead, &errWrite, &inherit, 0))
+        // Merged stderr shares the stdout pipe, so there is no error pipe.
+        const auto merge = options.mergeErrorOutput;
+
+        if (!merge && !CreatePipe(&errRead, &errWrite, nullptr, 0))
         {
             CloseHandle(inRead);
             CloseHandle(inWrite);
@@ -279,62 +428,42 @@ private:
             return;
         }
 
-        // The parent-side ends must not leak into the child.
-        SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0);
-        SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
-        SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
-
-        STARTUPINFOW startup {};
-        startup.cb = sizeof startup;
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = inRead;
-        startup.hStdOutput = outWrite;
-        startup.hStdError = errWrite;
-
-        auto commandLine = buildCommandLine(options.executable, options.arguments);
-        commandLine.push_back(L'\0');
-
-        auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
-
         PROCESS_INFORMATION info {};
-        auto created = CreateProcessW(
-            nullptr,
-            commandLine.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            creationFlags(options, environment),
-            environment.empty() ? nullptr : (LPVOID) environment.data(),
-            workingDir.empty() ? nullptr : workingDir.c_str(),
-            &startup,
-            &info);
+        auto created = createProcessWithStdHandles(
+            options, {inRead, outWrite, merge ? outWrite : errWrite}, info);
 
         CloseHandle(inRead);
         CloseHandle(outWrite);
-        CloseHandle(errWrite);
+
+        if (errWrite != nullptr)
+            CloseHandle(errWrite);
 
         if (!created)
         {
             CloseHandle(inWrite);
             CloseHandle(outRead);
-            CloseHandle(errRead);
+
+            if (errRead != nullptr)
+                CloseHandle(errRead);
+
             return;
         }
 
-        processHandle = info.hProcess;
-        threadHandle = info.hThread;
-        processId = info.dwProcessId;
+        adopt(info);
         inputWrite = inWrite;
 
-        outReader = std::thread([this, outRead] { drain(outRead, outBuffer); });
-        errReader = std::thread([this, errRead] { drain(errRead, errBuffer); });
+        outReader =
+            std::thread([this, outRead] { drain(outRead, outBuffer, onOutput); });
+
+        if (errRead != nullptr)
+            errReader =
+                std::thread([this, errRead] { drain(errRead, errBuffer, nullptr); });
     }
 
     // No pipes: the child writes straight to the launcher's stdio, so a
     // long-running child's output streams instead of buffering unbounded.
-    // The launcher's std handles are duplicated inheritable first — the
-    // ones a harness hands us (pipes, files) often aren't.
+    // The launcher's std handles are duplicated first, so the inherit flag is
+    // set on our copies, not on the handles a harness handed us.
     void launchInheritingStdio(const ProcessOptions& options)
     {
         HANDLE handles[3] = {};
@@ -351,35 +480,13 @@ private:
                                 GetCurrentProcess(),
                                 &handles[i],
                                 0,
-                                TRUE,
+                                FALSE,
                                 DUPLICATE_SAME_ACCESS);
         }
 
-        STARTUPINFOW startup {};
-        startup.cb = sizeof startup;
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = handles[0];
-        startup.hStdOutput = handles[1];
-        startup.hStdError = handles[2];
-
-        auto commandLine = buildCommandLine(options.executable, options.arguments);
-        commandLine.push_back(L'\0');
-
-        auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
-
         PROCESS_INFORMATION info {};
-        auto created = CreateProcessW(
-            nullptr,
-            commandLine.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            creationFlags(options, environment),
-            environment.empty() ? nullptr : (LPVOID) environment.data(),
-            workingDir.empty() ? nullptr : workingDir.c_str(),
-            &startup,
-            &info);
+        auto created = createProcessWithStdHandles(
+            options, {handles[0], handles[1], handles[2]}, info);
 
         for (auto handle: handles)
             if (handle != nullptr)
@@ -388,9 +495,17 @@ private:
         if (!created)
             return;
 
+        adopt(info);
+    }
+
+    void adopt(const PROCESS_INFORMATION& info)
+    {
         processHandle = info.hProcess;
         threadHandle = info.hThread;
         processId = info.dwProcessId;
+
+        if (killsDescendants)
+            job = startInJobOfItsOwn(info);
     }
 
     void launchDetached(const ProcessOptions& options)
@@ -398,8 +513,7 @@ private:
         STARTUPINFOW startup {};
         startup.cb = sizeof startup;
 
-        auto commandLine = buildCommandLine(options.executable, options.arguments);
-        commandLine.push_back(L'\0');
+        auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
         auto environment = buildEnvironmentBlock(options.environment);
@@ -429,13 +543,18 @@ private:
         processId = info.dwProcessId;
     }
 
-    void drain(HANDLE handle, std::string& dest)
+    void drain(HANDLE handle,
+               std::string& dest,
+               const std::function<void(std::string_view)>& onChunk)
     {
         char buffer[4096];
         DWORD count = 0;
 
         while (ReadFile(handle, buffer, sizeof buffer, &count, nullptr) && count > 0)
         {
+            if (onChunk)
+                onChunk(std::string_view {buffer, (std::size_t) count});
+
             auto lock = std::lock_guard {bufferMutex};
             dest.append(buffer, count);
         }
@@ -452,8 +571,15 @@ private:
             errReader.join();
     }
 
+    // The blocking wait holds no lock, so isRunning() and requestStop() on
+    // other threads still answer while one thread waits; the status is then
+    // collected under the lock. The handle stays open until the destructor, so
+    // the wait stays valid while the other threads use it.
     bool reap(bool blocking) const
     {
+        if (blocking && processHandle != nullptr)
+            WaitForSingleObject(processHandle, INFINITE);
+
         auto lock = std::lock_guard {reapMutex};
 
         if (reaped)
@@ -462,9 +588,7 @@ private:
         if (processHandle == nullptr)
             return false;
 
-        auto result = WaitForSingleObject(processHandle, blocking ? INFINITE : 0);
-
-        if (result == WAIT_TIMEOUT)
+        if (WaitForSingleObject(processHandle, 0) == WAIT_TIMEOUT)
             return false;
 
         DWORD code = 0;
@@ -483,6 +607,12 @@ private:
 
     void closeHandles()
     {
+        if (job != nullptr)
+        {
+            CloseHandle(job);
+            job = nullptr;
+        }
+
         if (threadHandle != nullptr)
         {
             CloseHandle(threadHandle);
@@ -498,8 +628,12 @@ private:
 
     HANDLE processHandle = nullptr;
     HANDLE threadHandle = nullptr;
+    HANDLE job = nullptr;
     DWORD processId = 0;
     const bool detached;
+    const bool killsDescendants;
+    const bool receivesConsoleBreak;
+    const std::function<void(std::string_view)> onOutput;
     HANDLE inputWrite = nullptr;
 
     std::thread outReader;
@@ -512,6 +646,7 @@ private:
     mutable std::mutex reapMutex;
     mutable bool reaped = false;
     mutable DWORD exitStatus = 0;
+    bool waitedFor = false;
 };
 
 Process::Process(ProcessOptions options)
@@ -555,6 +690,10 @@ void Process::terminate()
 void Process::kill()
 {
     impl->kill();
+}
+bool Process::requestStop()
+{
+    return impl->requestStop();
 }
 
 std::string Process::output() const

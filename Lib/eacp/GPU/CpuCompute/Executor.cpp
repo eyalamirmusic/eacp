@@ -17,7 +17,8 @@ using Extents = std::array<Word, 3>;
 bool executorSlotMatches(const Plan& plan, const Bindings::Slot& slot, int index)
 {
     return slot.bound && slot.element == plan.element(index)
-           && slot.access == plan.access(index);
+           && slot.access == plan.access(index)
+           && slot.structStride == plan.structStride(index);
 }
 
 void executorSplatUniforms(const Plan& plan,
@@ -50,6 +51,24 @@ void executorSplatExtents(const Plan& plan, Workspace& workspace, Extents extent
 
         Lanes::fill(
             workspace.at(plan.node(extent.node).scratch), value, plan.laneStride());
+    }
+}
+
+void executorSplatGroupCounts(const Plan& plan, Workspace& workspace, Extents groups)
+{
+    for (const auto& builtIn: plan.builtInNodes())
+    {
+        if (static_cast<ShaderBuiltIn>(builtIn.index) != ShaderBuiltIn::GroupCount)
+            continue;
+
+        const auto& node = plan.node(builtIn.node);
+
+        for (auto component = 0; component < node.components; ++component)
+            Lanes::fill(workspace.at(node.scratch
+                                     + static_cast<std::uint32_t>(
+                                         component * plan.laneStride())),
+                        groups[static_cast<std::size_t>(component)],
+                        plan.laneStride());
     }
 }
 
@@ -475,11 +494,17 @@ bool Executor::dispatchGroups(const PreparedDispatch& prepared,
     for (auto index = 0; index < executionPlan.storageSlotCount(); ++index)
     {
         const auto& slot = prepared.slots[static_cast<std::size_t>(index)];
-        context.slots[static_cast<std::size_t>(index)] = {slot.data, slot.count};
+        context.slots[static_cast<std::size_t>(index)] = {
+            slot.data,
+            slot.count,
+            executionPlan.element(index) == ValueType::Half,
+            static_cast<std::size_t>(executionPlan.structStride(index)),
+            executionPlan.structComponents(index).data()};
     }
 
     executorSplatUniforms(executionPlan, prepared.uniforms.data(), workspace);
     executorSplatExtents(executionPlan, workspace, prepared.extents);
+    executorSplatGroupCounts(executionPlan, workspace, prepared.groupsPerAxis);
     executorEvaluate(context, executionPlan.dispatchSchedule());
     executorRunGroups(context,
                       prepared.groupsPerAxis,

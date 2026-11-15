@@ -148,7 +148,7 @@ private:
 
     Vector<std::string> items;
     std::string placeholder;
-    Color accent = defaultTheme().accent;
+    std::optional<Color> accent;
     int selectedIndex = -1;
 
     std::optional<Popup> popup;

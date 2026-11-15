@@ -71,7 +71,8 @@ void stopProcessRootLoop();
 // True while a loop is running that work handed to callAsync will reach: this
 // copy's root loop or a nested pump (runEventLoopFor), or another eacp copy's
 // root loop — the EACP_ROOT_LOOP marker crosses images, so a plugin sees its
-// host's loop.
+// host's loop. It answers for the whole process, so a worker asking sees the
+// loop thread's pumps, nested ones included.
 //
 // Ask before deferring anything that must actually run. During app teardown —
 // Apps::run destroys the app once the loop has exited — this is false, and a

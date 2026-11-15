@@ -1453,8 +1453,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
         // The flag and the signature are two statements of one fact; assert
         // they agree before reading either.
-        check(generated.vertexReadsUniforms == vertexDeclares);
-        check(generated.fragmentReadsUniforms == fragmentDeclares);
+        check(generated.vertexReadsUniforms() == vertexDeclares);
+        check(generated.fragmentReadsUniforms() == fragmentDeclares);
     };
 
     // Read only by the position: the fragment stage is never bound.
@@ -1470,8 +1470,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
     auto vertexShader = vertexOnly.build();
     stagesOf(vertexOnly.graph(), vertexShader);
-    check(vertexShader.vertexReadsUniforms);
-    check(!vertexShader.fragmentReadsUniforms);
+    check(vertexShader.vertexReadsUniforms());
+    check(!vertexShader.fragmentReadsUniforms());
 
     // Read only by the colour: the vertex stage is never bound.
     auto fragmentOnly = ShaderBuilder {};
@@ -1482,8 +1482,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
     auto fragmentShader = fragmentOnly.build();
     stagesOf(fragmentOnly.graph(), fragmentShader);
-    check(!fragmentShader.vertexReadsUniforms);
-    check(fragmentShader.fragmentReadsUniforms);
+    check(!fragmentShader.vertexReadsUniforms());
+    check(fragmentShader.fragmentReadsUniforms());
 
     // Declared and read by neither stage: nothing is bound at all, though the
     // program still has a block to pack.
@@ -1499,8 +1499,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 
     auto unreadShader = unread.build();
     stagesOf(unread.graph(), unreadShader);
-    check(!unreadShader.vertexReadsUniforms);
-    check(!unreadShader.fragmentReadsUniforms);
+    check(!unreadShader.vertexReadsUniforms());
+    check(!unreadShader.fragmentReadsUniforms());
 
     expectGlslCompiles(vertexOnly.graph());
     expectGlslCompiles(fragmentOnly.graph());
@@ -1529,8 +1529,8 @@ auto tCodegenUniformInStatementBinds =
     builder.fragment(float4(shade, shade, shade, 1.0f));
 
     auto generated = builder.build();
-    check(!generated.vertexReadsUniforms);
-    check(generated.fragmentReadsUniforms);
+    check(!generated.vertexReadsUniforms());
+    check(generated.fragmentReadsUniforms());
     check(contains(emitMetal(builder.graph()),
                    "fragmentMain(VertexOut input [[stage_in]],\n    "
                        + uniformDecl(RenderPass::uniformBase)));
@@ -1936,7 +1936,7 @@ auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
     builder.write(output, position.y * 16u + position.x, toFloat(position.x));
 
     auto shader = builder.build();
-    check(shader.dispatchRank == DispatchRank::TwoD);
+    check(shader.dispatchRank() == DispatchRank::TwoD);
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint2 gid [[thread_position_in_grid]]"));
@@ -2182,7 +2182,7 @@ auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
     builder.write(output, gid, toFloat(gid));
 
     auto shader = builder.build();
-    check(shader.dispatchRank == DispatchRank::OneD);
+    check(shader.dispatchRank() == DispatchRank::OneD);
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint gid [[thread_position_in_grid]]"));
@@ -3573,6 +3573,210 @@ auto tCodegenGlslDepthSample = test("GPU/codegenGlslDepthSample") = []
     check(countOccurrences(glsl, ").r") == 1);
 
     expectGlslCompiles(builder.graph());
+};
+
+// The whole depth plane of an array target: declared as the array type in all
+// three dialects and sampled with the layer beside the coordinate, a Float
+// layer rounded on Metal the way the other two round the third component.
+auto tCodegenDepthArraySample = test("GPU/codegenDepthArraySample") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto layer = builder.uniform<Float>();
+    auto index = builder.uniform<Int>();
+    auto depth = builder.depthTextureArray();
+    auto carried = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(sample(depth, carried, layer),
+                            sample(depth, carried, index),
+                            sample(depth, carried, 1),
+                            1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(has(metal, "depth2d_array<float> texture0 [[texture(0)]]"));
+    check(
+        has(metal, "texture0.sample(sampler0, input.v0, uint(rint(uniforms.u0)))"));
+    check(has(metal, "texture0.sample(sampler0, input.v0, uint(uniforms.u1))"));
+    check(has(metal, "texture0.sample(sampler0, input.v0, uint(1))"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(has(hlsl, "Texture2DArray<float> texture0 : register(t0);"));
+    check(has(hlsl, "SamplerState samplerConfig0 : register(s0);"));
+    check(
+        has(hlsl, "texture0.Sample(samplerConfig0, float3(input.v0, uniforms.u0))"));
+    check(has(
+        hlsl,
+        "texture0.Sample(samplerConfig0, float3(input.v0, float(uniforms.u1)))"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(has(glsl,
+              "layout(set = 0, binding = " + std::to_string(vulkanTextureBinding(0))
+                  + ") uniform sampler2DArray texture0;"));
+    check(has(glsl, "texture(texture0, vec3(vary0, uniforms.u0)).r"));
+    check(has(glsl, "texture(texture0, vec3(vary0, float(uniforms.u1))).r"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// The colour array is the same declaration without the depth: four channels
+// back, and no .r on GLSL.
+auto tCodegenColorArraySample = test("GPU/codegenColorArraySample") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto layer = builder.uniform<Float>();
+    auto layers = builder.textureArray(
+        TextureSampling {TextureFilter::Linear, TextureAddressMode::Repeat});
+    auto carried = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(layers, carried, layer));
+
+    auto metal = emitMetal(builder.graph());
+    check(has(metal, "texture2d_array<float> texture0 [[texture(0)]]"));
+    check(
+        has(metal, "texture0.sample(sampler0, input.v0, uint(rint(uniforms.u0)))"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(has(hlsl, "Texture2DArray texture0 : register(t0);"));
+    check(
+        has(hlsl, "texture0.Sample(samplerConfig3, float3(input.v0, uniforms.u0))"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(has(glsl, "uniform sampler2DArray texture0;"));
+    check(has(glsl, "texture(texture0, vec3(vary0, uniforms.u0))"));
+    check(!has(glsl, ").r"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// A comparison sample is its own call in each dialect, and the declaration it
+// needs is the shadow type on GLSL and a SamplerComparisonState on the static
+// sampler register the compare configuration owns on HLSL.
+auto tCodegenCompareSample = test("GPU/codegenCompareSample") = []
+{
+    auto builder = ShaderBuilder {};
+
+    const auto shadowSampling = TextureSampling {
+        TextureFilter::Linear, TextureAddressMode::Clamp, TextureCompare::LessEqual};
+    const auto shadowIndex = std::to_string(samplingIndex(shadowSampling));
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto reference = builder.uniform<Float>();
+    auto cascade = builder.uniform<Int>();
+    auto single = builder.depthTexture(shadowSampling);
+    auto cascades = builder.depthTextureArray(shadowSampling);
+    auto carried = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(sampleCompare(single, carried, reference),
+                            sampleCompare(cascades, carried, cascade, reference),
+                            sampleCompare(cascades, carried, 2, reference),
+                            1.0f));
+
+    check(shadowIndex == "6");
+
+    auto metal = emitMetal(builder.graph());
+    check(has(metal, "depth2d<float> texture0 [[texture(0)]]"));
+    check(has(metal, "depth2d_array<float> texture1 [[texture(1)]]"));
+    check(has(metal, "texture0.sample_compare(sampler0, input.v0, uniforms.u0)"));
+    check(has(metal,
+              "texture1.sample_compare(sampler1, input.v0, uint(uniforms.u1), "
+              "uniforms.u0)"));
+    check(has(metal,
+              "texture1.sample_compare(sampler1, input.v0, uint(2), uniforms.u0)"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(has(hlsl,
+              "SamplerComparisonState samplerConfig" + shadowIndex + " : register(s"
+                  + shadowIndex + ");"));
+    check(!has(hlsl, "SamplerState samplerConfig"));
+    check(has(hlsl,
+              "texture0.SampleCmpLevelZero(samplerConfig" + shadowIndex
+                  + ", input.v0, uniforms.u0)"));
+    check(has(hlsl,
+              "texture1.SampleCmpLevelZero(samplerConfig" + shadowIndex
+                  + ", float3(input.v0, float(uniforms.u1)), uniforms.u0)"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(has(glsl, "uniform sampler2DShadow texture0;"));
+    check(has(glsl, "uniform sampler2DArrayShadow texture1;"));
+    check(has(glsl, "texture(texture0, vec3(vary0, uniforms.u0))"));
+    check(has(glsl,
+              "texture(texture1, vec4(vary0, float(uniforms.u1), uniforms.u0))"));
+    check(!has(glsl, ").r"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// A compare configuration sits above the four plain ones and below the
+// per-bind registers, and it round-trips through samplingConfiguration, which
+// is what every backend builds its fixed set from.
+auto tCodegenCompareConfigurations = test("GPU/codegenCompareConfigurations") = []
+{
+    check(samplingConfigurations <= RenderPass::samplerRegisterBase);
+
+    for (auto index = 0; index < samplingConfigurations; ++index)
+    {
+        const auto sampling = samplingConfiguration(index);
+
+        check(samplingIndex(sampling) == index);
+        check((sampling.compare != TextureCompare::None) == (index >= 4));
+    }
+
+    check(samplingIndex(TextureSampling {}) == 0);
+};
+
+// The stage built-ins: the vertex ids are entry parameters on Metal and HLSL
+// and globals on GLSL, declared only by a shader that reads them, and the
+// fragment coordinate is the position member except on GLSL - with HLSL's w
+// turned into the 1 / w the other two hand over.
+auto tCodegenStageBuiltIns = test("GPU/codegenStageBuiltIns") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(builder.vertexId() + builder.instanceId());
+    auto at = builder.fragmentCoordinate();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(at.xy(), toFloat(carried), at.w()));
+
+    auto metal = emitMetal(builder.graph());
+    check(has(metal,
+              "vertexMain(VertexIn input [[stage_in]], uint vertexId [[vertex_id]], "
+              "uint instanceId [[instance_id]]"));
+    check(has(metal, "(vertexId + instanceId)"));
+    check(has(metal, "(input.position).xy"));
+    check(has(metal, "(input.position).w"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(
+        has(hlsl,
+            "VertexOut vertexMain(VertexIn input, uint vertexId : SV_VertexID, uint "
+            "instanceId : SV_InstanceID)"));
+    check(has(hlsl, "(float4(input.position.xyz, 1.0 / input.position.w)).w"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(has(glsl, "(uint(gl_VertexIndex) + uint(gl_InstanceIndex))"));
+    check(has(glsl, "(gl_FragCoord).xy"));
+    check(has(glsl, "(gl_FragCoord).w"));
+
+    expectGlslCompiles(builder.graph());
+
+    auto plain = ShaderBuilder {};
+    plain.position(float4(plain.vertexInput<Float2>(), 0.0f, 1.0f));
+    plain.fragment(float4(plain.constant(1.0f), 0.0f, 0.0f, 1.0f));
+
+    check(!has(emitMetal(plain.graph()), "_id]]"));
+    check(!has(emitHlsl(plain.graph()), "SV_VertexID"));
+    check(!has(emitHlsl(plain.graph()), "SV_InstanceID"));
 };
 
 // Vulkan's NDC has y down; the fix is a negative viewport height in RenderPass,

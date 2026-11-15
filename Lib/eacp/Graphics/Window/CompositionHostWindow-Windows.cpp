@@ -495,18 +495,28 @@ void CompositionHostWindow::initializeComposition(bool topMost)
     if (!hwnd)
         return;
 
+    // A new host can be the first use of the devices since a detach dropped
+    // the retry scheduled for them. A registered host is being rebuilt by a
+    // recovery that has already rescheduled or finished: nothing to resume.
+    if (!compositionHosts().contains(this))
+        resumeDeviceRecovery();
+
     topMostTarget = topMost;
+
+    // Drop anything built against a previous device before rebuilding, and
+    // before finding there is nothing to rebuild with: a device-loss recovery
+    // can bring the rendering device back without a composition device, and
+    // the old target and root are dead either way.
+    rootVisual.Reset();
+    target.Reset();
+    generation = getCompositionGeneration();
+
+    // With or without a device: a recovery that brings one back rebuilds it.
+    EA::Vectors::addIfNotThere(compositionHosts(), this);
 
     auto* device = getCompositionDevice();
     if (!device)
         return;
-
-    EA::Vectors::addIfNotThere(compositionHosts(), this);
-
-    // Drop anything built against a previous device before rebuilding.
-    rootVisual.Reset();
-    target.Reset();
-    generation = getCompositionGeneration();
 
     if (FAILED(device->CreateTargetForHwnd(hwnd, topMost, target.GetAddressOf())))
     {
@@ -788,15 +798,15 @@ void CompositionHostWindow::registerFileDrops()
     if (!oleReady)
         return;
 
-    auto* target = new HostFileDropTarget(*this);
+    auto* dropTarget = new HostFileDropTarget(*this);
 
-    if (FAILED(RegisterDragDrop(hwnd, target)))
+    if (FAILED(RegisterDragDrop(hwnd, dropTarget)))
     {
-        target->Release();
+        dropTarget->Release();
         return;
     }
 
-    fileDropTarget = target;
+    fileDropTarget = dropTarget;
 }
 
 void CompositionHostWindow::revokeFileDrops()

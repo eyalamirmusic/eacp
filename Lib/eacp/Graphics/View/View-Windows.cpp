@@ -411,16 +411,30 @@ struct View::Native
         repaint();
     }
 
+    // A view hidden by its own flag joins its new parent the way a hidden view
+    // stays in one: out of the visual tree, remembering where setVisible(true)
+    // puts it back.
     void addSubview(View& view)
     {
         if (visual && view.impl->visual)
         {
-            view.impl->attachToParent(getVisual());
+            if (view.isVisible())
+                view.impl->attachToParent(getVisual());
+            else
+                view.impl->parentWhileHidden = getVisual();
+
             view.impl->updateVisualPosition();
         }
     }
 
-    void removeSubview(View& view) { view.impl->detachFromParent(); }
+    // A hidden view forgets the parent it would have gone back to, which may
+    // be about to be destroyed: setVisible(true) after a re-add shows it in its
+    // new parent, never in the old one's visual.
+    void removeSubview(View& view)
+    {
+        view.impl->detachFromParent();
+        view.impl->parentWhileHidden.Reset();
+    }
 
     void setOpacity(float opacity)
     {
@@ -689,6 +703,7 @@ View::~View()
         layer->detachFromLayer();
 
     removeFromParent();
+    detachSubviews();
 }
 
 void* View::getHandle()
@@ -847,13 +862,25 @@ OffscreenComposite makeOffscreenComposite(const Rect& bounds, float scale)
     if (composite.pixelWidth <= 0 || composite.pixelHeight <= 0)
         return composite;
 
+    if (getD2DDevice() == nullptr)
+        retryDeviceRecoveryIfDue();
+
     auto* device = getD2DDevice();
     if (!device)
         return composite;
 
-    if (FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-                                           composite.dc.GetAddressOf())))
+    auto hr = Detail::takeInjectedDeviceFault(
+        Detail::DeviceFault::SnapshotCreateDeviceContext);
+
+    if (SUCCEEDED(hr))
+        hr = device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                         composite.dc.GetAddressOf());
+
+    if (FAILED(hr))
+    {
+        handleDeviceLossIfNeeded(hr);
         return {};
+    }
 
     auto properties =
         D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
@@ -1007,8 +1034,18 @@ Image readbackComposite(OffscreenComposite& composite)
     if (!composite.valid())
         return {};
 
-    if (FAILED(composite.dc->EndDraw()))
+    auto hr = composite.dc->EndDraw();
+
+    if (auto injected =
+            Detail::takeInjectedDeviceFault(Detail::DeviceFault::SnapshotEndDraw);
+        FAILED(injected))
+        hr = injected;
+
+    if (FAILED(hr))
+    {
+        handleDeviceLossIfNeeded(hr);
         return {};
+    }
 
     auto properties = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,

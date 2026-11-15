@@ -303,10 +303,10 @@ void Messenger::readUntilGone()
 void Messenger::notifyMain(Callback callback)
 {
     Threads::callAsync(
-        [impl = this->impl, callback = std::move(callback)]
+        [sharedImpl = this->impl, onMain = std::move(callback)]
         {
-            if (!impl->stop)
-                callback();
+            if (!sharedImpl->stop)
+                onMain();
         });
 }
 

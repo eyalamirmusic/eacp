@@ -142,6 +142,39 @@ void transitionForUse(CommandContext& commands,
     buffer.state = target;
 }
 
+namespace
+{
+constexpr auto textureReadStates = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+                                   | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+                                   | D3D12_RESOURCE_STATE_COPY_SOURCE;
+
+bool isTextureReadState(D3D12_RESOURCE_STATES state)
+{
+    return state != D3D12_RESOURCE_STATE_COMMON && (state & ~textureReadStates) == 0;
+}
+
+bool includesState(D3D12_RESOURCE_STATES state, D3D12_RESOURCE_STATES wanted)
+{
+    return (state & wanted) == wanted;
+}
+
+// Reads are combined, never swapped: a texture copied from and then sampled is in
+// COPY_SOURCE | PIXEL_SHADER_RESOURCE until it is next written. The swap
+// (COPY_SOURCE -> PIXEL_SHADER_RESOURCE -> RENDER_TARGET) is valid D3D12 and WARP
+// orders it, but an NVIDIA driver (RTX 5070 Ti, 32.0.16.1088) let the later
+// pass's clear reach the copy. The combined state avoids that and is the
+// recommended form anyway. Copy/copiesBetweenPassesAreInOrderAtEverySize is the
+// test.
+D3D12_RESOURCE_STATES stateAfter(D3D12_RESOURCE_STATES current,
+                                 D3D12_RESOURCE_STATES target)
+{
+    if (isTextureReadState(current) && isTextureReadState(target))
+        return current | target;
+
+    return target;
+}
+} // namespace
+
 void transitionTextureForUse(ID3D12GraphicsCommandList* list,
                              D3D12TextureData& texture,
                              D3D12_RESOURCE_STATES target)
@@ -149,15 +182,20 @@ void transitionTextureForUse(ID3D12GraphicsCommandList* list,
     if (texture.resource == nullptr || texture.state == target)
         return;
 
+    if (isTextureReadState(target) && includesState(texture.state, target))
+        return;
+
+    const auto after = stateAfter(texture.state, target);
+
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = texture.resource.get();
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     barrier.Transition.StateBefore = texture.state;
-    barrier.Transition.StateAfter = target;
+    barrier.Transition.StateAfter = after;
     list->ResourceBarrier(1, &barrier);
 
-    texture.state = target;
+    texture.state = after;
 }
 
 void bindComputeRootState(D3D12Context& context, ID3D12GraphicsCommandList* list)

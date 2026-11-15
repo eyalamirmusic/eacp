@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Graphics.h>
 
@@ -483,9 +484,9 @@ struct StencilShadowsView final : GPUView
 
             // Taken in the light-facing face's own direction, so the wall's
             // outward side faces out of the volume.
-            auto lit = faceFacesLight[edge.faceA];
-            auto start = corners[lit ? edge.startA : edge.startB];
-            auto end = corners[lit ? edge.endA : edge.endB];
+            auto faceALit = faceFacesLight[edge.faceA];
+            auto start = corners[faceALit ? edge.startA : edge.startB];
+            auto end = corners[faceALit ? edge.endA : edge.endB];
 
             auto startFar = extrude(start);
             auto endFar = extrude(end);
@@ -787,7 +788,14 @@ int printLuminanceGrid()
 
 int main(int argc, char** argv)
 {
-    if (argc > 1 && std::strcmp(argv[1], "--check") == 0)
+    auto check = false;
+    auto cli = Args::Parser {"StencilShadows", "Stencil shadow volumes."};
+    cli.flag("--check", check, "render headlessly and print the checks, no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (check)
         return printLuminanceGrid();
 
     return eacp::Apps::run<StencilShadowsApp>();

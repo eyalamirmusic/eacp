@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 
 #if EACP_BENCH_PATHS
@@ -1043,17 +1044,18 @@ void sweepBatchWidths()
     }
 }
 
-bool asksForSweep(int argc, char** argv)
-{
-    for (auto i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--sweep")
-            return true;
-
-    return false;
-}
-
 int main(int argc, char** argv)
 {
+    auto sweep = false;
+
+    auto cli = Args::Parser {"CpuComputeBench",
+                             "eacp-cpu-compute's interpreter against hand-written "
+                             "C++. Exits 1 if any result differs."};
+    cli.flag("--sweep", sweep, "time the stream kernels again at each batch width");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
 #if !defined(NDEBUG)
     std::printf("Note: a Debug build -- the executor is always optimised, but "
                 "build Release for representative numbers.\n\n");
@@ -1064,7 +1066,7 @@ int main(int argc, char** argv)
 
     benchStreams(PlanOptions {});
 
-    if (asksForSweep(argc, argv))
+    if (sweep)
         sweepBatchWidths();
 
 #if EACP_BENCH_PATHS

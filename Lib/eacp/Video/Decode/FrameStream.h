@@ -5,7 +5,6 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
-#include <thread>
 
 namespace eacp::Video
 {
@@ -187,6 +186,6 @@ private:
     std::mutex callbackMutex;
     Callback frameReady = [] {};
 
-    std::thread decodeThread;
+    Threads::Thread decodeThread;
 };
 } // namespace eacp::Video

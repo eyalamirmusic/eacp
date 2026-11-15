@@ -153,6 +153,25 @@ public:
         // the user is the one wrong answer.
         bool loadDeclinedPopupsInline = true;
 
+        // Origins whose pages may post to message handlers and get the window
+        // bridges. Every page message is checked against its sender before
+        // any handler runs: the framework's own (__eacpBridge and so every
+        // bound API method and armFileDrag, __eacpKeyEvent, the window-drag
+        // and window-control bridges) and the app's alike. A message from
+        // anywhere else is dropped, so a remote page, or a foreign iframe, in
+        // this view cannot drive the app or the window hosting it — inside a
+        // plugin editor, the DAW's.
+        //
+        // Empty, the default, means only the content the view serves itself:
+        // pages on one of its own `schemes` / `streamingSchemes` (the embedded
+        // scheme included), the Vite dev server when Embedded picked it, and
+        // the document loadHTML loads without a base URL. A UI served from
+        // anywhere else — a remote site, or loadHTML with an http(s) base URL
+        // — has to list its origin here: "https://example.com", or with an
+        // explicit port, "http://localhost:8080". "*" trusts every origin,
+        // which is the behaviour before this option existed.
+        Vector<std::string> trustedOrigins;
+
         // macOS/iOS: back this WebView with a non-persistent (in-memory)
         // WKWebsiteDataStore instead of the app-wide default store. Two
         // effects: nothing the page stores (cookies, localStorage, caches)
@@ -190,6 +209,17 @@ public:
         // are handled by the page/browser and never forwarded. iOS has no
         // hardware-key chain to feed, so it is a no-op there.
         bool forwardUnhandledKeys = false;
+
+        // Ask the user before a page gets the camera or microphone. Off (the
+        // default) grants every getUserMedia request once the app itself has
+        // OS permission, which suits an app whose pages are its own UI. A
+        // general browser loads arbitrary sites and should turn this on: macOS
+        // 12+ answers WKPermissionDecisionPrompt so WebKit shows its own
+        // per-origin prompt, and Windows leaves PermissionRequested at its
+        // default so WebView2 shows its prompt. macOS 11 has no prompt to
+        // defer to (only the private _WKCaptureDevices SPI), so there the
+        // request is denied.
+        bool promptForMediaCapture = false;
 
         // Keep requestAnimationFrame-driven content advancing while the view is
         // off-screen, so an animated canvas (a spectrum analyser, a meter, a
@@ -328,6 +358,14 @@ public:
     std::function<void(FileDragPoint)> onFileDragMoved = [](auto&&) {};
     std::function<void(FileDragPoint)> onFileDragEnded = [](auto&&) {};
     std::function<void()> onClose = [] {};
+
+    // Downloads (Apple platforms, macOS 11.3+ / iOS 14.5+). A navigation to
+    // something WebKit can't display, or an anchor marked `download`, becomes
+    // a download into the user's Downloads directory under a collision-free
+    // name; these report where it landed / why it died. On Windows, WebView2
+    // runs its own download UI and these never fire.
+    std::function<void(const std::string& path)> onDownloadFinished = [](auto&&) {};
+    std::function<void(const std::string& error)> onDownloadFailed = [](auto&&) {};
 
     // Fired (with Options::forwardUnhandledKeys) for every key event the page
     // did not consume. Return true to consume it here; returning false sends

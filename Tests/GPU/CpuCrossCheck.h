@@ -2,11 +2,13 @@
 
 #include "Common.h"
 
+#include <eacp/GPU/Codegen/PackedScalars.h>
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 
 #include <bit>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <optional>
 #include <source_location>
@@ -86,24 +88,70 @@ struct HostArray
 {
     int slot = -1;
     bool isUInt = false;
+    bool isHalf = false;
     Vector<float> floats;
     Vector<std::uint32_t> uints;
+    Vector<std::uint16_t> halves;
     int first = 0;
     int count = 0;
+
+    // A buffer of structs: its bytes, held in `uints` rounded up to a word,
+    // and the struct, which the agreement compares a field at a time - the
+    // padding between fields being nobody's to agree on.
+    const ShaderGraph* graph = nullptr;
+    int structId = -1;
+    int structBytes = 0;
+
+    std::span<std::byte> structRange()
+    {
+        return {reinterpret_cast<std::byte*>(uints.data()),
+                (std::size_t) structBytes};
+    }
 
     std::function<void(CpuCompute::Bindings&, HostArray&)> bindOnCpu =
         [](CpuCompute::Bindings&, HostArray&) {};
     std::function<void(const BufferRange&)> bindOnGpu = [](const BufferRange&) {};
 
-    int elements() const { return isUInt ? uints.size() : floats.size(); }
+    int elements() const
+    {
+        if (isHalf)
+            return halves.size();
+
+        return isUInt ? uints.size() : floats.size();
+    }
+
+    std::int64_t elementBytes() const { return isHalf ? 2 : 4; }
+
     const void* bytes() const
     {
+        if (isHalf)
+            return halves.data();
+
         return isUInt ? (const void*) uints.data() : (const void*) floats.data();
     }
-    void* bytes() { return isUInt ? (void*) uints.data() : (void*) floats.data(); }
+
+    void* bytes()
+    {
+        if (isHalf)
+            return halves.data();
+
+        return isUInt ? (void*) uints.data() : (void*) floats.data();
+    }
+
+    // The f16 elements widened, which is how two backends' halves compare.
+    Vector<float> halvesAsFloats() const
+    {
+        auto widened = Vector<float> {};
+
+        for (auto bits: halves)
+            widened.add(halfToFloat(bits));
+
+        return widened;
+    }
 
     std::span<float> floatRange() { return range(floats); }
     std::span<std::uint32_t> uintRange() { return range(uints); }
+    std::span<std::uint16_t> halfRange() { return range(halves); }
 
 private:
     template <typename T>
@@ -113,6 +161,60 @@ private:
         return whole.subspan((std::size_t) first, (std::size_t) count);
     }
 };
+
+// Every component of every field of every element: an f16 widened, a float
+// within the tolerance, an integer bit for bit.
+inline bool structComponentsAgree(ValueType type,
+                                  const std::byte* cpu,
+                                  const std::byte* gpu,
+                                  float tolerance)
+{
+    auto cpuWords = Array<std::uint32_t, 16> {};
+    auto gpuWords = Array<std::uint32_t, 16> {};
+    detail::readStorageValue(cpu, type, cpuWords.data());
+    detail::readStorageValue(gpu, type, gpuWords.data());
+
+    auto isFloat = !isSignedInteger(type) && !isUnsignedInteger(type);
+
+    for (auto component = 0; component < componentCount(type); ++component)
+    {
+        auto a = cpuWords[component];
+        auto b = gpuWords[component];
+
+        if (a == b)
+            continue;
+
+        if (!isFloat
+            || std::abs(std::bit_cast<float>(a) - std::bit_cast<float>(b))
+                   > tolerance)
+            return false;
+    }
+
+    return true;
+}
+
+inline void expectStructsAgree(const HostArray& cpu,
+                               const HostArray& gpu,
+                               float tolerance,
+                               const std::source_location& where)
+{
+    const auto& type = cpu.graph->structType(cpu.structId);
+    const auto* cpuBytes = reinterpret_cast<const std::byte*>(cpu.uints.data());
+    const auto* gpuBytes = reinterpret_cast<const std::byte*>(gpu.uints.data());
+    auto agreeing = true;
+
+    for (auto element = 0; element < cpu.structBytes / type.size; ++element)
+        for (const auto& field: type.fields)
+            if (field.type != ValueType::Struct)
+            {
+                auto at = element * type.size + field.offset;
+                agreeing = agreeing
+                           && structComponentsAgree(
+                               field.type, cpuBytes + at, gpuBytes + at, tolerance);
+            }
+
+    nano::check(agreeing, "gpu vs cpu: every field of every struct", where);
+}
 
 class Readback
 {
@@ -140,9 +242,45 @@ public:
         return find(member.slot).uints;
     }
 
+    Vector<std::int32_t> ints(const IntAtomicBuffer& member) const
+    {
+        return intsAt(member.slot);
+    }
+
+    Vector<std::int32_t> ints(const IntOutputBuffer& member) const
+    {
+        return intsAt(member.slot);
+    }
+
+    const Vector<std::uint16_t>& halves(const HalfOutputBuffer& member) const
+    {
+        return find(member.slot).halves;
+    }
+
+    template <ShaderStructLike T>
+    StructBufferData<T> structs(const StructOutputBuffer<T>& member) const
+    {
+        const auto& array = find(member.slot);
+        auto data =
+            StructBufferData<T> {array.structBytes / StructLayout<T>::stride};
+        auto bytes = data.bytes();
+        std::memcpy(bytes.data(), array.uints.data(), bytes.size());
+        return data;
+    }
+
     Backend backend;
 
 private:
+    Vector<std::int32_t> intsAt(int slot) const
+    {
+        auto values = Vector<std::int32_t> {};
+
+        for (auto word: find(slot).uints)
+            values.add(std::bit_cast<std::int32_t>(word));
+
+        return values;
+    }
+
     const HostArray& find(int slot) const
     {
         for (const auto& array: arrays)
@@ -237,12 +375,96 @@ public:
         return output(member, filled(elements, fill));
     }
 
+    // The signed buffers, held as the words their int32s are.
+    CrossCheck& output(Uniform<IntAtomicBuffer>& member,
+                       const Vector<std::int32_t>& initial)
+    {
+        return addInts(member, initial);
+    }
+
+    CrossCheck& input(Uniform<IntInputBuffer>& member,
+                      const Vector<std::int32_t>& values)
+    {
+        return addInts(member, values);
+    }
+
+    CrossCheck& output(Uniform<IntOutputBuffer>& member,
+                       const Vector<std::int32_t>& initial)
+    {
+        return addInts(member, initial);
+    }
+
+    // The f16 buffers, held as their IEEE binary16 bits. The GPU half runs
+    // only where the device takes f16 (ComputeProgram::fitsShaderFloat16).
+    CrossCheck& input(Uniform<HalfInputBuffer>& member,
+                      const Vector<std::uint16_t>& values)
+    {
+        auto& array = add(member.slot, values, 0, -1);
+        array.bindOnCpu = [&member](CpuCompute::Bindings& bindings, HostArray& host)
+        { nano::check(bindings.set(member, host.halfRange())); };
+        array.bindOnGpu = [&member](const BufferRange& range) { member = range; };
+        return *this;
+    }
+
+    CrossCheck& output(Uniform<HalfOutputBuffer>& member,
+                       const Vector<std::uint16_t>& initial)
+    {
+        auto& array = add(member.slot, initial, 0, -1);
+        array.bindOnCpu = [&member](CpuCompute::Bindings& bindings, HostArray& host)
+        { nano::check(bindings.set(member, host.halfRange())); };
+        array.bindOnGpu = [&member](const BufferRange& range) { member = range; };
+        return *this;
+    }
+
+    // A buffer of structs (ShaderStruct.h), from its host bytes.
+    template <ShaderStructLike T>
+    CrossCheck& input(Uniform<StructInputBuffer<T>>& member,
+                      const StructBufferData<T>& values)
+    {
+        auto& array = addStruct(member.slot, values.bytes());
+        array.bindOnCpu = [&member](CpuCompute::Bindings& bindings, HostArray& host)
+        {
+            auto bytes = host.structRange();
+            nano::check(bindings.set(member, std::span<const std::byte> {bytes}));
+        };
+        array.bindOnGpu = [&member](const BufferRange& range) { member = range; };
+        return *this;
+    }
+
+    template <ShaderStructLike T>
+    CrossCheck& output(Uniform<StructOutputBuffer<T>>& member,
+                       const StructBufferData<T>& initial)
+    {
+        auto& array = addStruct(member.slot, initial.bytes());
+        array.bindOnCpu = [&member](CpuCompute::Bindings& bindings, HostArray& host)
+        { nano::check(bindings.set(member, host.structRange())); };
+        array.bindOnGpu = [&member](const BufferRange& range) { member = range; };
+        return *this;
+    }
+
     // After both halves have run, every array the GPU read back is compared
-    // with the CPU's, element for element. Not for a kernel whose result
-    // depends on the order threads ran in, such as atomic tickets.
+    // with the CPU's, element for element - a struct's field for field. Not
+    // for a kernel whose result depends on the order threads ran in, such as
+    // atomic tickets.
     CrossCheck& agreeing(float tolerance = 0.f)
     {
         agreement = tolerance;
+        return *this;
+    }
+
+    // The values the kernel's overrides take on both backends: the CPU plan's
+    // and the GPU pipeline's (OverrideValues.h).
+    CrossCheck& overriding(const OverrideValues& values)
+    {
+        overrides = values;
+        return *this;
+    }
+
+    // Leaves the GPU half out, for a kernel a known driver cannot run (WARP's
+    // ARM64 JIT crashes on the suite's largest, Common.h); the CPU half runs.
+    CrossCheck& cpuOnlyWhen(bool condition)
+    {
+        cpuOnly = condition;
         return *this;
     }
 
@@ -343,17 +565,53 @@ private:
 
     static constexpr auto elementBytes = std::int64_t {4};
 
+    template <typename Member>
+    CrossCheck& addInts(Member& member, const Vector<std::int32_t>& values)
+    {
+        auto words = Vector<std::uint32_t> {};
+
+        for (auto value: values)
+            words.add(std::bit_cast<std::uint32_t>(value));
+
+        auto& array = add(member.slot, words, 0, -1);
+        array.bindOnCpu = [&member](CpuCompute::Bindings& bindings, HostArray& host)
+        {
+            auto held = host.uintRange();
+            auto ints = std::span<std::int32_t> {
+                reinterpret_cast<std::int32_t*>(held.data()), held.size()};
+            nano::check(bindings.set(member, ints));
+        };
+        array.bindOnGpu = [&member](const BufferRange& range) { member = range; };
+        return *this;
+    }
+
+    HostArray& addStruct(int slot, std::span<const std::byte> bytes)
+    {
+        auto words = Vector<std::uint32_t> {};
+        words.resize((int) ((bytes.size() + 3) / 4), 0u);
+        std::memcpy(words.data(), bytes.data(), bytes.size());
+
+        auto& array = add(slot, words, 0, -1);
+        array.graph = &kernel.graph();
+        array.structId = kernel.graph().storageStructType(slot);
+        array.structBytes = (int) bytes.size();
+        return array;
+    }
+
     template <typename T>
     HostArray& add(int slot, const Vector<T>& values, int first, int count)
     {
         auto array = HostArray {};
         array.slot = slot;
         array.isUInt = std::is_same_v<T, std::uint32_t>;
+        array.isHalf = std::is_same_v<T, std::uint16_t>;
         array.first = first;
         array.count = count < 0 ? values.size() - first : count;
 
         if constexpr (std::is_same_v<T, std::uint32_t>)
             array.uints = values;
+        else if constexpr (std::is_same_v<T, std::uint16_t>)
+            array.halves = values;
         else
             array.floats = values;
 
@@ -374,7 +632,10 @@ private:
                   const Verify& verify,
                   const std::source_location& where)
     {
-        auto executor = CpuCompute::Executor {kernel};
+        auto options = CpuCompute::PlanOptions {};
+        options.overrides = overrides;
+
+        auto executor = CpuCompute::Executor {kernel, options};
         nano::check(executor.isValid(), "cpu: " + executor.reason(), where);
 
         if (!executor.isValid())
@@ -399,7 +660,15 @@ private:
 
         for (auto index = 0; index < gpuResult.size(); ++index)
         {
-            if (gpuResult[index].isUInt)
+            if (gpuResult[index].structId >= 0)
+                expectStructsAgree(
+                    cpuResult[index], gpuResult[index], *agreement, where);
+            else if (gpuResult[index].isHalf)
+                expectAgreement(cpuResult[index].halvesAsFloats(),
+                                gpuResult[index].halvesAsFloats(),
+                                *agreement,
+                                where);
+            else if (gpuResult[index].isUInt)
                 expectAgreement(
                     cpuResult[index].uints, gpuResult[index].uints, where);
             else
@@ -416,7 +685,7 @@ private:
     {
         auto& device = Device::shared();
 
-        if (!device.isValid())
+        if (cpuOnly || !device.isValid() || !kernel.fitsShaderFloat16(device))
             return;
 
         auto buffers = Vector<Buffer> {};
@@ -424,15 +693,14 @@ private:
 
         for (auto& array: arrays)
         {
-            buffers.add(device.makeBuffer(array.bytes(),
-                                          elementBytes * array.elements(),
-                                          BufferUsage::Storage));
-            array.bindOnGpu({&buffers.back(),
-                             elementBytes * array.first,
-                             elementBytes * array.count});
+            auto bytes = array.elementBytes();
+            buffers.add(device.makeBuffer(
+                array.bytes(), bytes * array.elements(), BufferUsage::Storage));
+            array.bindOnGpu(
+                {&buffers.back(), bytes * array.first, bytes * array.count});
         }
 
-        kernel.prepare(device);
+        kernel.prepare(device, overrides);
         nano::check(kernel.pipeline().isValid(), "gpu: the pipeline built", where);
 
         auto commands = device.makeCommandBuffer();
@@ -450,7 +718,7 @@ private:
         {
             host[index].bindOnGpu({});
             buffers[index].read(host[index].bytes(),
-                                elementBytes * host[index].elements());
+                                host[index].elementBytes() * host[index].elements());
         }
 
         verify(Readback {Backend::Gpu, host});
@@ -461,6 +729,8 @@ private:
     Vector<HostArray> arrays;
     Vector<HostArray> cpuResult;
     std::optional<float> agreement;
+    OverrideValues overrides;
+    bool cpuOnly = false;
 };
 
 // A kernel run on the CPU by hand, for the cases whose bindings a CrossCheck

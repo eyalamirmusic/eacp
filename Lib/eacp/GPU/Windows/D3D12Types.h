@@ -269,7 +269,7 @@ struct D3D12SubresourceTargetView
     int slice = 0;
     int count = 1;
     bool depth = false;
-    winrt::com_ptr<ID3D12DescriptorHeap> heap;
+    winrt::com_ptr<ID3D12DescriptorHeap> heap {};
     D3D12_CPU_DESCRIPTOR_HANDLE handle = {};
 };
 
@@ -503,7 +503,7 @@ struct D3D12Encoder
     // whatever reads it next, and a read between two passes is the case the
     // whole thing exists for. See TextureDescriptor::sampleCount, and
     // resolveMultisampledTarget below.
-    Vector<D3D12TextureData*> resolveTargets;
+    Vector<D3D12TextureData*> resolveTargets {};
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the
@@ -548,6 +548,12 @@ void transitionForUse(CommandContext& commands,
 // by the previous frame's last pass is what it is still in. Getting that wrong
 // is a barrier the debug layer rejects rather than anything visible, which is
 // exactly why the tracking lives here and not at the two call sites.
+//
+// A read (PIXEL_SHADER_RESOURCE, NON_PIXEL_SHADER_RESOURCE, COPY_SOURCE) asked of
+// a texture already in another is added to it, never swapped for it, so the
+// barrier into the next write names every read since the last one. Swapping is
+// valid D3D12 too; combining works around a driver that mis-orders the swap (see
+// stateAfter).
 void transitionTextureForUse(ID3D12GraphicsCommandList* list,
                              D3D12TextureData& texture,
                              D3D12_RESOURCE_STATES target);

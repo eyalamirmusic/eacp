@@ -25,6 +25,12 @@ public:
 
     // Asks for the next frame; the record's onFrameDone answers it.
     virtual void requestFrame() = 0;
+
+    // Restacks this child directly above `sibling`, another child of the same
+    // window. A new child starts above all of them, which is what keeps a menu
+    // bar on top of content that gets a surface after it does. Nothing to do
+    // where a window has one child at most (Android).
+    virtual void placeAbove(const NativeSurfaceHandle&) {}
 };
 
 // One per window.

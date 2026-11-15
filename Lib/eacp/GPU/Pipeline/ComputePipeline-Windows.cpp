@@ -16,14 +16,17 @@ namespace eacp::GPU
 {
 struct ComputePipeline::Native
 {
-    Native(Device& device, const ShaderLibrary& library)
+    Native(Device& device,
+           const ShaderLibrary& library,
+           const PipelineConstants& constants)
     {
         auto& context = getD3D12Context(device);
 
         if (!context.isValid() || context.getComputeRootSignature() == nullptr)
             return;
 
-        auto* program = static_cast<D3D12ShaderProgram*>(library.nativeLibrary());
+        auto* program =
+            static_cast<D3D12ShaderProgram*>(library.nativeLibrary(constants));
 
         if (program == nullptr || program->computeBytecode == nullptr)
             return;
@@ -41,8 +44,15 @@ struct ComputePipeline::Native
 };
 
 ComputePipeline::ComputePipeline(Device& device, const ShaderLibrary& library)
+    : ComputePipeline(device, library, PipelineConstants {})
+{
+}
+
+ComputePipeline::ComputePipeline(Device& device,
+                                 const ShaderLibrary& library,
+                                 const PipelineConstants& constants)
     : groupShape(library.threadGroupShape())
-    , impl(device, library)
+    , impl(device, library, constants)
 {
 }
 

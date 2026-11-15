@@ -75,6 +75,44 @@ void fillWorkspaceSimdGroupIndices(const Plan& plan, Workspace& workspace)
             out[lane] = static_cast<Word>(lane / simdGroupWidth);
     }
 }
+
+// The flat local index, its lane in a SIMD group, and the SIMD group's width -
+// SIMD groups being simdGroupWidth consecutive flat indices, as the emulating
+// backends form them.
+Word workspaceBuiltInLane(ShaderBuiltIn which, Word local)
+{
+    switch (which)
+    {
+        case ShaderBuiltIn::LocalIndex:
+            return local;
+        case ShaderBuiltIn::SimdLaneIndex:
+            return local % static_cast<Word>(simdGroupWidth);
+        case ShaderBuiltIn::SimdGroupSize:
+            return static_cast<Word>(simdGroupWidth);
+        default:
+            return 0u;
+    }
+}
+
+void fillWorkspaceBuiltIns(const Plan& plan, Workspace& workspace)
+{
+    for (const auto& builtIn: plan.builtInNodes())
+    {
+        auto which = static_cast<ShaderBuiltIn>(builtIn.index);
+
+        if (which == ShaderBuiltIn::GroupCount)
+            continue;
+
+        auto* out = workspace.at(plan.node(builtIn.node).scratch);
+
+        for (auto lane = 0; lane < plan.laneStride(); ++lane)
+        {
+            auto isReal = lane < plan.batchLanes();
+            auto local = isReal ? static_cast<Word>(lane % plan.lanes()) : 0u;
+            out[lane] = workspaceBuiltInLane(which, local);
+        }
+    }
+}
 } // namespace
 
 Workspace::Workspace(const Plan& plan)
@@ -91,6 +129,7 @@ Workspace::Workspace(const Plan& plan)
     fillWorkspaceLocalCoordinates(plan, *this);
     fillWorkspaceBatchCoordinates(plan, *this);
     fillWorkspaceSimdGroupIndices(plan, *this);
+    fillWorkspaceBuiltIns(plan, *this);
 }
 
 Workspace::Workspace(Workspace&& other) noexcept

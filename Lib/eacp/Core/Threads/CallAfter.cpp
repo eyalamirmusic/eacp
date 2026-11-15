@@ -72,7 +72,12 @@ private:
             if (pending.empty())
                 wake.wait(lock);
             else
-                wake.wait_until(lock, pending.begin()->first);
+            {
+                // A copy: wait_until reads its deadline again after waking, and
+                // stop() may have freed the map node it lived in by then.
+                auto deadline = pending.begin()->first;
+                wake.wait_until(lock, deadline);
+            }
 
             dispatchDue(lock);
         }

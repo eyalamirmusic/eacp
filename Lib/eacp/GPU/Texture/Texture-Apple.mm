@@ -4,6 +4,7 @@
 #include "Texture.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "MipChain.h"
 #include "TextureShape.h"
 
@@ -590,6 +591,7 @@ struct Texture::Native
         @autoreleasepool
         {
             auto commandBuffer = [queue commandBuffer];
+            Detail::reportFailureOf(commandBuffer);
             auto blit = [commandBuffer blitCommandEncoder];
 
             for (const auto& each: uploads)
@@ -610,6 +612,7 @@ struct Texture::Native
         @autoreleasepool
         {
             auto commandBuffer = [queue commandBuffer];
+            Detail::reportFailureOf(commandBuffer);
             auto blit = [commandBuffer blitCommandEncoder];
 
             [blit generateMipmapsForTexture:(id<MTLTexture>) texture.get()];
@@ -754,6 +757,7 @@ struct Texture::Native
                 return;
 
             auto commandBuffer = [queue commandBuffer];
+            Detail::reportFailureOf(commandBuffer);
             auto blit = [commandBuffer blitCommandEncoder];
 
             [blit copyFromTexture:source

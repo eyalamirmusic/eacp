@@ -135,7 +135,7 @@ bool advanceIs(float advance, float expected)
 // The advance of 'A' at a weight, or nothing when the face did not register or
 // the family did not resolve - a machine this cannot be tested on rather than
 // a failure, which is how the rest of these tests treat a missing family.
-std::optional<float> advanceAtWeight(int weight)
+std::optional<float> advanceAtWeight(int weight, bool italic = false)
 {
     const auto registered =
         registerMemoryFont(variableTestFont, sizeof(variableTestFont));
@@ -148,9 +148,25 @@ std::optional<float> advanceAtWeight(int weight)
     if (!rasterizer.isValid())
         return std::nullopt;
 
-    return rasterizer.shape("A", FontVariant {weight, false}).advance;
+    return rasterizer.shape("A", FontVariant {weight, italic}).advance;
 }
 } // namespace
+
+// The face has no italic and no slant axis, so an italic is the face leaned -
+// at the weight its axis was moved to, the lean being laid over the instance
+// and not over the default the file opens at.
+auto tASyntheticItalicKeepsTheInstance =
+    test("VariableFont/aSyntheticItalicLeansTheInstanceTheAxesWereMovedTo") = []
+{
+    const auto upright = advanceAtWeight(600);
+    const auto italic = advanceAtWeight(600, true);
+
+    if (!upright || !italic)
+        return;
+
+    check(advanceIs(*italic, *upright), "the lean moves no advance");
+    check(advanceIs(*italic, 76.f), "and keeps the weight");
+};
 
 auto tVariableFaceRegisters =
     test("VariableFont/aVariableFaceRegistersUnderTheFamilyItNamesItself") = []

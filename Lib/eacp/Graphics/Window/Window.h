@@ -209,9 +209,11 @@ struct WindowOptions
     // makes no such statement - a bordered lock has its own layout, and
     // lockedArea letterboxes - so it leaves fullscreen on.
     //
-    // macOS only: Windows has no OS-level fullscreen mode for a window (an
-    // app that wants one builds it from a borderless monitor-sized window),
-    // and its maximise path honours the constraint on its own. No-op on iOS.
+    // macOS only: Windows has no OS-level fullscreen mode for a window (what
+    // Window::setFullScreen builds there is a borderless monitor-sized one,
+    // which only the app asks for), and its maximise path honours the
+    // constraint on its own. No-op on iOS. Window::setFullScreen honours it
+    // on macOS too, where it is the same system full screen.
     std::optional<bool> allowsFullScreen;
 
     // Keeps the window above normal windows (macOS NSFloatingWindowLevel,
@@ -361,6 +363,28 @@ public:
     // frame when already maximized — the standard caption-button toggle.
     // No-op under headless and on iOS.
     void toggleMaximize();
+
+    // Takes the window full screen, or brings it back to the window it was -
+    // the app's own switch, for a game's settings or a video's button, with
+    // isFullScreen to read it back (and to remember between launches).
+    //
+    // Each platform's own idea of full screen: macOS's (a Space of the
+    // window's own, as the green button gives it), the Wayland compositor's
+    // or the X11 window manager's, and on Windows - which has no such mode -
+    // the frame taken off and the window laid over the whole of its monitor,
+    // taskbar included. Leaving puts the frame, the size and the place back.
+    //
+    // A request, not an order, on every platform but Windows: the switch
+    // happens when the system gets round to it, and isFullScreen reports the
+    // window's state, not the request, so it changes when the window does.
+    // Where nobody grants it - an X11 server with no window manager, a macOS
+    // window with allowsFullScreen off - the window stays a window. A
+    // constrained window gets the largest size its rule allows, as a
+    // maximise does (see sizeConstraint). Setting a size while full screen
+    // does nothing. No-op under headless; on iOS and Android the window
+    // always fills the screen.
+    void setFullScreen(bool shouldBeFullScreen);
+    bool isFullScreen() const;
 
     // Mouse lock for relative-motion input (FPS-style mouse look). While
     // locked the cursor is hidden and pinned in place, and mouse movement

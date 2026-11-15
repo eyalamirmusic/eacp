@@ -3,7 +3,9 @@
 #include "ComputePipeline.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Shader/ShaderLibrary.h"
+#include "MetalFunctions-Apple.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 
@@ -13,7 +15,9 @@ namespace eacp::GPU
 {
 struct ComputePipeline::Native
 {
-    Native(Device& device, const ShaderLibrary& library)
+    Native(Device& device,
+           const ShaderLibrary& library,
+           const PipelineConstants& constants)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
         auto metalLibrary = (__bridge id<MTLLibrary>) library.nativeLibrary();
@@ -21,17 +25,17 @@ struct ComputePipeline::Native
         if (metalDevice == nil || metalLibrary == nil)
             return;
 
-        auto kernelName = @(library.computeEntry().c_str());
-        id<MTLFunction> kernel = [metalLibrary newFunctionWithName:kernelName];
+        id<MTLFunction> kernel =
+            Detail::makeMetalFunction(library, library.computeEntry(), constants);
 
         if (kernel == nil)
             return;
 
-        NSError* error = nil;
-        state = [metalDevice newComputePipelineStateWithFunction:kernel error:&error];
+        auto build = [metalDevice, kernel](NSError** error)
+        { return [metalDevice newComputePipelineStateWithFunction:kernel error:error]; };
 
-        if (state.get() == nil && error != nil)
-            LOG(error.localizedDescription.UTF8String);
+        state = Detail::buildRetryingTransientFailures<id<MTLComputePipelineState>>(
+            "building a Metal compute pipeline", build);
 
         [kernel release];
         checkGroupFits(library.threadGroupShape());
@@ -68,8 +72,15 @@ struct ComputePipeline::Native
 };
 
 ComputePipeline::ComputePipeline(Device& device, const ShaderLibrary& library)
+    : ComputePipeline(device, library, PipelineConstants {})
+{
+}
+
+ComputePipeline::ComputePipeline(Device& device,
+                                 const ShaderLibrary& library,
+                                 const PipelineConstants& constants)
     : groupShape(library.threadGroupShape())
-    , impl(device, library)
+    , impl(device, library, constants)
 {
 }
 

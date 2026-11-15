@@ -45,11 +45,11 @@ SizeConstraint WindowOptions::effectiveSizeConstraint() const
 
     return [willResize, custom, lock](const ResizeRequest& request)
     {
-        auto width = (int) request.size.x;
-        auto height = (int) request.size.y;
-        willResize(width, height);
+        auto newWidth = (int) request.size.x;
+        auto newHeight = (int) request.size.y;
+        willResize(newWidth, newHeight);
 
-        auto size = custom({{(float) width, (float) height}, request.axis});
+        auto size = custom({{(float) newWidth, (float) newHeight}, request.axis});
         return lock({size, request.axis});
     };
 }

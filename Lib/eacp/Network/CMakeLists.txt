@@ -7,6 +7,7 @@ target_sources(eacp-network PRIVATE
         HTTPServer/HttpServer.cpp
         HTTPServer/HttpServerDispatcher.cpp
         HTTPServer/ResponseBuilders.cpp
+        HTTPServer/StreamingBody.cpp
         IPC/Channel.cpp
         IPC/Lock.cpp
         IPC/Messenger.cpp
@@ -71,8 +72,6 @@ endif ()
 set_default_target_setting(eacp-network)
 eacp_enable_unity_build(eacp-network)
 add_ide_sources(eacp-network)
-
-find_package(Miro REQUIRED)
 
 add_library(eacp-network-json STATIC)
 

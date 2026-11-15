@@ -2,6 +2,8 @@
 
 #include "SwizzleGrid.h"
 
+#include <cassert>
+
 namespace eacp::GPU
 {
 namespace detail
@@ -67,6 +69,9 @@ template struct Swizzles<Ints, 4>;
 template struct Swizzles<Bools, 2>;
 template struct Swizzles<Bools, 3>;
 template struct Swizzles<Bools, 4>;
+template struct Swizzles<Halves, 2>;
+template struct Swizzles<Halves, 3>;
+template struct Swizzles<Halves, 4>;
 } // namespace detail
 
 Float4 sample(const Texture2D& texture, const Float2& coordinates)
@@ -87,10 +92,134 @@ Float4 sample(const TextureCube& texture, const Float3& direction)
 
 Float sample(const TextureDepth2D& texture, const Float2& coordinates)
 {
+    assert(texture.graph->textureSampling(texture.slot).compare
+           == TextureCompare::None);
+
     auto result = Float {};
     result.graph = texture.graph;
     result.node = texture.graph->addDepthSample(texture.slot, coordinates.node);
     return result;
+}
+
+namespace
+{
+template <typename Result, typename Texture>
+Result
+    layerSampleOf(const Texture& texture, const Float2& coordinates, int layerNode)
+{
+    auto result = Result {};
+    result.graph = texture.graph;
+    result.node =
+        texture.graph->addLayerSample(texture.slot, coordinates.node, layerNode);
+    return result;
+}
+
+template <typename Texture>
+void assertCompares(const Texture& texture, bool compares)
+{
+    assert((texture.graph->textureSampling(texture.slot).compare
+            != TextureCompare::None)
+           == compares);
+    (void) texture;
+    (void) compares;
+}
+
+Float compareSampleOf(const TextureDepth2DArray& texture,
+                      const Float2& coordinates,
+                      int layerNode,
+                      const Float& reference)
+{
+    assertCompares(texture, true);
+
+    auto result = Float {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addCompareSample(
+        texture.slot, coordinates.node, layerNode, reference.node);
+    return result;
+}
+} // namespace
+
+Float4 sample(const Texture2DArray& texture,
+              const Float2& coordinates,
+              const Int& layer)
+{
+    return layerSampleOf<Float4>(texture, coordinates, layer.node);
+}
+
+Float4 sample(const Texture2DArray& texture,
+              const Float2& coordinates,
+              const Float& layer)
+{
+    return layerSampleOf<Float4>(texture, coordinates, layer.node);
+}
+
+Float4 sample(const Texture2DArray& texture, const Float2& coordinates, int layer)
+{
+    return layerSampleOf<Float4>(
+        texture, coordinates, texture.graph->addIntConstant(layer));
+}
+
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             const Int& layer)
+{
+    assertCompares(texture, false);
+    return layerSampleOf<Float>(texture, coordinates, layer.node);
+}
+
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             const Float& layer)
+{
+    assertCompares(texture, false);
+    return layerSampleOf<Float>(texture, coordinates, layer.node);
+}
+
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             int layer)
+{
+    assertCompares(texture, false);
+    return layerSampleOf<Float>(
+        texture, coordinates, texture.graph->addIntConstant(layer));
+}
+
+Float sampleCompare(const TextureDepth2D& texture,
+                    const Float2& coordinates,
+                    const Float& reference)
+{
+    assertCompares(texture, true);
+
+    auto result = Float {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addCompareSample(
+        texture.slot, coordinates.node, reference.node);
+    return result;
+}
+
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    const Int& layer,
+                    const Float& reference)
+{
+    return compareSampleOf(texture, coordinates, layer.node, reference);
+}
+
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    const Float& layer,
+                    const Float& reference)
+{
+    return compareSampleOf(texture, coordinates, layer.node, reference);
+}
+
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    int layer,
+                    const Float& reference)
+{
+    return compareSampleOf(
+        texture, coordinates, texture.graph->addIntConstant(layer), reference);
 }
 
 Float4
@@ -216,9 +345,17 @@ T readBufferVectorLoad(
     return result;
 }
 
+int literalNodeBeside(const ValueHandle& value, float literal)
+{
+    if (isHalf(value.graph->expr(value.node).type))
+        return value.graph->addHalfConstant(literal);
+
+    return value.graph->addConstant(literal);
+}
+
 ValueHandle constantOn(const ValueHandle& value, float literal)
 {
-    return {value.graph, value.graph->addConstant(literal)};
+    return {value.graph, literalNodeBeside(value, literal)};
 }
 
 ValueHandle uintConstantOn(const ValueHandle& value, unsigned literal)
@@ -240,9 +377,166 @@ void anchorAt(const ValueHandle*&, float) {}
 
 int argumentNode(const ValueHandle& anchor, float literal)
 {
-    return anchor.graph->addConstant(literal);
+    return literalNodeBeside(anchor, literal);
 }
 } // namespace detail
+
+Half HalfInputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Half>(graph, slot, index);
+}
+
+Half HalfInputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Half2 HalfInputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Half2>(
+        graph, slot, index, ValueType::Half2, 2);
+}
+
+Half3 HalfInputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Half3>(
+        graph, slot, index, ValueType::Half3, 3);
+}
+
+Half4 HalfInputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Half4>(
+        graph, slot, index, ValueType::Half4, 4);
+}
+
+Half2 HalfInputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Half3 HalfInputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Half4 HalfInputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+Half HalfOutputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Half>(graph, slot, index);
+}
+
+Half HalfOutputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Half2 HalfOutputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVector<Half2>(graph, slot, index, ValueType::Half2, 2);
+}
+
+Half3 HalfOutputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVector<Half3>(graph, slot, index, ValueType::Half3, 3);
+}
+
+Half4 HalfOutputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVector<Half4>(graph, slot, index, ValueType::Half4, 4);
+}
+
+Half2 HalfOutputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Half3 HalfOutputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Half4 HalfOutputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+UInt HalfOutputBuffer::index(unsigned value) const
+{
+    return detail::bufferIndex(graph, value);
+}
+
+Half toHalf(const UInt& value)
+{
+    return detail::convertTo<Half>(value);
+}
+
+Half toHalf(const Int& value)
+{
+    return detail::convertTo<Half>(value);
+}
+
+Half toHalf(const Bool& value)
+{
+    return detail::convertTo<Half>(value);
+}
+
+Half2x2 half2x2(const Half2& c0, const Half2& c1)
+{
+    return detail::construct<Half2x2>(
+        *c0.graph, ValueType::Half2x2, {c0.node, c1.node});
+}
+
+Half3x3 half3x3(const Half3& c0, const Half3& c1, const Half3& c2)
+{
+    return detail::construct<Half3x3>(
+        *c0.graph, ValueType::Half3x3, {c0.node, c1.node, c2.node});
+}
+
+Half4x4 half4x4(const Half4& c0, const Half4& c1, const Half4& c2, const Half4& c3)
+{
+    return detail::construct<Half4x4>(
+        *c0.graph, ValueType::Half4x4, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Half2x3 half2x3(const Half3& c0, const Half3& c1)
+{
+    return detail::construct<Half2x3>(
+        *c0.graph, ValueType::Half2x3, {c0.node, c1.node});
+}
+
+Half2x4 half2x4(const Half4& c0, const Half4& c1)
+{
+    return detail::construct<Half2x4>(
+        *c0.graph, ValueType::Half2x4, {c0.node, c1.node});
+}
+
+Half3x2 half3x2(const Half2& c0, const Half2& c1, const Half2& c2)
+{
+    return detail::construct<Half3x2>(
+        *c0.graph, ValueType::Half3x2, {c0.node, c1.node, c2.node});
+}
+
+Half3x4 half3x4(const Half4& c0, const Half4& c1, const Half4& c2)
+{
+    return detail::construct<Half3x4>(
+        *c0.graph, ValueType::Half3x4, {c0.node, c1.node, c2.node});
+}
+
+Half4x2 half4x2(const Half2& c0, const Half2& c1, const Half2& c2, const Half2& c3)
+{
+    return detail::construct<Half4x2>(
+        *c0.graph, ValueType::Half4x2, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Half4x3 half4x3(const Half3& c0, const Half3& c1, const Half3& c2, const Half3& c3)
+{
+    return detail::construct<Half4x3>(
+        *c0.graph, ValueType::Half4x3, {c0.node, c1.node, c2.node, c3.node});
+}
 
 Float InputBuffer::operator[](const UInt& index) const
 {
@@ -418,6 +712,102 @@ UInt UIntOutputBuffer::literal(unsigned value) const
     return detail::bufferIndex(graph, value);
 }
 
+Int IntInputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Int>(graph, slot, index);
+}
+
+Int IntInputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Int2 IntInputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Int2>(
+        graph, slot, index, ValueType::Int2, 2);
+}
+
+Int3 IntInputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Int3>(
+        graph, slot, index, ValueType::Int3, 3);
+}
+
+Int4 IntInputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Int4>(
+        graph, slot, index, ValueType::Int4, 4);
+}
+
+Int2 IntInputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Int3 IntInputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Int4 IntInputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+Int IntOutputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Int>(graph, slot, index);
+}
+
+Int IntOutputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Int2 IntOutputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVector<Int2>(graph, slot, index, ValueType::Int2, 2);
+}
+
+Int3 IntOutputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVector<Int3>(graph, slot, index, ValueType::Int3, 3);
+}
+
+Int4 IntOutputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVector<Int4>(graph, slot, index, ValueType::Int4, 4);
+}
+
+Int2 IntOutputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Int3 IntOutputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Int4 IntOutputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+Int IntOutputBuffer::literal(int value) const
+{
+    auto result = Int {};
+    result.graph = graph;
+    result.node = graph->addIntConstant(value);
+    return result;
+}
+
+UInt IntOutputBuffer::index(unsigned value) const
+{
+    return detail::bufferIndex(graph, value);
+}
+
 UInt AtomicBuffer::load(const UInt& index) const
 {
     auto result = UInt {};
@@ -437,6 +827,19 @@ UInt AtomicBuffer::literal(unsigned value) const
     result.graph = graph;
     result.node = graph->addUIntConstant(value);
     return result;
+}
+
+Int IntAtomicBuffer::load(const UInt& index) const
+{
+    auto result = Int {};
+    result.graph = graph;
+    result.node = graph->addAtomicLoad(slot, index.node);
+    return result;
+}
+
+Int IntAtomicBuffer::load(unsigned index) const
+{
+    return load(detail::bufferIndex(graph, index));
 }
 
 Float toFloat(const UInt& value)
@@ -723,6 +1126,46 @@ UInt packInt8x4(const Int4& values)
 UInt packUInt8x4(const UInt4& values)
 {
     return detail::call<UInt>(values, ValueType::UInt, "eacpPackUInt8x4");
+}
+
+UInt packUnorm8x4(const Float4& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackUnorm8x4");
+}
+
+UInt packSnorm8x4(const Float4& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackSnorm8x4");
+}
+
+UInt packUnorm16x2(const Float2& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackUnorm16x2");
+}
+
+UInt packSnorm16x2(const Float2& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackSnorm16x2");
+}
+
+Float4 unpackUnorm8x4(const UInt& bits)
+{
+    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackUnorm8x4");
+}
+
+Float4 unpackSnorm8x4(const UInt& bits)
+{
+    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackSnorm8x4");
+}
+
+Float2 unpackUnorm16x2(const UInt& bits)
+{
+    return detail::call<Float2>(bits, ValueType::Float2, "eacpUnpackUnorm16x2");
+}
+
+Float2 unpackSnorm16x2(const UInt& bits)
+{
+    return detail::call<Float2>(bits, ValueType::Float2, "eacpUnpackSnorm16x2");
 }
 
 Float4Pair unpackInt4x8(const UInt& bits)
@@ -1019,6 +1462,74 @@ Float4x4 transpose(const Float4x4& matrix)
     return detail::call<Float4x4>(matrix, ValueType::Float4x4, "transpose");
 }
 
+Float2x3 float2x3(const Float3& c0, const Float3& c1)
+{
+    return detail::construct<Float2x3>(
+        *c0.graph, ValueType::Float2x3, {c0.node, c1.node});
+}
+
+Float2x4 float2x4(const Float4& c0, const Float4& c1)
+{
+    return detail::construct<Float2x4>(
+        *c0.graph, ValueType::Float2x4, {c0.node, c1.node});
+}
+
+Float3x2 float3x2(const Float2& c0, const Float2& c1, const Float2& c2)
+{
+    return detail::construct<Float3x2>(
+        *c0.graph, ValueType::Float3x2, {c0.node, c1.node, c2.node});
+}
+
+Float3x4 float3x4(const Float4& c0, const Float4& c1, const Float4& c2)
+{
+    return detail::construct<Float3x4>(
+        *c0.graph, ValueType::Float3x4, {c0.node, c1.node, c2.node});
+}
+
+Float4x2
+    float4x2(const Float2& c0, const Float2& c1, const Float2& c2, const Float2& c3)
+{
+    return detail::construct<Float4x2>(
+        *c0.graph, ValueType::Float4x2, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Float4x3
+    float4x3(const Float3& c0, const Float3& c1, const Float3& c2, const Float3& c3)
+{
+    return detail::construct<Float4x3>(
+        *c0.graph, ValueType::Float4x3, {c0.node, c1.node, c2.node, c3.node});
+}
+
+Float3x2 transpose(const Float2x3& matrix)
+{
+    return detail::call<Float3x2>(matrix, ValueType::Float3x2, "transpose");
+}
+
+Float4x2 transpose(const Float2x4& matrix)
+{
+    return detail::call<Float4x2>(matrix, ValueType::Float4x2, "transpose");
+}
+
+Float2x3 transpose(const Float3x2& matrix)
+{
+    return detail::call<Float2x3>(matrix, ValueType::Float2x3, "transpose");
+}
+
+Float4x3 transpose(const Float3x4& matrix)
+{
+    return detail::call<Float4x3>(matrix, ValueType::Float4x3, "transpose");
+}
+
+Float2x4 transpose(const Float4x2& matrix)
+{
+    return detail::call<Float2x4>(matrix, ValueType::Float2x4, "transpose");
+}
+
+Float3x4 transpose(const Float4x3& matrix)
+{
+    return detail::call<Float3x4>(matrix, ValueType::Float3x4, "transpose");
+}
+
 Float determinant(const Float2x2& matrix)
 {
     return detail::call<Float>(matrix, ValueType::Float, "determinant");
@@ -1198,6 +1709,21 @@ EACP_DEFINE_UINT_COMPARISON(operator!=, "!=")
 EACP_DEFINE_MATRIX_SCALE(Float2x2)
 EACP_DEFINE_MATRIX_SCALE(Float3x3)
 EACP_DEFINE_MATRIX_SCALE(Float4x4)
+EACP_DEFINE_MATRIX_SCALE(Float2x3)
+EACP_DEFINE_MATRIX_SCALE(Float2x4)
+EACP_DEFINE_MATRIX_SCALE(Float3x2)
+EACP_DEFINE_MATRIX_SCALE(Float3x4)
+EACP_DEFINE_MATRIX_SCALE(Float4x2)
+EACP_DEFINE_MATRIX_SCALE(Float4x3)
+EACP_DEFINE_MATRIX_SCALE(Half2x2)
+EACP_DEFINE_MATRIX_SCALE(Half3x3)
+EACP_DEFINE_MATRIX_SCALE(Half4x4)
+EACP_DEFINE_MATRIX_SCALE(Half2x3)
+EACP_DEFINE_MATRIX_SCALE(Half2x4)
+EACP_DEFINE_MATRIX_SCALE(Half3x2)
+EACP_DEFINE_MATRIX_SCALE(Half3x4)
+EACP_DEFINE_MATRIX_SCALE(Half4x2)
+EACP_DEFINE_MATRIX_SCALE(Half4x3)
 
 #undef EACP_DEFINE_MATRIX_SCALE
 } // namespace eacp::GPU

@@ -883,7 +883,7 @@ TileFrame::TileFrame(TileKind kindToUse)
     title.setText(tile->getName());
     title.setFontSize(11.f);
     stats.setFontSize(11.f);
-    stats.setColour(UI::defaultTheme().dimText);
+    stats.setThemeColour(UI::ThemeKeys::dimText);
 
     auto& settings = tileSettings();
     tile->apply(settings);
@@ -1005,7 +1005,7 @@ void TileFrame::resized()
 
 void TileFrame::paint(UI::Graphics& g)
 {
-    g.setColour(UI::defaultTheme().panel);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
     g.fillRect(getLocalBounds());
 }
 
@@ -1013,7 +1013,8 @@ void TileFrame::paintOverChildren(UI::Graphics& g)
 {
     auto focused = tile->hasKeyboardFocus();
 
-    g.setColour(focused ? UI::defaultTheme().accent : UI::defaultTheme().outline);
+    g.setColour(UI::defaultTheme().get(focused ? UI::ThemeKeys::accent
+                                               : UI::ThemeKeys::outline));
     g.drawRect(getLocalBounds(), focused ? 2.f : 1.f);
 }
 

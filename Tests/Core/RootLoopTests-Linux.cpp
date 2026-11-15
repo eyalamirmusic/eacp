@@ -7,6 +7,9 @@
 
 #include <poll.h>
 
+#include <atomic>
+#include <chrono>
+
 using namespace nano;
 using namespace eacp;
 
@@ -305,6 +308,77 @@ auto tBareCloseDetachesTheHostedLoop =
         check(rootLoopPluginLoadCount() == 2);
     }
 };
+
+namespace
+{
+using PoolSubmit = void (*)(std::atomic<int>*, int);
+
+// A plugin copy's shared pool busy with two tasks when the image goes: through
+// detachCurrentThreadAsMain, or with the pool left to the image's static
+// destructors.
+void unloadWithPoolWork(bool detachFirst)
+{
+    for (auto attempt = 0; attempt < 10; ++attempt)
+    {
+        setEnv("EACP_ROOT_LOOP_PLUGIN_LOADS", "0");
+
+        auto plugin = RootLoopPlugin {};
+        check(plugin.isLoaded());
+
+        auto submit = plugin.library.findFunction<PoolSubmit>(
+            "eacpRootLoopPluginSubmitToPool");
+        auto detach =
+            plugin.library.findFunction<void (*)()>("eacpRootLoopPluginDetach");
+        check(submit != nullptr && detach != nullptr);
+
+        auto started = std::atomic<int> {0};
+        Threads::callAsync(
+            [&]
+            {
+                plugin.attach();
+                submit(&started, 100);
+            });
+
+        check(Threads::runEventLoopUntil([&] { return started.load() >= 1; },
+                                         Time::MS {2000}));
+
+        auto shutdown = plugin.shutdown;
+        auto begin = std::chrono::steady_clock::now();
+
+        Threads::runEventLoopFor(Time::MS {50},
+                                 [&]
+                                 {
+                                     if (detachFirst)
+                                         detach();
+
+                                     shutdown();
+                                     plugin.library.close();
+                                 });
+
+        auto tookMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - begin)
+                          .count();
+        LOG("unload with pool work (detach ", detachFirst, ") took ms: ", tookMs);
+        check(rootLoopPluginLoadCount() == 1);
+
+        auto afterUnload = 0;
+        Threads::callAsync([&] { ++afterUnload; });
+        check(Threads::runEventLoopUntil([&] { return afterUnload == 1; },
+                                         Time::MS {1000}));
+
+        auto reopened = Plugins::DynamicLibrary(EACP_ROOT_LOOP_TEST_PLUGIN);
+        check(reopened.isOpen());
+        check(rootLoopPluginLoadCount() == 2);
+    }
+}
+} // namespace
+
+auto tDetachStopsThePluginPool =
+    test("RootLoop/detachStopsThePluginsSharedPool") = []
+{ unloadWithPoolWork(true); };
+
+auto tCloseStopsThePluginPool = test("RootLoop/closeStopsThePluginsSharedPool") = []
+{ unloadWithPoolWork(false); };
 
 // Two copies of the same image are one load and one hosted loop; the last
 // close is what detaches it.

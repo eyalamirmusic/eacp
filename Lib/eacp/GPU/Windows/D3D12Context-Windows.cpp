@@ -7,13 +7,13 @@
 #include "../Device/Device.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Core/Utils/Singleton.h>
 #include <eacp/Core/Utils/Strings.h>
 
 #include <d3dcompiler.h>
 
 #include <algorithm>
 #include <cassert>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -531,6 +531,7 @@ namespace eacp::Graphics
 {
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
 void addRenderingDeviceReplacedListener(std::function<void()> listener);
+void addSharedDevicesReleaseListener(std::function<void()> listener);
 } // namespace eacp::Graphics
 
 namespace eacp::GPU
@@ -543,37 +544,55 @@ void CommandContext::rewindUploads()
     uploadCursor = 0;
 }
 
-D3D12Shared::D3D12Shared()
+D3D12Shared::D3D12Shared(std::uint64_t firstGeneration)
+    : generation(firstGeneration)
 {
     createAll();
-
-    // A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
-    // together. The graphics layer's recovery fires this listener after it
-    // re-established its own device; if ours died too (or never existed),
-    // rebuild it and every GPUView swapchain. The 2D layer also replaces its
-    // device voluntarily, so a healthy D3D12 device is left alone.
-    //
-    // Registered here rather than by Device, because there is one of these and
-    // there may be any number of Devices â€” a listener each would rebuild the
-    // swapchains once per Device.
-    Graphics::addRenderingDeviceReplacedListener(
-        []
-        {
-            auto& shared = getD3D12Shared();
-
-            if (shared.isValid()
-                && SUCCEEDED(shared.getDevice()->GetDeviceRemovedReason()))
-                return;
-
-            shared.recreateAfterDeviceLoss();
-
-            // The shared Device's context is what the swapchains below are
-            // rebuilt against, so it is renewed here and now. Every other
-            // Device renews on its own thread, at its next acquire().
-            getD3D12Context(Device::shared()).renewForNewDevice();
-            refreshAllGPUViewsForNewDevice();
-        });
 }
+
+namespace
+{
+// A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
+// together. The graphics layer's recovery fires this listener after it
+// re-established its own device; if ours died too (or never existed), rebuild
+// it and every GPUView swapchain. The 2D layer also replaces its device
+// voluntarily, so a healthy D3D12 device is left alone.
+//
+// Registered once per image rather than by Device, because there is one
+// D3D12Shared and there may be any number of Devices — a listener each would
+// rebuild the swapchains once per Device — and rather than by D3D12Shared,
+// which a release builds again.
+void rebuildIfRenderingDeviceReplacedOursToo()
+{
+    auto& shared = getD3D12Shared();
+
+    if (shared.isValid() && SUCCEEDED(shared.getDevice()->GetDeviceRemovedReason()))
+        return;
+
+    shared.recreateAfterDeviceLoss();
+
+    // The shared Device's context is what the swapchains below are rebuilt
+    // against, so it is renewed here and now. Every other Device renews on its
+    // own thread, at its next acquire().
+    getD3D12Context(Device::shared()).renewForNewDevice();
+    refreshAllGPUViewsForNewDevice();
+}
+
+void listenToTheGraphicsLayer()
+{
+    Graphics::addRenderingDeviceReplacedListener(
+        rebuildIfRenderingDeviceReplacedOursToo);
+    Graphics::addSharedDevicesReleaseListener(releaseSharedGPUDevice);
+}
+
+ReleasableShared<D3D12Shared>& d3d12SharedHolder()
+{
+    return Singleton::getImmortal<ReleasableShared<D3D12Shared>>();
+}
+
+// Carried across a release; see the D3D12Shared constructor.
+std::uint64_t nextD3D12SharedGeneration = 1;
+} // namespace
 
 void D3D12Shared::createAll()
 {
@@ -656,15 +675,21 @@ void D3D12Shared::createRootSignatures()
     for (auto configuration = 0; configuration < samplingConfigurations;
          ++configuration)
     {
-        const auto linear = (configuration & 2) != 0;
-        const auto repeat = (configuration & 1) != 0;
-        const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
-                                    : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        const auto sampling = samplingConfiguration(configuration);
+        const auto linear = sampling.filter == TextureFilter::Linear;
+        const auto compare = sampling.compare == TextureCompare::LessEqual;
+        const auto address = sampling.addressMode == TextureAddressMode::Repeat
+                                 ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                 : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
         auto& sampler = staticSamplers[configuration];
 
-        sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
-                                : D3D12_FILTER_MIN_MAG_MIP_POINT;
+        if (compare)
+            sampler.Filter = linear ? D3D12_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR
+                                    : D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT;
+        else
+            sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
+                                    : D3D12_FILTER_MIN_MAG_MIP_POINT;
         sampler.AddressU = address;
         sampler.AddressV = address;
         sampler.AddressW = address;
@@ -673,7 +698,8 @@ void D3D12Shared::createRootSignatures()
         // Not left at 0: zero is not a legal D3D12_COMPARISON_FUNC (they run
         // 1..8), and a static sampler is validated when the root signature is
         // serialised rather than quietly ignored.
-        sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        sampler.ComparisonFunc = compare ? D3D12_COMPARISON_FUNC_LESS_EQUAL
+                                         : D3D12_COMPARISON_FUNC_ALWAYS;
         sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
         sampler.ShaderRegister = static_cast<UINT>(configuration);
         sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -1112,8 +1138,24 @@ void D3D12Shared::recreateAfterDeviceLoss()
 
 D3D12Shared& getD3D12Shared()
 {
-    static auto shared = D3D12Shared();
-    return shared;
+    return d3d12SharedHolder().get(
+        [](std::optional<D3D12Shared>& shared)
+        {
+            [[maybe_unused]] static const auto listening =
+                (listenToTheGraphicsLayer(), true);
+
+            shared.emplace(nextD3D12SharedGeneration);
+        });
+}
+
+void releaseD3D12Shared()
+{
+    auto& holder = d3d12SharedHolder();
+
+    if (auto* shared = holder.find())
+        nextD3D12SharedGeneration = shared->getGeneration() + 1;
+
+    holder.release();
 }
 
 D3D12Context::D3D12Context(D3D12_COMMAND_LIST_TYPE type)
@@ -1229,6 +1271,7 @@ void D3D12Context::createNullDescriptors()
 void D3D12Context::releaseAll()
 {
     retired.clear();
+    retiredDescriptors.clear();
     staging.clear();
     readback.clear();
     constantPages.clear();
@@ -1306,6 +1349,11 @@ DescriptorSlot D3D12Context::allocateFrom(DescriptorAllocator& allocator)
     if (allocator.heap == nullptr)
         return {};
 
+    // Slots come back only as their fences pass, so a full heap may be holding
+    // some that already have.
+    if (allocator.freeList.empty() && allocator.next >= allocator.capacity)
+        purgeRetired();
+
     auto index = UINT {0};
 
     if (!allocator.freeList.empty())
@@ -1355,7 +1403,20 @@ void D3D12Context::freeFrom(DescriptorAllocator& allocator,
     if (slot.generation != generation || allocator.heap == nullptr)
         return;
 
-    allocator.freeList.push_back(slot.index);
+    retiredDescriptors.add({&allocator, slot.index, 0, false});
+}
+
+void D3D12Context::returnRetiredDescriptors()
+{
+    retiredDescriptors.eraseIf(
+        [this](const RetiredDescriptor& entry)
+        {
+            if (!entry.stamped || !hasCompleted(entry.fenceValue))
+                return false;
+
+            entry.allocator->freeList.push_back(entry.index);
+            return true;
+        });
 }
 
 DescriptorSlot D3D12Context::allocateTextureDescriptor()
@@ -1425,7 +1486,18 @@ void D3D12Context::purgeRetired()
                 entry.stamped = true;
             }
         }
+
+        for (auto& entry: retiredDescriptors)
+        {
+            if (!entry.stamped)
+            {
+                entry.fenceValue = lastSubmittedValue;
+                entry.stamped = true;
+            }
+        }
     }
+
+    returnRetiredDescriptors();
 
     // Each goes as its own value passes. Waiting instead for the fence to be
     // past *everything* ever submitted is what this used to do, and under
@@ -1617,10 +1689,8 @@ void D3D12Context::reportFailedClose() const
     auto* device = getDevice();
     const auto reason = device != nullptr ? device->GetDeviceRemovedReason() : S_OK;
 
-    char code[16] = {};
-    std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(reason));
-
-    LOG("D3D12Context: a recording failed to close; device removed reason ", code);
+    LOGF("D3D12Context: a recording failed to close; device removed reason 0x{:08X}",
+         static_cast<unsigned long>(reason));
 }
 
 void D3D12Context::discard(CommandContext* commands)
@@ -1848,7 +1918,7 @@ D3D12Context::ConstantPage* D3D12Context::pageFor(CommandContext& commands,
     return take(constantPages.size() - 1);
 }
 
-ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
+ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& poolToUse,
                                             Vector<int>& taken,
                                             std::size_t bytes,
                                             D3D12_HEAP_TYPE heapType)
@@ -1862,9 +1932,9 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
     // A free slot already big enough is the common case once the traffic
     // settles: every frame of a given clip, and every run of a given model,
     // moves exactly the same number of bytes.
-    for (auto index = 0; index < pool.size(); ++index)
+    for (auto index = 0; index < poolToUse.size(); ++index)
     {
-        auto& slot = pool[index];
+        auto& slot = poolToUse[index];
 
         if (isFree(slot) && slot.bytes >= bytes)
         {
@@ -1876,9 +1946,9 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
 
     // Otherwise grow a free slot rather than adding one, so a stream that
     // switches to a larger frame size does not strand the old buffers.
-    for (auto index = 0; index < pool.size(); ++index)
+    for (auto index = 0; index < poolToUse.size(); ++index)
     {
-        auto& slot = pool[index];
+        auto& slot = poolToUse[index];
 
         if (!isFree(slot))
             continue;
@@ -1907,8 +1977,8 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
     slot.lent = true;
 
     auto* resource = slot.resource.get();
-    pool.add(std::move(slot));
-    taken.add(pool.size() - 1);
+    poolToUse.add(std::move(slot));
+    taken.add(poolToUse.size() - 1);
     return resource;
 }
 
@@ -1926,17 +1996,17 @@ ID3D12Resource* D3D12Context::acquireReadbackBuffer(CommandContext& commands,
         readback, commands.readbackTaken, bytes, D3D12_HEAP_TYPE_READBACK);
 }
 
-void D3D12Context::returnPooled(Vector<StagingBuffer>& pool,
+void D3D12Context::returnPooled(Vector<StagingBuffer>& poolToUse,
                                 Vector<int>& taken,
                                 std::uint64_t freeAt)
 {
     for (auto index: taken)
     {
-        if (index < 0 || index >= pool.size())
+        if (index < 0 || index >= poolToUse.size())
             continue;
 
-        pool[index].lent = false;
-        pool[index].freeAt = freeAt;
+        poolToUse[index].lent = false;
+        poolToUse[index].freeAt = freeAt;
     }
 
     taken.clear();

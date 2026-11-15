@@ -31,8 +31,12 @@ endif ()
 # live in ESIMD, which is always built -O3 -- so ImageOps.cpp holds only thin
 # wrappers and needs no per-source optimization flag here. (The old per-config
 # per-source -O2 also broke the Xcode generator, which the iOS build uses.)
-find_package(ESIMD REQUIRED)
 target_link_libraries(eacp-graphics PUBLIC eacp-core ESIMD)
+
+# Only Windows has shared devices whose release at unload hangs the host.
+if (NOT WIN32)
+    target_sources(eacp-graphics PRIVATE Graphics/SharedDevices-Default.cpp)
+endif ()
 
 # PUBLIC so the capability is a compile-time fact for every consumer, not just
 # a CMake variable: Graphics.h leaves the 2D-tier headers out where there is no
@@ -151,7 +155,7 @@ elseif (ANDROID)
             Image/Image-Android.cpp
             Input/GameInput-Default.cpp
             Layers/Layer-Linux.cpp
-            Menu/Menu-Linux.cpp
+            Menu/Menu-Android.cpp
             Primitives/Path-Linux.cpp
             Tray/TrayIcon-Linux.cpp
             View/AndroidViewSurface-Android.cpp
@@ -159,6 +163,7 @@ elseif (ANDROID)
             Window/AndroidEnvironment-Android.cpp
             Window/AndroidMain-Android.c
             Window/Display-Android.cpp
+            Window/LinuxWindowSurface-Linux.cpp
             Window/Window-Android.cpp)
 
     # The glue is the NDK's own source, not clean under eacp's warning set.
@@ -176,16 +181,17 @@ elseif (ANDROID)
     target_link_libraries(eacp-graphics PUBLIC android log PRIVATE jnigraphics)
     target_link_options(eacp-graphics INTERFACE "-u" "ANativeActivity_onCreate")
 elseif (UNIX)
-    # Wayland and X11 side by side, plus stubs for what needs a codec or a
-    # desktop environment. Path is the exception, recording geometry rather
-    # than pixels.
+    # Wayland and X11 side by side, plus stubs for what needs a desktop
+    # environment. Path is the exception, recording geometry rather than
+    # pixels.
     target_sources(eacp-graphics PRIVATE
             Graphics/Keyboard-Linux.cpp
             Helpers/DisplayLink-Linux.cpp
             Helpers/SystemAppearance-Linux.cpp
             HotKey/GlobalHotKey-Linux.cpp
             Image/Image-Linux.cpp
-            Input/GameInput-Default.cpp
+            Input/EvdevGamepad-Linux.cpp
+            Input/GameInput-Linux.cpp
             Layers/Layer-Linux.cpp
             Menu/Menu-Linux.cpp
             Primitives/Path-Linux.cpp
@@ -198,7 +204,9 @@ elseif (UNIX)
             Window/HeadlessWindow-Linux.cpp
             Window/LinuxInput-Linux.cpp
             Window/LinuxWindowNative-Linux.cpp
+            Window/LinuxWindowSurface-Linux.cpp
             Window/LinuxWindowSystem-Linux.cpp
+            Window/NativeChildSurface-Linux.cpp
             Window/WaylandClipboard-Linux.cpp
             Window/WaylandDisplay-Linux.cpp
             Window/WaylandInput-Linux.cpp
@@ -215,6 +223,13 @@ elseif (UNIX)
     include(FindWayland)
     include(FindX11Backend)
     target_link_libraries(eacp-graphics PRIVATE eacp-wayland eacp-x11)
+
+    # The PNG/JPEG codec: stb's implementations are compiled in Image-Linux.cpp
+    # alone, so it stays out of the unity batches.
+    include(FindStb)
+    target_link_libraries(eacp-graphics PRIVATE eacp-stb)
+    set_source_files_properties(Image/Image-Linux.cpp
+            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 endif ()
 
 set_default_target_setting(eacp-graphics)

@@ -108,7 +108,7 @@ auto tThreadIdPairIsTheWholeGid = test("ThreadIndexVector/aPairIsTheWholeGid") =
     builder.write(output, g.y() * builder.gridWidth() + g.x(), weighted.y());
 
     auto shader = builder.build();
-    check(shader.dispatchRank == DispatchRank::TwoD);
+    check(shader.dispatchRank() == DispatchRank::TwoD);
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint2 gid [[thread_position_in_grid]]"));
@@ -143,7 +143,7 @@ auto tThreadIdTripleIsTheWholeGid =
     builder.write(output, g.z() * 16u + g.x(), weighted.z());
 
     auto shader = builder.build();
-    check(shader.dispatchRank == DispatchRank::ThreeD);
+    check(shader.dispatchRank() == DispatchRank::ThreeD);
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint3 gid [[thread_position_in_grid]]"));

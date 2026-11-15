@@ -129,16 +129,18 @@ std::uint64_t GlyphAtlas::keyFor(
 {
     // A glyph id is sixteen bits in every font format, which leaves the low
     // word room for the font it is in, the weight class, the slant, the phase
-    // and the lightness; the face gets a word of its own.
+    // and the lightness; the face gets the high word but its top bit, which
+    // says an italic may not be synthesized.
     const auto weight =
         static_cast<std::uint64_t>(weightClass(variant.weight) / 100);
     const auto font = static_cast<std::uint64_t>(std::clamp(key.font, 0, 255));
+    const auto faceBits = static_cast<std::uint64_t>(face) & 0x7FFFFFFFu;
 
     return static_cast<std::uint64_t>(key.glyph & 0xFFFF) | (font << 16)
            | (weight << 24) | (static_cast<std::uint64_t>(variant.italic) << 28)
            | (static_cast<std::uint64_t>(phase & 3) << 29)
-           | (static_cast<std::uint64_t>(lightText) << 31)
-           | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(face)) << 32);
+           | (static_cast<std::uint64_t>(lightText) << 31) | (faceBits << 32)
+           | (static_cast<std::uint64_t>(withholdsSyntheticItalic(variant)) << 63);
 }
 
 std::string GlyphAtlas::shapeKeyFor(std::string_view text,
@@ -150,7 +152,8 @@ std::string GlyphAtlas::shapeKeyFor(std::string_view text,
     key += static_cast<char>(face);
     key += static_cast<char>(face >> 8);
     key += static_cast<char>(weightClass(variant.weight) / 100
-                             + (variant.italic ? 16 : 0));
+                             + (variant.italic ? 16 : 0)
+                             + (withholdsSyntheticItalic(variant) ? 32 : 0));
     key += text;
 
     return key;

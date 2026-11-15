@@ -35,6 +35,11 @@ add_subdirectory(AspectLock)
 # because a row is something a model paints rather than something the tree holds.
 add_subdirectory(WidgetGallery)
 
+# One Graphics::MenuBar through setApplicationMenuBar, its items greying and
+# ticking from state the window prints: the system bar on macOS, the window's
+# on Windows, and on Linux a bar drawn in the window above the content.
+add_subdirectory(MenuBarDemo)
+
 # The OnlineResources registry as a list: DownloadAndPlay's clips, each with
 # whether it is on disk, a progress bar while one is fetched, and one button
 # that empties the folder both apps share.
@@ -59,3 +64,7 @@ add_subdirectory(SVGDocument)
 # up to 64 at once in a scrolling grid, stacked under widgets and a captured
 # group, and added, deleted and reparented while they animate.
 add_subdirectory(GPUComponents)
+
+# A layout function rebuilt and reloaded on save under EACP_HOT_RELOAD, and
+# compiled into the app as it stands otherwise.
+add_subdirectory(HotReload)

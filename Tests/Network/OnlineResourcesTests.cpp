@@ -197,8 +197,8 @@ auto tRegistryAppOwned =
     auto listed = registry.entries();
     check(std::count_if(listed.begin(),
                         listed.end(),
-                        [&](const OnlineResources::Entry& entry)
-                        { return entry.directory == directory; })
+                        [&](const OnlineResources::Entry& listedEntry)
+                        { return listedEntry.directory == directory; })
           == 1);
     check(entryAt(resource.path()).status == Status::fetched);
 };

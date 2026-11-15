@@ -24,6 +24,7 @@ namespace
 constexpr auto httpServerSlice = Time::MS {100};
 
 constexpr auto httpServerReadChunk = 4096;
+constexpr auto streamingBodyReadChunk = 64 * 1024;
 
 TCP::Timeouts httpServerTimeouts()
 {
@@ -42,13 +43,22 @@ struct Server::Impl
 
     ~Impl();
 
-    bool start(int port, RequestHandler h);
+    bool start(int port, RequestHandler h, StreamingRouteFinder finder);
     void stop();
 
     void acceptLoop();
     void handleConnection(TCP::Connection connection);
-    std::optional<Request> readRequest(TCP::Connection& connection);
+    std::optional<std::string> receiveFromPeer(TCP::Connection& connection,
+                                               int maxBytes);
+    std::optional<Request>
+        readRequest(TCP::Connection& connection,
+                    RequestParser& parser,
+                    std::optional<StreamingRequestHandler>& streamingHandler);
     void dispatchRequest(TCP::Connection connection, Request request);
+    void serveStreamingConnection(TCP::Connection& connection,
+                                  const Request& head,
+                                  std::string bytesAfterHeaders,
+                                  const StreamingRequestHandler& streamingHandler);
 
     bool beginReading(TCP::Connection& connection);
     void endReading(TCP::Connection& connection);
@@ -58,6 +68,7 @@ struct Server::Impl
     OwningPointer<Dispatcher> dispatcher;
     std::optional<TCP::Listener> listener;
     RequestHandler handler;
+    StreamingRouteFinder findStreamingRoute;
     std::thread acceptThread;
     std::atomic<bool> running {false};
 
@@ -73,9 +84,11 @@ Server::Server(ServerOptions options)
 
 Server::~Server() = default;
 
-bool Server::listen(int port, RequestHandler handler)
+bool Server::startListening(int port,
+                            RequestHandler handler,
+                            StreamingRouteFinder findStreamingRoute)
 {
-    return impl->start(port, std::move(handler));
+    return impl->start(port, std::move(handler), std::move(findStreamingRoute));
 }
 
 void Server::stop()
@@ -93,7 +106,7 @@ Server::Impl::~Impl()
     stop();
 }
 
-bool Server::Impl::start(int port, RequestHandler h)
+bool Server::Impl::start(int port, RequestHandler h, StreamingRouteFinder finder)
 {
     if (listener.has_value())
         return false;
@@ -109,6 +122,7 @@ bool Server::Impl::start(int port, RequestHandler h)
     }
 
     handler = std::move(h);
+    findStreamingRoute = std::move(finder);
     running = true;
     acceptThread = std::thread([this] { acceptLoop(); });
     return true;
@@ -172,11 +186,11 @@ void Server::Impl::dispatchRequest(TCP::Connection connection, Request request)
     connection.setIoTimeout({});
     auto peer = std::make_shared<TCP::Connection>(std::move(connection));
 
-    auto sendResponse = [peer](const Response& res)
+    auto sendReplyAndClose = [peer](const Response& res)
     {
         try
         {
-            peer->send(serializeResponse(res));
+            sendResponse(res, [&peer](std::string_view bytes) { peer->send(bytes); });
         }
         catch (const TCP::Error&)
         {
@@ -186,7 +200,7 @@ void Server::Impl::dispatchRequest(TCP::Connection connection, Request request)
     };
 
     dispatcher->dispatch(
-        DispatchTask {std::move(request), handler, std::move(sendResponse)});
+        DispatchTask {std::move(request), handler, std::move(sendReplyAndClose)});
 }
 
 // A connection is listed only while its request is read, under the lock
@@ -226,50 +240,124 @@ void Server::Impl::handleConnection(TCP::Connection connection)
     if (!beginReading(connection))
         return;
 
-    auto request = readRequest(connection);
+    auto parser = RequestParser();
+    auto streamingHandler = std::optional<StreamingRequestHandler>();
+    auto request = readRequest(connection, parser, streamingHandler);
+
+    if (request.has_value() && streamingHandler.has_value())
+    {
+        serveStreamingConnection(
+            connection, *request, parser.takeBytesAfterHeaders(), *streamingHandler);
+        return;
+    }
+
     endReading(connection);
 
     if (request.has_value())
         dispatchRequest(std::move(connection), std::move(*request));
 }
 
-std::optional<Request> Server::Impl::readRequest(TCP::Connection& connection)
+// The connection stays listed for stop() while the handler reads the body,
+// and leaves the list only to send the reply, as a dispatched one does.
+void Server::Impl::serveStreamingConnection(
+    TCP::Connection& connection,
+    const Request& head,
+    std::string bytesAfterHeaders,
+    const StreamingRequestHandler& streamingHandler)
 {
-    auto parser = RequestParser();
+    auto peer = PeerStream();
+    peer.alreadyReceived = std::move(bytesAfterHeaders);
+    peer.receiveMore = [this, &connection]
+    { return receiveFromPeer(connection, streamingBodyReadChunk).value_or(""); };
+    peer.send = [&connection](std::string_view bytes) { connection.send(bytes); };
 
+    auto response = Response();
+
+    try
+    {
+        response = serveStreamingRequest(streamingHandler, head, std::move(peer));
+    }
+    catch (const TCP::Error&)
+    {
+        endReading(connection);
+        return;
+    }
+
+    endReading(connection);
+    connection.setIoTimeout({});
+
+    try
+    {
+        sendResponse(response,
+                     [&connection](std::string_view bytes) { connection.send(bytes); });
+    }
+    catch (const TCP::Error&)
+    {
+    }
+
+    connection.close();
+}
+
+std::optional<std::string> Server::Impl::receiveFromPeer(TCP::Connection& connection,
+                                                         int maxBytes)
+{
     while (true)
     {
-        auto chunk = std::string();
-
         try
         {
-            chunk = connection.receive(httpServerReadChunk);
+            auto chunk = connection.receive(maxBytes);
+
+            if (chunk.empty())
+                return std::nullopt;
+
+            return chunk;
         }
         catch (const TCP::TimeoutError&)
         {
-            if (running)
-                continue;
-
-            return std::nullopt;
+            if (!running)
+                return std::nullopt;
         }
         catch (const TCP::Error&)
         {
             return std::nullopt;
         }
+    }
+}
 
-        if (chunk.empty())
+std::optional<Request> Server::Impl::readRequest(
+    TCP::Connection& connection,
+    RequestParser& parser,
+    std::optional<StreamingRequestHandler>& streamingHandler)
+{
+    auto hasLookedForStreamingRoute = false;
+
+    while (true)
+    {
+        auto chunk = receiveFromPeer(connection, httpServerReadChunk);
+
+        if (!chunk.has_value())
             return std::nullopt;
 
-        auto state = parser.feed(chunk.data(), (int) chunk.size());
+        auto state = parser.feed(chunk->data(), (int) chunk->size());
 
         if (state == RequestParser::State::Invalid)
             return std::nullopt;
 
-        if (state == RequestParser::State::Ready)
+        if (parser.hasHeaders() && !hasLookedForStreamingRoute)
+        {
+            hasLookedForStreamingRoute = true;
+            streamingHandler = findStreamingRoute(parser.request());
+        }
+
+        if (state == RequestParser::State::Ready || streamingHandler.has_value())
         {
             auto request = std::move(parser.request());
             request.remoteAddr = connection.address().host;
             request.remotePort = connection.address().port;
+
+            if (streamingHandler.has_value())
+                request.body.clear();
+
             return request;
         }
     }

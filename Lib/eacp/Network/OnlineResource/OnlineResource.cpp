@@ -464,19 +464,19 @@ Threads::Async<OnlineResource::Result> OnlineResource::start()
     // The registry hears the outcome even when the object is gone: the
     // file landed, or did not, whoever was waiting for it.
     std::thread {
-        [current, plan = std::move(plan)]
+        [current, spec = std::move(plan)]
         {
-            auto result = performFetch(plan, current->transfer, current->stage);
+            auto result = performFetch(spec, current->transfer, current->stage);
             current->stage = Progress::Stage::done;
 
             Threads::callAsync(
-                [current, target = plan.target, result = std::move(result)]() mutable
+                [current, target = spec.target, output = std::move(result)]() mutable
                 {
                     current->running = false;
-                    OnlineResources::get().reportFinished(target, result);
+                    OnlineResources::get().reportFinished(target, output);
 
                     if (!current->abandoned)
-                        current->promise.resolve(std::move(result));
+                        current->promise.resolve(std::move(output));
                 });
         }}
         .detach();

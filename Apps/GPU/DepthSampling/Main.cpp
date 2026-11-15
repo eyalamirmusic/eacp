@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Graphics.h>
 
@@ -1060,6 +1061,11 @@ float quantiseToByte(float value)
     return std::round(std::clamp(value, 0.f, 1.f) * 255.f) / 255.f;
 }
 
+int binaryExponent(float value)
+{
+    return value == 0.f ? 0 : std::ilogb(value) + 1;
+}
+
 // And out of a half float: ten stored mantissa bits below the leading one, so
 // the step is 2^(exponent - 11) at whatever exponent the value has. Computed
 // rather than converted through a half type, there being no portable one.
@@ -1068,8 +1074,7 @@ float quantiseToHalf(float value)
     if (value == 0.f)
         return 0.f;
 
-    auto exponent = 0;
-    std::frexp(value, &exponent);
+    auto exponent = binaryExponent(value);
 
     auto step = std::ldexp(1.f, exponent - 11);
     return std::round(value / step) * step;
@@ -1220,8 +1225,7 @@ int runCheck()
                 (double) linearDistance(asHalf),
                 (double) std::abs(linearDistance(asHalf) - linearDistance(probe)));
 
-    auto exponent = 0;
-    std::frexp(probe, &exponent);
+    auto exponent = binaryExponent(probe);
 
     auto floatStep = stepInUnits(probe, std::ldexp(1.f, exponent - 24));
     auto halfStep = stepInUnits(probe, std::ldexp(1.f, exponent - 11));
@@ -1261,7 +1265,14 @@ int runCheck()
 
 int main(int argc, char** argv)
 {
-    if (argc > 1 && std::strcmp(argv[1], "--check") == 0)
+    auto check = false;
+    auto cli = Args::Parser {"DepthSampling", "Soft particles over sampled depth."};
+    cli.flag("--check", check, "render headlessly and print the checks, no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (check)
         return runCheck();
 
     return eacp::Apps::run<DepthSamplingApp>();

@@ -1,9 +1,19 @@
 # The CPU executor's own suite: device-free, so it runs on every lane, a Linux
 # box with no driver included.
 nano_add_executable(CpuComputeTests
-        SOURCES BatchTests.cpp DispatchGroupsTests.cpp ExecutorTests.cpp
-                GroupTests.cpp HelperTests.cpp KernelTests.cpp SimdMatrixTests.cpp
+        SOURCES AtomicOpsTests.cpp BatchTests.cpp ControlFlowTests.cpp
+                CountingHeap.cpp DispatchGroupsTests.cpp
+                ExecutorTests.cpp Float16Tests.cpp FunctionTests.cpp GroupTests.cpp
+                HelperTests.cpp
+                KernelBuiltInTests.cpp KernelTests.cpp OverrideTests.cpp
+                SimdMatrixTests.cpp StructTests.cpp TypesTests.cpp
+                WgslBuiltinTests.cpp
         TARGETS eacp-cpu-compute)
+
+# The replaced operator new stays out of every unity batch, where GCC would inline
+# it into the other cases' allocations and warn about the malloc it sees.
+set_source_files_properties(CountingHeap.cpp PROPERTIES
+        SKIP_UNITY_BUILD_INCLUSION ON)
 
 # The executor never contracts a multiply-add, so the inline C++ references the
 # cases compare against must not either, or an exact comparison fails on a

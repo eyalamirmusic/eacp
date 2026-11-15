@@ -237,8 +237,7 @@ void bindStageTexture(D3D12Encoder* encoder,
     // A render target an earlier pass on this frame drew into is still in
     // RENDER_TARGET, and this is where it goes back. A plain texture is already
     // in the state this asks for and the helper records nothing.
-    if (!hasReadState(data->state, readStateFor(stage)))
-        transitionTextureForUse(list, *data, readStateFor(stage));
+    transitionTextureForUse(list, *data, readStateFor(stage));
 
     // Only the SRV: the sampler is a static sampler in the root signature, chosen
     // by the register the shader's sampler was emitted at. See TextureSampling.
@@ -415,6 +414,17 @@ void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
 {
     bindStageDepthTexture(
         impl->encoder.get(), ShaderStage::Vertex, renderTarget, slot);
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
+// The slot's sampler table alone, which both stages see.
+void RenderPass::setFragmentSampler(const Sampler& sampler, int slot)
+{
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
+void RenderPass::setVertexSampler(const Sampler& sampler, int slot)
+{
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 

@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include <functional>
+#include <string>
 
 // Frame::copy and CommandBuffer::copy: texture to texture, buffer to buffer and
 // between the two, recorded in order with the passes. Every texel a copy moves
@@ -493,6 +494,50 @@ auto tCopyOrderedWithPasses = test("Copy/aCopyBetweenPassesIsInOrder") = []
     check(readTexture(drawn) == filled(16, green));
     check(readTexture(copy) == filled(16, red));
     check(readTexture(sampled) == filled(16, red));
+};
+
+// A copy and a read-back between two passes see the first pass and not the
+// second at every size, the target going back to being drawn into once each has
+// read it. Whether a driver orders the copy before the next pass's clear was seen
+// to depend on the texture's size, so one size alone proves little.
+auto tCopiesOrderedAtEverySize =
+    test("Copy/copiesBetweenPassesAreInOrderAtEverySize") = []
+{
+    if (!canCopy())
+        return;
+
+    for (const auto width: {4, 16, 64, 256, 1024})
+    {
+        const auto count = width * width;
+        const auto atWidth = "width " + std::to_string(width);
+        auto drawn = makeTexture(nullptr, width, true);
+        auto copy = makeZeroTexture(width);
+        auto readBack = makeZeroBuffer(count);
+
+        runFrame(
+            [&](Frame& frame)
+            {
+                frame.beginPass(drawn, {{1.f, 0.f, 0.f, 1.f}});
+                frame.copy(drawn, copy);
+                frame.beginPass(drawn, {{0.f, 1.f, 0.f, 1.f}});
+            });
+
+        check(readTexture(copy) == filled(count, red), atWidth);
+
+        runFrame(
+            [&](Frame& frame)
+            {
+                auto layout = BufferTextureCopy {};
+                layout.bytesPerRow = width * 4;
+
+                frame.beginPass(drawn, {{1.f, 0.f, 0.f, 1.f}});
+                frame.copy(drawn, readBack, layout);
+                frame.beginPass(drawn, {{0.f, 1.f, 0.f, 1.f}});
+            });
+
+        check(readBuffer(readBack) == filled(count, red), atWidth);
+        check(readTexture(drawn) == filled(count, green), atWidth);
+    }
 };
 
 // The same copies on an off-screen command buffer.

@@ -37,7 +37,7 @@ std::string webSocketPadForSha1(std::string_view input)
     auto message = std::string(input);
     auto bitLength = (std::uint64_t) input.size() * 8;
 
-    message.push_back((char) 0x80);
+    message.push_back('\x80');
 
     while (message.size() % 64 != 56)
         message.push_back('\0');

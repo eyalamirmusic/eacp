@@ -41,12 +41,59 @@ bool Bindings::set(const UIntOutputBuffer& member, std::span<std::uint32_t> elem
                 BufferAccess::Write);
 }
 
+bool Bindings::set(const IntInputBuffer& member,
+                   std::span<const std::int32_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Int,
+                BufferAccess::Read);
+}
+
+bool Bindings::set(const IntOutputBuffer& member, std::span<std::int32_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Int,
+                BufferAccess::Write);
+}
+
+bool Bindings::set(const HalfInputBuffer& member,
+                   std::span<const std::uint16_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Half,
+                BufferAccess::Read);
+}
+
+bool Bindings::set(const HalfOutputBuffer& member, std::span<std::uint16_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Half,
+                BufferAccess::Write);
+}
+
 bool Bindings::set(const AtomicBuffer& member, std::span<std::uint32_t> elements)
 {
     return bind(member.slot,
                 elements.data(),
                 elements.size(),
                 ValueType::UInt,
+                BufferAccess::Atomic);
+}
+
+bool Bindings::set(const IntAtomicBuffer& member, std::span<std::int32_t> elements)
+{
+    return bind(member.slot,
+                elements.data(),
+                elements.size(),
+                ValueType::Int,
                 BufferAccess::Atomic);
 }
 
@@ -84,6 +131,22 @@ bool Bindings::bind(int slot,
     entry.element = element;
     entry.access = access;
     entry.bound = true;
+    entry.structStride = 0;
+    return true;
+}
+
+bool Bindings::bindStruct(
+    int slot, const void* data, std::size_t bytes, int stride, BufferAccess access)
+{
+    if (stride <= 0
+        || !bind(slot,
+                 data,
+                 bytes / static_cast<std::size_t>(stride),
+                 ValueType::Struct,
+                 access))
+        return false;
+
+    slots[static_cast<std::size_t>(slot)].structStride = stride;
     return true;
 }
 } // namespace eacp::GPU::CpuCompute

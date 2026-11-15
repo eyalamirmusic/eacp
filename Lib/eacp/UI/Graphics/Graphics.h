@@ -162,6 +162,18 @@ public:
                    const Rect& dest,
                    float opacity = 1.f);
 
+    // The same, cut to a rounded rect -- `corners`, in the current space, and
+    // usually larger than `dest`: one tile of a background is cut by the box it
+    // tiles, not by itself. Anti-aliased as fillRoundedRect's edge is, and cut
+    // in the image batch's own fragment stage, so it costs no clip change and a
+    // row of tiles under one box stays one draw. It narrows whatever clip is in
+    // force rather than replacing it.
+    void drawImage(const ImageRef& image,
+                   const Rect& source,
+                   const Rect& dest,
+                   const RoundedRect& corners,
+                   float opacity = 1.f);
+
     // Draws with the pen on the baseline at the string's left edge, and returns
     // the advance so differently coloured runs can be chained along a line.
     float drawText(std::string_view text, Point baselineLeft);

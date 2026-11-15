@@ -1,3 +1,4 @@
+#include <eacp/GPU/Dxc/DxcResource.h>
 #include <eacp/GPU/GPU.h>
 #include <algorithm>
 
@@ -172,6 +173,26 @@ Graphics::WindowOptions windowOptions()
     options.aspectRatio = Graphics::Point {16.0f, 9.0f};
     return options;
 }
+
+// On D3D12 the shaders go through DXC rather than FXC: the first compile
+// fetches the compiler release once and loads it, and anything that stops it
+// leaves FXC compiling them as before. Every other backend ignores the option.
+void reportShaderCompiler()
+{
+    const auto status = Dxc::status();
+
+    if (status.state == Dxc::State::loaded)
+        LOG("Teapot: shaders compiled by DXC ",
+            status.version,
+            " (",
+            status.compiledStages,
+            " stages)");
+    else if (Platform::isWindows())
+        LOG("Teapot: shaders compiled by FXC; DXC ",
+            Dxc::stateName(status.state),
+            " ",
+            status.error);
+}
 } // namespace
 
 struct TeapotView final : GPUView
@@ -183,6 +204,7 @@ struct TeapotView final : GPUView
         shader.setVertices(mesh.vertices.data(), mesh.vertices.size());
         shader.setIndices(mesh.indices.data(), mesh.indices.size());
         shader.prepare(sampleCount(), true);
+        reportShaderCompiler();
         setContinuous(true);
     }
 
@@ -214,5 +236,6 @@ struct TeapotView final : GPUView
 
 int main()
 {
+    Dxc::enableFromOnlineResource();
     return Graphics::runWindowedApp<TeapotView>(windowOptions());
 }

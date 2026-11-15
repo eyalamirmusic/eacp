@@ -33,8 +33,8 @@ public:
 
     void received(Message message) override
     {
-        deliver([message = std::move(message)](WebSocketEndpoint& self)
-                { self.deliverReceived(message); });
+        deliver([incoming = std::move(message)](WebSocketEndpoint& self)
+                { self.deliverReceived(incoming); });
     }
 
     void closed(int code, const std::string& reason) override

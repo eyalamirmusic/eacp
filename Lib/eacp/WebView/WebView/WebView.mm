@@ -1,6 +1,12 @@
 #import <WebKit/WebKit.h>
 #import <Foundation/Foundation.h>
 #import <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#else
+#import <AppKit/AppKit.h>
+#endif
+#include "MessageOrigin.h"
 #include "Snapshot-Apple.h"
 #include "WebView.h"
 #include "WebViewPlatform-Apple.h"
@@ -96,6 +102,15 @@ struct WebViewDelegateState
 {
     std::weak_ptr<eacp::Graphics::WebView::Native> nativeWeak;
     MessageHandlerMap* messageHandlers = nullptr;
+
+    // Owned by the Native beside messageHandlers and cut with it.
+    eacp::Graphics::detail::MessageOriginPolicy* originPolicy = nullptr;
+    WKWebView* ownWebView = nil;
+
+    // Where each in-flight WKDownload was told to write, keyed by the
+    // download object. Recorded when the destination is chosen, erased when
+    // the download finishes or fails. Main thread only.
+    std::unordered_map<const void*, std::string> downloadDestinations;
 };
 
 WebViewDelegateState* getWebViewDelegateState(id self)
@@ -149,16 +164,20 @@ struct WebView::PopupInit
 {
     WKWebViewConfiguration* configuration = nil;
     bool inspectable = false;
+    bool promptForMediaCapture = false;
+    detail::MessageOriginPolicy originPolicy;
 };
 
 struct WebView::Native
 {
     Native(WebView& ownerToUse, Options options)
         : owner(ownerToUse)
+        , originPolicy(options)
     {
         delegate = createWebViewDelegate();
         getWebViewDelegateState(delegate.get())->messageHandlers =
             &messageHandlers;
+        getWebViewDelegateState(delegate.get())->originPolicy = &originPolicy;
 
         config = [[WKWebViewConfiguration alloc] init];
 
@@ -202,6 +221,8 @@ struct WebView::Native
               .defaultContextMenu = options.defaultContextMenu
             }
         );
+        getWebViewDelegateState(delegate.get())->ownWebView = webView.get();
+
         if (options.transparentBackground)
         {
 #if TARGET_OS_IPHONE
@@ -220,6 +241,7 @@ struct WebView::Native
             webView.get().customUserAgent = Strings::toNSString(options.userAgent);
 
         loadDeclinedPopupsInline = options.loadDeclinedPopupsInline;
+        promptForMediaCapture = options.promptForMediaCapture;
 
         detail::setFileDragStartedCallback(
             webView.get(),
@@ -241,15 +263,18 @@ struct WebView::Native
 
     Native(WebView& ownerToUse, WebView::PopupInit init)
         : owner(ownerToUse)
+        , originPolicy(std::move(init.originPolicy))
     {
         delegate = createWebViewDelegate();
         getWebViewDelegateState(delegate.get())->messageHandlers =
             &messageHandlers;
+        getWebViewDelegateState(delegate.get())->originPolicy = &originPolicy;
 
         config = ObjC::Ptr {init.configuration, ObjC::RetainMode {}};
 
         auto rect = CGRectMake(0, 0, 100, 100);
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
+        getWebViewDelegateState(delegate.get())->ownWebView = webView.get();
         webView.get().navigationDelegate =
             (id<WKNavigationDelegate>) delegate.get();
         webView.get().UIDelegate = (id<WKUIDelegate>) delegate.get();
@@ -259,6 +284,8 @@ struct WebView::Native
                            options:NSKeyValueObservingOptionNew
                            context:nullptr];
         observingTitle = true;
+
+        promptForMediaCapture = init.promptForMediaCapture;
 
         if (init.inspectable)
             setWebViewInspectable(webView.get(), true);
@@ -278,6 +305,8 @@ struct WebView::Native
         // pointer so that hop finds nothing to call rather than reading a map
         // that is about to be freed.
         getWebViewDelegateState(delegate.get())->messageHandlers = nullptr;
+        getWebViewDelegateState(delegate.get())->originPolicy = nullptr;
+        getWebViewDelegateState(delegate.get())->ownWebView = nil;
 
         if (observingTitle)
             [webView.get() removeObserver:delegate.get() forKeyPath:@"title"];
@@ -305,20 +334,28 @@ struct WebView::Native
     Vector<ObjC::Ptr<NSObject>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
+    detail::MessageOriginPolicy originPolicy;
 #if !TARGET_OS_IPHONE
     EmbedderKeyForwarder keyForwarder {owner};
 #endif
     double zoomLevel = 1.0;
     bool observingTitle = false;
     bool loadDeclinedPopupsInline = true;
+    bool promptForMediaCapture = false;
 };
 
 struct WebViewNativeAccess
 {
     static OwningPointer<WebView>
-        makePopup(WKWebViewConfiguration* configuration, bool inspectable)
+        makePopup(WKWebViewConfiguration* configuration,
+                  bool inspectable,
+                  bool promptForMediaCapture,
+                  detail::MessageOriginPolicy originPolicy)
     {
-        auto init = WebView::PopupInit {configuration, inspectable};
+        auto init = WebView::PopupInit {configuration,
+                                        inspectable,
+                                        promptForMediaCapture,
+                                        std::move(originPolicy)};
         return OwningPointer<WebView> {new WebView {init}};
     }
 
@@ -421,8 +458,11 @@ WKWebView* webViewDelegateCreateWebView(id self,
     if (! native)
         return nil;
 
-    auto popup = eacp::Graphics::WebViewNativeAccess::makePopup(configuration,
-                                                                inspectable);
+    auto popup = eacp::Graphics::WebViewNativeAccess::makePopup(
+        configuration,
+        inspectable,
+        native->promptForMediaCapture,
+        native->originPolicy.forPopup());
     auto* popupWKWebView = eacp::Graphics::WebViewNativeAccess::wkWebViewOf(*popup);
 
     if (native->owner.onNewWindowRequested(std::move(popup), url))
@@ -449,9 +489,190 @@ void webViewDelegateDidClose(id self, SEL, WKWebView*)
         });
 }
 
+// --- Navigation policy: downloads + external schemes -------------------------
+
+void openURLExternally(NSURL* url)
+{
+#if TARGET_OS_IPHONE
+    [UIApplication.sharedApplication openURL:url
+                                     options:@{}
+                           completionHandler:nil];
+#else
+    [NSWorkspace.sharedWorkspace openURL:url];
+#endif
+}
+
+void webViewDelegateDecidePolicyForNavigationAction(
+    id,
+    SEL,
+    WKWebView* webView,
+    WKNavigationAction* action,
+    void (^handler)(WKNavigationActionPolicy))
+{
+    if (@available(macOS 11.3, iOS 14.5, *))
+    {
+        if (action.shouldPerformDownload)
+        {
+            handler(WKNavigationActionPolicyDownload);
+            return;
+        }
+    }
+
+    // Schemes WebKit renders itself (http, https, file, about, blob, data…)
+    // and schemes this view serves through a registered handler stay
+    // in-page; anything else (mailto:, zoom:, spotify:…) belongs to the OS.
+    auto* scheme = action.request.URL.scheme;
+    auto webKitHandles = scheme == nil || [WKWebView handlesURLScheme:scheme];
+
+    if (!webKitHandles
+        && [webView.configuration urlSchemeHandlerForURLScheme:scheme] == nil)
+    {
+        openURLExternally(action.request.URL);
+        handler(WKNavigationActionPolicyCancel);
+        return;
+    }
+
+    handler(WKNavigationActionPolicyAllow);
+}
+
+void webViewDelegateDecidePolicyForNavigationResponse(
+    id,
+    SEL,
+    WKWebView*,
+    WKNavigationResponse* response,
+    void (^handler)(WKNavigationResponsePolicy))
+{
+    if (!response.canShowMIMEType)
+    {
+        if (@available(macOS 11.3, iOS 14.5, *))
+        {
+            handler(WKNavigationResponsePolicyDownload);
+            return;
+        }
+
+        handler(WKNavigationResponsePolicyCancel);
+        return;
+    }
+
+    handler(WKNavigationResponsePolicyAllow);
+}
+
+// --- Downloads (WKDownloadDelegate) -------------------------------------------
+
+NSURL* uniqueDownloadDestination(NSString* suggestedFilename)
+{
+    auto* fileManager = NSFileManager.defaultManager;
+    auto* directory = [fileManager URLsForDirectory:NSDownloadsDirectory
+                                          inDomains:NSUserDomainMask]
+                          .firstObject;
+
+    if (directory == nil)
+        return nil;
+
+    auto* name = suggestedFilename.length > 0 ? suggestedFilename : @"download";
+    auto* candidate = [directory URLByAppendingPathComponent:name];
+    auto* base = name.stringByDeletingPathExtension;
+    auto* extension = name.pathExtension;
+
+    for (auto counter = 2; [fileManager fileExistsAtPath:candidate.path];
+         ++counter)
+    {
+        auto* numbered =
+            extension.length > 0
+                ? [NSString stringWithFormat:@"%@-%d.%@", base, counter, extension]
+                : [NSString stringWithFormat:@"%@-%d", base, counter];
+        candidate = [directory URLByAppendingPathComponent:numbered];
+    }
+
+    return candidate;
+}
+
+void reportDownloadFailure(id self, const std::string& error)
+{
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak, error]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onDownloadFailed(error);
+        });
+}
+
+API_AVAILABLE(macos(11.3), ios(14.5))
+void webViewDelegateNavigationActionDidBecomeDownload(
+    id self, SEL, WKWebView*, WKNavigationAction*, WKDownload* download)
+{
+    download.delegate = (id<WKDownloadDelegate>) self;
+}
+
+API_AVAILABLE(macos(11.3), ios(14.5))
+void webViewDelegateNavigationResponseDidBecomeDownload(
+    id self, SEL, WKWebView*, WKNavigationResponse*, WKDownload* download)
+{
+    download.delegate = (id<WKDownloadDelegate>) self;
+}
+
+API_AVAILABLE(macos(11.3), ios(14.5))
+void webViewDelegateDecideDownloadDestination(id self,
+                                              SEL,
+                                              WKDownload* download,
+                                              NSURLResponse*,
+                                              NSString* suggestedFilename,
+                                              void (^handler)(NSURL*))
+{
+    auto* destination = uniqueDownloadDestination(suggestedFilename);
+
+    // nil cancels the download; report here since it was never tracked.
+    if (destination == nil)
+    {
+        reportDownloadFailure(self, "No downloads directory available");
+        handler(nil);
+        return;
+    }
+
+    getWebViewDelegateState(self)
+        ->downloadDestinations[(__bridge const void*) download] =
+        safeString([destination.path UTF8String]);
+    handler(destination);
+}
+
+API_AVAILABLE(macos(11.3), ios(14.5))
+void webViewDelegateDownloadDidFinish(id self, SEL, WKDownload* download)
+{
+    auto* state = getWebViewDelegateState(self);
+    auto it = state->downloadDestinations.find((__bridge const void*) download);
+
+    if (it == state->downloadDestinations.end())
+        return;
+
+    auto path = it->second;
+    state->downloadDestinations.erase(it);
+
+    eacp::Threads::callAsync(
+        [weak = state->nativeWeak, path]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onDownloadFinished(path);
+        });
+}
+
+API_AVAILABLE(macos(11.3), ios(14.5))
+void webViewDelegateDownloadDidFail(
+    id self, SEL, WKDownload* download, NSError* error, NSData*)
+{
+    auto* state = getWebViewDelegateState(self);
+    auto it = state->downloadDestinations.find((__bridge const void*) download);
+
+    if (it == state->downloadDestinations.end())
+        return;
+
+    state->downloadDestinations.erase(it);
+    reportDownloadFailure(
+        self, safeString([error.localizedDescription UTF8String], "Unknown error"));
+}
+
 API_AVAILABLE(macos(12.0), ios(15.0))
 void webViewDelegateRequestMediaCapture(
-    id,
+    id self,
     SEL,
     WKWebView*,
     WKSecurityOrigin*,
@@ -459,6 +680,16 @@ void webViewDelegateRequestMediaCapture(
     WKMediaCaptureType,
     void (^handler)(WKPermissionDecision decision))
 {
+    // Options::promptForMediaCapture: hand the decision to WebKit's own
+    // per-origin prompt instead of granting every page.
+    auto native = getWebViewDelegateState(self)->nativeWeak.lock();
+
+    if (native && native->promptForMediaCapture)
+    {
+        handler(WKPermissionDecisionPrompt);
+        return;
+    }
+
     handler(WKPermissionDecisionGrant);
 }
 
@@ -471,7 +702,7 @@ void webViewDelegateRequestMediaCapture(
 // a blanket denial on exactly the macOS 11 systems this exists to serve. Both
 // paths now answer the same way, so whichever WebKit dispatches, the decision
 // matches and the request never hangs.
-void webViewDelegateRequestUserMediaSPI(id,
+void webViewDelegateRequestUserMediaSPI(id self,
                                         SEL,
                                         WKWebView*,
                                         _WKCaptureDevices,
@@ -479,18 +710,52 @@ void webViewDelegateRequestUserMediaSPI(id,
                                         NSURL*,
                                         void (^handler)(BOOL authorized))
 {
-    handler(YES);
+    // This SPI has no "ask the user" answer, so a view that wants a prompt
+    // is denied rather than silently granted (Options::promptForMediaCapture).
+    auto native = getWebViewDelegateState(self)->nativeWeak.lock();
+    handler(native && native->promptForMediaCapture ? NO : YES);
 }
 #endif
+
+std::string senderOriginOf(WKFrameInfo* frame)
+{
+    auto* origin = frame.securityOrigin;
+    return eacp::Graphics::detail::makeOrigin(safeString(origin.protocol.UTF8String),
+                                              safeString(origin.host.UTF8String),
+                                              (int) origin.port);
+}
+
+// loadHTMLString with no base URL: WebKit reports this view's own main frame at
+// about:blank with an opaque origin (empty protocol and host). A frame inside
+// it (srcdoc, data:) is not the main frame, and a page that navigated itself
+// to about:blank keeps the origin it came from.
+bool isInlineDocument(WKScriptMessage* message, WKWebView* ownWebView)
+{
+    auto* frame = message.frameInfo;
+    auto url = safeString(frame.request.URL.absoluteString.UTF8String);
+
+    return frame.isMainFrame && message.webView == ownWebView
+           && url == "about:blank" && frame.securityOrigin.protocol.length == 0;
+}
+
+bool isFromTrustedSender(WebViewDelegateState& state, WKScriptMessage* message)
+{
+    if (state.originPolicy == nullptr)
+        return false;
+
+    return state.originPolicy->admit(senderOriginOf(message.frameInfo),
+                                     isInlineDocument(message, state.ownWebView));
+}
 
 void webViewDelegateDidReceiveScriptMessage(id self,
                                             SEL,
                                             WKUserContentController*,
                                             WKScriptMessage* message)
 {
-    auto* messageHandlers = getWebViewDelegateState(self)->messageHandlers;
+    auto* state = getWebViewDelegateState(self);
+    auto* messageHandlers = state->messageHandlers;
 
-    if (messageHandlers)
+    if (messageHandlers && isFromTrustedSender(*state, message))
     {
         auto name = std::string([message.name UTF8String]);
         auto it = messageHandlers->find(name);
@@ -583,6 +848,33 @@ Class getWebViewDelegateClass()
                 createWebViewWithConfiguration:forNavigationAction:windowFeatures:),
             webViewDelegateCreateWebView);
         builder->addMethod(@selector(webViewDidClose:), webViewDelegateDidClose);
+
+        builder->addMethod(
+            @selector(webView:decidePolicyForNavigationAction:decisionHandler:),
+            webViewDelegateDecidePolicyForNavigationAction);
+        builder->addMethod(
+            @selector(webView:decidePolicyForNavigationResponse:decisionHandler:),
+            webViewDelegateDecidePolicyForNavigationResponse);
+
+        if (@available(macOS 11.3, iOS 14.5, *))
+        {
+            builder->addProtocol(@protocol(WKDownloadDelegate));
+            builder->addMethod(
+                @selector(webView:navigationAction:didBecomeDownload:),
+                webViewDelegateNavigationActionDidBecomeDownload);
+            builder->addMethod(
+                @selector(webView:navigationResponse:didBecomeDownload:),
+                webViewDelegateNavigationResponseDidBecomeDownload);
+            builder->addMethod(
+                @selector(download:
+                    decideDestinationUsingResponse:suggestedFilename
+                                                  :completionHandler:),
+                webViewDelegateDecideDownloadDestination);
+            builder->addMethod(@selector(downloadDidFinish:),
+                               webViewDelegateDownloadDidFinish);
+            builder->addMethod(@selector(download:didFailWithError:resumeData:),
+                               webViewDelegateDownloadDidFail);
+        }
 
         // The public media-capture selector (and the WKMediaCaptureType /
         // WKPermissionDecision types in its signature) only exists on
@@ -888,6 +1180,10 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
     {
         nsBaseURL =
             [NSURL URLWithString:[NSString stringWithUTF8String:baseURL.c_str()]];
+    }
+    else
+    {
+        impl->originPolicy.trustInlineDocument();
     }
     [impl->webView.get() loadHTMLString:nsHtml baseURL:nsBaseURL];
 }

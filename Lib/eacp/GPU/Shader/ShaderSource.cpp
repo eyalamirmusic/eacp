@@ -72,9 +72,9 @@ bool ShaderSource::hasFragment() const
     return !fragmentEntry.empty();
 }
 
-ShaderSource& ShaderSource::withBinding(ResourceBinding binding)
+ShaderSource& ShaderSource::withPipelineConstants()
 {
-    bindings.add(std::move(binding));
+    hasPipelineConstants = true;
     return *this;
 }
 } // namespace eacp::GPU

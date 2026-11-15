@@ -32,20 +32,22 @@ set(graphics_test_sources
         MenuCommandsTests.cpp
         MenuTests.cpp
         MouseTrackingLifetimeTests.cpp
+        OptionalViewTests.cpp
         RectTests.cpp
         RoundedRectTests.cpp
         ScrollWheelTests.cpp
         SizeConstraintTests.cpp
         TestMain.cpp
         TouchTests.cpp
+        ViewLifetimeTests.cpp
         ViewVisibilityTests.cpp
         ViewWindowTests.cpp
         WindowTests.cpp)
 
 # The ones that need a platform image codec or a 2D Context. Listed rather than
 # left to self-skip: a suite that skips every case still reports as a pass.
-# Android has a codec without a Context; desktop Linux has neither.
-if (EACP_HAS_CONTEXT OR ANDROID)
+# Android and desktop Linux have a codec without a Context.
+if (EACP_HAS_CONTEXT OR ANDROID OR LINUX)
     list(APPEND graphics_test_sources ImageCodecTests.cpp)
 endif ()
 
@@ -53,11 +55,17 @@ if (EACP_HAS_CONTEXT)
     list(APPEND graphics_test_sources RenderToImageTests.cpp)
 endif ()
 
-# The two Linux tables with no portable half: the commands a Path records, and
-# the framework's KeyCodes against the kernel's evdev numbering.
+# The Linux tables with no portable half: the commands a Path records, the
+# framework's KeyCodes against the kernel's evdev numbering, and the evdev
+# gamepad mapping (with a uinput pad driven through the whole backend where
+# /dev/uinput is the user's to write). And the window half of the in-window
+# menu bar (MenuBarTests-Linux): layout, size, routing and shortcuts, with a
+# stand-in for the bar eacp-ui draws.
 if (LINUX)
     list(APPEND graphics_test_sources
+            GameInputTests-Linux.cpp
             KeyCodeTests-Linux.cpp
+            MenuBarTests-Linux.cpp
             PathTests-Linux.cpp)
 endif ()
 
@@ -178,6 +186,16 @@ if (LINUX)
         target_compile_definitions(EmbeddedViewTests PRIVATE EACP_HAS_XTEST=1)
     endif ()
 
+    # The other direction: a foreign client parented into one of our layouts,
+    # played by a second connection of the test's own.
+    nano_add_executable(NativeChildSurfaceTests
+            NO_MAIN
+            SOURCES
+                NativeChildSurfaceTests-Linux.cpp
+            TARGETS eacp-graphics)
+
+    target_link_libraries(NativeChildSurfaceTests PRIVATE eacp-x11)
+
     nano_add_executable(DisplayLinkTests
             NO_MAIN
             SOURCES
@@ -204,6 +222,8 @@ if (LINUX AND NOT CMAKE_CROSSCOMPILING)
             "set_tests_properties(X11 PROPERTIES\n"
             "        RESOURCE_LOCK \"eacp-linux-display;eacp-system-clipboard\")\n"
             "set_tests_properties(EmbeddedView PROPERTIES\n"
+            "        RESOURCE_LOCK eacp-linux-display)\n"
+            "set_tests_properties(NativeChildSurface PROPERTIES\n"
             "        RESOURCE_LOCK eacp-linux-display)\n")
 
     set_property(DIRECTORY APPEND PROPERTY

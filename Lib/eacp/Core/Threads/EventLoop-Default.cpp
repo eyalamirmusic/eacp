@@ -1,5 +1,6 @@
 #include "EventLoop.h"
 #include "CallAfter.h"
+#include "ThreadPool.h"
 
 namespace eacp::Threads
 {
@@ -19,11 +20,12 @@ void stopEventLoop()
 // without any setup.
 void attachCurrentThreadAsMain() {}
 
-// Only the scheduler thread is this copy's own here, and a host that unloads
-// the image cannot be left with it running.
+// Only the scheduler and the shared pool's threads are this copy's own here, and
+// a host that unloads the image cannot be left with them running.
 void detachCurrentThreadAsMain()
 {
     stopCallAfterScheduler();
+    stopSharedThreadPool();
 }
 
 } // namespace eacp::Threads

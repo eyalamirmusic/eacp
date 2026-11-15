@@ -144,6 +144,16 @@ void Window::toggleMaximize()
     // iOS windows always fill the screen; there's nothing to toggle.
 }
 
+void Window::setFullScreen(bool)
+{
+    // iOS windows always fill the screen; there's nothing to switch.
+}
+
+bool Window::isFullScreen() const
+{
+    return true;
+}
+
 void* Window::getHandle()
 {
     return impl->getWindow();

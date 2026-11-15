@@ -125,7 +125,7 @@ auto tCodegenCompute3D = test("GPU/codegenCompute3D") = []
     builder.write(output, (p.z * 16u + p.y) * 16u + p.x, toFloat(p.z));
 
     auto shader = builder.build();
-    check(shader.dispatchRank == DispatchRank::ThreeD);
+    check(shader.dispatchRank() == DispatchRank::ThreeD);
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint3 gid [[thread_position_in_grid]]"));

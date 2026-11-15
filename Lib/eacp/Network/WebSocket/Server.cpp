@@ -184,14 +184,14 @@ public:
 
     void connected(ClientId id, Handshake handshake)
     {
-        deliver([id, handshake = std::move(handshake)](auto& self)
-                { self.callbacks.onConnect(id, handshake); });
+        deliver([id, clientHandshake = std::move(handshake)](auto& self)
+                { self.callbacks.onConnect(id, clientHandshake); });
     }
 
     void received(ClientId id, Message message)
     {
-        deliver([id, message = std::move(message)](auto& self)
-                { self.callbacks.onMessage(id, message); });
+        deliver([id, incoming = std::move(message)](auto& self)
+                { self.callbacks.onMessage(id, incoming); });
     }
 
     // The slot is let go before the callback, so a clientCount() asked for
@@ -219,10 +219,10 @@ public:
     void listenerFailed(std::string error)
     {
         deliver(
-            [error = std::move(error)](auto& self)
+            [failure = std::move(error)](auto& self)
             {
                 self.dropListener();
-                self.callbacks.onError(error);
+                self.callbacks.onError(failure);
             });
     }
 
@@ -253,10 +253,10 @@ private:
         auto at = generation.load();
 
         Threads::callAsync(
-            [self, delivery = std::move(delivery), at]
+            [self, pending = std::move(delivery), at]
             {
                 if (self->generation.load() == at)
-                    delivery(*self);
+                    pending(*self);
             });
     }
 

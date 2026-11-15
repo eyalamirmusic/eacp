@@ -4,6 +4,8 @@
 
 #include "../WebView.h"
 
+#include <eacp/Core/Utils/Format.h>
+
 #include <filesystem>
 #include <fstream>
 
@@ -60,9 +62,8 @@ std::string jsStringLiteral(std::string_view value)
             default:
                 if (static_cast<unsigned char>(c) < 0x20)
                 {
-                    char buf[8];
-                    std::snprintf(buf, sizeof buf, "\\u%04x", c);
-                    out += buf;
+                    out +=
+                        Strings::format("\\u{:04x}", static_cast<unsigned char>(c));
                 }
                 else
                 {

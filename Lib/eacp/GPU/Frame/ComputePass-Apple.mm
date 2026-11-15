@@ -157,6 +157,17 @@ void ComputePass::setInputTexture(const Texture& texture,
     bindInputTexture(impl->encoder.get(), texture, slot, sampler.nativeSampler());
 }
 
+void ComputePass::setSampler(const Sampler& sampler, int slot)
+{
+    auto encoder = impl->encoder.get();
+    auto metalSampler = (__bridge id<MTLSamplerState>) sampler.nativeSampler();
+
+    if (encoder == nil || metalSampler == nil || slot < 0)
+        return;
+
+    [encoder setSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+
 // Metal binds a texture the same way whether the kernel reads or writes it;
 // what separates the two is the usage it was created with and the access
 // qualifier the kernel declared. No sampler: a written texture has none.

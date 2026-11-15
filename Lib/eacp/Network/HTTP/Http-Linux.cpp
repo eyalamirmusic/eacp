@@ -1,6 +1,8 @@
 #include "Http.h"
 #include "HttpProtocol.h"
 
+#include <eacp/Core/Utils/File.h>
+
 #include <curl/curl.h>
 
 #include <chrono>
@@ -113,6 +115,45 @@ int progressCallback(
 {
     auto* watch = static_cast<TransferWatch*>(userp);
     return watch->update(dltotal, dlnow, ulnow) ? 1 : 0;
+}
+
+struct BodyFromFile
+{
+    explicit BodyFromFile(const std::string& filePath)
+        : path(filePath)
+        , file(FilePath(filePath))
+    {
+    }
+
+    std::string path;
+    File file;
+    std::uint64_t offset = 0;
+};
+
+size_t readFromFile(char* buffer, size_t size, size_t nitems, void* userp)
+{
+    auto* source = static_cast<BodyFromFile*>(userp);
+    auto* bytes = reinterpret_cast<std::uint8_t*>(buffer);
+    auto readCount = source->file.read(source->offset,
+                                       Span<std::uint8_t>(bytes, (int) (size * nitems)));
+
+    if (readCount < 0)
+        return CURL_READFUNC_ABORT;
+
+    source->offset += (std::uint64_t) readCount;
+    return (size_t) readCount;
+}
+
+void streamBodyFromFile(CURL* curl, BodyFromFile& source)
+{
+    if (!source.file.isRegularFile())
+        throw std::runtime_error("Cannot read the body file " + source.path);
+
+    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(
+        curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t) source.file.size());
+    curl_easy_setopt(curl, CURLOPT_READFUNCTION, readFromFile);
+    curl_easy_setopt(curl, CURLOPT_READDATA, &source);
 }
 
 struct BodyToString
@@ -414,6 +455,11 @@ Response httpRequestInternal(const Request& req)
 
     auto headers = CurlSlist();
     applyCommonOptions(curl.handle, req, headers);
+
+    auto bodyFromFile = std::optional<BodyFromFile>();
+
+    if (!req.bodyFilePath.empty())
+        streamBodyFromFile(curl.handle, bodyFromFile.emplace(req.bodyFilePath));
 
     auto response = Response();
     auto sink = BodyToString {};

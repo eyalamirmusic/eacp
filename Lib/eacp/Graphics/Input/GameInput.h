@@ -14,8 +14,8 @@ class Window;
 enum class GameInputSource
 {
     // The platform's game input API where there is one (GameController on
-    // Apple, XInput for gamepads on Windows), the window's own events for
-    // whatever it does not cover.
+    // Apple, XInput for gamepads on Windows, evdev for gamepads on Linux), the
+    // window's own events for whatever it does not cover.
     Automatic,
 
     // Only the window's own key and mouse events.
@@ -32,8 +32,8 @@ enum class GameInputSource
 //     for (auto& pad: frame.gamepads()) walk(pad.leftStick());
 //
 // Gamepads come only from the platform feed (GCController's extended gamepads
-// on Apple, XInput on Windows, polled from a thread of its own); where there
-// is none, frame.gamepads() stays empty.
+// on Apple, XInput on Windows, polled from a thread of its own, and evdev on
+// Linux, read from one); where there is none, frame.gamepads() stays empty.
 //
 // On Apple the events come from GameController (GCKeyboard, GCMouse) on a
 // high-priority queue of their own, so they are captured and timestamped even

@@ -8,9 +8,9 @@
 
 namespace eacp::UI
 {
-// What a menu is drawn with. A value rather than a set of setters, for what
-// Theme is one: a product has one look for every menu it opens, and that look
-// is something to build once and hand to each of them.
+// What a menu is drawn with. A value rather than a set of setters: a product
+// has one look for every menu it opens, and that look is something to build
+// once and hand to each of them.
 //
 // Every member starts out as defaultTheme() would draw it, and fromTheme makes
 // the same mapping from a theme of the caller's own.
@@ -18,16 +18,16 @@ struct PopupMenuStyle
 {
     static PopupMenuStyle fromTheme(const Theme& theme);
 
-    Color background = defaultTheme().panel;
-    Color outline = defaultTheme().outline;
-    Color text = defaultTheme().text;
-    Color disabledText = defaultTheme().dimText.withAlpha(0.55f);
-    Color highlight = defaultTheme().accentDim;
-    Color highlightedText = defaultTheme().text;
-    Color separator = defaultTheme().outline;
-    Color tick = defaultTheme().accent;
-    Color headerText = defaultTheme().dimText;
-    Color arrow = defaultTheme().dimText;
+    Color background = defaultTheme().get(ThemeKeys::panel);
+    Color outline = defaultTheme().get(ThemeKeys::outline);
+    Color text = defaultTheme().get(ThemeKeys::text);
+    Color disabledText = defaultTheme().get(ThemeKeys::dimText).withAlpha(0.55f);
+    Color highlight = defaultTheme().get(ThemeKeys::accentDim);
+    Color highlightedText = defaultTheme().get(ThemeKeys::text);
+    Color separator = defaultTheme().get(ThemeKeys::outline);
+    Color tick = defaultTheme().get(ThemeKeys::accent);
+    Color headerText = defaultTheme().get(ThemeKeys::dimText);
+    Color arrow = defaultTheme().get(ThemeKeys::dimText);
 
     // Empty draws in the host's face, which is what makes a menu look like the
     // rest of the tree it was opened over.
@@ -95,6 +95,14 @@ struct PopupMenuOptions
     // another item before an open submenu closes -- long enough to cross the
     // rows between an item and the submenu it opened without closing it.
     double subMenuDelay = 0.2;
+
+    // What a menu bar switches menus with, the menu being open over it. Told
+    // where the pointer is, in the root's coordinates, each time it moves
+    // outside every open panel; and told -1 or 1 for a Left or a Right the
+    // menu has no use for (Left on the menu itself, Right on an item with no
+    // submenu). Either may close the menu or open another.
+    std::function<void(Point)> onPointerOutside;
+    std::function<void(int)> onSideStep;
 };
 
 // A list of commands opened over the tree, and closed by choosing one or by

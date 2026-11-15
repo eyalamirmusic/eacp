@@ -100,18 +100,18 @@ struct Tile final : UI::Component
     {
         const auto& theme = UI::defaultTheme();
 
-        g.setColour(theme.panel);
+        g.setColour(theme.get(UI::ThemeKeys::panel));
         g.fillRoundedRect(getLocalBounds().inset(3.f), 6.f);
 
         // Drawn whether or not the mask exists, so a shape the atlas had no room
         // for reads as an empty frame rather than as a gap in the layout.
-        g.setColour(theme.outline);
+        g.setColour(theme.get(UI::ThemeKeys::outline));
         g.drawRect(getLocalBounds().inset(3.f));
 
-        g.setColour(theme.accent);
+        g.setColour(theme.get(UI::ThemeKeys::accent));
         g.fillPath(shape);
 
-        g.setColour(theme.dimText);
+        g.setColour(theme.get(UI::ThemeKeys::dimText));
         g.drawText(std::to_string(index),
                    getLocalBounds().inset(8.f, 4.f),
                    UI::Justification::Left);
@@ -171,8 +171,8 @@ struct StatsBar final : UI::Component
                     + std::to_string(percent) + "% full   " + std::to_string(dropped)
                     + " dropped";
 
-        g.setColour(dropped > 0 ? UI::defaultTheme().text
-                                : UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(dropped > 0 ? UI::ThemeKeys::text
+                                                       : UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
         if (text != lastPainted)
@@ -190,7 +190,7 @@ struct DemoRoot final : UI::Component
 {
     DemoRoot()
     {
-        title.setColour(UI::defaultTheme().text);
+        title.setThemeColour(UI::ThemeKeys::text);
 
         list.setContent(grid);
 
@@ -199,7 +199,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override

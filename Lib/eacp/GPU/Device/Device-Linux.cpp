@@ -246,9 +246,10 @@ bool Device::supportsLayeredRendering() const
     return isValid() && getVulkanShared().supportsLayeredRendering();
 }
 
-// One answer for both: an image declared with the format's qualifier loads
-// wherever it stores. A shader that declares none - the emitter's writeonly
-// image2D - leans on shaderStorageImageWriteWithoutFormat instead.
+// The storage-image bit answers both: an image declared with the format's
+// qualifier loads wherever it stores, given the qualifier is one the device
+// declares (supportsComputeReadWrite). A shader that declares none - the
+// emitter's writeonly images - leans on shaderStorageImageWriteWithoutFormat.
 bool Device::supportsComputeWrite(TextureFormat format) const
 {
     if (!isValid() || !isRenderableFormat(format) || isSrgbFormat(format)
@@ -263,9 +264,52 @@ bool Device::supportsComputeWrite(TextureFormat format) const
            != 0;
 }
 
+namespace
+{
+// The formats SPIR-V's Shader capability declares an image in; every other
+// qualifier needs StorageImageExtendedFormats. A write-only image is declared
+// with no qualifier at all, so only a read-write one asks.
+bool isBaseStorageImageFormat(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::RGBA8Unorm:
+        case TextureFormat::RGBA16Float:
+        case TextureFormat::RGBA32Float:
+        case TextureFormat::R32Float:
+        case TextureFormat::RGBA8Uint:
+        case TextureFormat::RGBA16Uint:
+        case TextureFormat::RGBA32Uint:
+        case TextureFormat::R32Uint:
+        case TextureFormat::RGBA8Sint:
+        case TextureFormat::RGBA16Sint:
+        case TextureFormat::RGBA32Sint:
+        case TextureFormat::R32Sint:
+            return true;
+        default:
+            return false;
+    }
+}
+} // namespace
+
+bool Device::supportsShaderFloat16() const
+{
+    return isValid() && getVulkanShared().supportsShaderFloat16();
+}
+
+bool Device::supportsSampleRateShading() const
+{
+    return isValid() && getVulkanShared().supportsSampleRateShading();
+}
+
 bool Device::supportsComputeReadWrite(TextureFormat format) const
 {
-    return supportsComputeWrite(format);
+    if (!supportsComputeWrite(format))
+        return false;
+
+    return isBaseStorageImageFormat(format)
+           || getVulkanShared().getFeatures().shaderStorageImageExtendedFormats
+                  == VK_TRUE;
 }
 
 // A chain of vkCmdBlitImage with a linear filter, level to level.

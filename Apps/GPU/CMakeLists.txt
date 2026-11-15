@@ -46,6 +46,10 @@ add_subdirectory(StreamingStress)
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 
+# A GPUView made by a hot-reloaded factory: the host owns the view, and every
+# save destroys it and asks the fresh module image for a new one.
+add_subdirectory(HotReload)
+
 # These paint an overlay with the 2D Graphics::Context, so each needs the
 # native 2D tier rather than only a window and a glyph rasterizer.
 if (EACP_HAS_CONTEXT)

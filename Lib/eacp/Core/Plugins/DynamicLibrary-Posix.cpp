@@ -1,12 +1,31 @@
 #include "DynamicLibraryPlatform.h"
 
+#include <cerrno>
 #include <dlfcn.h>
+#include <signal.h>
+#include <unistd.h>
 
 namespace eacp::Plugins::Detail
 {
 void* loadImage(const FilePath& path)
 {
     return dlopen(path.c_str(), RTLD_LOCAL | RTLD_NOW);
+}
+
+std::string lastLoadError()
+{
+    auto* message = dlerror();
+    return message == nullptr ? std::string {} : std::string {message};
+}
+
+long long currentProcessId()
+{
+    return (long long) getpid();
+}
+
+bool isProcessRunning(long long processId)
+{
+    return kill((pid_t) processId, 0) == 0 || errno == EPERM;
 }
 
 void unloadImage(void* handle)

@@ -1,11 +1,13 @@
 #pragma once
 
+#include "Graphics/SharedDevices.h"
 #include "Image/ImageOps.h"
 #include "Helpers/DisplayLink.h"
 #include "Helpers/SystemAppearance.h"
 #include "HotKey/GlobalHotKey.h"
 #include "Input/GameInput.h"
 #include "Tray/TrayIcon.h"
+#include "View/OptionalView.h"
 #include "View/ViewList.h"
 #include "Window/Display.h"
 #include "Window/EmbeddedView.h"

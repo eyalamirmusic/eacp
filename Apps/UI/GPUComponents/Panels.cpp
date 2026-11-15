@@ -30,7 +30,7 @@ int fpsAt(int index)
 
 void paintPage(UI::Graphics& g, const UI::Rect& area)
 {
-    g.setColour(UI::defaultTheme().background);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::background));
     g.fillRect(area);
 }
 
@@ -214,7 +214,7 @@ GridPanel::GridPanel()
     viewportWidth.setValue(1.f);
     viewportWidth.setDefaultValue(1.f);
     viewportWidth.onValueChange = onWidth;
-    hint.setColour(UI::defaultTheme().dimText);
+    hint.setThemeColour(UI::ThemeKeys::dimText);
 
     viewport.setContent(shelf);
     viewport.setScrollbarsShown(false, true);
@@ -269,7 +269,7 @@ void GridPanel::paint(UI::Graphics& g)
 
 FadingGroup::Contents::Contents()
 {
-    caption.setColour(UI::defaultTheme().text);
+    caption.setThemeColour(UI::ThemeKeys::text);
     knobLike.setValue(0.3f);
     addChildren({caption, tile, knobLike});
 }
@@ -322,7 +322,7 @@ OverlayCard::OverlayCard()
     };
 
     button.onClick = onClicked;
-    clicks.setColour(UI::defaultTheme().dimText);
+    clicks.setThemeColour(UI::ThemeKeys::dimText);
     setInterceptsMouseClicks(true);
 
     addChildren({text, button, clicks});
@@ -343,9 +343,9 @@ void OverlayCard::resized()
 
 void OverlayCard::paint(UI::Graphics& g)
 {
-    g.setColour(UI::defaultTheme().panel.withAlpha(0.88f));
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel).withAlpha(0.88f));
     g.fillRoundedRect(getLocalBounds(), 8.f);
-    g.setColour(UI::defaultTheme().outline);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::outline));
     g.drawRoundedRect(getLocalBounds(), 8.f);
 }
 
@@ -374,8 +374,8 @@ OverlapPanel::OverlapPanel()
     for (auto i = 1; i <= 30; ++i)
         longList.addItem("Option " + std::to_string(i));
 
-    menuHint.setColour(UI::defaultTheme().dimText);
-    comboCaption.setColour(UI::defaultTheme().dimText);
+    menuHint.setThemeColour(UI::ThemeKeys::dimText);
+    comboCaption.setThemeColour(UI::ThemeKeys::dimText);
 
     addChildren({opacityCaption, opacity, rotationCaption, rotation});
     addChildren({scaleCaption, scale, fadeCaption, fade, menuHint});
@@ -458,7 +458,7 @@ ChurnPanel::ChurnPanel()
         shelf->onTilesChanged = onTilesChanged;
     }
 
-    counts.setColour(UI::defaultTheme().dimText);
+    counts.setThemeColour(UI::ThemeKeys::dimText);
 
     addChildren({addButton, removeButton, reparentButton, churn, counts});
     addChildren({leftCaption, rightCaption, left, right});
@@ -665,7 +665,7 @@ Toolbar::Toolbar()
     snapshot.onClick = onSnapshotClicked;
 
     for (auto* caption: {&hostFpsCaption, &tileFpsCaption})
-        caption->setColour(UI::defaultTheme().dimText);
+        caption->setThemeColour(UI::ThemeKeys::dimText);
 
     addChildren({continuous, hostFpsCaption, hostFps, tileFpsCaption, tileFps});
     addChildren({msaa, timing, snapshot});
@@ -702,7 +702,7 @@ void Toolbar::resized()
 
 void Toolbar::paint(UI::Graphics& g)
 {
-    g.setColour(UI::defaultTheme().panel);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
     g.fillRect(getLocalBounds());
 }
 
@@ -718,15 +718,15 @@ void StatsFooter::setLines(const std::string& first, const std::string& second)
 
 void StatsFooter::paint(UI::Graphics& g)
 {
-    g.setColour(UI::defaultTheme().panel);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
     g.fillRect(getLocalBounds());
 
     auto area = getLocalBounds().inset(10.f, 3.f);
     auto line = area.h * 0.5f;
 
-    g.setColour(UI::defaultTheme().text);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::text));
     g.drawText(top, area.removeFromTop(line));
-    g.setColour(UI::defaultTheme().dimText);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
     g.drawText(bottom, area);
 }
 } // namespace GPUComponentsDemo

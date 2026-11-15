@@ -5,6 +5,12 @@ the two commands a build needs; this page is everything behind them: the
 dependencies, every option, the capability variables that decide which
 modules a platform gets, the pieces that build everywhere, and how CI runs.
 
+After cloning, run `git config core.hooksPath .githooks` once. It turns on
+the repository's two hooks: `pre-commit` refuses a commit whose author or
+committer names Claude or Anthropic, and `commit-msg` refuses a message with a
+`Co-Authored-By` trailer for either, an `@anthropic.com` address or a
+"Generated with Claude" line.
+
 ## Dependencies
 
 Dependencies are fetched by [CPM](https://github.com/cpm-cmake/CPM.cmake) at
@@ -16,7 +22,8 @@ own so other projects can take it without eacp; `CMake/FindESIMD.cmake`, the
 behind `EACP_BUILD_SPIRV` and so on Linux only by default, `glslang`. A Linux build
 adds `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator`
 (`CMake/FindVulkanBackend.cmake`, one `eacp-vulkan` target, fetched on no
-other platform), libcurl for the HTTP client, and three pkg-config groups
+other platform), `stb` for the PNG/JPEG codec (`CMake/FindStb.cmake`, headers
+only), libcurl for the HTTP client, and three pkg-config groups
 found against the machine's own libraries: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor
 (`CMake/FindWayland.cmake`); xcb with `xcb-xkb`, `xkbcommon-x11`,
@@ -29,12 +36,22 @@ false. The package names are in [Linux.md](Linux.md). An Android build
 fetches nothing more and needs no libcurl: its HTTP and WebSocket clients are
 Java's own, reached through JNI.
 
-One dependency is carried in the tree instead: `ThirdParty/miniz`, the
-amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
+Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
+the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
 target so it never joins a unity build and its warnings are silenced. Only
 `eacp-core` links it, PRIVATE, and only `Utils/Zip.cpp` includes its header,
 so the whole of it is reached through `eacp::Zip`. To update it, replace the
 files under `ThirdParty/miniz` and the version in its README.
+
+The other, `ThirdParty/fmt`, is carried the same way: fmt 12.2.0's
+`include/fmt` headers and `src/format.cc` alone, unmodified, beside its MIT
+license, built as its own static C++ target with its warnings silenced. Only
+`eacp-core` links it, PRIVATE, so no eacp header may include it, and only
+`Utils/Format.cpp` does, behind `eacp::Strings::format`. fmt's `base.h`
+requires `/utf-8` on MSVC of every translation unit that includes it, so the
+fmt target sets the flag PRIVATE on its own `format.cc` and `eacp-core` sets it
+on `Format.cpp` alone. To update it, replace those files and the version in
+its README.
 
 ## Options
 
@@ -79,8 +96,9 @@ files under `ThirdParty/miniz` and the version in its README.
 
 - `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's
   exact configuration locally. It forces `EACP_UNITY_BUILD`,
-  `EACP_UNITY_BUILD_TESTS` and `MIRO_UNITY_BUILD` on. Because it turns unity on, it is for reproducing CI,
-  not for LSP-backed development.
+  `EACP_UNITY_BUILD_TESTS`, `MIRO_UNITY_BUILD` and `ESIMD_UNITY_BUILD` on.
+  Because it turns unity on, it is for reproducing CI, not for LSP-backed
+  development.
 
   ```bash
   cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
@@ -116,6 +134,44 @@ files under `ThirdParty/miniz` and the version in its README.
   server instead (`npm run dev` in the app's `web/` dir); the runtime already
   prefers a reachable dev server (`Options::Embedded::preferDevServer`).
   Schema codegen still emits TS into `web/src/generated` on every app build.
+
+- `EACP_HOT_RELOAD` (default `OFF`) — dev or static mode for every app wired
+  with `eacp_add_hot_reload(<app> <library> [SOURCES <files...>]
+  [HOT_RELOAD <bool>])` that names no mode of its own (or an empty one). The
+  call creates
+  `<library>`, configured afterwards like any target: a static library linked
+  into the app in static mode, a module the app loads in dev mode. An app's
+  `HOT_RELOAD` wins over the option either way, and both in-tree examples
+  pass `ON`. iOS and Android are always static. Windows dev mode needs a
+  Ninja generator, `cl` or clang-cl, x64 or ARM64 and the DLL C runtime
+  (`/MD`); any other Windows build directory is static, and the configure
+  line says why. It links the app with an export list of its own objects and
+  every static library in its closure (`eacp_add_export_list`,
+  `Lib/eacp/ExportList/README.md`), and turns link-time optimisation off for
+  that closure in the whole build directory, so in a configuration that has
+  it (Release) only `-DEACP_HOT_RELOAD=ON` gives dev mode; an app's own
+  `HOT_RELOAD ON` leaves Release static and optimised. A configure prints
+  `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
+  `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
+
+- `EACP_PRECOMPILE_SHADERS` (default `ON`) — compiles the shaders of every app
+  wired with `eacp_add_precompiled_shaders` (`CMake/PrecompiledShaders.cmake`)
+  at build time and embeds the blobs, which each `ShaderLibrary` loads instead
+  of compiling its source. `OFF` leaves those apps compiling at run time, as
+  does a cross-compile (iOS, Android) for now and a host that can compile none
+  of the requested backends. An app gets its platform's own backend — `metal`
+  on Apple, `dxbc` on Windows, `spirv` on Linux — unless its call names
+  `BACKENDS`, and `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides
+  every call, so `-DEACP_PRECOMPILE_SHADER_BACKENDS=spirv` with
+  `-DEACP_BUILD_SPIRV=ON` exercises the SPIR-V path on a Mac. A backend the
+  host cannot compile is dropped with a `STATUS` line: Metal needs Xcode's
+  Metal Toolchain component (`xcodebuild -downloadComponent MetalToolchain`),
+  probed once per build directory as the cached `EACP_METAL_TOOLCHAIN_FOUND`
+  (`-U` it after installing); DXBC needs a Windows host and SPIR-V
+  `eacp-spirv`. A configure prints `<app>: precompiled shaders (<backends>)`
+  or why there are none. The helper and the blob names are in
+  [Lib/eacp/GPU/README.md](../Lib/eacp/GPU/README.md), "Compiling shaders at
+  build time".
 
 - `EACP_VERBOSE_CONFIGURE` (default `OFF`) — prints the configure detail a
   clean configure leaves out: the FetchContent population of the
@@ -288,6 +344,82 @@ floor. `CMake/AppleSetup.cmake` claims `CMAKE_OSX_DEPLOYMENT_TARGET` only
 when nothing has filled it, so `-DCMAKE_OSX_DEPLOYMENT_TARGET=...` on the
 command line wins on both.
 
+iOS signing works the same way. `eacp_default_setup()` signs with
+`EACP_APPLE_DEVELOPMENT_TEAM` (a cache variable, eacp's own team by default,
+empty for none) and the `iPhone Developer` identity, but only where the project
+leaves `CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM` and
+`CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY` unset. The defaults are applied at
+the end of the top-level directory, so a project's own team wins however it
+sets it: on the command line, or as a normal variable or a cache entry, before
+or after eacp's setup runs, and an empty team included.
+`Tests/AppleSetup` checks each of those against the generated Xcode project.
+
+## Who owns the process
+
+Every statically linked eacp copy in a process (the executable's, and one per
+library that links eacp) answers three questions about itself
+(`Core/Plugins/ModuleInfo.h`):
+
+- **Identity**: the image the copy is compiled into, which keys the per-image
+  OS registrations that must not collide between copies, such as Win32 window
+  classes (`getCurrentModuleHandle`, `getCurrentModulePath`,
+  `getModuleIdentitySuffix`).
+- **Role**: is the copy the application, or a guest in a process someone else
+  owns (`Platform::isStandalone()`/`isDLL()`)? A guest does not run the loop in
+  `Apps::run<T>()`, defers alerts to its host, and on Linux attaches to an
+  eacp host's root loop and prefers X11.
+- **Product image**: the image that is the application to the user and the
+  OS: what `Files::applicationPath()` names, where the Windows icon is loaded
+  from, what the WebView2 data folder is named after (`getProductModulePath`,
+  `getProductModuleHandle`).
+
+A copy in the executable is the application and its product is the
+executable; a copy in a library is a guest and its product is its library.
+Both are decided from the loaded images by address (the executable's `HMODULE`
+on Windows, the Mach-O file type on macOS, the main program's `PT_LOAD`
+segments from `dl_iterate_phdr` on Linux), never from paths, so a bare name on
+`PATH`, a rewritten `argv[0]` or a `chdir` after a relative launch change
+nothing. On Linux the executable's path is `/proc/self/exe`, so under an
+explicitly invoked loader (`ld.so ./app`) `applicationPath()` names the loader.
+Android's app is a library NativeActivity loads, and `isDLL()` is false there.
+
+A thin launcher whose application, eacp included, lives in a library it links
+claims that library's copy, which then is the application with the launcher as
+its product, while its identity stays the library:
+
+```cpp
+// In the library
+EACP_PLUGIN_EXPORT const void* myAppModuleAddress()
+{
+    return eacp::Plugins::getCurrentModuleAddress();
+}
+
+// In the executable
+#include <eacp/Core/Plugins/ClaimCopy.h>
+
+extern "C" const void* myAppModuleAddress();
+EACP_CLAIM_COPY(myAppModuleAddress());
+```
+
+```cmake
+target_link_libraries(MyLauncher PRIVATE MyAppLibrary)
+eacp_claim_copy(MyLauncher)
+```
+
+The macro defines `eacpClaimedCopy`, which each copy looks up in the
+executable alone and compares by image with its own, so any other copy, such
+as a plugin the launcher loads, is still a guest. It is read in the copy's
+first static initialiser, before the executable's C runtime is up, so the
+expression must be a plain call into the library, not `&importedFunction`
+(on Windows the executable's import thunk). `eacp_claim_copy` exports the
+symbol on Linux (`--export-dynamic-symbol`: GNU ld 2.35+, gold, lld 11+, mold),
+and without it the macro's `static_assert` fails the build on every platform.
+The launcher must link the library rather than `dlopen` it, and should carry
+no eacp copy of its own, or two copies would both own the loop.
+`Tests/Core/ModuleRoleTests.cpp` covers the claim, and
+`ModuleInfoTests-Posix.cpp` launches a standalone binary every way that used
+to fool the Linux check.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables
@@ -308,7 +440,7 @@ and their tests build with it:
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
@@ -358,13 +490,19 @@ the network backend included, then configures once
 more with no NDK named, which exercises the newest-installed path. The two
 Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
 run their npm installs inside configure, several times slower on the ARM
-runners, and the x64 lanes cover the WebView2 backend. Every lane
-configures with `EACP_CI_BUILD=ON` and builds `RelWithDebInfo`: the tests run
-optimized code, as a shipped build does, while the link-time optimization
-eacp's targets take under `Release` stays off — it roughly tripled the macOS
-and MSVC build steps for a few seconds of test time. The `NDEBUG`-only paths —
-the D3D12 debug layer, `Device::assertOwningThread`, the Android JNI
-local-reference check — are exercised by a local Debug build, not by CI.
+runners, and the x64 lanes cover the WebView2 backend. The Windows lanes
+build the two hot-reload examples in dev mode, as every RelWithDebInfo Ninja
+build with `cl` or clang-cl does, and run `HotReloadEndToEnd`, which rebuilds
+and reloads a module of its own through `eacp_add_hot_reload`; a CI build in
+which that app came out static fails the configure rather than skip the
+test. Every lane
+configures with `EACP_CI_BUILD=ON` and `CMAKE_COMPILE_WARNING_AS_ERROR=ON`, so
+a warning in any compiled target fails the lane, and builds `RelWithDebInfo`:
+the tests run optimized code, as a shipped build does, while the link-time
+optimization eacp's targets take under `Release` stays off — it roughly
+tripled the macOS and MSVC build steps for a few seconds of test time. The
+`NDEBUG`-only paths — the D3D12 debug layer, `Device::assertOwningThread`, the
+Android JNI local-reference check — are exercised by a local Debug build, not by CI.
 
 Every lane of the build matrix compiles through [ccache](https://ccache.dev)
 (`hendrikmuhs/ccache-action`, which installs it and keeps its directory in the
@@ -399,12 +537,12 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
     with-weston ctest --test-dir build-ci-linux --output-on-failure \
-    -E '^(X11|EmbeddedView)(/|$)'
+    -E '^(X11|EmbeddedView|NativeChildSurface)(/|$)'
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -v "$PWD":/workspace eacp-ci-linux \
     with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-    -R '^(X11|EmbeddedView|Present)(/|$)'
+    -R '^(X11|EmbeddedView|NativeChildSurface|Present)(/|$)'
 ```
 
 A ctest entry is a group, not a case: `Tests/CMakeLists.txt` sets
@@ -419,3 +557,11 @@ The environment variables those commands set — `EACP_VK_SOFTWARE`,
 `EACP_REQUIRE_GPU`, `EACP_REQUIRE_DISPLAY`, `EACP_REQUIRE_FONTS`,
 `EACP_HEADLESS` — are described in [Linux.md](Linux.md) and in the "Running
 it" section of `Lib/eacp/GPU/README.md`.
+
+On Windows, a session with no desktop compositor — a service, a CI runner, a
+job started over ssh, which lands in session 0 — cannot create a
+DirectComposition device (`E_ACCESSDENIED`). Nothing reaches the screen there,
+but DirectWrite, Direct2D and `renderToImage` still work, and so do the tests
+that use them; the ones that need on-screen composition self-skip.
+`EACP_DCOMP_UNAVAILABLE=1` forces that state on a desktop that has a
+compositor, which is how `NoCompositionTests` checks it on any machine.

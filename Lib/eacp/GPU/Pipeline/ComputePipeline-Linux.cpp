@@ -3,12 +3,15 @@
 #include "../Device/Device.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Vulkan/VulkanTypes.h"
+#include "VulkanSpecialization-Linux.h"
 
 namespace eacp::GPU
 {
 struct ComputePipeline::Native
 {
-    Native(Device& device, const ShaderLibrary& library)
+    Native(Device& device,
+           const ShaderLibrary& library,
+           const PipelineConstants& constants)
     {
         if (!device.isValid())
             return;
@@ -25,11 +28,14 @@ struct ComputePipeline::Native
         if (!chooseLayouts())
             return;
 
+        const auto specialization = VulkanSpecialization {constants};
+
         VkPipelineShaderStageCreateInfo stage = {};
         stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
         stage.module = program->compute;
         stage.pName = "main";
+        stage.pSpecializationInfo = specialization.get();
 
         VkComputePipelineCreateInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
@@ -117,8 +123,15 @@ struct ComputePipeline::Native
 };
 
 ComputePipeline::ComputePipeline(Device& device, const ShaderLibrary& library)
+    : ComputePipeline(device, library, PipelineConstants {})
+{
+}
+
+ComputePipeline::ComputePipeline(Device& device,
+                                 const ShaderLibrary& library,
+                                 const PipelineConstants& constants)
     : groupShape(library.threadGroupShape())
-    , impl(device, library)
+    , impl(device, library, constants)
 {
 }
 

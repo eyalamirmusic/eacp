@@ -1,4 +1,7 @@
 #include "Common.h"
+
+#include <eacp/Core/Utils/TemporaryFile.h>
+
 #include <filesystem>
 #include <fstream>
 
@@ -116,4 +119,23 @@ auto tIsUnderRoot = test("File/isUnder") = []
             dir));
 
     std::filesystem::remove(inside);
+};
+
+auto tIsUnderRootWithNamesOutsideTheCodePage =
+    test("File/isUnder a folder whose name the ANSI code page cannot spell") = []
+{
+    auto root = eacp::TemporaryFile {};
+    const auto folder = eacp::toStdPath(root.path())
+                        / std::filesystem::path {u8"\u65e5\u672c\u8a9e"};
+    std::filesystem::create_directories(folder);
+    const auto inside = folder / "kick.wav";
+    {
+        auto out = std::ofstream {inside, std::ios::binary};
+        out << "x";
+    }
+
+    check(File {inside}.isUnder(root.path()));
+    check(
+        !File {eacp::toStdPath(root.path()).parent_path() / "elsewhere.wav"}.isUnder(
+            root.path()));
 };
