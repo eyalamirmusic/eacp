@@ -51,6 +51,68 @@ async function readBody(req)
     return Buffer.concat(chunks);
 }
 
+// What an httpbin-compatible server answers on /anything, /post and the like,
+// for the Apps/Network examples run against this server: the query, headers,
+// method and body, the body decoded as a form, multipart parts or JSON where
+// its Content-Type says it is one.
+function multipartParts(body, contentType)
+{
+    const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
+    const form = {};
+    const files = {};
+
+    if (!match)
+        return {form, files};
+
+    const boundary = '--' + (match[1] || match[2]).trim();
+    const text = body.toString('latin1');
+
+    for (const chunk of text.split(boundary).slice(1))
+    {
+        if (chunk.startsWith('--'))
+            break;
+
+        const split = chunk.indexOf('\r\n\r\n');
+
+        if (split < 0)
+            continue;
+
+        const head = chunk.slice(0, split);
+        const value = chunk.slice(split + 4).replace(/\r\n$/, '');
+        const name = /name="([^"]*)"/i.exec(head)?.[1] ?? '';
+
+        if (/filename="/i.test(head))
+            files[name] = Buffer.from(value, 'latin1').toString('utf8');
+        else
+            form[name] = Buffer.from(value, 'latin1').toString('utf8');
+    }
+
+    return {form, files};
+}
+
+function httpbinEcho(req, url, body)
+{
+    const contentType = req.headers['content-type'] || '';
+    const args = Object.fromEntries(url.searchParams);
+    let form = {};
+    let files = {};
+    let json = null;
+
+    if (contentType.startsWith('application/x-www-form-urlencoded'))
+        form = Object.fromEntries(new URLSearchParams(body.toString('utf8')));
+    else if (contentType.startsWith('multipart/form-data'))
+        ({form, files} = multipartParts(body, contentType));
+    else if (contentType.startsWith('application/json'))
+    {
+        try { json = JSON.parse(body.toString('utf8')); }
+        catch {}
+    }
+
+    return {args, headers: req.headers, method: req.method,
+            origin: req.socket.remoteAddress, url: req.url,
+            data: body.toString('utf8'), form, files, json};
+}
+
 function createHandler(ports, hits)
 {
     return async (req, res) =>
@@ -222,6 +284,55 @@ function createHandler(ports, hits)
                     return send(304, {'ETag': tag});
                 return send(200, {'Content-Type': 'application/octet-stream', 'ETag': tag},
                             pattern(0, Number(q('size') || 5000)));
+            }
+
+            // The httpbin endpoints the Apps/Network and Apps/Console examples
+            // use, in httpbin's shapes.
+            case '/anything':
+            case '/post':
+            {
+                if (url.pathname === '/post' && req.method !== 'POST')
+                    return send(405, {'Content-Type': 'text/plain'}, 'POST only');
+                return send(200, {'Content-Type': 'application/json'},
+                            JSON.stringify(httpbinEcho(req, url, body), null, 2));
+            }
+
+            case '/headers':
+                return send(200, {'Content-Type': 'application/json'},
+                            JSON.stringify({headers: req.headers}, null, 2));
+
+            case '/user-agent':
+                return send(200, {'Content-Type': 'application/json'},
+                            JSON.stringify({'user-agent': req.headers['user-agent'] || ''}));
+
+            case '/ip':
+                return send(200, {'Content-Type': 'application/json'},
+                            JSON.stringify({origin: req.socket.remoteAddress}));
+
+            case '/bearer':
+            {
+                const token = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
+                if (!token)
+                    return send(401, {'Content-Type': 'application/json'},
+                                JSON.stringify({authenticated: false}));
+                return send(200, {'Content-Type': 'application/json'},
+                            JSON.stringify({authenticated: true, token}));
+            }
+
+            case '/json':
+                return send(200, {'Content-Type': 'application/json'},
+                            JSON.stringify({slideshow: {author: 'eacp', title: 'Sample',
+                                                        slides: [{title: 'One'},
+                                                                 {title: 'Two'}]}},
+                                           null, 2));
+
+            case '/robots.txt':
+            {
+                const tag = '"robots-v1"';
+                if (req.headers['if-none-match'] === tag)
+                    return send(304, {'ETag': tag});
+                return send(200, {'Content-Type': 'text/plain', 'ETag': tag},
+                            'User-agent: *\nDisallow: /deny\n');
             }
 
             default:

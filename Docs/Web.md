@@ -52,9 +52,15 @@ look for itself: `emcmake` names it, and the toolchain file alone takes the
 `node` on `PATH`. Where neither found one — an IDE started from the Dock has no
 shell `PATH` — the emulator is the test node (see "Testing").
 
-`Apps/` takes only `Apps/Web` there, `HelloLoop` and `HelloNetwork`. An app is
-an ordinary `eacp_add_app`, which on the web is an `add_executable` producing
-`<app>.js` and `<app>.wasm`, plus one call:
+`Apps/` goes through the same capability variables there as everywhere, so
+what builds is what needs nothing that draws and no socket of its own: the two
+`Apps/Web` examples written for the browser's loop, `HelloLoop` and
+`HelloNetwork`, and five examples of every platform, unchanged — `Console`,
+`ZipDemo` and `OnlineResourceDemo` from `Apps/Console`, `Http` and `BasicHttp`
+from `Apps/Network`. The servers, TCP and IPC examples are behind
+`EACP_HAS_SOCKETS` and `Apps/Plugins` is never added. An app is an ordinary
+`eacp_add_app` or `add_executable`, which on the web produces `<app>.js` and
+`<app>.wasm`, plus one call:
 
 ```cmake
 eacp_add_app(HelloLoop Main.cpp)
@@ -62,13 +68,17 @@ target_link_libraries(HelloLoop PRIVATE eacp-core)
 eacp_web_executable(HelloLoop)
 ```
 
-`eacp_web_executable(<target> [NODE_FILESYSTEM] [COMPANION <script.mjs>]
-[ARGUMENTS <arg>...])` gives it the link options every web executable shares
-(`eacp_web_link_options`): `-sALLOW_MEMORY_GROWTH=1`, a 1 MB stack
-(`-sSTACK_SIZE=1MB`) and `-sEXIT_RUNTIME=1`, so the runtime exits with the code
-`Apps::quit` or `main()` gives it. `NODE_FILESYSTEM` adds `-sNODERAWFS=1`,
-node's own file system under the program, which makes the executable
-node-only; the test suites link that way, an app does not. No HTML page is
+`eacp_web_executable(<target> [NODE_FILESYSTEM] [NESTED_PUMP]
+[COMPANION <script.mjs>] [ARGUMENTS <arg>...])` gives it the link options every
+web executable shares (`eacp_web_link_options`): `-sALLOW_MEMORY_GROWTH=1`, a
+1 MB stack (`-sSTACK_SIZE=1MB`) and `-sEXIT_RUNTIME=1`, so the runtime exits
+with the code `Apps::quit` or `main()` gives it, and `CMake/Web/UncaughtException.js`
+as a `--post-js` (below, "Uncaught exceptions"). `NODE_FILESYSTEM` adds
+`-sNODERAWFS=1`, node's own file system under the program, which makes the
+executable node-only; the test suites link that way, an app does not.
+`NESTED_PUMP` links `eacp-core-nested-pump` (see "The nested pump"), which is
+how an example that blocks in `main()` — `OnlineResourceDemo`, `Http`,
+`BasicHttp` — runs unchanged, at the price of needing JSPI. No HTML page is
 produced: the build output is the `.js` and the `.wasm` beside it, and a page
 that defines `Module` and loads the `.js` is the deployer's.
 
@@ -190,9 +200,30 @@ it does not). Not linked,
 an error naming `eacp-core-nested-pump` and throws `std::logic_error`.
 
 The test suites link it, because their cases are blocking code that runs
-unchanged on every other platform. The apps do not: an app on the web is
-written against callbacks anyway, and without JSPI it runs on any engine with
-wasm exceptions, rather than only on one that has JSPI.
+unchanged on every other platform. An app does not by default: an app on the
+web is written against callbacks anyway, and without JSPI it runs on any engine
+with wasm exceptions, rather than only on one that has JSPI. An example
+written blocking for the other platforms opts in with
+`eacp_web_executable(<app> NESTED_PUMP)`; its launcher and ctest entries then
+run under the test node (`EACP_WEB_TEST_NODE`) rather than the emulator, since
+`Launch.mjs node` runs the app under its own node.
+
+## Uncaught exceptions
+
+A C++ exception nothing catches ends a native program in `std::terminate`.
+Emscripten hands one that leaves `main()` or a callback to its `quit_`, which
+under node exits non-zero but in a page only throws it on; and a `main()`
+linked with the nested pump runs as a promise, so in a page the throw became
+an unhandled rejection, no exit was reported and the runtime stayed alive.
+`CMake/Web/UncaughtException.js`, a `--post-js` every web executable links
+through `eacp_web_link_options`, wraps `quit_` so that a C++ exception reaching
+it calls `abort()` with the exception's type and message instead: it prints
+`Aborted(uncaught exception: std::runtime_error: <what>)`, calls
+`Module.onAbort` (which a page, `Launch.mjs`'s included, takes as exit code 1)
+and ends the run at once, under node and in a page alike. The type and message
+come from Emscripten's `getExceptionMessage`, which a Debug build exports; a
+Release build prints `uncaught exception` alone. `ThrowFromMainHarness`
+(`Tests/Core/ThrowFromMainHarness-Web.cpp`) is the regression check.
 
 ## Threads
 
@@ -401,8 +432,9 @@ emulator, `/opt/homebrew/bin/node` and `/usr/local/bin/node` that has
 with none found the configure warns, the test node is the emulator, and the
 suites fail. Pass `-DEACP_WEB_TEST_NODE=<node>` to name one, and a node 24 as
 a list with its flag, `-DEACP_WEB_TEST_NODE="<node>;--experimental-wasm-jspi"`.
-The apps link no JSPI, so their ctest entries ask nothing of the emulator's
-node beyond wasm exceptions, and `<app>-run` uses it only for the launcher.
+An app links no JSPI unless it says `NESTED_PUMP`, so the ctest entries ask
+nothing of the emulator's node beyond wasm exceptions, and `<app>-run` uses it
+only for the launcher; a `NESTED_PUMP` app's launcher is the test node.
 
 That node tier proves the client logic against a real server — statuses,
 bodies, multipart, timeouts, cancellation, size limits, resume, the WebSocket
@@ -424,7 +456,7 @@ is aborted or something calls into it after it exited (`Aborted`, `aborted:`,
 from Emscripten's `ASSERTIONS`, which a Debug build has; a Release web build
 prints none of them, so there the entries check little beyond the exit code
 and the timeout. The node entries are the point: the path real apps take
-is tested on a machine without Chrome. `Tests/CMakeLists.txt` registers four:
+is tested on a machine without Chrome. `Tests/CMakeLists.txt` registers these six first:
 
 - `HelloLoop` runs `callAsync`, `callAfter` and a `Timer` on the page's loop
   in order and quits.
@@ -443,9 +475,41 @@ is tested on a machine without Chrome. `Tests/CMakeLists.txt` registers four:
   connection so the socket stays open across the exit, and quits. Its server
   is a `COMPANION` `TestServer.mjs`, as `HelloNetwork`'s is, not the ctest
   fixture, and nothing may call into the exited runtime.
+- `Console` (`Apps/Console/Console`), the desktop example unchanged: a 1 Hz
+  `Timer` that logs four ticks and quits.
+- `ZipDemo` (`Apps/Console/Zip`), unchanged: an archive built in memory,
+  written to the in-memory file system, read back, extracted and deflated, in
+  `main()` with no loop.
 
-Each must exit 0. None of them links `eacp-core-nested-pump`. These are a few
-apps in one browser; nothing else runs in a browser automatically.
+Each must exit 0, and none of them links `eacp-core-nested-pump`. Three more
+do, the network examples that block in `main()`, unchanged on every platform:
+
+- `OnlineResourceDemo` (`Apps/Console/OnlineResource`) fetches
+  `<server>/robots.txt` through `OnlineResource::fetch` and prints it.
+- `Http` (`Apps/Network/HTTP`) makes one blocking request of each kind — a
+  JSON document, a query string, custom headers, a JSON and a form POST, a
+  User-Agent, a bearer token, a download to a file and a multipart upload of
+  it — and exits 1 if any failed.
+- `BasicHttp` (`Apps/Network/BasicHTTP`) POSTs a reflected struct as JSON ten
+  times and exits 1 if any failed.
+
+Each takes its server as an optional positional argument (`Args::Parser`),
+defaulting to `https://httpbingo.org`, an httpbin-compatible host that sends
+CORS headers, answers preflights for the headers they set and takes ten
+requests at once, so `<app>-run` and a native run need no server of their own.
+Their ctest entries get `TestServer.mjs` as a `COMPANION`, set on the target by
+`Tests/CMakeLists.txt` just before `eacp_web_add_app_tests` so `<app>-run`
+keeps the public default; the server answers the httpbin endpoints they use
+(`/json`, `/anything`, `/headers`, `/post`, `/user-agent`, `/ip`, `/bearer`,
+and `/robots.txt` with an ETag) in httpbin's shapes, so the entries run
+offline. There are no native ctest entries for them, since node, which the
+server needs, is not a dependency of the native tests.
+
+Last, `ThrowFromMainHarness` and `ThrowFromMainHarnessHeadless` run a
+`NESTED_PUMP` harness that throws out of `main()` from inside a nested pump,
+and pass on the `Aborted(uncaught exception: ...)` line within 20 s (see
+"Uncaught exceptions"). These are a few apps in one browser; nothing else runs
+in a browser automatically.
 
 There is no web lane in CI: `.github/workflows/build.yml` neither installs
 Emscripten nor builds the target.
@@ -453,8 +517,8 @@ Emscripten nor builds the target.
 ## Not there yet
 
 - **Graphics.** No window, view, input, GPU, text, UI or SVG: every drawing
-  capability variable is off, and `Apps/` builds only the two `Apps/Web`
-  examples. The shader codegen builds, and on the web takes the Linux builder,
+  capability variable is off, and `Apps/` builds only the seven examples that
+  draw nothing (`plan.md` is the roadmap to the rest). The shader codegen builds, and on the web takes the Linux builder,
   so a `ShaderBuilder` emits GLSL for the Vulkan backend there.
 - **Persistence.** The in-memory file system is all there is; nothing written
   in a page survives it.

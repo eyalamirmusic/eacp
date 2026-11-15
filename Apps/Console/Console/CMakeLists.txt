@@ -10,3 +10,7 @@ if (APPLE)
             MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
             XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
 endif ()
+
+if (EMSCRIPTEN)
+    eacp_web_executable(Console)
+endif ()

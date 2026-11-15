@@ -8,3 +8,8 @@ set_target_properties(Http PROPERTIES
         MACOSX_BUNDLE_BUNDLE_NAME "Http Request App"
         MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+
+# main() makes blocking requests, each waiting in a nested pump.
+if (EMSCRIPTEN)
+    eacp_web_executable(Http NESTED_PUMP)
+endif ()

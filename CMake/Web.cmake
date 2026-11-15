@@ -60,16 +60,22 @@ if (NOT EACP_WEB_CHROME)
             "-DEACP_WEB_CHROME=<path> names one")
 endif ()
 
+set(EACP_WEB_UNCAUGHT_EXCEPTION "${CMAKE_CURRENT_LIST_DIR}/Web/UncaughtException.js"
+        CACHE INTERNAL "eacp web uncaught exception handling")
+
 # eacp_web_link_options(<out_var> [NODE_FILESYSTEM])
 #
 # The link settings every web executable shares: a growable memory, a 1 MB
-# stack, and a runtime that exits with the code Apps::quit or main() gives it.
+# stack, a runtime that exits with the code Apps::quit or main() gives it, and
+# one that aborts with the message of a C++ exception nothing caught
+# (Web/UncaughtException.js), as std::terminate would.
 # NODE_FILESYSTEM puts node's own file system under the program, which is
 # what the tests read and write; it makes the executable node-only.
 function(eacp_web_link_options out_var)
     cmake_parse_arguments(WEB "NODE_FILESYSTEM" "" "" ${ARGN})
 
-    set(options -sALLOW_MEMORY_GROWTH=1 -sEXIT_RUNTIME=1 -sSTACK_SIZE=1MB)
+    set(options -sALLOW_MEMORY_GROWTH=1 -sEXIT_RUNTIME=1 -sSTACK_SIZE=1MB
+            "SHELL:--post-js \"${EACP_WEB_UNCAUGHT_EXCEPTION}\"")
 
     if (WEB_NODE_FILESYSTEM)
         list(APPEND options -sNODERAWFS=1)
@@ -133,11 +139,20 @@ set(EACP_WEB_LAUNCHER "${CMAKE_CURRENT_LIST_DIR}/Web/Launch.mjs"
 # EACP_WEB_COMPANION names a node script, that script is started first
 # (`node <script> serve`, printing a JSON line with a baseUrl) and the URL
 # appended to them. Both are read when the command is made.
+#
+# An app linked with NESTED_PUMP needs JSPI, so its launcher, which runs it
+# under its own node in node mode, is the test node rather than the emulator.
 function(eacp_web_launch_command out_var target mode)
     get_target_property(companion ${target} EACP_WEB_COMPANION)
     get_target_property(arguments ${target} EACP_WEB_LAUNCH_ARGUMENTS)
-    set(command ${CMAKE_CROSSCOMPILING_EMULATOR} "${EACP_WEB_LAUNCHER}" ${mode}
-            "$<TARGET_FILE:${target}>")
+    get_target_property(nested_pump ${target} EACP_WEB_NESTED_PUMP)
+    set(node ${CMAKE_CROSSCOMPILING_EMULATOR})
+
+    if (nested_pump)
+        set(node ${EACP_WEB_TEST_NODE})
+    endif ()
+
+    set(command ${node} "${EACP_WEB_LAUNCHER}" ${mode} "$<TARGET_FILE:${target}>")
 
     if (companion)
         list(APPEND command --companion "${companion}")
@@ -184,15 +199,25 @@ function(eacp_web_add_app_tests target)
     endforeach ()
 endfunction()
 
-# eacp_web_executable(<target> [NODE_FILESYSTEM] [COMPANION <script.mjs>]
-#                     [ARGUMENTS <arg>...])
+# eacp_web_executable(<target> [NODE_FILESYSTEM] [NESTED_PUMP]
+#                     [COMPANION <script.mjs>] [ARGUMENTS <arg>...])
 #
 # An executable that can run in a browser (no NODE_FILESYSTEM) also gets
 # <target>-run, which builds it and opens it in the default browser and is not
 # part of all, with COMPANION and ARGUMENTS kept as its properties for that
 # target and eacp_web_add_app_tests.
+#
+# NESTED_PUMP links eacp-core-nested-pump, and with it JSPI, so blocking code
+# written for the other platforms - httpRequest, OnlineResource::fetch, a
+# runEventLoopFor in main() - runs unchanged, on an engine that has JSPI only.
 function(eacp_web_executable target)
-    cmake_parse_arguments(WEB "NODE_FILESYSTEM" "COMPANION" "ARGUMENTS" ${ARGN})
+    cmake_parse_arguments(WEB "NODE_FILESYSTEM;NESTED_PUMP" "COMPANION" "ARGUMENTS"
+            ${ARGN})
+
+    if (WEB_NESTED_PUMP)
+        target_link_libraries(${target} PRIVATE eacp-core-nested-pump)
+        set_target_properties(${target} PROPERTIES EACP_WEB_NESTED_PUMP TRUE)
+    endif ()
 
     set(link_arguments "")
 
@@ -202,6 +227,8 @@ function(eacp_web_executable target)
 
     eacp_web_link_options(options ${link_arguments})
     target_link_options(${target} PRIVATE ${options})
+    set_property(TARGET ${target} APPEND PROPERTY
+            LINK_DEPENDS "${EACP_WEB_UNCAUGHT_EXCEPTION}")
 
     if (WEB_NODE_FILESYSTEM)
         return()

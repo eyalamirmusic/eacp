@@ -802,12 +802,17 @@ See `Lib/eacp/GPU/README.md`.
 `-DCMAKE_TOOLCHAIN_FILE=<emscripten>/cmake/Modules/Platform/Emscripten.cmake`
 (or `emcmake cmake`) builds wasm32 for a browser or node: `Core`, `Network`'s
 client half and the four device-free pieces, nothing that draws, and of the
-examples only `Apps/Web` (`HelloLoop`, `HelloNetwork`). It is browser-first:
+examples what the same capability gates as everywhere let through: `Apps/Web`
+(`HelloLoop`, `HelloNetwork`) and, unchanged, `Console`, `ZipDemo`,
+`OnlineResourceDemo`, `Http` and `BasicHttp` (no socket apps, no
+`Apps/Plugins`; `plan.md` is the roadmap to the rest). It is browser-first:
 one thread, no `-pthread`, so the output (`<app>.js` and `<app>.wasm`, no
 page) is plain static files needing no cross-origin isolation headers.
 `CMake/Web.cmake` (included before any target, for `-fwasm-exceptions`
-everywhere) gives `eacp_web_executable(<app>)`: the shared link options
-(`-sEXIT_RUNTIME=1`, growable memory, 1 MB stack) and one `<app>-run` target
+everywhere) gives `eacp_web_executable(<app> [NESTED_PUMP])`: the shared link
+options (`-sEXIT_RUNTIME=1`, growable memory, 1 MB stack), with `NESTED_PUMP`
+linking `eacp-core-nested-pump` for an example that blocks in `main()` and
+running its launcher under the test node, and one `<app>-run` target
 that opens the app in the default browser through `CMake/Web/Launch.mjs`,
 whose `node` and `headless` (headless Chrome) modes only the ctest entries
 use. Per-platform files are `Thing-Web.cpp`, and the
@@ -824,7 +829,7 @@ the `callAfter` timers) and exits the runtime with the return value, so
 nested pump (`runEventLoopFor`/`Until`, `Async::waitFor`, the blocking HTTP
 calls, `OnlineResource::fetch`) needs JSPI and so exists only in executables
 linking the `eacp-core-nested-pump` object library, which the test suites do
-and apps do not; elsewhere a positive `runFor` throws, `httpRequest` returns an
+and apps do only through `NESTED_PUMP`; elsewhere a positive `runFor` throws, `httpRequest` returns an
 error and `fetch` throws, each naming the library. HTTP is `fetch()`
 (`Http-Web.cpp`/`.js`) and WebSocket the browser's (`WebSocket-Web.cpp`/`.js`),
 with the browser's limits (CORS, runtime-owned headers, opaque redirects, no
@@ -838,10 +843,17 @@ group discovered at ctest time (`<suite>.discovery` fails when a suite cannot
 be listed), against `Tests/Network/Web/TestServer.mjs` as a fixture, with
 `EACP_WEB_TEST_NODE` a node that has JSPI (25+, or a node 24 named with
 `--experimental-wasm-jspi` as a list). `eacp_web_add_app_tests` registers
-`HelloLoop`, `HelloNetwork` and the `QuitWithTimerHarness` and
-`QuitWithFetchHarness` real-exit checks, built without JSPI as apps are, as
+`HelloLoop`, `HelloNetwork`, `Console`, `ZipDemo` and the
+`QuitWithTimerHarness` and `QuitWithFetchHarness` real-exit checks, built
+without JSPI as apps are, and the `NESTED_PUMP` examples `OnlineResourceDemo`,
+`Http` and `BasicHttp` (each taking an httpbin-compatible server as its
+argument, `https://httpbingo.org` by default, given `TestServer.mjs` as a
+companion in ctest), as
 one entry under plain node each and one `<app>Headless` entry in the headless
-Chrome configure found (`EACP_WEB_CHROME`). `Docs/Web.md` is the account.
+Chrome configure found (`EACP_WEB_CHROME`). Every web executable links
+`CMake/Web/UncaughtException.js` as a `--post-js`, which turns a C++ exception
+escaping `main()` or a callback into an `abort()` with its message, so a page
+ends too (`ThrowFromMainHarness`). `Docs/Web.md` is the account.
 
 ## Architecture
 New source files are added directly to the module's CMakeLists.txt under the

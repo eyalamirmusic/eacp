@@ -100,10 +100,48 @@ if (EMSCRIPTEN)
     # The example apps and the quit harnesses, built without JSPI as an app
     # is. HelloNetwork in a browser shows the browser's own rules - CORS,
     # forbidden headers, opaque redirects - that the node-run cases cannot; a
-    # harness checks that a real exit with work in flight stays clean.
-    foreach (app HelloLoop HelloNetwork QuitWithTimerHarness QuitWithFetchHarness)
+    # harness checks that a real exit with work in flight stays clean. Console
+    # and ZipDemo are examples of every platform, run unchanged.
+    foreach (app HelloLoop HelloNetwork QuitWithTimerHarness QuitWithFetchHarness
+            Console ZipDemo)
         if (TARGET ${app})
             eacp_web_add_app_tests(${app})
         endif ()
     endforeach ()
+
+    # The network examples, which block in main() through the nested pump. Their
+    # <app>-run talks to the public hosts they default to; their ctest entries
+    # get the test server as a companion, whose URL they take as their last
+    # argument, so the entries run offline.
+    foreach (app OnlineResourceDemo Http BasicHttp)
+        if (TARGET ${app})
+            set_target_properties(${app} PROPERTIES EACP_WEB_COMPANION
+                    "${PROJECT_SOURCE_DIR}/Tests/Network/Web/TestServer.mjs")
+            eacp_web_add_app_tests(${app})
+        endif ()
+    endforeach ()
+
+    # A C++ exception out of a main() suspended in a nested pump must abort at
+    # once with its message, under node and in a page, rather than leave the
+    # runtime alive.
+    if (TARGET ThrowFromMainHarness)
+        set(names ThrowFromMainHarness)
+        set(modes node)
+
+        if (EACP_WEB_CHROME)
+            list(APPEND names ThrowFromMainHarnessHeadless)
+            list(APPEND modes headless)
+        endif ()
+
+        foreach (name mode IN ZIP_LISTS names modes)
+            eacp_web_launch_command(command ThrowFromMainHarness ${mode})
+            add_test(NAME ${name}
+                    COMMAND ${command}
+                    WORKING_DIRECTORY "$<TARGET_FILE_DIR:ThrowFromMainHarness>")
+            set_tests_properties(${name} PROPERTIES
+                    PASS_REGULAR_EXPRESSION
+                    "Aborted\\(uncaught exception: std::runtime_error: ThrowFromMainHarness threw on purpose\\)"
+                    TIMEOUT 20)
+        endforeach ()
+    endif ()
 endif ()
