@@ -139,7 +139,12 @@ struct WindowOptions
     //
     // Fullscreen and maximise give a constrained window the largest size the
     // rule allows on that display, centred: macOS and the Wayland compositor
-    // letterbox the rest in black, Windows leaves it to the desktop.
+    // letterbox the rest in black, Windows leaves it to the desktop. Wayland
+    // has no letterbox for a maximise, whose size a window must take exactly,
+    // so there a constrained window stays a window: toggleMaximize asks for
+    // nothing when aspectRatio is set or the window does not resize, and a
+    // maximise the compositor starts itself is turned down whenever the rule
+    // would change the size it gives.
     SizeConstraint sizeConstraint = [](const ResizeRequest& request)
     { return request.size; };
 
@@ -361,7 +366,8 @@ public:
 
     // Maximizes (macOS zoom, Windows SW_MAXIMIZE), or restores the previous
     // frame when already maximized — the standard caption-button toggle.
-    // No-op under headless and on iOS.
+    // No-op under headless and on iOS, and on Wayland for a window whose size
+    // a maximise would break (see sizeConstraint).
     void toggleMaximize();
 
     // Takes the window full screen, or brings it back to the window it was -

@@ -187,7 +187,20 @@ struct WaylandWindowNative final
              & (LIBDECOR_WINDOW_STATE_MAXIMIZED | LIBDECOR_WINDOW_STATE_FULLSCREEN))
             != 0;
 
+        const auto proposed = std::pair {width, height};
         state.applyConstraints(width, height, bounded);
+
+        // A maximised window must take exactly the size it is given, which a
+        // constrained one cannot, and a configure cannot be refused: it is
+        // left unanswered and the window asks to be a window again, whose
+        // configure is the one it commits to.
+        auto maximised = (windowState & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0;
+
+        if (maximised && std::pair {width, height} != proposed)
+        {
+            libdecor_frame_unset_maximized(frame);
+            return;
+        }
 
         auto* configuring = frame;
 
@@ -396,6 +409,9 @@ struct WaylandWindowNative final
             libdecor_frame_set_minimized(frame);
     }
 
+    // A window with an aspect ratio, or one that does not resize, cannot take
+    // the size a maximise gives it, so it is not asked for. Any other rule is
+    // checked against the size itself when the configure comes.
     void toggleMaximize() override
     {
         if (frame == nullptr)
@@ -403,7 +419,7 @@ struct WaylandWindowNative final
 
         if (state.maximized)
             libdecor_frame_unset_maximized(frame);
-        else
+        else if (state.resizable && !state.aspectRatioHint)
             libdecor_frame_set_maximized(frame);
     }
 

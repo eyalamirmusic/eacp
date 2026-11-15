@@ -454,7 +454,11 @@ the content (`Window/WaylandWindow-Linux.cpp`; maximise and full screen are
 libdecor requests whose state comes back in the configure, a full screen asked
 for before the frame exists is set on it before the map, and a configure with
 no size goes back to the last floating size, which is what un-maximising and
-leaving full screen restore), a `wl_subsurface` per presenting
+leaving full screen restore; a maximised configure the size constraint would
+change is left unanswered and undone with `unset_maximized`, since xdg-shell
+holds a maximised window to its size exactly, and `toggleMaximize` asks for
+nothing on a window with an aspect ratio or a fixed size), a `wl_subsurface`
+per presenting
 view (`View/WaylandViewSurface-Linux.cpp`, the Wayland `ViewSurfaceBackend`),
 seat protocol glue feeding the shared state machines with pointer-constraints
 for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
