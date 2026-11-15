@@ -847,6 +847,73 @@ auto tClipboardFilesAreNotText = test("Wayland/clipboardFilesOfferNoText") = []
     check(Clipboard::getText().empty());
 };
 
+namespace
+{
+// A protocol error costs the process its only connection, after which a new
+// window is built with no surface.
+bool waylandConnectionAlive()
+{
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+
+    auto probe = Window {options};
+
+    return probe.getHandle() != nullptr;
+}
+} // namespace
+
+// What a title bar's close does: the window is hidden from inside one of
+// libdecor's own callbacks, here the configure a maximise brings, through the
+// app's resize handler.
+auto tAWindowHiddenFromAConfigureShowsAgain =
+    test("Wayland/aWindowHiddenFromAConfigureShowsAgain") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto hideOnResize = false;
+    Window* target = nullptr;
+
+    auto options = WindowOptions {};
+    options.width = 400;
+    options.height = 300;
+    options.title = "eacp Wayland tests";
+    options.isPrimary = false;
+    options.onResize = [&](int, int)
+    {
+        if (!hideOnResize)
+            return;
+
+        hideOnResize = false;
+        target->setVisible(false);
+    };
+
+    auto content = View {};
+    auto window = Window {options};
+    target = &window;
+
+    window.setContentView(content);
+    Threads::runEventLoopUntil([&] { return window.isVisible(); },
+                               waylandTestTimeout);
+
+    hideOnResize = true;
+    window.toggleMaximize();
+
+    Threads::runEventLoopUntil([&] { return !hideOnResize; }, waylandTestTimeout);
+    Threads::runEventLoopFor(Time::MS {200});
+
+    check(!hideOnResize, "the maximise never reached the window");
+    check(!window.isVisible(), "the window hidden from a configure still shows");
+
+    window.setVisible(true);
+    Threads::runEventLoopUntil([&] { return window.isVisible(); },
+                               waylandTestTimeout);
+    Threads::runEventLoopFor(Time::MS {100});
+
+    check(window.isVisible(), "the window did not come back");
+    check(waylandConnectionAlive(), "the compositor dropped the connection");
+};
+
 // Last in the file on purpose: the connection it kills is the process's only
 // one, so every case after it in a direct run would find itself headless.
 // ctest gives each case a process of its own, which is where this is honest.

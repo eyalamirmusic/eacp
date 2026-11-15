@@ -95,6 +95,16 @@ struct WaylandWindowNative final
         if (decorations == nullptr)
             return;
 
+        // A new xdg_surface must be made on a surface with no buffer, and the
+        // surface is reused from the last time the window was shown, so
+        // anything that reached it since the unmap is taken off first.
+        if (buffer.get() != nullptr)
+        {
+            wl_surface_attach(getSurface(), nullptr, 0, 0);
+            wl_surface_commit(getSurface());
+            buffer.destroy();
+        }
+
         frame = libdecor_decorate(decorations, getSurface(), &frameListener(), this);
 
         if (frame == nullptr)
@@ -179,6 +189,8 @@ struct WaylandWindowNative final
 
         state.applyConstraints(width, height, bounded);
 
+        auto* configuring = frame;
+
         auto* newState = libdecor_state_new(width, height);
         libdecor_frame_commit(frame, newState, configuration);
         libdecor_state_free(newState);
@@ -191,6 +203,11 @@ struct WaylandWindowNative final
         }
 
         state.resizeTo({(float) width, (float) height});
+
+        // The activation and resize handlers above are the app's, and one that
+        // hid the window has unmapped it: nothing may reach the surface now.
+        if (frame != configuring)
+            return;
 
         if (libdecor_frame_is_floating(frame))
             floatingSize = contentSize;
@@ -545,13 +562,22 @@ struct WaylandWindowNative final
         {
             auto built = libdecor_frame_interface {};
 
-            built.configure = [](libdecor_frame*,
+            // A frame let go of from inside one of its own callbacks - the ✕
+            // that hides a hidesOnClose window - lives on until that callback
+            // returns, and can still call these. It is not ours any more.
+            built.configure = [](libdecor_frame* from,
                                  libdecor_configuration* configuration,
                                  void* data)
-            { self(data).configure(configuration); };
+            {
+                if (from == self(data).frame)
+                    self(data).configure(configuration);
+            };
 
-            built.close = [](libdecor_frame*, void* data)
-            { self(data).state.closeRequested(); };
+            built.close = [](libdecor_frame* from, void* data)
+            {
+                if (from == self(data).frame)
+                    self(data).state.closeRequested();
+            };
 
             // The decorations are on synchronous subsurfaces of ours, and
             // reach the screen only when this surface commits.
