@@ -3,6 +3,8 @@
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop-Linux.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Graphics/Menu/LinuxMenuBar-Linux.h>
+#include <eacp/Graphics/View/View-Linux.h>
 #include <eacp/Graphics/Window/EmbeddedView.h>
 #include <eacp/Graphics/Window/NativeChildSurface.h>
 
@@ -1138,6 +1140,128 @@ auto tAToplevelWindowHoldsTheSurface =
           "the client went down with the toplevel");
 
     content.removeSubview(surface);
+};
+
+// The toplevel's children, bottom of the stack first.
+std::vector<xcb_window_t> stackOf(const Connection& connection, xcb_window_t window)
+{
+    auto* xcb = connection.connection;
+    auto* reply = xcb_query_tree_reply(xcb, xcb_query_tree(xcb, window), nullptr);
+
+    if (reply == nullptr)
+        return {};
+
+    auto* children = xcb_query_tree_children(reply);
+    auto stack = std::vector<xcb_window_t>(
+        children, children + xcb_query_tree_children_length(reply));
+
+    std::free(reply);
+
+    return stack;
+}
+
+// A menu bar whose view presents, as eacp-ui's does, so it has a child window
+// of its own; the bar is drawn by nobody, only stacked.
+struct PresentingMenuBar final : LinuxMenuBarPresenter
+{
+    PresentingMenuBar()
+        : surface(requestViewSurface(view))
+    {
+    }
+
+    View& getView() override { return view; }
+    float getHeight() const override { return 24.f; }
+
+    void layout(Rect windowBounds) override
+    {
+        view.setBounds({0.f, 0.f, windowBounds.w, 24.f});
+    }
+
+    bool isMenuOpen() const override { return false; }
+    void dismissMenu() override {}
+    bool keyPressed(const KeyEvent&) override { return false; }
+
+    View view;
+    ViewSurface& surface;
+};
+
+// A container made after the menu bar's surface would start above it and hide
+// an open menu; it goes under the bar instead.
+auto tAMenuBarStaysAboveTheSurface =
+    test("NativeChildSurface/aMenuBarStaysAboveTheSurface") = []
+{
+    if (!x11ServerReachable())
+        return;
+
+    auto connection = Connection {};
+    auto pump = Pump {};
+
+    PresentingMenuBar* bar = nullptr;
+
+    setLinuxMenuBarPresenterFactory(
+        [&bar](const MenuBar&, Callback) -> std::unique_ptr<LinuxMenuBarPresenter>
+        {
+            auto made = std::make_unique<PresentingMenuBar>();
+            bar = made.get();
+            return made;
+        });
+
+    {
+        auto content = View {};
+        auto surface = NativeChildSurface {};
+
+        surface.setBounds({16.f, 24.f, 240.f, 120.f});
+
+        auto options = WindowOptions {};
+        options.width = 400;
+        options.height = 300;
+        options.title = "eacp native child surface tests";
+        options.isPrimary = false;
+
+        auto window = Window {options};
+        window.setContentView(content);
+
+        auto file = Menu {"File"};
+        file.add(MenuItem::withAction("Quit"));
+
+        auto menus = MenuBar {};
+        menus.add(std::move(file));
+        setApplicationMenuBar(menus, window);
+
+        check(bar != nullptr);
+        check(pump.until(
+            [&] { return window.isVisible() && bar->surface.handle.window != 0; }));
+
+        // Only now, so its container is made after the bar's child window.
+        content.addSubview(surface);
+
+        const auto toplevel = (xcb_window_t) (uintptr_t) window.getHandle();
+        const auto container =
+            (xcb_window_t) (uintptr_t) surface.getNativeParentHandle();
+        const auto barWindow = (xcb_window_t) bar->surface.handle.window;
+
+        check(container != XCB_NONE);
+
+        auto stacked = false;
+
+        check(pump.until(
+            [&]
+            {
+                auto stack = stackOf(connection, toplevel);
+                auto barAt = std::ranges::find(stack, barWindow);
+                auto containerAt = std::ranges::find(stack, container);
+
+                stacked = barAt != stack.end() && containerAt != stack.end()
+                          && barAt > containerAt;
+                return stacked;
+            }));
+
+        check(stacked, "the container was left above the menu bar");
+
+        content.removeSubview(surface);
+    }
+
+    setLinuxMenuBarPresenterFactory({});
 };
 } // namespace NativeChildSurfaceTests
 

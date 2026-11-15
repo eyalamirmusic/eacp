@@ -31,12 +31,22 @@ target_sources(eacp-ui PRIVATE
         Render/ShapeBatch.cpp
         Widgets/ComboBox.cpp
         Widgets/ListBox.cpp
+        Widgets/MenuBarComponent.cpp
         Widgets/PopupMenu.cpp
         Widgets/Tabs.cpp
         Widgets/Theme.cpp
         Widgets/TouchScroller.cpp
         Widgets/Viewport.cpp
         Widgets/Widgets.cpp)
+
+# The one per-platform file: what draws setApplicationMenuBar's bar on desktop
+# Linux, where eacp-graphics has no text to draw it with. It registers itself
+# when the program starts and nothing calls into it, so every link of eacp-ui
+# is told to keep it.
+if (LINUX)
+    target_sources(eacp-ui PRIVATE Widgets/MenuBarPresenter-Linux.cpp)
+    target_link_options(eacp-ui INTERFACE "LINKER:--undefined=eacpUILinuxMenuBar")
+endif ()
 
 set_default_target_setting(eacp-ui)
 eacp_enable_unity_build(eacp-ui)

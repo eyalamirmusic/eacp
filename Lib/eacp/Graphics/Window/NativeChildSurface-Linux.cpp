@@ -207,6 +207,16 @@ struct NativeChildSurface::Native final : LinuxNativeChild
             this, [this](const xcb_generic_event_t& event) { handleEvent(event); });
 
         mapped = false;
+
+        linuxKeepMenuBarAbove(owner, containerHandle(connection));
+    }
+
+    NativeSurfaceHandle containerHandle(X11Connection& connection) const
+    {
+        return {NativeSurfaceHandle::Kind::X11,
+                connection.getConnection(),
+                nullptr,
+                container};
     }
 
     void place(X11Connection& connection, X11WindowSurface& newHost)
@@ -224,6 +234,8 @@ struct NativeChildSurface::Native final : LinuxNativeChild
                                 parent,
                                 x11ClampPosition(newPixels.x),
                                 x11ClampPosition(newPixels.y));
+
+            linuxKeepMenuBarAbove(owner, containerHandle(connection));
         }
 
         host = &newHost;

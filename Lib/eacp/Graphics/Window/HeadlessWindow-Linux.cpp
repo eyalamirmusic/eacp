@@ -28,11 +28,7 @@ struct HeadlessWindowNative final
         viewSurfaces = std::make_unique<HeadlessViewSurfaceBackend>();
     }
 
-    ~HeadlessWindowNative() override
-    {
-        if (contentView != nullptr)
-            linuxUnbindWindowFromContentView(*contentView);
-    }
+    ~HeadlessWindowNative() override { linuxUnbindWindow(*this); }
 
     LinuxWindowState& getState() override { return state; }
 

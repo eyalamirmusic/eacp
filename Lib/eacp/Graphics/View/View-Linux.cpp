@@ -91,6 +91,22 @@ bool linuxEffectivelyVisible(View& view)
     return true;
 }
 
+// A new child starts on top of its siblings, so one made for the content after
+// the menu bar's would cover an open menu: the bar's go back above it.
+void linuxKeepMenuBarOnTop(View& view,
+                           LinuxWindowSurface& window,
+                           const NativeSurfaceHandle& created)
+{
+    auto* bar = window.menuBarView;
+
+    if (bar == nullptr || &linuxRootOf(view) == bar)
+        return;
+
+    for (auto& [other, state]: linuxViewRecords())
+        if (state->native != nullptr && &linuxRootOf(*other) == bar)
+            state->native->placeAbove(created);
+}
+
 void linuxCreateViewSurface(LinuxViewRecord& state,
                             View& view,
                             LinuxWindowSurface& window)
@@ -99,6 +115,8 @@ void linuxCreateViewSurface(LinuxViewRecord& state,
 
     if (state.native == nullptr)
         return;
+
+    linuxKeepMenuBarOnTop(view, window, state.record.handle);
 
     state.record.frameCallbackPending = false;
     state.record.onAvailable();
@@ -211,13 +229,21 @@ View::~View()
     linuxViewRecords().erase(this);
     linuxNativeChildren().erase(this);
 
-    // A content view dying first would leave the window holding a pointer.
+    // A root dying first would leave the window holding a pointer.
     auto& windows = linuxContentViewWindows();
     auto owner = windows.find(this);
 
     if (owner != windows.end())
     {
-        owner->second->contentView = nullptr;
+        auto& window = *owner->second;
+
+        if (window.contentView == this)
+            window.contentView = nullptr;
+
+        if (window.menuBarView == this)
+            window.menuBarView = nullptr;
+
+        window.forgetRoot(this);
         windows.erase(owner);
     }
 
@@ -303,7 +329,8 @@ Point View::getMousePosition() const
     while (root->getParent() != nullptr)
         root = root->getParent();
 
-    if (window == nullptr || window->contentView != root)
+    if (window == nullptr
+        || (window->contentView != root && window->menuBarView != root))
         return {};
 
     auto origin = linuxViewOriginInWindow(*this);
@@ -400,13 +427,45 @@ void linuxBindWindowToContentView(View& contentView, LinuxWindowSurface& window)
 
 void linuxUnbindWindowFromContentView(View& contentView)
 {
+    auto& windows = linuxContentViewWindows();
+
+    if (auto found = windows.find(&contentView); found != windows.end())
+        found->second->forgetRoot(&contentView);
+
     linuxReleaseViewSurfaceTree(contentView);
-    linuxContentViewWindows().erase(&contentView);
+    windows.erase(&contentView);
+}
+
+void linuxUnbindWindow(LinuxWindowSurface& window)
+{
+    auto roots = Vector<View*> {};
+
+    for (auto& [root, owner]: linuxContentViewWindows())
+        if (owner == &window)
+            roots.add(root);
+
+    for (auto* root: roots)
+        linuxUnbindWindowFromContentView(*root);
 }
 
 void linuxWindowSurfaceStateChanged(View& contentView)
 {
-    linuxSyncViewSurfaces(contentView);
+    auto* window = linuxWindowForView(contentView);
+
+    if (window == nullptr)
+    {
+        linuxSyncViewSurfaces(contentView);
+        return;
+    }
+
+    auto roots = Vector<View*> {};
+
+    for (auto& [root, owner]: linuxContentViewWindows())
+        if (owner == window)
+            roots.add(root);
+
+    for (auto* root: roots)
+        linuxSyncViewSurfaces(*root);
 }
 
 LinuxWindowSurface* linuxWindowForView(View& view)
@@ -427,13 +486,19 @@ void linuxUnregisterNativeChild(View& view)
     linuxNativeChildren().erase(&view);
 }
 
+void linuxKeepMenuBarAbove(View& view, const NativeSurfaceHandle& created)
+{
+    if (auto* window = linuxWindowForView(view))
+        linuxKeepMenuBarOnTop(view, *window, created);
+}
+
 Point linuxViewOriginInWindow(const View& view)
 {
     auto origin = Point {};
 
-    // Stops before the root, whose bounds are the window's content rect.
-    for (const auto* node = &view; node->getParent() != nullptr;
-         node = node->getParent())
+    // The root included: its bounds are where it sits in the window, which
+    // for a content view under a menu bar is not the top.
+    for (const auto* node = &view; node != nullptr; node = node->getParent())
     {
         auto bounds = node->getBounds();
         origin.x += bounds.x;

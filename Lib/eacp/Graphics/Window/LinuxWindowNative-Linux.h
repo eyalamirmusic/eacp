@@ -19,17 +19,25 @@ inline constexpr const char* linuxDefaultAppId = "eacp";
 
 inline constexpr Color linuxDefaultWindowBackground = Color::gray(0.f);
 
+class LinuxWindowMenuBar;
+
 // The option-derived state of a toplevel and the behaviour built on it: what
 // is left over in a native is protocol. A native holds one and hands it the
 // LinuxWindowSurface it is.
+//
+// Sizes here are the whole surface's, as the window system sees them. A menu
+// bar takes surface.contentTop off the top, and what the app sees - the size
+// it asks for and is told, the constraint and the minimum - is the content
+// below it, so a bar adds to the window rather than taking from the content.
 struct LinuxWindowState
 {
     LinuxWindowState(LinuxWindowSurface& surfaceToUse,
                      const WindowOptions& options,
                      WindowEvents& eventsToUse);
+    ~LinuxWindowState();
 
     // The window's one rule (WindowOptions::effectiveSizeConstraint), then
-    // the minimum size.
+    // the minimum size, both applied to the content below the menu bar.
     //
     // `bounded` says the size is a ceiling rather than a drag - a maximise or
     // a fullscreen, where the compositor names the most it will give and a
@@ -39,9 +47,17 @@ struct LinuxWindowState
     // the fact), so the width drives, as ResizeAxis::Both asks for.
     void applyConstraints(int& width, int& height, bool bounded) const;
 
-    // Resizes the content view and reports it; silent when the size asked for
-    // is the one already there.
+    // Resizes the surface, lays out the views on it and reports the content's
+    // size; silent when the size asked for is the one already there.
     void resizeTo(Point newSize);
+
+    // The content's size, and the surface size that holds a content this big.
+    Point getContentSize() const;
+    Point surfaceSizeFor(Point contentSize) const;
+
+    // The smallest surface: the minimum content size, under the menu bar.
+    int minimumSurfaceWidth() const;
+    int minimumSurfaceHeight() const;
 
     void setActive(bool nowActive);
 
@@ -97,6 +113,9 @@ struct LinuxWindowState
     // nobody grants it. The request is what a window coming up asks for.
     bool fullScreen = false;
     bool fullScreenRequested = false;
+
+    // Installed by setApplicationMenuBar (Menu-Linux.cpp).
+    std::unique_ptr<LinuxWindowMenuBar> menuBar;
 };
 
 // What a Window forwards to. Not a LinuxWindowSurface itself: a native is this
@@ -141,6 +160,15 @@ public:
     // back; a backend that can really move a window overrides this.
     virtual void setPosition(Point newPosition);
 
+    // The minimum size, or the pin on a window that does not resize, changed
+    // its meaning in surface terms: tell the window system again.
+    virtual void sizeHintsChanged() {}
+
+    // Pushes the content down by `top` points for a menu bar, keeping the
+    // content's size: the window grows or shrinks by the difference. A
+    // maximised or full screen window keeps its size and the content gives.
+    void setContentTop(float top);
+
     LinuxWindowSurface& getWindowSurface();
 
     bool isVisible();
@@ -155,4 +183,7 @@ public:
 // backend that is not implemented yet all end up with.
 std::unique_ptr<LinuxWindowNative>
     makeHeadlessWindowNative(const WindowOptions& options, WindowEvents& events);
+
+// The native behind a live Window (Window-Linux.cpp keeps the map).
+LinuxWindowNative& linuxWindowNative(Window& window);
 } // namespace eacp::Graphics

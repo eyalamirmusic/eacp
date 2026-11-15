@@ -517,7 +517,7 @@ void WaylandInput::endPointerFrame()
             event.pos = pointerState.getPosition();
             event.modifiers = getModifiers();
 
-            leavingWindow->contentView->dispatchMouseEvent(event);
+            leavingWindow->dispatchMouseEvent(event);
         }
 
         leavingWindow = nullptr;
@@ -577,7 +577,7 @@ void WaylandInput::dispatchWheel()
     auto empty = event.delta.x == 0.f && event.delta.y == 0.f;
 
     if (!empty || event.scrollPhase == ScrollPhase::Ended)
-        pointerWindow->contentView->dispatchMouseEvent(event);
+        pointerWindow->dispatchMouseEvent(event);
 }
 
 void WaylandInput::dispatchMouse(MouseEvent event)
@@ -589,7 +589,7 @@ void WaylandInput::dispatchMouse(MouseEvent event)
                         ? event.pos
                         : pointerState.getDownPosition();
 
-    pointerWindow->contentView->dispatchMouseEvent(event);
+    pointerWindow->dispatchMouseEvent(event);
 }
 
 void WaylandInput::refreshCursor()
@@ -597,10 +597,7 @@ void WaylandInput::refreshCursor()
     if (pointerWindow == nullptr || pointerWindow->contentView == nullptr)
         return;
 
-    auto* contentView = pointerWindow->contentView;
-    auto* hit = contentView->hitTest(pointerState.getPosition());
-    auto shape = hit != nullptr ? hit->getMouseCursor().getShape()
-                                : contentView->getMouseCursor().getShape();
+    auto shape = pointerWindow->cursorShapeAt(pointerState.getPosition());
 
     if (cursor.setShape(shape))
         applyCursor();
@@ -836,7 +833,7 @@ void WaylandInput::deliverKey(uint32_t code, bool down, bool isRepeat)
     event.characters = keyboardState.textForKey(code);
     event.charactersIgnoringModifiers = keyboardState.plainTextForKey(code);
 
-    keyboardWindow->contentView->dispatchKeyEvent(event);
+    keyboardWindow->dispatchKeyEvent(event);
 }
 
 bool WaylandInput::isKeyPressed(uint32_t evdevCode) const

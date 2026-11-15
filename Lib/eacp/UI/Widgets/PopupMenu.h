@@ -95,6 +95,14 @@ struct PopupMenuOptions
     // another item before an open submenu closes -- long enough to cross the
     // rows between an item and the submenu it opened without closing it.
     double subMenuDelay = 0.2;
+
+    // What a menu bar switches menus with, the menu being open over it. Told
+    // where the pointer is, in the root's coordinates, each time it moves
+    // outside every open panel; and told -1 or 1 for a Left or a Right the
+    // menu has no use for (Left on the menu itself, Right on an item with no
+    // submenu). Either may close the menu or open another.
+    std::function<void(Point)> onPointerOutside;
+    std::function<void(int)> onSideStep;
 };
 
 // A list of commands opened over the tree, and closed by choosing one or by
