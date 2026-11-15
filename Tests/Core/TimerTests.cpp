@@ -1,5 +1,9 @@
 #include "Common.h"
 
+#ifdef __EMSCRIPTEN__
+#include <eacp/Core/Threads/EventLoop-Web.h>
+#endif
+
 using namespace nano;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Threads::Timer;
@@ -52,3 +56,21 @@ auto tDestructionStopsTicking = test("Timer/destructionStopsTicking") = []
 
     check(ticks == afterStopping);
 };
+
+#ifdef __EMSCRIPTEN__
+// The browser keeps firing the interval while no loop drains the queue; what
+// piled up is one tick when a loop runs again, not one per interval.
+auto tTicksCoalesce = test("Timer/ticksNoLoopDrainedRunOnce") = []
+{
+    auto ticks = 0;
+    auto timer = Timer {[&] { ++ticks; }, eacp::Time::MS {5}};
+
+    auto suspended = eacp::Time::Deadline {eacp::Time::MS {200}};
+
+    while (!suspended.expired())
+        eacpWebSuspendUntilWoken((double) suspended.remaining().count);
+
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {0});
+    check(ticks == 1);
+};
+#endif

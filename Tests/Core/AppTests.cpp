@@ -187,6 +187,9 @@ auto tRestartWithoutFactoryIsSafe = test("App/restartIsNoOpWhenFactoryIsEmpty") 
 
 auto tRestartFromAnyThread = test("App/restartIsSafeFromBackgroundThread") = []
 {
+    if constexpr (!eacp::Platform::hasThreads())
+        return;
+
     resetAppState();
     installCountedFactory();
 
@@ -304,4 +307,43 @@ auto tChooserLaterDefersToTheLoop =
         check(answers[0] == std::optional<std::string> {"/tmp/picked.wav"});
         check(!answers[1].has_value(), "a cancel arrives as nullopt");
     }
+};
+
+// The suite runs outside any loop, so run() can own one here and return. A
+// callAfter it left pending would otherwise land in the next loop that runs,
+// after the app it may refer to is gone.
+auto tRunDropsPendingCallAfters = test("App/runDropsTheCallAftersItLeft") = []
+{
+    auto fired = false;
+
+    eacp::Apps::run(
+        [&]
+        { eacp::Threads::callAfter(eacp::Time::MS {50}, [&] { fired = true; }); });
+
+    runEventLoopFor(eacp::Time::MS {200});
+    check(!fired);
+};
+
+struct AppLeavingACallAfter
+{
+    AppLeavingACallAfter()
+    {
+        eacp::Threads::callAfter(eacp::Time::MS {50}, [] { fired = true; });
+        quit();
+    }
+
+    static inline auto fired = false;
+};
+
+auto tRunTDropsPendingCallAfters =
+    test("App/runOfAnAppDropsTheCallAftersItLeft") = []
+{
+    resetAppState();
+    AppLeavingACallAfter::fired = false;
+
+    eacp::Apps::run<AppLeavingACallAfter>();
+
+    runEventLoopFor(eacp::Time::MS {200});
+    check(!AppLeavingACallAfter::fired);
+    resetAppState();
 };

@@ -18,7 +18,9 @@ struct DownloadRequest : Request
 };
 
 // Runs the request on a worker thread and hands the Response to `callback`
-// on the message thread.
+// on the message thread. On the web there is no worker: the browser's fetch()
+// is asynchronous itself, and these are what an app uses, since the blocking
+// calls need an executable that can suspend.
 void asyncRequest(const Request& req, const ResponseCallback& callback);
 void asyncDownload(const DownloadRequest& req, const ResponseCallback& callback);
 

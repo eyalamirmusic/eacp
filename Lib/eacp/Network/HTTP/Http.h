@@ -34,7 +34,8 @@ struct DownloadProgress
     // it then returns an error. NSURLSession, WinHTTP and curl act on it
     // within a few tens of milliseconds even while the connection is stalled.
     // Android checks it only as body data arrives, so a stalled transfer
-    // there runs on until its idle or whole-request timeout.
+    // there runs on until its idle or whole-request timeout. The web checks
+    // it, and the three time limits, every 50 ms.
     std::atomic<bool> cancel {false};
     std::atomic<bool> done {false};
 };
@@ -68,14 +69,25 @@ struct FileField
 // IgnoreLocalCache, the default, always reaches the server, and is what every
 // backend does. UseLocalCache only changes anything where the platform keeps
 // a cache: NSURLCache on Apple, and on Android an HttpResponseCache the app has
-// installed itself. WinHTTP and libcurl have no cache, so there it is the
-// default by another name.
+// installed itself, and on the web the browser's own HTTP cache. WinHTTP and
+// libcurl have no cache, so there it is the default by another name.
 enum class CachePolicy
 {
     IgnoreLocalCache,
     UseLocalCache
 };
 
+// On the web a request is the runtime's fetch(), which a browser holds to its
+// own rules: a server on another origin answers only if it sends CORS headers,
+// and only the response headers it exposes are seen; Host, Content-Length and
+// Connection are the runtime's own and a request's are dropped. A User-Agent
+// is sent only when the app sets one (setDefaultUserAgent, or the header), and
+// a browser may drop it (Chrome) or send it (Firefox), which on another origin
+// needs a CORS preflight the server must allow. perform(), downloadTo() and the
+// free functions below block, which the web's one thread can do only in an
+// executable that links eacp-core-nested-pump; anywhere else they return at
+// once with an error, and asyncRequest/asyncDownload (HttpAsync.h) are the way
+// in.
 struct Request
 {
     Request(const std::string& urlToUse = "");
@@ -124,7 +136,8 @@ struct Request
     // the backend - or to `timeout`, when that is set. NSURLSession reports no
     // connect event, so on Apple platforms this bounds the time until the
     // response headers arrive or the first byte of the body is sent: the
-    // connect, TLS and the server's think time together.
+    // connect, TLS and the server's think time together, and on the web too,
+    // which has no connect event either.
     Time::MS connectTimeout {0};
 
     // Longest silence tolerated once the request has started: the transfer
@@ -137,12 +150,15 @@ struct Request
     // Whether a 3xx answer is followed to its Location. Off, the redirect
     // itself is the response - its status, headers and body - and nothing
     // is sent to the new URL, so a header such as an API key never leaves
-    // the host it was meant for.
+    // the host it was meant for. A browser hides a redirect it is told not to
+    // follow - no status, no headers - so there the request fails with an
+    // error instead; node returns the redirect.
     bool followRedirects = true;
 
     // Most redirects followed before the request fails with an error, when
     // followRedirects is on. Negative, the default, leaves the backend's own
-    // limit in place; zero fails on the first redirect.
+    // limit in place; zero fails on the first redirect. On the web any
+    // positive limit is the runtime's own (20), which fetch() cannot lower.
     int maxRedirects = -1;
 
     CachePolicy cachePolicy = CachePolicy::IgnoreLocalCache;
@@ -174,6 +190,10 @@ struct Request
     int remotePort = -1;
 
     DownloadProgress* progress = nullptr;
+
+    // Downloads only: ranged chunks fetched side by side, one thread each,
+    // when the server allows ranges. Where there are no threads (the web)
+    // the download is one stream.
     int parallelChunks = 1;
 };
 
@@ -193,10 +213,11 @@ void setDefaultUserAgent(const std::string& agent);
 
 // The User-Agent a request with no User-Agent header is sent with: the one
 // given to setDefaultUserAgent, else eacpUserAgent() on Windows and Linux.
-// Empty on Apple platforms and Android when none was set: the request then
-// adds no header, and the system sends its own (CFNetwork's
-// "<App>/<version> CFNetwork/... Darwin/...", or HttpURLConnection's
-// http.agent, "Dalvik/...").
+// Empty on Apple platforms, Android and the web when none was set: the
+// request then adds no header, and the system sends its own (CFNetwork's
+// "<App>/<version> CFNetwork/... Darwin/...", HttpURLConnection's
+// http.agent, "Dalvik/...", or the browser's or node's). A browser may drop a
+// User-Agent a request sets or send it (Request has the details).
 std::string defaultUserAgent();
 
 // Percent-encodes every byte outside RFC 3986's unreserved set (A-Z a-z 0-9

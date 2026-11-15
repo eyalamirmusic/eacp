@@ -34,7 +34,11 @@ links `libvulkan`: `volkInitialize()` opens it by name at runtime, so a
 machine with no driver builds the same binary and reports `Device::isValid()`
 false. The package names are in [Linux.md](Linux.md). An Android build
 fetches nothing more and needs no libcurl: its HTTP and WebSocket clients are
-Java's own, reached through JNI.
+Java's own, reached through JNI. A web build fetches nothing more either and
+links nothing of the system's: its HTTP and WebSocket clients are the
+runtime's `fetch()` and `WebSocket`, reached through two JS libraries
+`eacp-network` adds to every link. It needs Emscripten and node on the
+machine (see [Web.md](Web.md)).
 
 Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
 the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
@@ -142,7 +146,7 @@ its README.
   `<library>`, configured afterwards like any target: a static library linked
   into the app in static mode, a module the app loads in dev mode. An app's
   `HOT_RELOAD` wins over the option either way, and both in-tree examples
-  pass `ON`. iOS, Android and Windows are always static. A configure prints
+  pass `ON`. iOS, Android, Windows and the web are always static. A configure prints
   `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
   `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
 
@@ -282,6 +286,40 @@ from any thread. `isSystemDarkMode()` reads the night bit of the activity's
 current configuration (`SystemAppearance-Android.cpp`). There is no
 change notification behind it on any platform; a caller asks again.
 
+## Web
+
+`-DCMAKE_TOOLCHAIN_FILE=<emscripten>/cmake/Modules/Platform/Emscripten.cmake`,
+or `emcmake cmake ...`, configures the web target: wasm32, single-threaded,
+`Core`, `Network` and the device-free pieces below, nothing that draws.
+`CMake/Web.cmake` is included before any target, so every object, dependencies
+included, is compiled with `-fwasm-exceptions`, and the top-level 64-bit check
+lets wasm32 through. Of the examples only `Apps/Web` is built. An app is an
+`eacp_add_app` plus `eacp_web_executable(<app>)`, which links it with a
+growable memory, a 1 MB stack and `-sEXIT_RUNTIME=1` and gives it the
+`<app>-run` (node), `<app>-browser` and `<app>-headless` (headless Chrome)
+launcher targets, none part of `all`; `eacp_web_add_app_tests(<app>)` makes
+its node and headless Chrome runs ctest entries. `eacp_add_plugin` is a
+configure `FATAL_ERROR` there, since the web loads no dynamic libraries. These
+cache variables are the target's own:
+
+- `CMAKE_CROSSCOMPILING_EMULATOR` — the node that runs the launchers and the
+  app entries. The Emscripten toolchain supplies it — `emcmake` names it, the
+  toolchain file alone takes the `node` on `PATH` — and where it has none it
+  is the test node.
+- `EACP_WEB_TEST_NODE` — the node, and its flags, for the test suites, which
+  link JSPI: the first of the emulator, `/opt/homebrew/bin/node` and
+  `/usr/local/bin/node` that has `WebAssembly.Suspending` (node 25 or later;
+  node 22 cannot). A node 24 has it only behind a flag, which configure does
+  not try: `-DEACP_WEB_TEST_NODE="<node>;--experimental-wasm-jspi"`.
+- `EACP_WEB_CHROME` — the Chrome, found once at configure, that the
+  `<app>-headless` targets and the `<app>Headless` ctest entries run in; those
+  entries exist only when one is found, and a `STATUS` line says when none
+  was.
+
+[Web.md](Web.md) is the account: the loop and `run()`/`quit()`, the nested
+pump, threads, the network's browser differences, the file system and the
+tests.
+
 ## A local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against
@@ -374,6 +412,8 @@ segments from `dl_iterate_phdr` on Linux), never from paths, so a bare name on
 nothing. On Linux the executable's path is `/proc/self/exe`, so under an
 explicitly invoked loader (`ld.so ./app`) `applicationPath()` names the loader.
 Android's app is a library NativeActivity loads, and `isDLL()` is false there.
+A web program is one wasm module with no dynamic linking, so its copy is always
+the application and the only image.
 
 A thin launcher whose application, eacp included, lives in a library it links
 claims that library's copy, which then is the application with the launcher as
@@ -414,18 +454,22 @@ to fool the Linux check.
 
 ## Capability variables
 
-The top-level `CMakeLists.txt` decides this once, in seven capability variables
+The top-level `CMakeLists.txt` decides this once, in nine capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
-The three drawing ones are on together on every platform that draws — they
+Seven decide what draws (and, last of them, Core ML); none of them is on for
+the web, which builds no graphics. The three drawing ones are on together on
+every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, capture excepted, which Android
 has too, and `EACP_HAS_COREML` hangs off
 `EACP_HAS_GPU` and is Apple-only. `Network` needs none of them: it is
 unconditional, over NSURLSession and Network.framework on Apple, WinHTTP on
-Windows, libcurl on Linux and Java's `HttpURLConnection` and sockets through
-JNI on Android, and the WebView page bridge over its RPC, `eacp-ui-network`
-and their tests build with it:
+Windows, libcurl on Linux, Java's `HttpURLConnection` and sockets through
+JNI on Android and the runtime's `fetch()` and `WebSocket` on the web, and the
+WebView page bridge over its RPC, `eacp-ui-network` and their tests build with
+it. The other two, `EACP_HAS_THREADS` and `EACP_HAS_SOCKETS`, decide what the
+host can run rather than what it draws; both are on everywhere but the web:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
@@ -436,16 +480,23 @@ and their tests build with it:
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
+| `EACP_HAS_THREADS` | not Emscripten | threads a body can run on: `ThreadTests` and `ThreadPoolTests` (`ThreadlessTests-Web.cpp` without), and in `Network` the worker-thread async calls, parallel chunk downloads and `OnlineResource`'s threaded fetch (the web's own asynchronous ones without) |
+| `EACP_HAS_SOCKETS` | not Emscripten | sockets of eacp's own: `HTTPServer`, `TCP`, `IPC`, `WebSocket::Server`, `eacp-network-json`, the HTTP and IPC RPC transports, and the `NetworkTests` cases that start a server |
+
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
 caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
-one on `eacp-ml` in the same way.
+one on `eacp-ml` in the same way, and `EACP_HAS_SOCKETS` on `eacp-network`,
+read by the `Network.h` umbrella. `EACP_HAS_THREADS` is not a compile
+definition: code asks `Platform::hasThreads()`, its compile-time twin, so a
+`Thread` refuses to start and a `ThreadPool` runs its work on the main thread
+where it is false.
 
 ## The pieces that build everywhere
 
-Four pieces of the gated modules are portable and so sit outside all seven:
-they are built and tested on every platform, Linux included, because none
-touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
+Four pieces of the gated modules are portable and so sit outside all seven
+drawing variables: they are built and tested on every platform, Linux and the
+web included, because none touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
 `GPUCodegenTests`. `eacp-cpu-compute` runs the kernels that EDSL records on the
 CPU, checked by `CpuComputeTests` and timed by `CpuComputeBench`; it is also
@@ -479,7 +530,9 @@ and Android: an Ubuntu lane installs a pinned NDK with `sdkmanager`, configures
 against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` and
 `HelloNetwork` for `arm64-v8a`, which is every module an Android app links,
 the network backend included, then configures once
-more with no NDK named, which exercises the newest-installed path. The two
+more with no NDK named, which exercises the newest-installed path. Nothing
+builds the web target: there is no Emscripten lane, so it is checked by a
+local build under node and headless Chrome ([Web.md](Web.md)). The two
 Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
 run their npm installs inside configure, several times slower on the ARM
 runners, and the x64 lanes cover the WebView2 backend. Every lane

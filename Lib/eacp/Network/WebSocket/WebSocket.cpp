@@ -3,9 +3,6 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
 
-#include <atomic>
-#include <thread>
-
 namespace eacp::WebSocket
 {
 // The Sink every backend reports into, and the only place the connection's
@@ -13,8 +10,7 @@ namespace eacp::WebSocket
 // racing the destructor included - so each one is handed to the message
 // thread holding a reference to this object, and dropped on arrival once the
 // Connection that owns it has gone. Everything below the marshalling is
-// therefore message-thread-only, and none of it is atomic but the one flag
-// the closing handshake's timeout waits on from a thread of its own.
+// therefore message-thread-only.
 class WebSocketEndpoint
     : public Sink
     , public std::enable_shared_from_this<WebSocketEndpoint>
@@ -48,12 +44,13 @@ public:
         deliver([error](WebSocketEndpoint& self) { self.deliverFailed(error); });
     }
 
-    // The closing handshake ran out of time, which is a report like any other
-    // and goes the same way: to the message thread, and nowhere at all once
-    // the Connection has gone.
+    // The closing handshake ran out of time. Called on the message thread by
+    // the callAfter that bounds it, so it needs no marshalling, only the same
+    // silence once the Connection has gone.
     void closeTimedOut()
     {
-        deliver([](WebSocketEndpoint& self) { self.deliverCloseTimedOut(); });
+        if (alive)
+            deliverCloseTimedOut();
     }
 
     State currentState() const { return state; }
@@ -64,10 +61,6 @@ public:
         return state == State::closing || state == State::closed;
     }
 
-    // False the moment the close settles or the Connection goes, so the wait
-    // can stop early instead of sleeping out a timeout nobody is owed.
-    bool isAwaitingClose() const { return awaitingClose.load(); }
-
     void setDropBackend(std::function<void()> callback)
     {
         dropBackend = std::move(callback);
@@ -77,13 +70,11 @@ public:
     {
         closeRequested = true;
         state = State::closing;
-        awaitingClose.store(true);
     }
 
     void stopDelivering()
     {
         alive = false;
-        awaitingClose.store(false);
         dropBackend = [] {};
     }
 
@@ -153,11 +144,7 @@ private:
         callbacks.onClose({1006, {}});
     }
 
-    void settle()
-    {
-        state = State::closed;
-        awaitingClose.store(false);
-    }
+    void settle() { state = State::closed; }
 
     Callbacks callbacks;
     std::function<void()> dropBackend = [] {};
@@ -165,17 +152,7 @@ private:
     std::string protocol;
     bool alive = true;
     bool closeRequested = false;
-    std::atomic<bool> awaitingClose {false};
 };
-
-// How long the wait for the closing handshake naps between looks at whether
-// it is still owed one.
-Time::MS webSocketCloseWaitSlice(const Time::Deadline& deadline)
-{
-    constexpr auto slice = Time::MS {20};
-    auto remaining = deadline.remaining();
-    return remaining < slice ? remaining : slice;
-}
 
 struct Connection::Impl
 {
@@ -235,32 +212,20 @@ struct Connection::Impl
         startCloseTimeout();
     }
 
-    // Core has no one-shot timer, so the bound on the closing handshake is a
-    // thread of its own, holding nothing but the endpoint - which is why a
-    // Connection destroyed first leaves it nothing to dangle over. It looks
-    // in as it waits rather than sleeping the whole timeout out, so a close
-    // that settles leaves no thread behind it.
+    // The bound on the closing handshake holds the endpoint weakly, so a
+    // Connection destroyed first leaves it nothing to keep alive, and a close
+    // that settled first makes it a no-op.
     void startCloseTimeout()
     {
         if (closeTimeout.count <= 0)
             return;
 
-        auto wait = [waking = endpoint, timeout = closeTimeout]
-        {
-            auto deadline = Time::Deadline {timeout};
-
-            while (!deadline.expired())
-            {
-                if (!waking->isAwaitingClose())
-                    return;
-
-                Time::sleep(webSocketCloseWaitSlice(deadline));
-            }
-
-            waking->closeTimedOut();
-        };
-
-        std::thread(wait).detach();
+        Threads::callAfter(closeTimeout,
+                           [weak = std::weak_ptr(endpoint)]
+                           {
+                               if (auto waking = weak.lock())
+                                   waking->closeTimedOut();
+                           });
     }
 
     std::string url;

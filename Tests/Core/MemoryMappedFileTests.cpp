@@ -343,6 +343,11 @@ auto tMappingDoesNotAllocateTheFile =
 auto tMapsAFileLargerThanAnInt =
     test("MemoryMappedFile/mapsAFileLargerThanAnInt") = []
 {
+    // wasm32 has a 4 GiB address space and Emscripten maps by copying into
+    // memory, so a 2 GiB view cannot exist there.
+    if constexpr (eacp::Platform::isWeb())
+        return;
+
     const auto dir = scratchDirectory("mapped-large");
     const auto path = dir / "large.bin";
     const auto size = (std::size_t {1} << 31) + 4096;

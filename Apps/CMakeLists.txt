@@ -1,5 +1,11 @@
 set(CMAKE_FOLDER Examples)
 
+# Core alone so far: the examples that prove it, and nothing that draws.
+if (EMSCRIPTEN)
+    add_subdirectory(Web)
+    return ()
+endif ()
+
 if (ANDROID)
     add_subdirectory(Android)
     add_subdirectory(GPU)

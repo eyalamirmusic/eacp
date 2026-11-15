@@ -2,6 +2,7 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 
 #include <algorithm>
@@ -520,11 +521,15 @@ bool dispatchOnThreads(const Executor& executor, const PreparedDispatch& prepare
                 failures.fetch_add(1);
         };
 
-        threads[static_cast<std::size_t>(which)] = std::thread {runShare};
+        if constexpr (Platform::hasThreads())
+            threads[static_cast<std::size_t>(which)] = std::thread {runShare};
+        else
+            runShare();
     }
 
     for (auto& thread: threads)
-        thread.join();
+        if (thread.joinable())
+            thread.join();
 
     return failures.load() == 0;
 }

@@ -341,11 +341,14 @@ mode is decided like this:
 - With no `HOT_RELOAD`, or one whose value is empty (an unset variable, say),
   the app follows the `EACP_HOT_RELOAD` cache option (default `OFF`), read the
   same way.
-- iOS, Android and Windows are always static, whatever either says.
+- iOS, Android, Windows and the web are always static, whatever either says.
+  The web loads no module at all: `eacp_add_plugin` stops its configure with
+  a `FATAL_ERROR`, and `DynamicLibraryTests`, `ReloadableLibraryTests`,
+  `HotReloadLoopTests` and `ReloadableTests` are not built there.
 
 Both in-tree examples pass `HOT_RELOAD ON`, so on macOS and Linux they are in
 dev mode in every build directory, and in static mode on Windows, iOS and
-Android:
+Android (the web builds neither, since both draw):
 
 - `Apps/UI/HotReload` (`HotReload`, library `HotReloadLayout`) reloads a
   layout function.

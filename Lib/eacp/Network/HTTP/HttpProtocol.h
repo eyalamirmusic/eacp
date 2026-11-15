@@ -2,6 +2,8 @@
 
 #include "Http.h"
 
+#include <optional>
+
 namespace eacp::HTTP
 {
 
@@ -103,6 +105,30 @@ DownloadWrite downloadWriteFor(int statusCode,
 Response downloadFileFrom(const Request& req,
                           const std::string& filePath,
                           std::int64_t resumeFrom);
+
+// Request::downloadTo for parallelChunks > 1 on a fresh file: ranged chunks,
+// one thread each, where the server allows it (HttpParallel.cpp); without
+// threads, the backend's single stream.
+Response downloadFileParallel(const Request& req, const std::string& filePath);
+
+// Request::perform's preparation: a request with form or file fields gets its
+// multipart body and the Content-Type naming its boundary.
+void buildMultipartBody(Request& req);
+
+// The bytes already at filePath that a resuming download asks the remainder
+// of: zero unless Request::resumeDownload is set and the caller named no Range.
+std::int64_t bytesToResumeFrom(const Request& req, const std::string& filePath);
+
+// The request asking for everything from offset on, unencoded.
+Request withRangeFrom(const Request& req, std::int64_t offset);
+
+// What the response to withRangeFrom(req, offset) means for the file it
+// landed in: the final response, or nullopt when the download must start over
+// without the Range (the progress block is reset for it).
+std::optional<Response> settleResumedDownload(const Request& req,
+                                              const std::string& filePath,
+                                              std::int64_t offset,
+                                              Response response);
 
 std::string serializeResponse(const Response& response);
 

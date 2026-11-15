@@ -44,7 +44,8 @@ public:
 
     int cancelPending();
 
-    // Not from a thread of this pool: asserts, and the timed form returns false.
+    // Not from inside a task of this pool: asserts, and the timed form returns
+    // false.
     void waitUntilIdle();
     bool waitUntilIdleFor(Time::MS timeout);
     bool isIdle() const;
@@ -92,7 +93,7 @@ public:
 
 private:
     ThreadPool& pool;
-    OwningPointer<Tag> tag;
+    std::shared_ptr<Tag> tag;
 };
 
 // Stops ThreadPool::shared() if anything ever created it. Called by Apps::run

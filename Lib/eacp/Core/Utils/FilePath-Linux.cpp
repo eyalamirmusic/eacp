@@ -170,7 +170,16 @@ FilePath FilePath::desktopDirectory()
 FilePath FilePath::tempDirectory()
 {
     auto path = getEnvValue("TMPDIR");
-    return path.empty() ? FilePath {"/tmp"} : FilePath {path};
+
+    if (path.empty())
+        return FilePath {"/tmp"};
+
+    // A TMPDIR may end in a separator - macOS's always does, and a web build
+    // under node inherits it - and the answer never does.
+    if (path.size() > 1 && path.ends_with('/'))
+        path.pop_back();
+
+    return FilePath {path};
 }
 
 FilePath FilePath::appDataDirectory()

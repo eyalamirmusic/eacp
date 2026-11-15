@@ -89,6 +89,11 @@ auto tAtomicFollowsSymlinks = test("Files/atomicFollowsSymlinks") = []
 // throws here rather than answering zero.
 auto tReadsAStreamWithNoKnownSize = test("Files/readsAStreamWhoseSizeIsUnknown") = []
 {
+    // Emscripten's file systems have no FIFOs: under node one is the host's,
+    // whose open blocks node's own thread until a writer comes.
+    if constexpr (eacp::Platform::isWeb())
+        return;
+
     const auto dir = scratchDirectory("files-read-fifo");
     const auto path = dir / "pipe";
 

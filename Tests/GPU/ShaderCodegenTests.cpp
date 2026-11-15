@@ -112,7 +112,9 @@ auto tCodegenNativeSourceBackend = test("GPU/codegenNativeSourceBackend") = []
     auto shader = builder.build();
     const auto& graph = builder.graph();
 
-    if constexpr (Platform::isLinuxFamily())
+    // The web takes the Linux builder (ShaderBuilder-Linux.cpp) until it has
+    // a dialect of its own.
+    if constexpr (Platform::isLinuxFamily() || Platform::isWeb())
     {
         check(shader.source.backend == ShaderBackend::Vulkan);
         check(shader.source.source == emitGlsl(graph));

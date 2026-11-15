@@ -55,6 +55,9 @@ auto tTimeoutReturnsFalse = test("EventLoop/runUntil/timeoutReturnsFalse") = []
 auto tWorkerThreadFlipsPredicate =
     test("EventLoop/runUntil/workerThreadFlipsPredicate") = []
 {
+    if constexpr (!eacp::Platform::hasThreads())
+        return;
+
     auto flag = false;
     auto worker = std::thread(
         [&]

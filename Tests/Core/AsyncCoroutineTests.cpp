@@ -111,6 +111,9 @@ auto tCoroChainsMultipleAwaits = test("Async/coro/chainsMultipleAwaits") = []
 
 auto tCoroResumesAfterWorkerThread = test("Async/coro/resumesAfterWorkerThread") = []
 {
+    if constexpr (!eacp::Platform::hasThreads())
+        return;
+
     auto producer = AsyncPromise<int>();
     auto coro = coroAwaiting(producer.get());
 

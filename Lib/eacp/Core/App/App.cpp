@@ -162,15 +162,18 @@ void quit(int returnValue)
 
 int run(const Callback& func)
 {
+    // By value: on the web runEventLoop can unwind the caller's stack, as an
+    // exception would, before this runs (App.h, run<T>).
     setReturnValue(0);
     Threads::runEventLoop(
-        [&func]
+        [func]
         {
             func();
             quit();
         });
 
     Threads::stopSharedThreadPool();
+    Threads::stopCallAfterScheduler();
     return getReturnValue();
 }
 
@@ -212,7 +215,7 @@ int runConsole(const std::function<int()>& body)
     // run(func) quits once the callback returns and hands back the return
     // value, so setting it here is the quit(code) of an app-shaped program.
     return run(
-        [&body]
+        [body]
         {
             setDockIconVisible(false);
             setReturnValue(runConsoleBody(body));

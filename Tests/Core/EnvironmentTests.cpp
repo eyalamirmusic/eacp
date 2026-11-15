@@ -27,6 +27,9 @@ std::string getRaceVariableName(int index)
 auto tEnvironmentReadsWhileAnotherThreadWrites =
     test("Environment/readsWhileAnotherThreadWrites") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     auto writerFinished = std::atomic {false};
     auto reads = 0;
     auto missingReads = 0;
@@ -59,7 +62,9 @@ auto tEnvironmentReadsWhileAnotherThreadWrites =
 
 // The parent hands the child a non-ASCII value through the process environment;
 // the child reads it with getEnvValue (EACP_CONSOLE_HARNESS_ARGV0 becomes its
-// program name) and prints it back in its error line.
+// program name) and prints it back in its error line. The web has no harness,
+// since it starts no children.
+#if defined(EACP_CONSOLE_HARNESS)
 auto tEnvironmentNonAsciiReachesAChild =
     test("Environment/a non-ASCII value reaches getEnv in a child as UTF-8") = []
 {
@@ -79,3 +84,4 @@ auto tEnvironmentNonAsciiReachesAChild =
     check(result.exitCode == 1);
     check(errorOutput == name + ": boom\n");
 };
+#endif

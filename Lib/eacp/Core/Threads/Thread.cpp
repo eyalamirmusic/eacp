@@ -1,4 +1,6 @@
 #include "Thread.h"
+#include "../Platform/Platform.h"
+#include "../Utils/Console.h"
 
 #include <atomic>
 #include <future>
@@ -20,6 +22,17 @@ bool threadApplyOptions(const ThreadOptions& options)
 
     setCurrentThreadPriority(options.priority);
     return false;
+}
+
+[[maybe_unused]] void threadReportNoThreads()
+{
+    static auto reported = false;
+
+    if (std::exchange(reported, true))
+        return;
+
+    Console::printError("Thread::start: this platform has no threads "
+                        "(Platform::hasThreads()), so the body does not run");
 }
 } // namespace
 
@@ -74,6 +87,12 @@ Thread& Thread::operator=(Thread&& other) noexcept
 void Thread::start(const Callback& body)
 {
     join();
+
+    if constexpr (!Platform::hasThreads())
+    {
+        threadReportNoThreads();
+        return;
+    }
 
     auto id = std::make_shared<AtomicId>();
     auto settled = std::make_shared<std::promise<bool>>();

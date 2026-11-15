@@ -71,3 +71,39 @@ endif ()
 # Always added: ScriptHostTests needs no web runtime and no graphics. The
 # directory returns after it unless EACP_HAS_WEBVIEW.
 add_subdirectory(WebView)
+
+# One ctest entry per case group, through node, for every suite the web builds,
+# in place of the one whole-suite entry each, which ctest is told to ignore.
+# The suites wait in nested pumps (runEventLoopUntil and what is built on it),
+# so they link the JSPI half of the loop, and run on node's file system.
+if (EMSCRIPTEN)
+    eacp_web_link_options(node_link_options NODE_FILESYSTEM)
+    set(web_suites "")
+
+    foreach (suite CoreTests NetworkTests GPUCodegenTests CpuComputeTests
+            MLGraphTests ScriptHostTests)
+        if (TARGET ${suite})
+            target_link_options(${suite} PRIVATE ${node_link_options})
+            target_link_libraries(${suite} PRIVATE eacp-core-nested-pump)
+            eacp_web_discover_tests(${suite})
+            list(APPEND web_suites ${suite})
+        endif ()
+    endforeach ()
+
+    file(WRITE "${CMAKE_BINARY_DIR}/CTestCustom.cmake"
+            "set(CTEST_CUSTOM_TESTS_IGNORE ${web_suites})\n")
+
+    if (TARGET CpuComputeBench)
+        target_link_options(CpuComputeBench PRIVATE ${node_link_options})
+    endif ()
+
+    # The example apps and the quit harnesses, built without JSPI as an app
+    # is. HelloNetwork in a browser shows the browser's own rules - CORS,
+    # forbidden headers, opaque redirects - that the node-run cases cannot; a
+    # harness checks that a real exit with work in flight stays clean.
+    foreach (app HelloLoop HelloNetwork QuitWithTimerHarness QuitWithFetchHarness)
+        if (TARGET ${app})
+            eacp_web_add_app_tests(${app})
+        endif ()
+    endforeach ()
+endif ()

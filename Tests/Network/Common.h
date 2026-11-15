@@ -56,6 +56,9 @@ inline bool exists(const eacp::FilePath& path)
     return std::filesystem::exists(eacp::toStdPath(path));
 }
 
+// The servers, and the threads their blocking clients run on, exist only where
+// the suite can open sockets of its own.
+#if EACP_HAS_SOCKETS
 // A handler that blocks has to run off the event loop, which is the same
 // loop the reply has to travel back through.
 inline eacp::HTTP::ServerOptions threadPoolOptions()
@@ -128,6 +131,7 @@ inline void performExchange(eacp::HTTP::Server& server,
     out.completed = stopped;
     server.stop();
 }
+#endif
 
 struct GreetRequest
 {
@@ -158,6 +162,7 @@ constexpr auto withoutWaitingForTheServer = eacp::Time::MS {3000};
 // already served its purpose - which is where these suites used to spend most
 // of their time. The bound on wait() is a backstop against a test that fails
 // before releasing, not a timing the tests rely on.
+#if EACP_HAS_SOCKETS
 struct StallGate
 {
     ~StallGate() { release(); }
@@ -182,3 +187,4 @@ struct StallGate
     std::condition_variable opened;
     bool isOpen = false;
 };
+#endif

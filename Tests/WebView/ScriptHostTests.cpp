@@ -169,9 +169,13 @@ auto tAsyncCommandDelivers =
         std::function<void(const Message&, Miro::Completer<Message>)> {
             [](const Message& m, Miro::Completer<Message> complete)
             {
-                std::thread([m, complete]
-                            { complete.resolve(Message {m.text + "-done"}); })
-                    .detach();
+                auto finish = [m, complete]
+                { complete.resolve(Message {m.text + "-done"}); };
+
+                if constexpr (Platform::hasThreads())
+                    std::thread(finish).detach();
+                else
+                    Threads::callAsync(finish);
             }});
 
     host.post(bridgeChannel, R"({"id":2,"command":"slow","payload":{"text":"go"}})");

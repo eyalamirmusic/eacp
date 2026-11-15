@@ -27,7 +27,11 @@ namespace eacp
 // The transfer runs on a worker thread. It writes to <path>.part and renames
 // into place only once whole, so an interrupted download never passes for a
 // complete one. Destroying the object cancels a transfer in flight and
-// abandons its Async, so no continuation runs into a view that is gone.
+// abandons its Async, so no continuation runs into a view that is gone. On
+// the web there is no worker: the transfer is the browser's fetch(), and the
+// unpacking and installing run on the main thread when it lands. fetch()
+// blocks, so there it needs an executable that links eacp-core-nested-pump
+// and throws at once without one.
 class OnlineResource
 {
 public:

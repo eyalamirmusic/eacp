@@ -10,9 +10,6 @@ set(core_test_sources
         Base64Tests.cpp
         # Touches the real system clipboard, and restores whatever was there.
         ClipboardTests.cpp
-        # Runs ConsoleHarness as a child: runConsole's exit codes and streams.
-        ConsoleTests.cpp
-        DynamicLibraryTests.cpp
         EnvironmentTests.cpp
         EventLoopTests.cpp
         FileLocationsTests.cpp
@@ -37,19 +34,24 @@ set(core_test_sources
         PlatformTests.cpp
         PluginObjectTests.cpp
         RangeTests.cpp
-        ReloadableLibraryTests.cpp
         Sha256Tests.cpp
         SourceWatcherTests.cpp
         StringsTests.cpp
         TemporaryFileTests.cpp
-        ThreadPoolTests.cpp
-        ThreadTests.cpp
         TimerTests.cpp
         TimeTests.cpp
         ZipTests.cpp)
 
+# A child process and a loaded library every case: the web has neither.
+# ConsoleTests runs ConsoleHarness as a child for runConsole's exit codes and
+# streams.
+if (NOT EMSCRIPTEN)
+    list(APPEND core_test_sources
+            ConsoleTests.cpp DynamicLibraryTests.cpp ReloadableLibraryTests.cpp)
+endif ()
+
 # These drive POSIX commands (/bin/sh, ...), so they only run on macOS and Linux.
-if (NOT WIN32)
+if (NOT WIN32 AND NOT EMSCRIPTEN)
     list(APPEND core_test_sources
             BuildRunnerTests.cpp HotReloadLoopTests.cpp ReloadableTests.cpp)
 endif ()
@@ -85,8 +87,20 @@ endif ()
 if (NOT WIN32)
     list(APPEND core_test_sources
             FilesTests-Posix.cpp
-            MemoryMappedFileTests-Posix.cpp
-            ModuleInfoTests-Posix.cpp)
+            MemoryMappedFileTests-Posix.cpp)
+endif ()
+
+# Without threads a Thread refuses to start and a ThreadPool runs its work on
+# the main thread, which ThreadlessTests-Web.cpp covers instead.
+if (EACP_HAS_THREADS)
+    list(APPEND core_test_sources ThreadPoolTests.cpp ThreadTests.cpp)
+else ()
+    list(APPEND core_test_sources ThreadlessTests-Web.cpp)
+endif ()
+
+# Launches ModuleInfoHarness three ways; the web launches nothing.
+if (NOT WIN32 AND NOT EMSCRIPTEN)
+    list(APPEND core_test_sources ModuleInfoTests-Posix.cpp)
 endif ()
 
 if (APPLE AND NOT IOS)
@@ -108,7 +122,7 @@ if (LINUX)
     list(APPEND core_test_sources FileLocationsTests-Linux.cpp)
 endif ()
 
-if (NOT IOS AND NOT ANDROID)
+if (NOT IOS AND NOT ANDROID AND NOT EMSCRIPTEN)
     list(APPEND core_test_sources ModuleRoleTests.cpp)
 endif ()
 
@@ -139,12 +153,14 @@ target_compile_definitions(CoreTests PRIVATE
 
 # A command-line tool over Apps::runConsole and Args::Parser, which
 # ConsoleTests runs to read the exit code and both streams it leaves.
-add_executable(ConsoleHarness ConsoleHarness.cpp)
-target_link_libraries(ConsoleHarness PRIVATE eacp-core)
+if (NOT EMSCRIPTEN)
+    add_executable(ConsoleHarness ConsoleHarness.cpp)
+    target_link_libraries(ConsoleHarness PRIVATE eacp-core)
 
-target_compile_definitions(CoreTests PRIVATE
-        EACP_CONSOLE_HARNESS="$<TARGET_FILE:ConsoleHarness>")
-add_dependencies(CoreTests ConsoleHarness)
+    target_compile_definitions(CoreTests PRIVATE
+            EACP_CONSOLE_HARNESS="$<TARGET_FILE:ConsoleHarness>")
+    add_dependencies(CoreTests ConsoleHarness)
+endif ()
 
 # A short-lived program that runs the loop and prints how many threads it
 # left, which EventLoopTests-Windows.cpp reads. It has to be a process of its
@@ -161,7 +177,7 @@ endif ()
 # The image a standalone executable reports for itself cannot be checked from
 # inside the test binary: it depends on the path the launcher used, so the
 # fixture is a second executable the cases start three different ways.
-if (NOT WIN32)
+if (NOT WIN32 AND NOT EMSCRIPTEN)
     add_executable(ModuleInfoHarness ModuleInfoHarness.cpp)
     target_link_libraries(ModuleInfoHarness PRIVATE eacp-core)
 
@@ -173,7 +189,7 @@ endif ()
 # ModuleRoleTests start launchers with no eacp of their own: one claims the
 # copy in the ModuleRoleLibraryA it links, one does not, and either can load
 # ModuleRoleLibraryB beside it.
-if (NOT IOS AND NOT ANDROID)
+if (NOT IOS AND NOT ANDROID AND NOT EMSCRIPTEN)
     foreach (library ModuleRoleLibraryA ModuleRoleLibraryB)
         add_library(${library} SHARED ModuleRoleLibrary.cpp)
         target_link_libraries(${library} PRIVATE eacp-core)
@@ -213,37 +229,40 @@ if (NOT IOS AND NOT ANDROID)
             ModuleRoleLauncher ModuleRoleLauncherUnclaimed)
 endif ()
 
-# The fixture plugin's static initializer counts genuine loads in the
-# process environment, so the tests can observe real unmaps.
-eacp_add_plugin(DynamicLibraryTestPlugin DynamicLibraryTestPlugin.cpp)
-target_link_libraries(DynamicLibraryTestPlugin PRIVATE eacp-core)
-
-target_compile_definitions(CoreTests PRIVATE
-        EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
-add_dependencies(CoreTests DynamicLibraryTestPlugin)
-
-# Builds of one module for ReloadableLibraryTests, HotReloadLoopTests and
-# ReloadableTests, linking no eacp library: a bare module needs only
-# PluginExport.h or ReloadableEntry.h, so it takes eacp-core's include directory
-# and nothing else. ReloadFixtureC lacks the answer function, and
-# ReloadableFixtureMismatch's entry has the wrong signature. Each one's path is
-# EACP_<NAME_IN_CAPITALS>, so ReloadFixtureA is EACP_RELOAD_FIXTURE_A.
-foreach (fixture
-        ReloadFixtureA ReloadFixtureB ReloadFixtureC
-        ReloadableFixtureA ReloadableFixtureB ReloadableFixtureMismatch
-        ReloadableFixtureObjectA ReloadableFixtureObjectB ReloadableFixtureNull
-        ReloadableFixtureThrow ReloadableFixturePair)
-    eacp_add_plugin(${fixture} ${fixture}.cpp)
-    target_include_directories(${fixture} PRIVATE
-            $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)
-
-    string(REGEX REPLACE "([a-z])([A-Z])" "\\1_\\2" define ${fixture})
-    string(TOUPPER ${define} define)
+# The modules the cases load, which the web cannot: it builds none.
+if (NOT EMSCRIPTEN)
+    # The fixture plugin's static initializer counts genuine loads in the
+    # process environment, so the tests can observe real unmaps.
+    eacp_add_plugin(DynamicLibraryTestPlugin DynamicLibraryTestPlugin.cpp)
+    target_link_libraries(DynamicLibraryTestPlugin PRIVATE eacp-core)
 
     target_compile_definitions(CoreTests PRIVATE
-            EACP_${define}="$<TARGET_FILE:${fixture}>")
-    add_dependencies(CoreTests ${fixture})
-endforeach ()
+            EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
+    add_dependencies(CoreTests DynamicLibraryTestPlugin)
+
+    # Builds of one module for ReloadableLibraryTests, HotReloadLoopTests and
+    # ReloadableTests, linking no eacp library: a bare module needs only
+    # PluginExport.h or ReloadableEntry.h, so it takes eacp-core's include
+    # directory and nothing else. ReloadFixtureC lacks the answer function, and
+    # ReloadableFixtureMismatch's entry has the wrong signature. Each one's path
+    # is EACP_<NAME_IN_CAPITALS>, so ReloadFixtureA is EACP_RELOAD_FIXTURE_A.
+    foreach (fixture
+            ReloadFixtureA ReloadFixtureB ReloadFixtureC
+            ReloadableFixtureA ReloadableFixtureB ReloadableFixtureMismatch
+            ReloadableFixtureObjectA ReloadableFixtureObjectB ReloadableFixtureNull
+            ReloadableFixtureThrow ReloadableFixturePair)
+        eacp_add_plugin(${fixture} ${fixture}.cpp)
+        target_include_directories(${fixture} PRIVATE
+                $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)
+
+        string(REGEX REPLACE "([a-z])([A-Z])" "\\1_\\2" define ${fixture})
+        string(TOUPPER ${define} define)
+
+        target_compile_definitions(CoreTests PRIVATE
+                EACP_${define}="$<TARGET_FILE:${fixture}>")
+        add_dependencies(CoreTests ${fixture})
+    endforeach ()
+endif ()
 
 # The thin-eacp-host bridge: a plugin whose own copy defers work, so the
 # tests can watch this binary's root loop pump it (RootLoopTests-Linux.cpp).
@@ -272,4 +291,15 @@ if (NOT CMAKE_CROSSCOMPILING)
             TEST_INCLUDE_FILES "${clipboard_lock_file}")
 endif ()
 
-add_subdirectory(Process)
+# Every case there launches a child, which the web cannot.
+if (NOT EMSCRIPTEN)
+    add_subdirectory(Process)
+endif ()
+
+# Quits with a static Timer alive, whose teardown must not abort the exit
+# (Tests/CMakeLists.txt registers it).
+if (EMSCRIPTEN)
+    add_executable(QuitWithTimerHarness QuitWithTimerHarness-Web.cpp)
+    target_link_libraries(QuitWithTimerHarness PRIVATE eacp-core)
+    eacp_web_executable(QuitWithTimerHarness)
+endif ()

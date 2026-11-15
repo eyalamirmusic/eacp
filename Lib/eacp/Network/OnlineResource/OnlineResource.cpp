@@ -1,4 +1,5 @@
 #include "OnlineResource.h"
+#include "OnlineResourceInternal.h"
 #include "OnlineResources.h"
 
 #include "../HTTP/Http.h"
@@ -15,7 +16,6 @@
 
 #include <filesystem>
 #include <stdexcept>
-#include <thread>
 
 namespace eacp
 {
@@ -238,19 +238,23 @@ bool install(const FetchPlan& plan, const HTTP::Response& response)
     return true;
 }
 
-OnlineResource::Result
-    performFetch(const FetchPlan& plan,
-                 HTTP::DownloadProgress& transfer,
-                 std::atomic<OnlineResource::Progress::Stage>& stage)
-{
-    using Stage = OnlineResource::Progress::Stage;
+using FetchStage = std::atomic<OnlineResource::Progress::Stage>;
 
+OnlineResource::Result resultFor(const FetchPlan& plan)
+{
     auto result = OnlineResource::Result {};
     result.path = plan.target;
+    return result;
+}
 
-    auto cancelled = [&] { return transfer.cancel.load(); };
+// Everything before the request goes out: a result when the fetch ends here.
+std::optional<OnlineResource::Result> prepareFetch(const FetchPlan& plan,
+                                                   HTTP::DownloadProgress& transfer,
+                                                   FetchStage& stage)
+{
+    auto result = resultFor(plan);
 
-    if (cancelled())
+    if (transfer.cancel.load())
     {
         result.cancelled = true;
         return result;
@@ -263,12 +267,20 @@ OnlineResource::Result
     }
 
     discardLeftovers(plan);
-    stage = Stage::downloading;
+    stage = OnlineResource::Progress::Stage::downloading;
+    return std::nullopt;
+}
 
-    auto request = conditionalRequest(plan, transfer);
-    auto response = request.downloadTo(partialPath(plan).str());
+OnlineResource::Result completeFetch(const FetchPlan& plan,
+                                     const HTTP::Response& response,
+                                     HTTP::DownloadProgress& transfer,
+                                     FetchStage& stage)
+{
+    using Stage = OnlineResource::Progress::Stage;
 
-    if (cancelled())
+    auto result = resultFor(plan);
+
+    if (transfer.cancel.load())
     {
         discardLeftovers(plan);
         result.cancelled = true;
@@ -461,25 +473,45 @@ Threads::Async<OnlineResource::Result> OnlineResource::start()
 
     current->running = true;
 
-    // The registry hears the outcome even when the object is gone: the
-    // file landed, or did not, whoever was waiting for it.
-    std::thread {
-        [current, spec = std::move(plan)]
-        {
-            auto result = performFetch(spec, current->transfer, current->stage);
+    auto request = conditionalRequest(plan, current->transfer);
+    auto partPath = partialPath(plan).str();
+    auto target = plan.target;
+    auto spec = std::make_shared<const FetchPlan>(std::move(plan));
+
+    auto prepare = [current, spec]
+    {
+        auto early = prepareFetch(*spec, current->transfer, current->stage);
+
+        if (early)
             current->stage = Progress::Stage::done;
 
-            Threads::callAsync(
-                [current, target = spec.target, output = std::move(result)]() mutable
-                {
-                    current->running = false;
-                    OnlineResources::get().reportFinished(target, output);
+        return early;
+    };
 
-                    if (!current->abandoned)
-                        current->promise.resolve(std::move(output));
-                });
-        }}
-        .detach();
+    auto complete = [current, spec](const HTTP::Response& response)
+    {
+        auto result =
+            completeFetch(*spec, response, current->transfer, current->stage);
+        current->stage = Progress::Stage::done;
+        return result;
+    };
+
+    // The registry hears the outcome even when the object is gone: the
+    // file landed, or did not, whoever was waiting for it.
+    auto deliver = [current, target](Result output)
+    {
+        current->running = false;
+        OnlineResources::get().reportFinished(target, output);
+
+        if (!current->abandoned)
+            current->promise.resolve(std::move(output));
+    };
+
+    runOnlineResourceFetch(std::move(prepare),
+                           std::move(request),
+                           std::move(partPath),
+                           std::move(complete),
+                           std::move(deliver));
 
     return current->promise.get();
 }
@@ -533,6 +565,12 @@ Threads::Async<OnlineResource::Result> OnlineResource::fetchAsync(Options option
 OnlineResource::Result OnlineResource::fetch(Options options)
 {
     Threads::assertMainThread();
+
+    if (!onlineResourceFetchCanBlock())
+        throw std::runtime_error {
+            "Could not fetch " + options.info.url
+            + ": a blocking fetch cannot run on the web unless the executable "
+              "links eacp-core-nested-pump; use fetchAsync"};
 
     auto owned = std::make_shared<OwnedFetch>();
     auto async = startOwned(owned, std::move(options));

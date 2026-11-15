@@ -19,7 +19,8 @@ eacp is a cross-platform GUI/graphics framework written in modern C++20 with Obj
 `README.md` is written for users of the library — interface, capabilities and
 usage — and stays free of build-system and implementation detail. In-depth
 docs live under `Docs/` (`Build.md` for options, dependencies, capability
-variables and CI; `Linux.md` for the Linux backend; `Toolbox.md` for the
+variables and CI; `Linux.md` for the Linux backend; `Web.md` for the
+WebAssembly target; `Toolbox.md` for the
 Core reuse map; `HotReload.md` for
 `Plugins::Reloadable`, `eacp_add_hot_reload` and the reload machinery under
 them) and beside the modules
@@ -50,11 +51,19 @@ set of modules and a new port reaches them one at a time. The next three hang of
 is Apple, Windows and Android, so on Apple and Windows the first six are
 simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-`Network` is gated by none of them: it builds everywhere — the HTTP client is
-NSURLSession on Apple, WinHTTP on Windows, libcurl on Linux and Java's
-`HttpURLConnection` and sockets through JNI on Android — and the WebView page
+None of the seven is on for the web (Emscripten), which builds no graphics.
+Two more capability variables in the same block decide what the host can run
+rather than what it draws, both on everywhere but the web: `EACP_HAS_THREADS`
+(threads a body runs on; code asks its compile-time twin
+`Platform::hasThreads()`) and `EACP_HAS_SOCKETS` (sockets of eacp's own: the
+HTTP and WebSocket servers, TCP, IPC, `eacp-network-json` and the HTTP/IPC RPC
+transports; a PUBLIC define on `eacp-network` the `Network.h` umbrella reads).
+`Network`'s client half is gated by none of them: it builds everywhere — the HTTP client is
+NSURLSession on Apple, WinHTTP on Windows, libcurl on Linux, Java's
+`HttpURLConnection` and sockets through JNI on Android and the runtime's
+`fetch()` on the web — and the WebView page
 bridge over its RPC, `eacp-ui-network` and their tests build with it.
-`Core` and `Network` build everywhere, Linux included, and so do four
+`Core` and `Network` build everywhere, Linux and the web included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
 and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`); `eacp-cpu-compute`, an
 interpreter that runs the same compute kernels on the CPU with no device
@@ -83,7 +92,7 @@ tests on), and builds iOS for the simulator and HelloGPU and HelloNetwork
 for Android (arm64-v8a, an NDK installed with `sdkmanager`). The Windows ARM64
 lanes configure with `-DEACP_BUILD_WEBVIEW=OFF`, because the WebView example
 apps' npm installs run inside configure and are several times slower on the
-ARM runners; the x64 lanes cover WebView2.
+ARM runners; the x64 lanes cover WebView2. No lane builds the web target.
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed`, `ESIMD` (`eyalamirmusic/ESIMD`, `CMake/FindESIMD.cmake`: the
@@ -108,7 +117,8 @@ optional — three pkg-config groups: the Wayland client library,
 target; no Xlib symbol anywhere), and FreeType, HarfBuzz and fontconfig for the
 glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
-and reports `Device::isValid()` false.
+and reports `Device::isValid()` false. A web build adds nothing; it needs
+Emscripten and node installed.
 
 Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
 the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
@@ -344,7 +354,8 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 
 - `EACP_HOT_RELOAD` (default `OFF`): dev or static mode for every app wired
   with `eacp_add_hot_reload` that passes no `HOT_RELOAD` of its own (both
-  in-tree examples pass `ON`; Windows, iOS and Android are always static).
+  in-tree examples pass `ON`; Windows, iOS, Android and the web are always
+  static).
   `eacp_add_hot_reload(<app> <library> SOURCES ...)` creates the library: a
   static one linked into the app in static mode, a module the app loads in
   dev mode, whose own links are routed to the app and reach it compile-only.
@@ -786,6 +797,51 @@ host to the loop, as `EmbeddedViewTests` does, so
 which `pumpEventLoop`'s refusal to re-enter would otherwise make a no-op.
 See `Lib/eacp/GPU/README.md`.
 
+## The Web Target
+
+`-DCMAKE_TOOLCHAIN_FILE=<emscripten>/cmake/Modules/Platform/Emscripten.cmake`
+(or `emcmake cmake`) builds wasm32 for a browser or node: `Core`, `Network`'s
+client half and the four device-free pieces, nothing that draws, and of the
+examples only `Apps/Web` (`HelloLoop`, `HelloNetwork`). It is browser-first:
+one thread, no `-pthread`, so the output (`<app>.js` and `<app>.wasm`, no
+page) is plain static files needing no cross-origin isolation headers.
+`CMake/Web.cmake` (included before any target, for `-fwasm-exceptions`
+everywhere) gives `eacp_web_executable(<app>)`: the shared link options
+(`-sEXIT_RUNTIME=1`, growable memory, 1 MB stack) and the `<app>-run` (node),
+`<app>-browser` and `<app>-headless` (headless Chrome) targets over
+`CMake/Web/Launch.mjs`. Per-platform files are `Thing-Web.cpp`, and the
+`EMSCRIPTEN` branch comes before `UNIX`, which Emscripten also sets.
+`EventLoop-Web.cpp` makes the browser's loop eacp's: `callAsync` drains on a
+later turn, `callAfter` is one JS timeout for the nearest deadline, `Timer` is
+`setInterval`, both plain JS timers holding no runtime keepalive. Unless the
+executable links the nested pump, `run()` does not return: it unwinds the
+stack to the browser as an exception would (a `catch (...)` does not stop it),
+running the destructors of `main()`'s locals before the app is constructed,
+and `quit()` does `run<T>()`'s teardown (destroy the app, stop the pool and
+the `callAfter` timers) and exits the runtime with the return value, so
+`main()` holds nothing in a local the app needs. A
+nested pump (`runEventLoopFor`/`Until`, `Async::waitFor`, the blocking HTTP
+calls, `OnlineResource::fetch`) needs JSPI and so exists only in executables
+linking the `eacp-core-nested-pump` object library, which the test suites do
+and apps do not; elsewhere a positive `runFor` throws, `httpRequest` returns an
+error and `fetch` throws, each naming the library. HTTP is `fetch()`
+(`Http-Web.cpp`/`.js`) and WebSocket the browser's (`WebSocket-Web.cpp`/`.js`),
+with the browser's limits (CORS, runtime-owned headers, opaque redirects, no
+WebSocket headers, close codes 1000/3000–4999) written into the public
+headers; both JS libraries abort what is in flight when the runtime exits.
+Processes (`Process-Default.cpp`, shared with iOS), dynamic libraries
+(`eacp_add_plugin` is a configure `FATAL_ERROR`; `eacp_add_hot_reload` is
+static), clipboard, alerts and pickers are the stub paths; the file system is
+in-memory and nothing persists. The suites run under node, one ctest entry per
+group discovered at ctest time (`<suite>.discovery` fails when a suite cannot
+be listed), against `Tests/Network/Web/TestServer.mjs` as a fixture, with
+`EACP_WEB_TEST_NODE` a node that has JSPI (25+, or a node 24 named with
+`--experimental-wasm-jspi` as a list). `eacp_web_add_app_tests` registers
+`HelloLoop`, `HelloNetwork` and the `QuitWithTimerHarness` and
+`QuitWithFetchHarness` real-exit checks, built without JSPI as apps are, as
+one entry under plain node each and one `<app>Headless` entry in the headless
+Chrome configure found (`EACP_WEB_CHROME`). `Docs/Web.md` is the account.
+
 ## Architecture
 New source files are added directly to the module's CMakeLists.txt under the
 appropriate `target_sources(...)` call. Platform-specific sources go inside the
@@ -827,8 +883,8 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   top-level windows are disabled while it is up), `UIAlertController` on iOS
   (retried on later turns while nothing can present it). Nobody choosing — a
   quit, a failed or dismissed dialog, an answer dropped unanswered (the last
-  copy of the answer going answers it), headless, Linux and Android (which
-  never show one), a standalone app with no loop running (answered at once on
+  copy of the answer going answers it), headless, Linux, Android and the web
+  (which never show one), a standalone app with no loop running (answered at once on
   the calling thread; `isEventLoopRunning` answers for the whole process) —
   answers `Detail::unansweredButton`: the cancel button, else the default.
   The platforms' id-to-button mappings are `Detail::` functions in
@@ -945,7 +1001,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `callAsync(Callback)`: Schedule function on main thread
 - `callAfter(Time::MS, Callback)`: the same, delayed. One shared scheduler
   thread serves every pending callback, so N deadlines cost one thread, not N;
-  `Threads::delay` is built on it (`Threads/CallAfter.cpp`)
+  `Threads::delay` is built on it (`Threads/CallAfter.cpp`). It is stopped —
+  pending callbacks dropped, the thread joined — by `Apps::run` after the
+  shared pool and by `detachCurrentThreadAsMain` (`stopCallAfterScheduler`).
+  The web has no such thread: one JS timeout armed for the nearest deadline
+  (`EventLoop-Web.cpp`)
 - `Timer`: periodic callbacks, taking either `Time::MS` or an integer Hz
 - `Thread` (`Threads/Thread.h`): a joining thread whose header keeps
   `<thread>` out of public headers; the only wrapper eacp has, so new worker
@@ -965,7 +1025,8 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   SCHED_RESET_ON_FORK` at JUCE's mid level on desktop Linux (so no thread it
   starts is born realtime), nothing on Android. A refusal leaves the thread
   `High` (`TIME_CRITICAL` on Windows) and the body still runs; `isRealtime()`
-  says which, settled when `start()` returns
+  says which, settled when `start()` returns. Where `Platform::hasThreads()` is
+  false (the web) `start()` prints once and runs nothing
 - `ThreadPool` (`Threads/ThreadPool.h`): one mutex, one FIFO, `Thread`s started
   lazily up to `ThreadPoolOptions::threadCount` (0 is one per logical core),
   each from a copy of `ThreadPoolOptions::thread` (a `ThreadOptions`, default
@@ -988,7 +1049,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `ThreadPool::shared()` is stopped by `Apps::run` after the app is destroyed
   and by `detachCurrentThreadAsMain` (`stopSharedThreadPool`, a no-op when
   nothing created it). `Tests/Core/ThreadPoolTests.cpp` (32 `ThreadPool/`
-  cases)
+  cases). Without threads (the web) every pool has zero threads: its queue
+  runs on the main thread one task per loop turn, and the waits run it inline
+  (`Tests/Core/ThreadlessTests-Web.cpp`)
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
 - `FramePacer` (`Graphics/Helpers/FramePacer.h`): the frame-rate divider
   behind `DisplayLink::setMaxFps`, `ComponentHost::setAnimationMaxFps` and
@@ -1021,7 +1084,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 
 **Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession on
-  Apple, WinHTTP on Windows, libcurl on Linux, `HttpURLConnection` on Android)
+  Apple, WinHTTP on Windows, libcurl on Linux, `HttpURLConnection` on Android,
+  `fetch()` on the web, where blocking needs `eacp-core-nested-pump` and apps
+  use `asyncRequest`; `Docs/Web.md`, "Networking", has the browser's limits)
 - `Request::followRedirects` (default on; off returns the 3xx itself and sends
   nothing to its Location) and `Request::maxResponseSize` (0 = no limit; the
   transfer is aborted as the body arrives and reported as an error with status
@@ -1052,17 +1117,19 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   curl drives a cancellable transfer through a multi handle polled every
   25 ms, and WinHTTP's watchdog - started for any request with a progress
   block - closes the handle. Android checks the flag only per body chunk (for
-  both), so a stall there lasts until the idle or whole-request timeout
+  both), so a stall there lasts until the idle or whole-request timeout. The
+  web checks it, and the time limits, from a 50 ms `Timer`
 - `Request::cachePolicy` (default `IgnoreLocalCache`; on Apple the request uses
   `NSURLRequestReloadIgnoringLocalCacheData`, and a request that would have
   used `sharedSession` uses one process-wide session of eacp's own with no
   `URLCache` instead, so nothing is stored either; Android
-  `setUseCaches(false)`; WinHTTP and curl never cache)
+  `setUseCaches(false)`; the web `cache: "no-store"`; WinHTTP and curl never
+  cache)
 - User-Agent: each backend adds `userAgentToAdd(req)` (`HttpProtocol`), which
   is empty when the request has a User-Agent header and otherwise
   `defaultUserAgent()`: the mutex-guarded value from `setDefaultUserAgent`
-  (empty resets), else empty on Apple/Android - so NSURLSession and
-  HttpURLConnection send the system's own - and `eacpUserAgent()`
+  (empty resets), else empty on Apple/Android/web - so NSURLSession,
+  HttpURLConnection and `fetch()` send the system's own - and `eacpUserAgent()`
   (`eacp/<project version>`, from `EACP_VERSION_STRING`) on Windows and
   Linux. WinHTTP's process-wide session is opened with `eacpUserAgent()`, but
   the agent is also added per request as a header, so a later
@@ -1094,7 +1161,12 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `progress()` readable from any thread), `fetchAsync(Options)` with the
   callbacks in `Options`, and the blocking `fetch(Options)` for a console app
   that needs the file before its loop runs. Destroying the object abandons
-  its Async, so a dead view is never called back. `Apps/Console/OnlineResource`
+  its Async, so a dead view is never called back. The fetch is split around
+  its download behind one seam (`OnlineResourceInternal.h`,
+  `runOnlineResourceFetch`): `OnlineResource-Threaded.cpp` runs it on a worker
+  thread, `OnlineResource-Web.cpp` on the browser's asynchronous fetch with
+  the unpacking on the main thread, where the blocking `fetch` throws unless
+  the executable links `eacp-core-nested-pump`. `Apps/Console/OnlineResource`
   and `Apps/Video/DownloadAndPlay` are the two users.
 - `OnlineResources` (`Network/OnlineResource/OnlineResources.h`): the
   process-wide registry every `OnlineResource` reports into as it starts,
@@ -1125,9 +1197,13 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   Ubuntu 24.04's 8.5.0), and on Android `java.net.Socket` through JNI with
   `Protocol.h` framing it, a reader and a writer thread per connection, the
   certificate checked against the host for `wss://` and `ws://` refused where
-  the network security config refuses cleartext. `WebSocket.cpp` is the one
+  the network security config refuses cleartext, and on the web the browser's
+  own `WebSocket` (no caller headers: a connection given any fails; close codes
+  outside 1000 and 3000-4999 sent as 1000). `WebSocket.cpp` is the one
   state machine, marshalling
-  every `Sink` report to the message thread through `Threads::callAsync`; each
+  every `Sink` report to the message thread through `Threads::callAsync` and
+  bounding the closing handshake with a `callAfter` holding the endpoint
+  weakly (no thread of its own); each
   `WebSocket-<Platform>` file implements `Backend.h`'s `makeBackend` and
   nothing else. `Protocol.h` is RFC 6455 framing and the client handshake
   (`parseUrl`, `randomClientKey`, `clientHandshakeRequest`,
@@ -1185,7 +1261,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   need no shell; `ProcessTests.cpp` (POSIX), `ProcessTests-Windows.cpp` (the
   same options through cmd.exe), `ProcessTokeniseTests.cpp` (everywhere)
 - POSIX impl (`Process-Posix.cpp`, fork/exec) shared by macOS+Linux; Windows uses
-  `CreateProcessW` (`Process-Windows.cpp`)
+  `CreateProcessW` (`Process-Windows.cpp`); iOS and the web launch nothing
+  (`Process-Default.cpp`: `launched()` false). Without threads `runAsync` and
+  `BuildRunner` run their job on a later loop turn through `callAsync`
 - `BuildRunner` (`Process/BuildRunner.h`): one command rerun on demand on a
   background thread, stderr merged; `onOutput`/`onFinished` on the main thread;
   `run()` mid-run coalesces into exactly one rerun; a cancelled run finishes
@@ -1269,7 +1347,7 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   (never through a shell) and reaps it on a detached thread rather than as a
   detached `Process`, which would leave a zombie per call, and reveals by
   opening `Files::revealFallbackDirectory` (the parent, a pure string
-  function) since selection has no portable form; iOS and Android
+  function) since selection has no portable form; iOS, Android and the web
   (`FilesOpen-Default.cpp`) answer `false`. `true` means launched, which on
   Linux is only that `xdg-open` started. Tests cover the refusals and the
   computed targets only; nothing in CI opens a file manager
@@ -1431,6 +1509,9 @@ xcb-icccm and xcb-xinput, FreeType, HarfBuzz and fontconfig, plus the Vulkan
 loader, opened with `dlopen` rather than linked.
 Android: android, log, jnigraphics, the Vulkan loader the same way, and
 `java.net`/`javax.net.ssl` through JNI for the network; no libcurl.
+Web: nothing linked; the runtime's `fetch()` and `WebSocket` through
+`Http-Web.js` and `WebSocket-Web.js`, JS libraries `eacp-network` adds to the
+link.
 
 ## Code Style
 
