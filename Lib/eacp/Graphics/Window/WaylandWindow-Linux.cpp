@@ -207,6 +207,22 @@ struct WaylandWindowNative final
             linuxWindowSurfaceStateChanged(*contentView);
     }
 
+    // libdecor asks for a commit whenever it redraws the decorations, and the
+    // cairo plugin does so as early as the title is set, before the first
+    // configure. A buffer attached then is a protocol error that costs the
+    // connection, so until the window is mapped the commit carries none.
+    void decorationsChanged()
+    {
+        if (mapped)
+        {
+            present();
+            return;
+        }
+
+        if (auto* surface = getSurface())
+            wl_surface_commit(surface);
+    }
+
     void present()
     {
         auto* connection = waylandDisplay();
@@ -539,7 +555,8 @@ struct WaylandWindowNative final
 
             // The decorations are on synchronous subsurfaces of ours, and
             // reach the screen only when this surface commits.
-            built.commit = [](libdecor_frame*, void* data) { self(data).present(); };
+            built.commit = [](libdecor_frame*, void* data)
+            { self(data).decorationsChanged(); };
 
             built.dismiss_popup = [](libdecor_frame*, const char*, void*) {};
 
