@@ -150,7 +150,8 @@ The original thread-based work is kept at `.git/web-threads-wip-backup/`
 | Check | Result |
 |---|---|
 | Web `ctest`, fresh `build-web` (test node 26.13.1, emulator node 22.22.0) | 107 of 107, three runs, then once more after the last follow-ups; 1269 cases |
-| Web launch targets: `-run` and `-headless` of `HelloLoop`, `HelloNetwork` (10 of 10 checks), `QuitWithTimerHarness`, `QuitWithFetchHarness` | all exit 0 |
+| Web app ctest entries, node and headless Chrome, of `HelloLoop`, `HelloNetwork`, `QuitWithTimerHarness`, `QuitWithFetchHarness` | 8 of 8 |
+| `HelloLoop-run` (`Launch.mjs browser`, the one launch target per app): page, `.js` and `.wasm` served (200, right types), the opened default-browser tab's output relayed, launcher and server gone after | exit 0, `PASS` |
 | `CpuComputeBench` under node | exit 0 |
 | Native macOS, fresh tree, whole build and whole `ctest` | 375 of 375 (one run); `NetworkTests` 413 cases; `App`, `EventLoop`, `Thread`, `ThreadPool`, `Timer` rerun after the last follow-ups: pass |
 | Unity compile (`-DEACP_CI_BUILD=ON`) | native `eacp-core`, `eacp-network`, `CoreTests`, `NetworkTests` clean; whole web tree clean |
@@ -219,14 +220,17 @@ Made during the fix pass; each can be reversed.
   and the iOS and Android CI lanes with this tree.
 - Running the clang-cl test binaries; they were built only.
 - The Linux display passes (Weston, Xvfb) with the Clang build; only GCC ran them.
-- Firefox and Safari: untried. Only headless Chrome has run any of this in a browser.
+- Firefox and Safari: untried. Only Chrome has run any of this in a browser:
+  headless for the ctest entries, and the desktop Chrome (this Mac's default
+  browser) for `HelloLoop-run`.
 - In a browser, only the four app entries ran. Timeouts other than the
   whole-request one, cancel, the response size limit, resume, zip unpacking and
   the WebSocket failure paths pass under node only.
 - Release web builds: the after-exit test patterns print nothing there.
 - A node 24 list passed as `EACP_WEB_TEST_NODE`.
 - The no-Chrome `STATUS` path in a real configure; the Chrome search on
-  Windows and Linux hosts; `Launch.mjs` `browser` mode.
+  Windows and Linux hosts; `Launch.mjs` `browser` mode (`<app>-run`) on
+  Windows and Linux, and for any app but `HelloLoop`.
 - Native `ctest` stability beyond one full run.
 - There is no web CI lane.
 
@@ -237,8 +241,18 @@ cmake -G Ninja -B build-web -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DCMAKE_TOOLCHAIN_FILE=/opt/homebrew/opt/emscripten/libexec/cmake/Modules/Platform/Emscripten.cmake
 cmake --build build-web -j 10
 ctest --test-dir build-web -j 6
-cmake --build build-web --target HelloLoop-headless
+cmake --build build-web --target HelloLoop-run
 ```
+
+- `<app>-run` is the one launch target per web app (`HelloLoop`,
+  `HelloNetwork`, `QuitWithTimerHarness`, `QuitWithFetchHarness`): it opens
+  the app in the default browser and exits with its code once the page
+  reports it. Under node or headless Chrome an app runs through its ctest
+  entry (`ctest --test-dir build-web -R '^HelloLoop$'`, `-R
+  '^HelloLoopHeadless$'`) or by hand from its build directory:
+  `node <src>/CMake/Web/Launch.mjs node HelloLoop.js`, or
+  `... headless HelloLoop.js --chrome <chrome>`, with
+  `--companion <script.mjs>` and `-- <args>...` as the app needs.
 
 - The apps run under the emulator, the node on `PATH` (v22 here), which is
   enough for them. The test suites need JSPI and run under

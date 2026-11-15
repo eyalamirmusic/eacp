@@ -6,8 +6,9 @@ using namespace eacp;
 
 // The web's network client against Tests/Network/Web/TestServer.mjs (its URL
 // the last argument), used as an app uses it: nothing blocks. In a browser
-// (HelloNetwork-headless) it exercises the browser's own rules - CORS,
-// forbidden headers, opaque redirects - which the node-run suites cannot.
+// (HelloNetwork-run, or the HelloNetworkHeadless ctest entry) it exercises
+// the browser's own rules - CORS, forbidden headers, opaque redirects - which
+// the node-run suites cannot.
 namespace
 {
 using Done = std::function<void(bool passed, const std::string& detail)>;

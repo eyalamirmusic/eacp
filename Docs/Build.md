@@ -295,9 +295,9 @@ or `emcmake cmake ...`, configures the web target: wasm32, single-threaded,
 included, is compiled with `-fwasm-exceptions`, and the top-level 64-bit check
 lets wasm32 through. Of the examples only `Apps/Web` is built. An app is an
 `eacp_add_app` plus `eacp_web_executable(<app>)`, which links it with a
-growable memory, a 1 MB stack and `-sEXIT_RUNTIME=1` and gives it the
-`<app>-run` (node), `<app>-browser` and `<app>-headless` (headless Chrome)
-launcher targets, none part of `all`; `eacp_web_add_app_tests(<app>)` makes
+growable memory, a 1 MB stack and `-sEXIT_RUNTIME=1` and gives it an
+`<app>-run` target, not part of `all`, that opens it in the default browser;
+`eacp_web_add_app_tests(<app>)` makes
 its node and headless Chrome runs ctest entries. `eacp_add_plugin` is a
 configure `FATAL_ERROR` there, since the web loads no dynamic libraries. These
 cache variables are the target's own:
@@ -312,9 +312,8 @@ cache variables are the target's own:
   node 22 cannot). A node 24 has it only behind a flag, which configure does
   not try: `-DEACP_WEB_TEST_NODE="<node>;--experimental-wasm-jspi"`.
 - `EACP_WEB_CHROME` — the Chrome, found once at configure, that the
-  `<app>-headless` targets and the `<app>Headless` ctest entries run in; those
-  entries exist only when one is found, and a `STATUS` line says when none
-  was.
+  `<app>Headless` ctest entries run in; those entries exist only when one is
+  found, and a `STATUS` line says when none was.
 
 [Web.md](Web.md) is the account: the loop and `run()`/`quit()`, the nested
 pump, threads, the network's browser differences, the file system and the

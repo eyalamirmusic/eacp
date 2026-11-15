@@ -72,18 +72,23 @@ node-only; the test suites link that way, an app does not. No HTML page is
 produced: the build output is the `.js` and the `.wasm` beside it, and a page
 that defines `Module` and loads the `.js` is the deployer's.
 
-An executable that can run in a browser also gets three launcher targets, none
-of them part of `all` and each building the app first:
+An executable that can run in a browser also gets one launcher target,
+`<app>-run`, not part of `all`: it builds the app, serves it on a loopback
+port and opens it in the default browser. It is `CMake/Web/Launch.mjs`, plain
+node with no packages, in its `browser` mode; the same script has a `node`
+mode, which runs the app under node, and a `headless` mode, which does what
+`browser` does in the headless Chrome named by `--chrome` (the ctest entries
+pass `EACP_WEB_CHROME`), failing with 124 if the app has not exited within
+120 s, and at once with no Chrome. No target runs those two; the app's ctest
+entries do (see "Testing"), and by hand, from the app's build directory, they
+are
 
-- `<app>-run` runs it under node.
-- `<app>-browser` serves it on a loopback port and opens it in the default
-  browser.
-- `<app>-headless` does the same in the headless Chrome configure found
-  (`EACP_WEB_CHROME`, passed to the launcher as `--chrome`), failing with 124
-  if the app has not exited within 120 s, and at once where configure found
-  none.
+```bash
+node CMake/Web/Launch.mjs node <app>.js [--companion <script.mjs>] [-- <args>...]
+node CMake/Web/Launch.mjs headless <app>.js --chrome <chrome> [-- <args>...]
+```
 
-All three are `CMake/Web/Launch.mjs`, plain node with no packages. In the
+with `CMake/Web/Launch.mjs` given by its path in the source tree. In the
 browser modes it serves the app's directory as static files and a generated
 page that hands the program its arguments through `Module.arguments`, relays
 every line it prints and its exit code back to the launcher, and exits with
@@ -98,7 +103,7 @@ appended to the app's arguments; that is how `HelloNetwork` gets the test
 server it talks to. `eacp_web_executable` keeps `COMPANION` and `ARGUMENTS` as
 the target's `EACP_WEB_COMPANION` and `EACP_WEB_LAUNCH_ARGUMENTS` properties,
 which are read when a launch command is made: by `eacp_web_executable` itself
-for the three targets, and by `eacp_web_add_app_tests` for the ctest entries
+for `<app>-run`, and by `eacp_web_add_app_tests` for the ctest entries
 (see "Testing"). They are therefore given to `eacp_web_executable`; a property
 set on the target afterwards reaches only an `eacp_web_add_app_tests` called
 after that.
@@ -303,7 +308,7 @@ a page, and nothing calls into the exited runtime afterwards.
 
 An app's file system is Emscripten's in-memory one: in a page it starts empty
 and nothing written to it survives a reload, and an app run under node through
-`<app>-run` gets the same in-memory file system, not the host's. Nothing
+`Launch.mjs node` gets the same in-memory file system, not the host's. Nothing
 persists yet. `FilePath`'s roots come from `FilePath-Linux.cpp`, reused, over
 Emscripten's default environment (`HOME` is `/home/web_user`), so
 `appSupportDirectory()`, `appCacheDirectory()` and `tempDirectory()` resolve
@@ -396,8 +401,8 @@ emulator, `/opt/homebrew/bin/node` and `/usr/local/bin/node` that has
 with none found the configure warns, the test node is the emulator, and the
 suites fail. Pass `-DEACP_WEB_TEST_NODE=<node>` to name one, and a node 24 as
 a list with its flag, `-DEACP_WEB_TEST_NODE="<node>;--experimental-wasm-jspi"`.
-The apps link no JSPI, so their `-run` targets and their ctest entries ask
-nothing of the emulator's node beyond wasm exceptions.
+The apps link no JSPI, so their ctest entries ask nothing of the emulator's
+node beyond wasm exceptions, and `<app>-run` uses it only for the launcher.
 
 That node tier proves the client logic against a real server — statuses,
 bodies, multipart, timeouts, cancellation, size limits, resume, the WebSocket

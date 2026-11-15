@@ -45,7 +45,7 @@ if (NOT EACP_WEB_TEST_NODE)
     set(EACP_WEB_TEST_NODE "${CMAKE_CROSSCOMPILING_EMULATOR}")
 endif ()
 
-# Headless Chrome, for the <app>-headless targets and the <app>Headless tests.
+# Headless Chrome, for the <app>Headless tests.
 find_program(EACP_WEB_CHROME
         NAMES "Google Chrome" Chromium google-chrome google-chrome-stable chromium
               chromium-browser chrome
@@ -56,9 +56,8 @@ find_program(EACP_WEB_CHROME
               "$ENV{LOCALAPPDATA}/Google/Chrome/Application")
 
 if (NOT EACP_WEB_CHROME)
-    message(STATUS "eacp: no Chrome found, so ctest runs no app in a browser "
-            "and the <app>-headless targets fail; -DEACP_WEB_CHROME=<path> "
-            "names one")
+    message(STATUS "eacp: no Chrome found, so ctest runs no app in a browser; "
+            "-DEACP_WEB_CHROME=<path> names one")
 endif ()
 
 # eacp_web_link_options(<out_var> [NODE_FILESYSTEM])
@@ -157,26 +156,6 @@ function(eacp_web_launch_command out_var target mode)
     set(${out_var} ${command} PARENT_SCOPE)
 endfunction()
 
-# eacp_web_launch_targets(<target>)
-#
-# <target>-run under node, <target>-browser in the default browser and
-# <target>-headless in headless Chrome, each building the app first and none
-# part of all.
-function(eacp_web_launch_targets target)
-    set(suffixes run browser headless)
-    set(modes node browser headless)
-
-    foreach (suffix mode IN ZIP_LISTS suffixes modes)
-        eacp_web_launch_command(command ${target} ${mode})
-        add_custom_target(${target}-${suffix}
-                COMMAND ${command}
-                WORKING_DIRECTORY "$<TARGET_FILE_DIR:${target}>"
-                USES_TERMINAL
-                VERBATIM)
-        add_dependencies(${target}-${suffix} ${target})
-    endforeach ()
-endfunction()
-
 # eacp_web_add_app_tests(<target>)
 #
 # An app that exits with its verdict as ctest entries: <target> under node,
@@ -208,9 +187,10 @@ endfunction()
 # eacp_web_executable(<target> [NODE_FILESYSTEM] [COMPANION <script.mjs>]
 #                     [ARGUMENTS <arg>...])
 #
-# An executable that can run in a browser (no NODE_FILESYSTEM) also gets the
-# launch targets, with COMPANION and ARGUMENTS kept as its properties for
-# eacp_web_add_app_tests.
+# An executable that can run in a browser (no NODE_FILESYSTEM) also gets
+# <target>-run, which builds it and opens it in the default browser and is not
+# part of all, with COMPANION and ARGUMENTS kept as its properties for that
+# target and eacp_web_add_app_tests.
 function(eacp_web_executable target)
     cmake_parse_arguments(WEB "NODE_FILESYSTEM" "COMPANION" "ARGUMENTS" ${ARGN})
 
@@ -230,5 +210,12 @@ function(eacp_web_executable target)
     set_target_properties(${target} PROPERTIES
             EACP_WEB_LAUNCH_ARGUMENTS "${WEB_ARGUMENTS}"
             EACP_WEB_COMPANION "${WEB_COMPANION}")
-    eacp_web_launch_targets(${target})
+
+    eacp_web_launch_command(command ${target} browser)
+    add_custom_target(${target}-run
+            COMMAND ${command}
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:${target}>"
+            USES_TERMINAL
+            VERBATIM)
+    add_dependencies(${target}-run ${target})
 endfunction()

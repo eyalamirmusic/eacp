@@ -807,9 +807,10 @@ one thread, no `-pthread`, so the output (`<app>.js` and `<app>.wasm`, no
 page) is plain static files needing no cross-origin isolation headers.
 `CMake/Web.cmake` (included before any target, for `-fwasm-exceptions`
 everywhere) gives `eacp_web_executable(<app>)`: the shared link options
-(`-sEXIT_RUNTIME=1`, growable memory, 1 MB stack) and the `<app>-run` (node),
-`<app>-browser` and `<app>-headless` (headless Chrome) targets over
-`CMake/Web/Launch.mjs`. Per-platform files are `Thing-Web.cpp`, and the
+(`-sEXIT_RUNTIME=1`, growable memory, 1 MB stack) and one `<app>-run` target
+that opens the app in the default browser through `CMake/Web/Launch.mjs`,
+whose `node` and `headless` (headless Chrome) modes only the ctest entries
+use. Per-platform files are `Thing-Web.cpp`, and the
 `EMSCRIPTEN` branch comes before `UNIX`, which Emscripten also sets.
 `EventLoop-Web.cpp` makes the browser's loop eacp's: `callAsync` drains on a
 later turn, `callAfter` is one JS timeout for the nearest deadline, `Timer` is
