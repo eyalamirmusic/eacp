@@ -2,6 +2,11 @@ set(CMAKE_FOLDER Examples/WebView)
 
 add_subdirectory(SimpleView)
 add_subdirectory(Browser)
+
+# Options::applicationNameForUserAgent, backForwardGestures, allowsMagnification
+# and elementFullscreen, all on in one window.
+add_subdirectory(BrowserOptions)
+
 add_subdirectory(FancyWindow)
 add_subdirectory(WebViewEmbed)
 add_subdirectory(WebViewReactAnim)

@@ -181,6 +181,18 @@ struct WebView::Native
 
         config = [[WKWebViewConfiguration alloc] init];
 
+        if (!options.applicationNameForUserAgent.empty())
+        {
+            config.get().applicationNameForUserAgent =
+                Strings::toNSString(options.applicationNameForUserAgent);
+        }
+
+        if (options.elementFullscreen)
+        {
+            if (@available(macOS 12.3, iOS 15.4, *))
+                config.get().preferences.elementFullscreenEnabled = YES;
+        }
+
         if (options.ephemeralSession)
         {
             config.get().websiteDataStore =
@@ -221,6 +233,12 @@ struct WebView::Native
               .defaultContextMenu = options.defaultContextMenu
             }
         );
+
+        webView.get().allowsBackForwardNavigationGestures =
+            options.backForwardGestures;
+#if !TARGET_OS_IPHONE
+        webView.get().allowsMagnification = options.allowsMagnification;
+#endif
         getWebViewDelegateState(delegate.get())->ownWebView = webView.get();
 
         if (options.transparentBackground)
@@ -464,6 +482,14 @@ WKWebView* webViewDelegateCreateWebView(id self,
         native->promptForMediaCapture,
         native->originPolicy.forPopup());
     auto* popupWKWebView = eacp::Graphics::WebViewNativeAccess::wkWebViewOf(*popup);
+
+    // Configuration-level options travel with `configuration`; view-level
+    // properties don't, so a popup inherits them from its opener here.
+    popupWKWebView.allowsBackForwardNavigationGestures =
+        webView.allowsBackForwardNavigationGestures;
+#if !TARGET_OS_IPHONE
+    popupWKWebView.allowsMagnification = webView.allowsMagnification;
+#endif
 
     if (native->owner.onNewWindowRequested(std::move(popup), url))
         return popupWKWebView;
