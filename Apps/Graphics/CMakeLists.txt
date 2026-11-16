@@ -25,6 +25,10 @@ if (NOT IOS)
     # GPU-drawn UI needs and a per-view cursor cannot do. No pointer on iOS.
     add_subdirectory(CursorShapes)
 
+    # GlobalHotKey::isAvailable on Command + Space, a chord the system holds.
+    # No global hot keys on iOS.
+    add_subdirectory(GlobalHotKeyDemo)
+
     # Snapshot capture is portable (macOS + Windows); the Screen mode falls back
     # gracefully where it is not yet available.
     add_subdirectory(VideoRecorderDemo)
