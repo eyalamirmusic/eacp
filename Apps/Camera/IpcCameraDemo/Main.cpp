@@ -304,9 +304,9 @@ struct IpcCameraApp
     // Runs on the capture thread the moment a frame lands, so nothing
     // waits on a poll tick. Messenger::send is safe from any thread; the
     // mutex only fences the viewer list against arrivals and departures
-    // on the main thread. A viewer that stops draining stalls this thread,
-    // and the camera's discardLateFrames turns the stall into dropped
-    // frames - latest wins.
+    // on the main thread. A viewer still reading an earlier frame skips
+    // this one, so a slow viewer gets fewer frames instead of a backlog
+    // (Messenger disconnects a peer that leaves 64 MB unread).
     void ship(const Cameras::CameraFrame& frame)
     {
         if (frame.data() == nullptr || frame.width() <= 0 || frame.height() <= 0)
@@ -320,7 +320,10 @@ struct IpcCameraApp
         auto message = encodeFrame(frame);
 
         for (auto* viewer: viewers)
-            viewer->send(message);
+        {
+            if (!viewer->hasUnsentMessages())
+                viewer->send(message);
+        }
 
         if (++framesSent % 30 == 0)
             std::printf("camera shipped %d frames (%dx%d)\n",
