@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "SharedDeviceRemoval-Windows.h"
 
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Graphics/DComp-Windows.h>
@@ -16,6 +16,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace SharedDeviceRemoval;
 
 namespace DeviceLossTests
 {
@@ -125,23 +126,6 @@ bool renderTimedFrames(TimedPassView& view)
 
     return everyFrameDrew;
 }
-
-void removeSharedDevice()
-{
-    auto* device = static_cast<ID3D12Device*>(Device::shared().nativeDevice());
-    auto removableDevice = winrt::com_ptr<ID3D12Device5>();
-
-    if (device != nullptr
-        && SUCCEEDED(device->QueryInterface(__uuidof(ID3D12Device5),
-                                            removableDevice.put_void())))
-        removableDevice->RemoveDevice();
-}
-
-struct ReplacementDeviceOnWarp
-{
-    ReplacementDeviceOnWarp() { setEnv("EACP_D3D12_WARP", "1"); }
-    ~ReplacementDeviceOnWarp() { unsetEnv("EACP_D3D12_WARP"); }
-};
 
 void enableDebugLayerWhenInstalled()
 {
