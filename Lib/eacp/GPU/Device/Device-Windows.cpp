@@ -186,7 +186,19 @@ std::string Device::name() const
     if (!isValid())
         return "no D3D12 device";
 
-    return getD3D12Shared().getAdapterName();
+    return getD3D12Shared().getAdapter().name;
+}
+
+AdapterDescription Device::describeAdapter() const
+{
+    if (!isValid())
+    {
+        auto unavailable = AdapterDescription {};
+        unavailable.name = name();
+        return unavailable;
+    }
+
+    return getD3D12Shared().getAdapter();
 }
 
 // D3D12 answers per format rather than per device, so this asks about the two

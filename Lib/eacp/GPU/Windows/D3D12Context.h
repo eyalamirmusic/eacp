@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../Device/AdapterDescription.h"
+
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/WinInclude.h>
@@ -170,10 +172,9 @@ public:
 
     ID3D12Device* getDevice() const { return device.get(); }
 
-    // What the adapter calls itself, read once at device creation. Shared
-    // rather than per-context because every Device on this machine runs on the
-    // same adapter.
-    const std::string& getAdapterName() const { return adapterName; }
+    // Read once at device creation. Shared rather than per-context because
+    // every Device on this machine runs on the same adapter.
+    const AdapterDescription& getAdapter() const { return adapter; }
 
     // What this adapter's driver was found unable to do, probed once before
     // the device was created. Shared for the same reason the name is.
@@ -243,7 +244,7 @@ private:
     void createRootSignatures();
 
     winrt::com_ptr<ID3D12Device> device;
-    std::string adapterName;
+    AdapterDescription adapter;
     DriverQuirks quirks;
     winrt::com_ptr<ID3D12RootSignature> renderRootSignature;
     winrt::com_ptr<ID3D12RootSignature> computeRootSignature;

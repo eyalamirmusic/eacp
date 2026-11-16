@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Device/AdapterDescription.h"
 #include "../Spirv/SpirvCompiler.h"
 #include "../Texture/Texture.h"
 
@@ -25,6 +26,8 @@ namespace eacp::GPU
 class Device;
 class VulkanContext;
 struct VulkanTextureData;
+
+std::string apiVersionText(std::uint32_t version);
 
 // A range of a recording's upload arena, valid until that recording completes.
 struct UploadRange
@@ -226,7 +229,7 @@ public:
     std::uint32_t getQueueFamily() const { return queueFamily; }
     VmaAllocator getAllocator() const { return allocator; }
 
-    const std::string& getAdapterName() const { return adapterName; }
+    const AdapterDescription& getAdapter() const { return adapter; }
     const DriverQuirks& getDriverQuirks() const { return quirks; }
 
     const VkPhysicalDeviceProperties& getProperties() const { return properties; }
@@ -325,7 +328,7 @@ private:
 
     VkPhysicalDeviceProperties properties = {};
     VkPhysicalDeviceFeatures features = {};
-    std::string adapterName = "no Vulkan device";
+    AdapterDescription adapter;
     DriverQuirks quirks;
     bool timestampsSupported = false;
     bool coreFloor = false;

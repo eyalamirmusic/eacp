@@ -234,6 +234,12 @@ if (WIN32)
             SOURCES
                 DeviceLoss-WindowsTests.cpp
             TARGETS eacp-gpu)
+
+    nano_add_executable(GPUAdapterDeviceLossTests
+            NO_MAIN
+            SOURCES
+                AdapterAfterDeviceLoss-WindowsTests.cpp
+            TARGETS eacp-gpu)
 endif ()
 
 # The module has eacp linked in, as a plug-in has; the host links nothing of

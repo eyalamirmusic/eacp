@@ -144,7 +144,19 @@ std::string Device::name() const
     if (!isValid())
         return "no Vulkan device";
 
-    return getVulkanShared().getAdapterName();
+    return getVulkanShared().getAdapter().name;
+}
+
+AdapterDescription Device::describeAdapter() const
+{
+    if (!isValid())
+    {
+        auto unavailable = AdapterDescription {};
+        unavailable.name = name();
+        return unavailable;
+    }
+
+    return getVulkanShared().getAdapter();
 }
 
 // The intersection of the three masks a pass touches.

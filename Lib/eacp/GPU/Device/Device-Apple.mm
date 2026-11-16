@@ -10,8 +10,10 @@
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Logging.h>
 
 #include <algorithm>
+#include <mutex>
 
 namespace eacp::GPU
 {
@@ -134,6 +136,71 @@ bool isMac2Family(id<MTLDevice> metalDevice)
     return [metalDevice supportsFamily:MTLGPUFamilyMac2] == YES;
 #pragma clang diagnostic pop
 }
+
+std::string describeOperatingSystemVersion()
+{
+#if TARGET_OS_IPHONE
+    constexpr auto systemName = "iOS";
+#else
+    constexpr auto systemName = "macOS";
+#endif
+
+    const auto version = [[NSProcessInfo processInfo] operatingSystemVersion];
+
+    return Strings::format("{} {}.{}.{}",
+                           systemName,
+                           version.majorVersion,
+                           version.minorVersion,
+                           version.patchVersion);
+}
+
+std::uint64_t readDedicatedMemoryBytes(id<MTLDevice> metalDevice)
+{
+    if (metalDevice.hasUnifiedMemory)
+        return 0;
+
+    if (@available(macOS 10.12, iOS 16.0, *))
+        return metalDevice.recommendedMaxWorkingSetSize;
+
+    return 0;
+}
+
+std::string describeMetalFamily(id<MTLDevice> metalDevice)
+{
+    if (@available(macOS 13.0, iOS 16.0, *))
+    {
+        if ([metalDevice supportsFamily:MTLGPUFamilyMetal3] == YES)
+            return "Metal 3";
+    }
+
+    return "Metal 2";
+}
+
+AdapterDescription describeMetalDevice(id<MTLDevice> metalDevice)
+{
+    return {.name = [[metalDevice name] UTF8String],
+            .vendorId = 0,
+            .deviceId = 0,
+            .dedicatedMemoryBytes = readDedicatedMemoryBytes(metalDevice),
+            .driverVersion = describeOperatingSystemVersion(),
+            .apiLevel = describeMetalFamily(metalDevice),
+            .isSoftware = false};
+}
+
+// Every Device on Apple wraps the same system default device, so it is named
+// once per process, as the other backends name their one shared device.
+void logChosenMetalDeviceOnce(id<MTLDevice> metalDevice)
+{
+    static auto logged = std::once_flag {};
+
+    std::call_once(logged,
+                   [&]
+                   {
+                       LOGF("Metal: chosen device: {}, registry id 0x{:x}",
+                            describeForLog(describeMetalDevice(metalDevice)),
+                            metalDevice.registryID);
+                   });
+}
 } // namespace
 
 struct Device::Native
@@ -144,6 +211,8 @@ struct Device::Native
 
         if (device)
         {
+            logChosenMetalDeviceOnce(device.get());
+
             queue = [device.get() newCommandQueue];
 
             CVMetalTextureCacheRef cache = nullptr;
@@ -208,6 +277,18 @@ std::string Device::name() const
         return "no Metal device";
 
     return [[impl->device.get() name] UTF8String];
+}
+
+AdapterDescription Device::describeAdapter() const
+{
+    if (!isValid())
+    {
+        auto unavailable = AdapterDescription {};
+        unavailable.name = name();
+        return unavailable;
+    }
+
+    return describeMetalDevice(impl->device.get());
 }
 
 // Metal answers this directly, and answers it for the *texture*: a count it
