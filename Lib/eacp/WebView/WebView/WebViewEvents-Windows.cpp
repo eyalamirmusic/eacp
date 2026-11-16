@@ -61,6 +61,7 @@ void WebView::Native::setupEventHandlers()
     if (!webView)
         return;
 
+    addFocusChangedHandlers();
     addNavigationStartingHandler();
     addNavigationCompletedHandler();
     addDocumentTitleChangedHandler();
@@ -100,6 +101,32 @@ void WebView::Native::removeEventHandlers()
     removeEventHandlerIfAdded(view,
                               &ICoreWebView2::remove_WindowCloseRequested,
                               windowCloseRequestedToken);
+}
+
+void WebView::Native::addFocusChangedHandlers()
+{
+    if (controller)
+    {
+        controller->add_GotFocus(
+            Microsoft::WRL::Callback<ICoreWebView2FocusChangedEventHandler>(
+                [this](ICoreWebView2Controller*, IUnknown*) -> HRESULT
+                {
+                    hasFocus = true;
+                    return S_OK;
+                })
+                .Get(),
+            &gotFocusToken);
+
+        controller->add_LostFocus(
+            Microsoft::WRL::Callback<ICoreWebView2FocusChangedEventHandler>(
+                [this](ICoreWebView2Controller*, IUnknown*) -> HRESULT
+                {
+                    hasFocus = false;
+                    return S_OK;
+                })
+                .Get(),
+            &lostFocusToken);
+    }
 }
 
 void WebView::Native::addNavigationStartingHandler()
