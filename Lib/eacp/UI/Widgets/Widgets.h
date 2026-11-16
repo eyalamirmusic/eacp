@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace eacp::UI
 {
@@ -142,8 +143,13 @@ public:
     explicit TextEditor(std::string textToUse = {});
 
     // Setting the text moves the caret to the end and drops the selection, the
-    // way handing someone a field with something already in it does.
+    // way handing someone a field with something already in it does. It also
+    // clears the undo history: the editor now holds a different value.
     void setText(std::string newText, bool notify = false);
+
+    // An edit the app makes on the user's behalf, for an app that handles some
+    // keys itself. Unlike setText it is one undoable step, as if typed.
+    void applyEdit(std::string newText, int newCaret, bool notify = false);
     const std::string& getText() const;
 
     // Shown in place of empty text, dimmed. Not part of the value: it is never
@@ -174,6 +180,15 @@ public:
     // used as a substring boundary without splitting a character.
     void setCaretPosition(int position);
     int getCaretPosition() const;
+
+    // Undo lasts for one editing session: Return, losing focus and setText all
+    // clear it, so it never reaches back past a committed value. An app that
+    // commits some other way calls clearUndo itself.
+    void undo();
+    void redo();
+    bool canUndo() const;
+    bool canRedo() const;
+    void clearUndo();
 
     void selectAll();
     void deselect();
@@ -213,13 +228,43 @@ private:
     int nextCharacter(int from) const;
     int previousCharacter(int from) const;
 
+    // Byte offsets of the word boundaries either side of `from`, skipping any
+    // spaces and punctuation in the way first.
+    int previousWordStart(int from) const;
+    int nextWordEnd(int from) const;
+
     int selectionLeft() const;
     int selectionRight() const;
 
+    // Typing and deleting a character at a time coalesce into one undo step
+    // each; every other edit is a step of its own.
+    enum class EditKind
+    {
+        Typing,
+        Deleting,
+        Other
+    };
+
+    struct UndoStep
+    {
+        std::string text;
+        int caret = 0;
+        int selectionStart = 0;
+    };
+
     void moveCaret(int position, bool extendSelection);
-    void replaceSelection(const std::string& with);
-    void deleteBackwards();
-    void deleteForwards();
+    void replaceSelection(const std::string& with, EditKind kind);
+    void replaceRange(int left, int right, const std::string& with, EditKind kind);
+    // Deletes the selection, or the text between the caret and `position`.
+    void deleteTo(int position, EditKind kind);
+
+    void recordEdit(EditKind kind, const std::string& inserted);
+
+    // A run of typing or deleting stays one undo step until the caret is
+    // moved, the kind of edit changes, or typing starts a new word.
+    bool continuesLastEdit(EditKind kind, const std::string& inserted) const;
+    bool isStartOfNewWord(const std::string& inserted) const;
+    void restore(const UndoStep& step);
 
     // Which byte offset a click at `x` landed on, by walking characters until
     // the measured width passes it. Linear in the string, which for one line of
@@ -232,6 +277,11 @@ private:
     void scrollToCaret();
 
     bool handleClipboardKey(const KeyEvent& event);
+    bool handleShortcutKey(const KeyEvent& event);
+    bool handleLineKey(const KeyEvent& event);
+    bool handleWholeLineKey(const KeyEvent& event);
+    bool handleWordKey(const KeyEvent& event);
+    bool handleUndoKey(const KeyEvent& event);
 
     // What is drawn for the first `bytes` of the text: the text itself, or
     // one mask per character of it in a password field. Everything that
@@ -253,6 +303,11 @@ private:
     // The other end of the selection. Equal to the caret means none, which is
     // why there is no separate flag to keep in step with it.
     int selectionStart = 0;
+
+    std::vector<UndoStep> undoSteps;
+    std::vector<UndoStep> redoSteps;
+    std::optional<EditKind> lastEdit;
+    int caretAfterLastEdit = 0;
 
     float scrollOffset = 0.f;
     bool readOnly = false;
