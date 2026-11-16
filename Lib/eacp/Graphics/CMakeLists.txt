@@ -71,6 +71,7 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-iOS.mm
                 Helpers/DisplayLink-iOS.mm
+                GlobalInput/GlobalMouseMonitor-Default.cpp
                 HotKey/GlobalHotKey-iOS.mm
                 Menu/Menu-iOS.mm
                 Tray/TrayIcon-iOS.mm
@@ -86,6 +87,7 @@ if (APPLE)
                 Graphics/Keyboard-macOS.mm
                 Helpers/DisplayLink-macOS.mm
                 Helpers/ImageConversion-macOS.mm
+                GlobalInput/GlobalMouseMonitor-macOS.mm
                 HotKey/GlobalHotKey-macOS.mm
                 Menu/AppKitMenu.mm
                 Menu/Menu-macOS.mm
@@ -110,6 +112,7 @@ elseif (WIN32)
             Helpers/DarkMode-Windows.cpp
             Helpers/DisplayLink-Windows.cpp
             Helpers/ImageConversion-Windows.cpp
+            GlobalInput/GlobalMouseMonitor-Windows.cpp
             HotKey/GlobalHotKey-Windows.cpp
             Image/Image-Windows.cpp
             Input/GameInput-Windows.cpp
@@ -151,6 +154,7 @@ elseif (ANDROID)
             Graphics/Keyboard-Android.cpp
             Helpers/DisplayLink-Android.cpp
             Helpers/SystemAppearance-Android.cpp
+            GlobalInput/GlobalMouseMonitor-Default.cpp
             HotKey/GlobalHotKey-Linux.cpp
             Image/Image-Android.cpp
             Input/GameInput-Default.cpp
@@ -188,6 +192,7 @@ elseif (UNIX)
             Graphics/Keyboard-Linux.cpp
             Helpers/DisplayLink-Linux.cpp
             Helpers/SystemAppearance-Linux.cpp
+            GlobalInput/GlobalMouseMonitor-Default.cpp
             HotKey/GlobalHotKey-Linux.cpp
             Image/Image-Linux.cpp
             Input/EvdevGamepad-Linux.cpp

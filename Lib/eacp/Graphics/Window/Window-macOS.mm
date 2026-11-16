@@ -188,6 +188,16 @@ namespace eacp::Graphics
 {
 bool detail::cursorWasWarped = false;
 
+// AppKit measures screen points from the bottom-left of the primary screen
+// with y growing up; eacp measures them from its top-left with y growing down
+// (see Display, and WindowOptions::initialPosition). Both directions of the
+// conversion are the same flip about the primary screen's top edge.
+double primaryScreenTop()
+{
+    NSScreen* primary = NSScreen.screens.firstObject;
+    return primary != nil ? NSMaxY(primary.frame) : 0.0;
+}
+
 namespace
 {
 // Borderless NSWindows refuse key status by default, which would make a
@@ -210,16 +220,6 @@ Class getKeyableBorderlessWindowClass()
     }();
 
     return instance->get();
-}
-
-// AppKit measures screen points from the bottom-left of the primary screen
-// with y growing up; eacp measures them from its top-left with y growing down
-// (see Display, and WindowOptions::initialPosition). Both directions of the
-// conversion are the same flip about the primary screen's top edge.
-double primaryScreenTop()
-{
-    NSScreen* primary = NSScreen.screens.firstObject;
-    return primary != nil ? NSMaxY(primary.frame) : 0.0;
 }
 
 Point toScreenPoint(NSRect frame)

@@ -1,6 +1,7 @@
 
 #import <Cocoa/Cocoa.h>
 #include "View.h"
+#include "View-MacOS.h"
 #include "FileDragOut-macOS.h"
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Image/Image.h"
@@ -16,6 +17,58 @@
 
 namespace eacp::Graphics
 {
+MouseButton mouseButtonFromEvent(NSEvent* event)
+{
+    switch (event.buttonNumber)
+    {
+        case 0:
+            return MouseButton::Left;
+        case 1:
+            return MouseButton::Right;
+        case 2:
+            return MouseButton::Middle;
+        default:
+            return MouseButton::Other;
+    }
+}
+
+ScrollPhase gesturePhaseFromEvent(NSEvent* event)
+{
+    switch (event.phase)
+    {
+        case NSEventPhaseBegan:
+        case NSEventPhaseMayBegin:
+            return ScrollPhase::Began;
+        case NSEventPhaseChanged:
+            return ScrollPhase::Changed;
+        case NSEventPhaseEnded:
+        case NSEventPhaseCancelled:
+            return ScrollPhase::Ended;
+        default:
+            return ScrollPhase::None;
+    }
+}
+
+ScrollPhase scrollPhaseFromEvent(NSEvent* event)
+{
+    // Momentum is reported on its own phase mask; it is checked first because an
+    // event coasting after lift-off carries momentumPhase set and phase empty.
+    switch (event.momentumPhase)
+    {
+        case NSEventPhaseBegan:
+        case NSEventPhaseChanged:
+            return ScrollPhase::Momentum;
+        case NSEventPhaseEnded:
+        case NSEventPhaseCancelled:
+            return ScrollPhase::MomentumEnded;
+        default:
+            break;
+    }
+
+    // A notched wheel reports no phase at all.
+    return gesturePhaseFromEvent(event);
+}
+
 namespace
 {
 Class getNativeViewClass();
@@ -45,21 +98,6 @@ NSView* getRootView(id self)
     }
 
     return root;
-}
-
-MouseButton mouseButtonFromEvent(NSEvent* event)
-{
-    switch (event.buttonNumber)
-    {
-        case 0:
-            return MouseButton::Left;
-        case 1:
-            return MouseButton::Right;
-        case 2:
-            return MouseButton::Middle;
-        default:
-            return MouseButton::Other;
-    }
 }
 
 // The screen is the one frame of reference a drag can be measured against. A
@@ -141,43 +179,6 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
         view->dispatchMouseEvent(e);
         mouseEventInDispatch = previousEvent;
     }
-}
-
-ScrollPhase gesturePhaseFromEvent(NSEvent* event)
-{
-    switch (event.phase)
-    {
-        case NSEventPhaseBegan:
-        case NSEventPhaseMayBegin:
-            return ScrollPhase::Began;
-        case NSEventPhaseChanged:
-            return ScrollPhase::Changed;
-        case NSEventPhaseEnded:
-        case NSEventPhaseCancelled:
-            return ScrollPhase::Ended;
-        default:
-            return ScrollPhase::None;
-    }
-}
-
-ScrollPhase scrollPhaseFromEvent(NSEvent* event)
-{
-    // Momentum is reported on its own phase mask; it is checked first because an
-    // event coasting after lift-off carries momentumPhase set and phase empty.
-    switch (event.momentumPhase)
-    {
-        case NSEventPhaseBegan:
-        case NSEventPhaseChanged:
-            return ScrollPhase::Momentum;
-        case NSEventPhaseEnded:
-        case NSEventPhaseCancelled:
-            return ScrollPhase::MomentumEnded;
-        default:
-            break;
-    }
-
-    // A notched wheel reports no phase at all.
-    return gesturePhaseFromEvent(event);
 }
 
 void scrollWheel(id self, SEL, NSEvent* event)
