@@ -4,6 +4,7 @@
 #include "Image/ImageOps.h"
 #include "Helpers/DisplayLink.h"
 #include "Helpers/SystemAppearance.h"
+#include "GlobalInput/GlobalMouseClickMonitor.h"
 #include "HotKey/GlobalHotKey.h"
 #include "Input/GameInput.h"
 #include "Tray/TrayIcon.h"
