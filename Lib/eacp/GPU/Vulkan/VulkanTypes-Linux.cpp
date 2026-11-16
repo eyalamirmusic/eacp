@@ -2,7 +2,54 @@
 
 #include "../Texture/Sampler.h"
 
+#include <Miro/Reflection/ReflectEnum.h>
+
 #include <algorithm>
+#include <string>
+
+// Vulkan's enums have no fixed underlying type and no negative enumerators, so
+// the probed range starts at zero.
+namespace
+{
+// Covers the formats eacp makes, every view type and every sample count.
+constexpr auto highestProbedVulkanEnumerator = 127;
+} // namespace
+
+template <>
+struct Miro::EnumRange<VkFormat>
+{
+    static constexpr int minValue = 0;
+    static constexpr int maxValue = highestProbedVulkanEnumerator;
+};
+
+template <>
+struct Miro::EnumRange<VkImageViewType>
+{
+    static constexpr int minValue = 0;
+    static constexpr int maxValue = highestProbedVulkanEnumerator;
+};
+
+template <>
+struct Miro::EnumRange<VkSampleCountFlagBits>
+{
+    static constexpr int minValue = 0;
+    static constexpr int maxValue = highestProbedVulkanEnumerator;
+};
+
+namespace
+{
+// The enumerator's name, or its number past the probed range.
+template <typename VulkanEnum>
+std::string getVulkanEnumName(VulkanEnum value)
+{
+    const auto name = Miro::enumToString(value);
+
+    if (name.empty())
+        return std::to_string(static_cast<int>(value));
+
+    return std::string {name};
+}
+} // namespace
 
 namespace eacp::GPU
 {
@@ -286,7 +333,45 @@ const ImageUse& VulkanTextureData::restingUse() const
     return isComputeWritable() ? imageStorage : imageSampled;
 }
 
-void VulkanTextureBindings::add(int slot, VkDescriptorType type)
+std::string getVulkanFormatName(VkFormat format)
+{
+    return getVulkanEnumName(format);
+}
+
+std::string getVulkanViewTypeName(VkImageViewType viewType)
+{
+    return getVulkanEnumName(viewType);
+}
+
+std::string getVulkanSampleCountName(VkSampleCountFlagBits samples)
+{
+    return getVulkanEnumName(samples);
+}
+
+VkWriteDescriptorSet
+    makeDescriptorWrite(VkDescriptorSet set, int binding, VkDescriptorType type)
+{
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = set;
+    write.dstBinding = static_cast<std::uint32_t>(binding);
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    return write;
+}
+
+VkDescriptorBufferInfo getUniformBufferInfo(const ConstantRange& uniforms,
+                                            const VulkanPlaceholders& placeholders)
+{
+    if (!uniforms.isValid())
+        return placeholders.uniformBuffer();
+
+    return {uniforms.buffer, 0, uniforms.range};
+}
+
+void VulkanTextureBindings::add(int slot,
+                                VkDescriptorType type,
+                                const VulkanImageShape& shape)
 {
     if (slot < 0 || slot >= maxTextureSlots)
         return;
@@ -300,13 +385,25 @@ void VulkanTextureBindings::add(int slot, VkDescriptorType type)
 
     declared |= 1u << slot;
     types[slot] = type;
+    shapes[slot] = shape;
+}
+
+bool VulkanTextureBindings::hasPlaceholder(int slot) const
+{
+    if (!has(slot))
+        return false;
+
+    if (types[slot] == VK_DESCRIPTOR_TYPE_SAMPLER)
+        return placeholders[slot].sampler != VK_NULL_HANDLE;
+
+    return placeholders[slot].imageView != VK_NULL_HANDLE;
 }
 
 void VulkanTextureBindings::merge(const VulkanTextureBindings& other)
 {
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
         if (other.has(slot))
-            add(slot, other.typeAt(slot));
+            add(slot, other.typeAt(slot), other.shapeAt(slot));
 }
 
 std::uint32_t VulkanRenderPipeline::strideForSlot(int slot) const
