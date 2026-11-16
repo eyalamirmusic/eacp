@@ -268,8 +268,8 @@ bool isTargetInTheWay(const std::error_code& ec)
 
     if constexpr (Platform::isWindows())
         return ec == std::errc::permission_denied;
-
-    return false;
+    else
+        return false;
 }
 
 bool writeBytes(std::ostream& stream, Span<const std::uint8_t> bytes)
