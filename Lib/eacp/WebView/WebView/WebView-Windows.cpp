@@ -66,7 +66,14 @@ WebView::Native::~Native()
     removeEventHandlers();
 
     if (controller)
+    {
+        if (gotFocusToken.value)
+            controller->remove_GotFocus(gotFocusToken);
+        if (lostFocusToken.value)
+            controller->remove_LostFocus(lostFocusToken);
+
         controller->Close();
+    }
 
     // Drop our COM references so the WebView2 browser-process IPC threads
     // release their connection while the heap is still valid. The shared
@@ -612,18 +619,27 @@ WebView* WebView::focused()
     if (!foreground)
         return nullptr;
 
+    WebView* firstInWindow = nullptr;
+
     for (auto* view: detail::registeredWebViews())
     {
         if (!view->impl || !view->impl->hostHwnd)
             continue;
 
         // The host HWND is the top-level window the visual-hosted WebView lives
-        // in; the focused WebView is the one whose window is in the foreground.
-        if (view->impl->hostHwnd == foreground)
+        // in. Of the WebViews in the foreground window, the focused one is the
+        // one holding keyboard focus; else, with focus elsewhere, the first.
+        if (view->impl->hostHwnd != foreground)
+            continue;
+
+        if (view->impl->hasFocus)
             return view;
+
+        if (firstInWindow == nullptr)
+            firstInWindow = view;
     }
 
-    return nullptr;
+    return firstInWindow;
 }
 
 bool WebView::isRuntimeAvailable()

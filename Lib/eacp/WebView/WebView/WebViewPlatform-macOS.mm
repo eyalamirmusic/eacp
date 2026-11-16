@@ -434,14 +434,29 @@ WebView* findFocusedWebView()
     if (keyWindow == nil)
         return nullptr;
 
+    // The one holding keyboard focus (the first responder is the WKWebView or
+    // a view inside it); else, with focus elsewhere in the window, the first
+    // in it -- not the first in it outright, which in a window of several
+    // (a toolbar page over the content) was whichever registered first.
+    auto* responder = keyWindow.firstResponder;
+    auto* responderView =
+        [responder isKindOfClass:[NSView class]] ? (NSView*) responder : nil;
+    WebView* firstInWindow = nullptr;
+
     for (auto* view: registeredWebViews())
     {
         auto* wkWebView = wkWebViewOf(view);
 
-        if (wkWebView != nil && wkWebView.window == keyWindow)
+        if (wkWebView == nil || wkWebView.window != keyWindow)
+            continue;
+
+        if (responderView != nil && [responderView isDescendantOf:wkWebView])
             return view;
+
+        if (firstInWindow == nullptr)
+            firstInWindow = view;
     }
 
-    return nullptr;
+    return firstInWindow;
 }
 } // namespace eacp::Graphics::detail

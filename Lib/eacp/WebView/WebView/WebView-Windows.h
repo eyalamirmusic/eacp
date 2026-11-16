@@ -139,6 +139,7 @@ struct WebView::Native
     bool isFromTrustedSender(ICoreWebView2WebMessageReceivedEventArgs* args);
     void setupEventHandlers();
     void removeEventHandlers();
+    void addFocusChangedHandlers();
     void addNavigationStartingHandler();
     void addNavigationCompletedHandler();
     void addDocumentTitleChangedHandler();
@@ -236,6 +237,12 @@ struct WebView::Native
     EventRegistrationToken permissionRequestedToken {};
     EventRegistrationToken newWindowRequestedToken {};
     EventRegistrationToken windowCloseRequestedToken {};
+    EventRegistrationToken gotFocusToken {};
+    EventRegistrationToken lostFocusToken {};
+
+    // Whether the page holds keyboard focus, from the controller's
+    // GotFocus/LostFocus. See WebView::focused.
+    bool hasFocus = false;
 };
 
 } // namespace eacp::Graphics
