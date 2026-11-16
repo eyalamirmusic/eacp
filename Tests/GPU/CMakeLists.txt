@@ -126,6 +126,7 @@ set(gpu_test_sources
         RenderPassRegionsTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
+        RenderScaleTests.cpp
         SamplerBindingDeviceTests.cpp
         SamplerTests.cpp
         ScissorTests.cpp
