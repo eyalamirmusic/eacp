@@ -172,7 +172,7 @@ if (APPLE)
     list(APPEND gpu_test_sources TextureInteropTests.mm MetalErrorsTests.mm)
 
     if (NOT IOS)
-        list(APPEND gpu_test_sources HiddenWindowTests-macOS.mm)
+        list(APPEND gpu_test_sources HiddenWindowTests-macOS.mm HiddenViewMemoryTests-macOS.mm)
     endif ()
 endif ()
 
