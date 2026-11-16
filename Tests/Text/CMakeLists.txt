@@ -49,3 +49,8 @@ if (LINUX)
             EmojiPresentation-LinuxTests.cpp
             Bidi-LinuxTests.cpp)
 endif ()
+
+# GlyphRenderer/drawsIntoAPassWithADepthAttachment draws into a pass with a
+# depth buffer; a pipeline that leaves the depth format out only fails there
+# under Metal's validation layer.
+eacp_run_test_groups_under_metal_validation(GlyphRenderer)

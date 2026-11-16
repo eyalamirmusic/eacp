@@ -23,11 +23,19 @@ namespace
 {
 constexpr auto viewSize = 128.f;
 
+enum class PassDepth
+{
+    none,
+    depthAttachment
+};
+
 struct GlyphView final : GPU::GPUView
 {
-    GlyphView()
+    explicit GlyphView(PassDepth passDepthToUse = PassDepth::none)
+        : withDepth(passDepthToUse == PassDepth::depthAttachment)
     {
         setSampleCount(1);
+        setDepth(withDepth);
         setBounds({0.f, 0.f, viewSize, viewSize});
     }
 
@@ -47,6 +55,7 @@ struct GlyphView final : GPU::GPUView
 
         renderer.emplace();
         renderer->setViewportSize({viewSize, viewSize});
+        renderer->setPassHasDepthAttachment(withDepth);
 
         return true;
     }
@@ -78,6 +87,7 @@ struct GlyphView final : GPU::GPUView
         renderer->flush(pass, *atlas);
     }
 
+    bool withDepth = false;
     char32_t codepoint = U'M';
     Graphics::Color color = Graphics::Color::white();
 
@@ -129,6 +139,28 @@ auto tDrawsAGlyph = test("GlyphRenderer/drawsAGlyphFromTheAtlas") = []
         return;
 
     auto view = GlyphView {};
+
+    if (!view.build())
+        return;
+
+    auto image = view.renderToImage(1.f);
+
+    check(image.isValid());
+    check(glyphInkPixels(image) > 20);
+};
+
+// Text over a 3D scene is drawn in the scene's own pass, which has a depth
+// attachment. A pipeline without one aborts under Metal's validation layer,
+// which Tests/Text/CMakeLists.txt turns on for this group. Vulkan's validation
+// layer only logs it (VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08914)
+// and D3D12's debug layer says nothing, so only macOS fails without the fix.
+auto tDrawsIntoAPassWithDepth =
+    test("GlyphRenderer/drawsIntoAPassWithADepthAttachment") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto view = GlyphView {PassDepth::depthAttachment};
 
     if (!view.build())
         return;
