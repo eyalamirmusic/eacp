@@ -1,6 +1,8 @@
 #include "Http.h"
 #include "HttpProtocol.h"
 
+#include "../JavaStreams-Android.h"
+
 #include <eacp/Core/Android/Jni.h>
 #include <eacp/Core/Utils/File.h>
 
@@ -33,10 +35,10 @@ struct JavaNet
 {
     void resolve(Jni::Lookup& java)
     {
+        streams.resolve(java);
+
         url = java.findClass("java/net/URL");
         connection = java.findClass("java/net/HttpURLConnection");
-        inputStream = java.findClass("java/io/InputStream");
-        outputStream = java.findClass("java/io/OutputStream");
 
         urlInit = java.method(url, "<init>", "(Ljava/lang/String;)V");
         openConnection =
@@ -69,17 +71,12 @@ struct JavaNet
         getErrorStream =
             java.method(connection, "getErrorStream", "()Ljava/io/InputStream;");
         disconnect = java.method(connection, "disconnect", "()V");
-
-        read = java.method(inputStream, "read", "([B)I");
-        closeInput = java.method(inputStream, "close", "()V");
-        write = java.method(outputStream, "write", "([B)V");
-        closeOutput = java.method(outputStream, "close", "()V");
     }
+
+    Network::JavaStreams streams;
 
     jclass url = nullptr;
     jclass connection = nullptr;
-    jclass inputStream = nullptr;
-    jclass outputStream = nullptr;
 
     jmethodID urlInit = nullptr;
     jmethodID openConnection = nullptr;
@@ -99,10 +96,6 @@ struct JavaNet
     jmethodID getInputStream = nullptr;
     jmethodID getErrorStream = nullptr;
     jmethodID disconnect = nullptr;
-    jmethodID read = nullptr;
-    jmethodID closeInput = nullptr;
-    jmethodID write = nullptr;
-    jmethodID closeOutput = nullptr;
 };
 
 jint clampedMilliseconds(Time::MS timeout)
@@ -278,7 +271,7 @@ public:
 
         auto closeStream = [this, stream]
         {
-            env->CallVoidMethod(stream, java.closeInput);
+            env->CallVoidMethod(stream, java.streams.closeInput);
             env->ExceptionClear();
         };
 
@@ -407,7 +400,7 @@ private:
         auto* bytes = Jni::toJavaBytes(env, req.body);
         check();
 
-        env->CallVoidMethod(stream, java.write, bytes);
+        env->CallVoidMethod(stream, java.streams.writeWholeArray, bytes);
         closeOutput(stream, Jni::takeException(env));
     }
 
@@ -435,7 +428,7 @@ private:
                 env, std::string_view(sliceStart, (std::size_t) readCount));
             check();
 
-            env->CallVoidMethod(stream, java.write, bytes);
+            env->CallVoidMethod(stream, java.streams.writeWholeArray, bytes);
             message = Jni::takeException(env);
             env->DeleteLocalRef(bytes);
             offset += (std::uint64_t) readCount;
@@ -447,7 +440,8 @@ private:
     jobject openOutput(jlong bodyLength)
     {
         env->CallVoidMethod(connection, java.setDoOutput, JNI_TRUE);
-        env->CallVoidMethod(connection, java.setFixedLengthStreamingMode, bodyLength);
+        env->CallVoidMethod(
+            connection, java.setFixedLengthStreamingMode, bodyLength);
         check();
 
         auto* stream = env->CallObjectMethod(connection, java.getOutputStream);
@@ -457,7 +451,7 @@ private:
 
     void closeOutput(jobject stream, std::string message)
     {
-        env->CallVoidMethod(stream, java.closeOutput);
+        env->CallVoidMethod(stream, java.streams.closeOutput);
 
         if (message.empty())
             message = Jni::takeException(env);
@@ -523,7 +517,7 @@ private:
         {
             throwIfExpired();
 
-            auto count = env->CallIntMethod(stream, java.read, buffer);
+            auto count = env->CallIntMethod(stream, java.streams.read, buffer);
             check();
 
             if (count < 0)

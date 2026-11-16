@@ -1,6 +1,8 @@
 #include "Backend.h"
 #include "Protocol.h"
 
+#include "../JavaStreams-Android.h"
+
 #include <eacp/Core/Android/Jni.h>
 
 #include <algorithm>
@@ -33,14 +35,14 @@ struct WebSocketJavaSockets
 {
     void resolve(Jni::Lookup& java)
     {
+        streams.resolve(java);
+
         socket = java.findClass("java/net/Socket");
         socketAddress = java.findClass("java/net/InetSocketAddress");
         sslSocketFactory = java.findClass("javax/net/ssl/SSLSocketFactory");
         sslSocket = java.findClass("javax/net/ssl/SSLSocket");
         sslParameters = java.findClass("javax/net/ssl/SSLParameters");
         securityPolicy = java.findClass("android/security/NetworkSecurityPolicy");
-        inputStream = java.findClass("java/io/InputStream");
-        outputStream = java.findClass("java/io/OutputStream");
 
         socketInit = java.method(socket, "<init>", "()V");
         connect = java.method(socket, "connect", "(Ljava/net/SocketAddress;I)V");
@@ -76,10 +78,9 @@ struct WebSocketJavaSockets
                               "()Landroid/security/NetworkSecurityPolicy;");
         cleartextPermitted = java.method(
             securityPolicy, "isCleartextTrafficPermitted", "(Ljava/lang/String;)Z");
-
-        read = java.method(inputStream, "read", "([B)I");
-        write = java.method(outputStream, "write", "([BII)V");
     }
+
+    Network::JavaStreams streams;
 
     jclass socket = nullptr;
     jclass socketAddress = nullptr;
@@ -87,8 +88,6 @@ struct WebSocketJavaSockets
     jclass sslSocket = nullptr;
     jclass sslParameters = nullptr;
     jclass securityPolicy = nullptr;
-    jclass inputStream = nullptr;
-    jclass outputStream = nullptr;
 
     jmethodID socketInit = nullptr;
     jmethodID connect = nullptr;
@@ -106,8 +105,6 @@ struct WebSocketJavaSockets
     jmethodID setEndpointIdentification = nullptr;
     jmethodID policyInstance = nullptr;
     jmethodID cleartextPermitted = nullptr;
-    jmethodID read = nullptr;
-    jmethodID write = nullptr;
 };
 
 void webSocketCheck(JNIEnv* env)
@@ -404,7 +401,7 @@ private:
     // Appends what one read brought; false at the end of the stream.
     bool readChunk(JNIEnv* env, jobject input, jbyteArray buffer, std::string& into)
     {
-        auto count = env->CallIntMethod(input, java.read, buffer);
+        auto count = env->CallIntMethod(input, java.streams.read, buffer);
         webSocketCheck(env);
 
         if (count < 0)
@@ -431,7 +428,8 @@ private:
 
             env->SetByteArrayRegion(
                 buffer, 0, count, reinterpret_cast<const jbyte*>(bytes.data()));
-            env->CallVoidMethod(output, java.write, buffer, 0, count);
+            env->CallVoidMethod(
+                output, java.streams.writeArrayRange, buffer, 0, count);
             webSocketCheck(env);
 
             bytes.remove_prefix((std::size_t) count);
