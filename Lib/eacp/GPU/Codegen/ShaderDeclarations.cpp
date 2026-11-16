@@ -73,20 +73,34 @@ struct TextureTypeSpelling
     TextureKind kind;
     std::string_view metal;
     std::string_view hlsl;
+    std::string_view wgsl;
 };
 
 constexpr auto textureTypeSpellings = Array<TextureTypeSpelling, 9> {
-    {TextureKind::Texture2D, "texture2d<float>", "Texture2D"},
-    {TextureKind::Cube, "texturecube<float>", "TextureCube"},
-    {TextureKind::Depth2D, "depth2d<float>", "Texture2D<float>"},
-    {TextureKind::Texture2DArray, "texture2d_array<float>", "Texture2DArray"},
-    {TextureKind::Depth2DArray, "depth2d_array<float>", "Texture2DArray<float>"},
-    {TextureKind::Texture3D, "texture3d<float>", "Texture3D"},
-    {TextureKind::CubeArray, "texturecube_array<float>", "TextureCubeArray"},
-    {TextureKind::DepthCube, "depthcube<float>", "TextureCube<float>"},
+    {TextureKind::Texture2D, "texture2d<float>", "Texture2D", "texture_2d<f32>"},
+    {TextureKind::Cube, "texturecube<float>", "TextureCube", "texture_cube<f32>"},
+    {TextureKind::Depth2D, "depth2d<float>", "Texture2D<float>", "texture_depth_2d"},
+    {TextureKind::Texture2DArray,
+     "texture2d_array<float>",
+     "Texture2DArray",
+     "texture_2d_array<f32>"},
+    {TextureKind::Depth2DArray,
+     "depth2d_array<float>",
+     "Texture2DArray<float>",
+     "texture_depth_2d_array"},
+    {TextureKind::Texture3D, "texture3d<float>", "Texture3D", "texture_3d<f32>"},
+    {TextureKind::CubeArray,
+     "texturecube_array<float>",
+     "TextureCubeArray",
+     "texture_cube_array<f32>"},
+    {TextureKind::DepthCube,
+     "depthcube<float>",
+     "TextureCube<float>",
+     "texture_depth_cube"},
     {TextureKind::DepthCubeArray,
      "depthcube_array<float>",
-     "TextureCubeArray<float>"},
+     "TextureCubeArray<float>",
+     "texture_depth_cube_array"},
 };
 
 const TextureTypeSpelling& findTextureTypeSpelling(TextureKind kind)
@@ -99,48 +113,49 @@ const TextureTypeSpelling& findTextureTypeSpelling(TextureKind kind)
     return textureTypeSpellings[0];
 }
 
-// A storage format's GLSL layout qualifier and how many channels it holds,
-// which is the width HLSL declares a typed UAV at.
+// A storage format's GLSL layout qualifier, its WGSL texel format and how many
+// channels it holds, which is the width HLSL declares a typed UAV at.
 struct StorageFormatSpelling
 {
     TextureFormat format;
     std::string_view glsl;
+    std::string_view wgsl;
     int channels;
 };
 
 constexpr auto storageFormatSpellings = Array<StorageFormatSpelling, 32> {{
-    {TextureFormat::RGBA8Unorm, "rgba8", 4},
-    {TextureFormat::R8Unorm, "r8", 1},
-    {TextureFormat::RG8Unorm, "rg8", 2},
-    {TextureFormat::RGBA16Float, "rgba16f", 4},
-    {TextureFormat::RGBA32Float, "rgba32f", 4},
-    {TextureFormat::R32Float, "r32f", 1},
-    {TextureFormat::R16Float, "r16f", 1},
-    {TextureFormat::RG16Float, "rg16f", 2},
-    {TextureFormat::RG32Float, "rg32f", 2},
-    {TextureFormat::R16Unorm, "r16", 1},
-    {TextureFormat::R32Uint, "r32ui", 1},
-    {TextureFormat::RG16Unorm, "rg16", 2},
-    {TextureFormat::RGBA16Unorm, "rgba16", 4},
-    {TextureFormat::RGB10A2Unorm, "rgb10_a2", 4},
-    {TextureFormat::RG11B10Float, "r11f_g11f_b10f", 3},
-    {TextureFormat::R8Uint, "r8ui", 1},
-    {TextureFormat::RG8Uint, "rg8ui", 2},
-    {TextureFormat::RGBA8Uint, "rgba8ui", 4},
-    {TextureFormat::R16Uint, "r16ui", 1},
-    {TextureFormat::RG16Uint, "rg16ui", 2},
-    {TextureFormat::RGBA16Uint, "rgba16ui", 4},
-    {TextureFormat::RG32Uint, "rg32ui", 2},
-    {TextureFormat::RGBA32Uint, "rgba32ui", 4},
-    {TextureFormat::R8Sint, "r8i", 1},
-    {TextureFormat::RG8Sint, "rg8i", 2},
-    {TextureFormat::RGBA8Sint, "rgba8i", 4},
-    {TextureFormat::R16Sint, "r16i", 1},
-    {TextureFormat::RG16Sint, "rg16i", 2},
-    {TextureFormat::RGBA16Sint, "rgba16i", 4},
-    {TextureFormat::R32Sint, "r32i", 1},
-    {TextureFormat::RG32Sint, "rg32i", 2},
-    {TextureFormat::RGBA32Sint, "rgba32i", 4},
+    {TextureFormat::RGBA8Unorm, "rgba8", "rgba8unorm", 4},
+    {TextureFormat::R8Unorm, "r8", "r8unorm", 1},
+    {TextureFormat::RG8Unorm, "rg8", "rg8unorm", 2},
+    {TextureFormat::RGBA16Float, "rgba16f", "rgba16float", 4},
+    {TextureFormat::RGBA32Float, "rgba32f", "rgba32float", 4},
+    {TextureFormat::R32Float, "r32f", "r32float", 1},
+    {TextureFormat::R16Float, "r16f", "r16float", 1},
+    {TextureFormat::RG16Float, "rg16f", "rg16float", 2},
+    {TextureFormat::RG32Float, "rg32f", "rg32float", 2},
+    {TextureFormat::R16Unorm, "r16", "r16unorm", 1},
+    {TextureFormat::R32Uint, "r32ui", "r32uint", 1},
+    {TextureFormat::RG16Unorm, "rg16", "rg16unorm", 2},
+    {TextureFormat::RGBA16Unorm, "rgba16", "rgba16unorm", 4},
+    {TextureFormat::RGB10A2Unorm, "rgb10_a2", "rgb10a2unorm", 4},
+    {TextureFormat::RG11B10Float, "r11f_g11f_b10f", "rg11b10ufloat", 3},
+    {TextureFormat::R8Uint, "r8ui", "r8uint", 1},
+    {TextureFormat::RG8Uint, "rg8ui", "rg8uint", 2},
+    {TextureFormat::RGBA8Uint, "rgba8ui", "rgba8uint", 4},
+    {TextureFormat::R16Uint, "r16ui", "r16uint", 1},
+    {TextureFormat::RG16Uint, "rg16ui", "rg16uint", 2},
+    {TextureFormat::RGBA16Uint, "rgba16ui", "rgba16uint", 4},
+    {TextureFormat::RG32Uint, "rg32ui", "rg32uint", 2},
+    {TextureFormat::RGBA32Uint, "rgba32ui", "rgba32uint", 4},
+    {TextureFormat::R8Sint, "r8i", "r8sint", 1},
+    {TextureFormat::RG8Sint, "rg8i", "rg8sint", 2},
+    {TextureFormat::RGBA8Sint, "rgba8i", "rgba8sint", 4},
+    {TextureFormat::R16Sint, "r16i", "r16sint", 1},
+    {TextureFormat::RG16Sint, "rg16i", "rg16sint", 2},
+    {TextureFormat::RGBA16Sint, "rgba16i", "rgba16sint", 4},
+    {TextureFormat::R32Sint, "r32i", "r32sint", 1},
+    {TextureFormat::RG32Sint, "rg32i", "rg32sint", 2},
+    {TextureFormat::RGBA32Sint, "rgba32i", "rgba32sint", 4},
 }};
 
 const StorageFormatSpelling& findStorageFormatSpelling(TextureFormat format)
@@ -397,6 +412,155 @@ std::string_view getHlslBufferType(BufferAccess access, ValueType elementType)
     return elementType == ValueType::UInt ? spelling.hlslUInt : spelling.hlslFloat;
 }
 
+namespace
+{
+// What WGSL's uniform rules give a member without a @size: a vec3 its twelve
+// bytes, a matrix of three or four rows its columns at sixteen.
+int getWgslUniformSize(ValueType type)
+{
+    if (isMetalWidenedUniform(type) || isMatrix(type))
+        return matrixColumns(type) * uniformColumnStride;
+
+    return byteSize(type);
+}
+
+std::string getWgslUniformMemberType(ValueType type)
+{
+    if (isMetalWidenedUniform(type))
+        return Strings::format("array<vec4<f32>, {}>", matrixColumns(type));
+
+    return wgslTypeName(type);
+}
+
+// Every member sits where the MSL rules put it, which is always on a WGSL
+// alignment of its type; a @size reaches the next one where WGSL's own size
+// falls short, and the last one reaches the block's end.
+std::string formatWgslUniformBlock(const Vector<ValueType>& types,
+                                   const Vector<std::string>& names)
+{
+    auto offsets = uniformOffsets(types);
+    auto blockSize = uniformBlockSize(types);
+    auto source = std::string {"struct Uniforms\n{\n"};
+
+    for (auto i = 0; i < types.size(); ++i)
+    {
+        auto end = i + 1 < types.size() ? offsets[i + 1] : blockSize;
+        auto span = end - offsets[i];
+        auto size = span != getWgslUniformSize(types[i])
+                        ? Strings::format("@size({}) ", span)
+                        : std::string {};
+
+        source += Strings::format(
+            "    {}{}: {},\n", size, names[i], getWgslUniformMemberType(types[i]));
+    }
+
+    return source
+           + Strings::format(
+               "}}\n\n@group(0) @binding({}) var<uniform> uniforms: Uniforms;\n\n",
+               webgpuUniformBinding);
+}
+
+std::string_view getWgslStorageScalarName(TextureFormat format)
+{
+    switch (storageTexelType(format))
+    {
+        case ValueType::UInt4:
+            return "u32";
+        case ValueType::Int4:
+            return "i32";
+        default:
+            return "f32";
+    }
+}
+
+std::string_view getWgslStorageKindName(TextureKind kind)
+{
+    if (kind == TextureKind::Texture2DArray)
+        return "2d_array";
+
+    return kind == TextureKind::Texture3D ? "3d" : "2d";
+}
+
+// The read binding is a sampled texture loaded by textureLoad, as GLSL's is a
+// sampler and HLSL's an SRV: WGSL's read-only storage access is a language
+// feature, and a storage binding of most formats a device feature.
+std::string getWgslTextureType(const ShaderGraph& graph, int slot)
+{
+    const auto access = graph.textureAccess(slot);
+    const auto kind = graph.textureKind(slot);
+
+    if (!isStorageAccess(access))
+        return std::string(findTextureTypeSpelling(kind).wgsl);
+
+    const auto format = graph.textureFormat(slot);
+
+    if (access == TextureAccess::Read)
+        return Strings::format("texture_{}<{}>",
+                               getWgslStorageKindName(kind),
+                               getWgslStorageScalarName(format));
+
+    return Strings::format("texture_storage_{}<{}, {}>",
+                           getWgslStorageKindName(kind),
+                           findStorageFormatSpelling(format).wgsl,
+                           access == TextureAccess::Write ? "write" : "read_write");
+}
+
+std::string_view getWgslBufferAccess(BufferAccess access)
+{
+    return access == BufferAccess::Read ? "read" : "read_write";
+}
+
+std::string
+    getWgslBufferElement(const ShaderGraph& graph, BufferAccess access, int slot)
+{
+    if (auto structId = graph.storageStructType(slot); structId >= 0)
+        return getStructName(graph, structId);
+
+    auto element = std::string(wgslTypeName(graph.storageElementType(slot)));
+
+    if (access == BufferAccess::Atomic)
+        return Strings::format("atomic<{}>",
+                               element == "i32" ? std::string_view {"i32"}
+                                                : std::string_view {"u32"});
+
+    return element;
+}
+} // namespace
+
+std::string formatWgslBuffer(const ShaderGraph& graph, BufferAccess access, int slot)
+{
+    return Strings::format(
+        "@group(0) @binding({}) var<storage, {}> buffer{}: array<{}>;\n",
+        webgpuBufferBinding(slot),
+        getWgslBufferAccess(access),
+        slot,
+        getWgslBufferElement(graph, access, slot));
+}
+
+std::string formatWgslTexture(const ShaderGraph& graph, int slot)
+{
+    const auto access = graph.textureAccess(slot);
+    auto source = std::string {};
+
+    if (access != TextureAccess::Sampler)
+        source += Strings::format("@group(0) @binding({}) var texture{}: {};\n",
+                                  webgpuTextureBinding(slot),
+                                  slot,
+                                  getWgslTextureType(graph, slot));
+
+    if (access != TextureAccess::Sampler && access != TextureAccess::Sample)
+        return source;
+
+    const auto compares =
+        graph.textureSampling(slot).compare != TextureCompare::None;
+
+    return source
+           + Strings::format("@group(0) @binding({}) var sampler{}: {};\n",
+                             webgpuSamplerBinding(slot),
+                             slot,
+                             compares ? "sampler_comparison" : "sampler");
+}
+
 // The CPU block uses MSL alignment (UniformLayout.h). HLSL cbuffer and std140
 // packing disagree with it in places, so pad scalars are emitted there.
 std::string formatUniformBlock(Backend backend,
@@ -404,6 +568,9 @@ std::string formatUniformBlock(Backend backend,
                                const Vector<std::string>& names,
                                int binding)
 {
+    if (backend == Backend::WebGPU)
+        return formatWgslUniformBlock(types, names);
+
     auto source = formatUniformBlockOpening(backend, binding);
     auto offsets = uniformOffsets(types);
     auto padding = UniformPadding {backend == Backend::Vulkan};
@@ -658,10 +825,15 @@ std::string formatHlslSamplerDeclarations(const ShaderGraph& graph)
     return source;
 }
 
-std::string formatBoundsGuard(DispatchRank rank)
+std::string formatBoundsGuard(DispatchRank rank, Backend backend)
 {
+    auto guard =
+        backend == Backend::WebGPU
+            ? std::string_view {"    if ({})\n    {{\n        return;\n    }}\n"}
+            : std::string_view {"    if ({})\n        return;\n"};
+
     if (rank == DispatchRank::OneD)
-        return "    if (gid >= uniforms.count)\n        return;\n";
+        return Strings::format(guard, "gid >= uniforms.count");
 
     auto condition = std::string {};
 
@@ -674,6 +846,6 @@ std::string formatBoundsGuard(DispatchRank rank)
             "gid{} >= uniforms.{}", getComponentSuffix(i), getGridExtentName(i));
     }
 
-    return Strings::format("    if ({})\n        return;\n", condition);
+    return Strings::format(guard, condition);
 }
 } // namespace eacp::GPU::ShaderEmission

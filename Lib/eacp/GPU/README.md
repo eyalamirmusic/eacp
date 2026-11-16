@@ -1,7 +1,7 @@
 # GPU
 
-Metal on Apple platforms, D3D12 on Windows and Vulkan on Linux, behind one
-API — and a shader EDSL that makes a shader a C++ struct rather than a string
+Metal on Apple platforms, D3D12 on Windows, Vulkan on Linux and WebGPU on the
+web, behind one API — and a shader EDSL that makes a shader a C++ struct rather than a string
 literal per backend. The same kernel the EDSL records also runs with no device
 at all: `CpuCompute/` interprets it on the calling thread ("Running a kernel on
 the CPU" below), and `Lib/eacp/ML` lifts tensor-level compute written against
@@ -1380,7 +1380,10 @@ The parsers are portable and tested on every lane against captured output
 diagnostics - source excerpts, carets, glslang's error count - and a log none
 of whose lines parses is one message of the whole text, an error beside a
 failure and a warning beside a success. `CompilationInfoDevice/` in `GPUTests`
-breaks a kernel and a fragment stage on purpose on the current backend.
+breaks a kernel and a fragment stage on purpose on the current backend, from
+the four twins under `Tests/GPU/Shaders/CompilationInfo/`, the files every
+hand-written test shader lives in (`Docs/Build.md`, "The pieces that build everywhere"); the line
+numbers checked are those files' own.
 **Metal drops the warnings of a library it builds** (checked on macOS 27: a
 `#warning` comes back only beside an error), so there a clean-but-warned
 source reports nothing. The FXC and DXC paths have not been compiled or run.
@@ -5070,3 +5073,74 @@ docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
     with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
     -R '^(X11|EmbeddedView|Present)(/|$)'
 ```
+
+## The web
+
+The web target (`Docs/Web.md`) draws through WebGPU: `GPU/WebGPU/` and the
+`-Web.cpp` files beside every backend's, over Emscripten's `emdawnwebgpu`
+port (`--use-port=emdawnwebgpu`, compiled into `eacp-gpu` and put on every
+link that takes it). Shaders are WGSL, which `eacp-gpu-codegen` emits itself:
+`ShaderBackend::WebGPU`, `emitWgsl` beside `emitMetal`/`emitHlsl`/`emitGlsl`,
+and `ShaderBuilder::build()` picks it on Emscripten. A hand-written source is
+`ShaderSource::wgsl`; the backend refuses every other dialect, since nothing in
+a page compiles MSL, HLSL or GLSL.
+
+Why a WGSL emitter rather than GLSL through glslang and Tint: the browser takes
+WGSL only, Tint is a large part of Dawn to build for a host or into the wasm,
+and its SPIR-V reader refuses what the GLSL emitter leans on (combined image
+samplers, format-less storage images). The EDSL was modelled on WGSL's
+built-ins from the start, so the dialect is closest to MSL's meaning and GLSL's
+structure; it is device-free like the others, so `GPUCodegenTests` checks its
+text on every platform (`WgslCodegenTests.cpp`).
+
+- **The device comes before `main()`.** `CMake/Web/WebGPU.js`, a `--pre-js` on
+  every executable linking `eacp-gpu`, holds the program back with a run
+  dependency while it asks for the adapter (high performance) and a device
+  with every feature the adapter offers (Chrome's experimental ones aside) and
+  its highest limits, and leaves it as `Module.preinitializedWebGPUDevice`.
+  Every `Device` takes that one (`emscripten_webgpu_get_device`), so two
+  `Device`s share a queue here. A page or a node with no `navigator.gpu` has
+  none, and every `Device` is invalid, which is what every GPU test and example
+  already stands down on. Validation errors nothing caught and a lost device
+  are printed as `WebGPU: ...` on the program's stderr.
+- **Waiting suspends, where it can.** `Buffer::read`, `Texture::read`,
+  `CommandBuffer::wait`, a shader's compilation messages and a pipeline's
+  validation (an error scope) are asynchronous in WebGPU. In an executable
+  linked with `eacp-core-nested-pump` each waits through JSPI, suspending until
+  the callback wakes it; in one without, the reads are skipped with a message
+  saying so once, `wait` returns at once, and a library or pipeline counts as
+  valid until the device says otherwise. Ordering needs no wait: the queue runs
+  submissions in order and `queue.writeBuffer`/`writeTexture` (what `update`
+  is) land ahead of everything submitted after them.
+- **Bindings are one group.** `@group(0)`: the uniform block at 0, storage
+  slot `n` at `1 + n`, texture slot `n` at `17 + n`, its sampler at `33 + n`
+  (`Codegen/ShaderBindings.h`). The backend builds each pipeline's layout by
+  reading the WGSL's `@group(0) @binding(n) var` declarations, so a hand-written
+  source declares each on one line in that form; a declared binding nothing was
+  bound to takes an empty resource of its kind. A sampler a depth or integer
+  texture is sampled through is made non-filtering, and one a comparison samples
+  through a comparison sampler.
+- **Storage texture formats.** WGSL fixes a storage texture's format in its
+  declaration, so a kernel bound to a texture of another format is rebuilt
+  with that format substituted, once per set of formats.
+- **Render pipelines per depth format.** WebGPU fixes a pass's depth format in
+  the pipeline, so a `RenderPipeline` builds one variant per depth format a
+  pass attaches. A vertex-only library gets an empty fragment stage that writes
+  nothing, so the pipeline still names the pass's colour formats.
+- **1D dispatches fold into rows** past 65535 groups (WebGPU's per-dimension
+  cap); the emitted kernel reads its index linearly across them.
+- **A `GPUView` is the canvas.** `GPUView-Web.cpp` configures a WebGPU canvas
+  context on the selector the window hands over (`Docs/Web.md`, "The surface a
+  presenter gets") in `bgra8unorm`, renders each frame into its current
+  texture, and lets the page show it when the turn returns; frames are paced by
+  the window's `requestAnimationFrame`. Multisampling and depth are companions
+  kept at the canvas's size.
+
+What it does not do yet: occlusion queries and GPU timestamps
+(`supportsOcclusionQueries`, `supportsPassTimings` false), mip generation on
+the GPU (`supportsMipGeneration` false; a `mipmapped` texture's chain is the
+CPU's), layered rendering, indirect draws with a count, multisampled
+sampleable depth (WebGPU resolves no depth), storage binds off the 256-byte
+offset grid (`storageBufferOffsetAlignment`), and worker-thread `Device`s (the
+web has no threads). `GPUTests` runs in headless Chrome (`Docs/Web.md`,
+"Testing").

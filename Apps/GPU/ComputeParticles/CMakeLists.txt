@@ -4,3 +4,7 @@ set_target_properties(ComputeParticles PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(ComputeParticles)
 set_default_target_setting(ComputeParticles)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(ComputeParticles WEBGPU)
+endif ()

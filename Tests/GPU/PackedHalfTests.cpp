@@ -476,12 +476,16 @@ auto tHelperIsNotAlwaysEmitted = test("PackedHalf/emitsTheHelperOnlyWhenUsed") =
     auto plain = PlainKernel {};
     auto unpacking = UnpackKernel {};
 
-    check(!contains(plain.source().source, "eacpUnpackHalf2"));
-    check(contains(unpacking.source().source, "eacpUnpackHalf2"));
+    // WGSL has the unpack as a built-in of its own, with no definition.
+    const auto wgsl = unpacking.source().backend == ShaderBackend::WebGPU;
+    const auto* name = wgsl ? "unpack2x16float" : "eacpUnpackHalf2";
+
+    check(!contains(plain.source().source, name));
+    check(contains(unpacking.source().source, name));
 
     // And the definition arrives before the body that calls it.
     const auto& source = unpacking.source().source;
-    check(source.find("eacpUnpackHalf2") < source.rfind("eacpUnpackHalf2"));
+    check(wgsl || source.find(name) < source.rfind(name));
 };
 
 auto tReadHalf = test("PackedHalf/readsEachHalfElementByIndex") = []
@@ -824,13 +828,34 @@ auto tHalfHelpersAreNotAlwaysEmitted =
     auto reading = ReadHalfKernel {};
     auto packing = RoundTripKernel {};
 
+    // WGSL packs with its own pack2x16float, never inside unpack2x16float.
+    const auto wgsl = packing.source().backend == ShaderBackend::WebGPU;
+    auto packs = [&](const std::string& text)
+    {
+        if (!wgsl)
+            return contains(text, "eacpPackHalf2");
+
+        auto count = [&](std::string_view needle)
+        {
+            auto found = 0;
+
+            for (auto at = text.find(needle); at != std::string::npos;
+                 at = text.find(needle, at + 1))
+                ++found;
+
+            return found;
+        };
+
+        return count("pack2x16float(") > count("unpack2x16float(");
+    };
+
     check(!contains(plain.source().source, "eacpReadHalf"));
-    check(!contains(plain.source().source, "eacpPackHalf2"));
+    check(!packs(plain.source().source));
 
     check(contains(reading.source().source, "eacpReadHalf"));
-    check(!contains(reading.source().source, "eacpPackHalf2"));
+    check(!packs(reading.source().source));
 
-    check(contains(packing.source().source, "eacpPackHalf2"));
+    check(packs(packing.source().source));
     check(!contains(packing.source().source, "eacpReadHalf"));
 };
 } // namespace PackedHalfTests

@@ -7,3 +7,5 @@ endif ()
 nano_add_executable(SpirvTests
         SOURCES SpirvTests.cpp
         TARGETS eacp-spirv)
+
+eacp_embed_test_shaders(SpirvTests)

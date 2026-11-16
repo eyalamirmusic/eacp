@@ -41,6 +41,8 @@ struct Dialects
     std::string hlslSample;
     std::string glslDeclaration;
     std::string glslSample;
+    std::string wgslDeclaration;
+    std::string wgslSample;
 };
 
 constexpr auto cubeDirections = R"(
@@ -145,6 +147,32 @@ void main()
 )";
 }
 
+std::string wgslColumns(const Dialects& dialects)
+{
+    return R"(
+@group(0) @binding(17) var image: )"
+           + dialects.wgslDeclaration + R"(;
+@group(0) @binding(33) var imageSampler: sampler;
+
+var<private> directions: array<vec3f, 6> = array<vec3f, 6>(
+    vec3f(1.0, 0.0, 0.0), vec3f(-1.0, 0.0, 0.0),
+    vec3f(0.0, 1.0, 0.0), vec3f(0.0, -1.0, 0.0),
+    vec3f(0.0, 0.0, 1.0), vec3f(0.0, 0.0, -1.0));
+
+@vertex fn vertexMain(@location(0) position: vec2f) -> @builtin(position) vec4f
+{
+    return vec4f(position, 0.0, 1.0);
+}
+
+@fragment fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f
+{
+    let column = u32(position.x);
+    return )"
+           + dialects.wgslSample + R"(;
+}
+)";
+}
+
 Dialects arrayDialects()
 {
     return {"texture2d_array<float>",
@@ -152,19 +180,24 @@ Dialects arrayDialects()
             "Texture2DArray<float4>",
             "image.Sample(imageSampler, float3(0.5, 0.5, column))",
             "sampler2DArray",
-            "texture(image, vec3(0.5, 0.5, float(column)))"};
+            "texture(image, vec3(0.5, 0.5, float(column)))",
+            "texture_2d_array<f32>",
+            "textureSample(image, imageSampler, vec2f(0.5), column)"};
 }
 
 Dialects volumeDialects(int depth)
 {
     const auto w = "(float(column) + 0.5) / " + std::to_string(depth) + ".0";
+    const auto wgslW = "(f32(column) + 0.5) / " + std::to_string(depth) + ".0";
 
     return {"texture3d<float>",
             "image.sample(imageSampler, float3(0.5, 0.5, " + w + "))",
             "Texture3D<float4>",
             "image.Sample(imageSampler, float3(0.5, 0.5, " + w + "))",
             "sampler3D",
-            "texture(image, vec3(0.5, 0.5, " + w + "))"};
+            "texture(image, vec3(0.5, 0.5, " + w + "))",
+            "texture_3d<f32>",
+            "textureSample(image, imageSampler, vec3f(0.5, 0.5, " + wgslW + "))"};
 }
 
 Dialects cubeArrayDialects()
@@ -174,13 +207,18 @@ Dialects cubeArrayDialects()
             "TextureCubeArray<float4>",
             "image.Sample(imageSampler, float4(directions[column % 6], column / 6))",
             "samplerCubeArray",
-            "texture(image, vec4(directions[column % 6u], float(column / 6u)))"};
+            "texture(image, vec4(directions[column % 6u], float(column / 6u)))",
+            "texture_cube_array<f32>",
+            "textureSample(image, imageSampler, directions[column % 6u], "
+            "column / 6u)"};
 }
 
 ShaderLibrary makeColumnsLibrary(const Dialects& dialects)
 {
-    auto source = nativeShaderSource(
-        mslColumns(dialects), hlslColumns(dialects), glslColumns(dialects));
+    auto source = nativeShaderSource(mslColumns(dialects),
+                                     hlslColumns(dialects),
+                                     glslColumns(dialects),
+                                     wgslColumns(dialects));
 
     return Device::shared().makeShaderLibrary(
         source.withVertex("vertexMain").withFragment("fragmentMain"));

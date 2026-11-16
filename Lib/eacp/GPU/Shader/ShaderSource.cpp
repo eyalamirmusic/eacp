@@ -38,6 +38,11 @@ ShaderSource ShaderSource::glsl(std::string sourceToUse)
     return makeShaderSourceFor(ShaderBackend::Vulkan, std::move(sourceToUse));
 }
 
+ShaderSource ShaderSource::wgsl(std::string sourceToUse)
+{
+    return makeShaderSourceFor(ShaderBackend::WebGPU, std::move(sourceToUse));
+}
+
 ShaderSource& ShaderSource::withVertex(std::string entry)
 {
     vertexEntry = std::move(entry);

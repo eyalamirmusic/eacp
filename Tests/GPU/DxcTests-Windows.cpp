@@ -335,16 +335,7 @@ auto tArguments = test("Dxc/argumentsReachTheCompiler") = []
         return;
 
     auto restore = RestoreOptions {};
-    auto source =
-        ShaderSource::hlsl("RWStructuredBuffer<uint> output : register(u0);\n"
-                           "[numthreads(64, 1, 1)]\n"
-                           "void computeMain(uint3 id : SV_DispatchThreadID)\n"
-                           "{\n"
-                           "#ifdef EACP_DXC_BREAK\n"
-                           "    undeclared[id.x] = 1;\n"
-                           "#endif\n"
-                           "    output[id.x] = id.x;\n"
-                           "}\n");
+    auto source = ShaderSource::hlsl(testShaderFile("Dxc/arguments.hlsl"));
     source.withCompute("computeMain");
 
     if (!enableTheRelease({"-O1"}))

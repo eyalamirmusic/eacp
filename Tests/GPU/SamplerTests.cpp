@@ -62,185 +62,6 @@ constexpr QuadVertex fullQuad[] = {
     {{-1.f, 1.f}, {0.f, 0.f}},
 };
 
-const char* mslSampling = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-    float2 uv [[attribute(1)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float2 uv;
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    out.uv = in.uv;
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             texture2d<float> image [[texture(0)]],
-                             sampler imageSampler [[sampler(0)]])
-{
-    return image.sample(imageSampler, in.uv);
-}
-)";
-
-const char* hlslSampling = R"(
-Texture2D image : register(t0);
-SamplerState imageSampler : register(s8);
-
-struct VertexIn
-{
-    float2 position : TEXCOORD0;
-    float2 uv : TEXCOORD1;
-};
-
-struct VertexOut
-{
-    float4 position : SV_Position;
-    float2 uv : TEXCOORD0;
-};
-
-VertexOut vertexMain(VertexIn input)
-{
-    VertexOut o;
-    o.position = float4(input.position, 0.0, 1.0);
-    o.uv = input.uv;
-    return o;
-}
-
-float4 fragmentMain(VertexOut input) : SV_Target
-{
-    return image.Sample(imageSampler, input.uv);
-}
-)";
-
-const char* glslSampling = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-layout(location = 1) in vec2 attr1;
-layout(location = 0) out vec2 uv;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.0, 1.0);
-    uv = attr1;
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) in vec2 uv;
-layout(set = 0, binding = 8) uniform sampler2D image;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = texture(image, uv);
-}
-#endif
-)";
-
-const char* mslCompare = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-    float2 uv [[attribute(1)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float2 uv;
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    out.uv = in.uv;
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             depth2d<float> depthImage [[texture(0)]],
-                             sampler depthSampler [[sampler(0)]])
-{
-    float passed = depthImage.sample_compare(depthSampler, in.uv, 0.5);
-    return float4(passed, 0.0, 0.0, 1.0);
-}
-)";
-
-const char* hlslCompare = R"(
-Texture2D<float> depthImage : register(t0);
-SamplerComparisonState depthSampler : register(s8);
-
-struct VertexIn
-{
-    float2 position : TEXCOORD0;
-    float2 uv : TEXCOORD1;
-};
-
-struct VertexOut
-{
-    float4 position : SV_Position;
-    float2 uv : TEXCOORD0;
-};
-
-VertexOut vertexMain(VertexIn input)
-{
-    VertexOut o;
-    o.position = float4(input.position, 0.0, 1.0);
-    o.uv = input.uv;
-    return o;
-}
-
-float4 fragmentMain(VertexOut input) : SV_Target
-{
-    float passed = depthImage.SampleCmpLevelZero(depthSampler, input.uv, 0.5);
-    return float4(passed, 0.0, 0.0, 1.0);
-}
-)";
-
-const char* glslCompare = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-layout(location = 1) in vec2 attr1;
-layout(location = 0) out vec2 uv;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.0, 1.0);
-    uv = attr1;
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) in vec2 uv;
-layout(set = 0, binding = 8) uniform sampler2DShadow depthImage;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    float passed = texture(depthImage, vec3(uv, 0.5));
-    fragColor = vec4(passed, 0.0, 0.0, 1.0);
-}
-#endif
-)";
-
 RenderPipeline makeQuadPipeline(const ShaderLibrary& library, int sampleCount)
 {
     auto descriptor = RenderPipelineDescriptor {};
@@ -278,8 +99,7 @@ struct SamplerView final : GPUView
 {
     explicit SamplerView(Texture& textureToSample)
         : texture(textureToSample)
-        , library(makeLibrary(
-              nativeShaderSource(mslSampling, hlslSampling, glslSampling)))
+        , library(makeLibrary(nativeShaderSource("Sampler/sampling")))
         , pipeline(makePipeline())
     {
     }
@@ -735,8 +555,7 @@ struct CompareView final : GPUView
 {
     explicit CompareView(CompareFunction function)
         : scene(Device::shared().makeTexture(describeDepthScene()))
-        , library(
-              makeLibrary(nativeShaderSource(mslCompare, hlslCompare, glslCompare)))
+        , library(makeLibrary(nativeShaderSource("Sampler/compare")))
         , pipeline(makePipeline())
         , vertices(Device::shared().makeBuffer(fullQuad))
         , sampler(Device::shared().makeSampler(describeCompare(function)))

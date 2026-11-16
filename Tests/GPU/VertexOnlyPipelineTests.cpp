@@ -48,204 +48,15 @@ constexpr QuadVertex leftHalf[] = {
     {{-1.f, 1.f}, {0.f, 0.f}},
 };
 
-const char* mslDepthOnly = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.25, 1.0);
-    return out;
-}
-)";
-
-const char* hlslDepthOnly = R"(
-float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
-{
-    return float4(position, 0.25, 1.0);
-}
-)";
-
-const char* glslDepthOnly = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.25, 1.0);
-}
-#endif
-)";
-
-const char* mslSolid = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.25, 1.0);
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]])
-{
-    return float4(1.0, 0.0, 0.0, 1.0);
-}
-)";
-
-const char* hlslSolid = R"(
-float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
-{
-    return float4(position, 0.25, 1.0);
-}
-
-float4 fragmentMain(float4 position : SV_Position) : SV_Target
-{
-    return float4(1.0, 0.0, 0.0, 1.0);
-}
-)";
-
-const char* glslSolid = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.25, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-}
-#endif
-)";
-
-const char* mslShowDepth = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-    float2 uv [[attribute(1)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float2 uv;
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    out.uv = in.uv;
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             depth2d<float> depthImage [[texture(0)]],
-                             sampler depthSampler [[sampler(0)]])
-{
-    return float4(depthImage.sample(depthSampler, in.uv), 0.0, 0.0, 1.0);
-}
-)";
-
-const char* hlslShowDepth = R"(
-Texture2D<float> depthImage : register(t0);
-SamplerState depthSampler : register(s8);
-
-struct VertexIn
-{
-    float2 position : TEXCOORD0;
-    float2 uv : TEXCOORD1;
-};
-
-struct VertexOut
-{
-    float4 position : SV_Position;
-    float2 uv : TEXCOORD0;
-};
-
-VertexOut vertexMain(VertexIn input)
-{
-    VertexOut o;
-    o.position = float4(input.position, 0.0, 1.0);
-    o.uv = input.uv;
-    return o;
-}
-
-float4 fragmentMain(VertexOut input) : SV_Target
-{
-    return float4(depthImage.Sample(depthSampler, input.uv), 0.0, 0.0, 1.0);
-}
-)";
-
-const char* glslShowDepth = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-layout(location = 1) in vec2 attr1;
-layout(location = 0) out vec2 uv;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.0, 1.0);
-    uv = attr1;
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) in vec2 uv;
-layout(set = 0, binding = 8) uniform sampler2D depthImage;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(texture(depthImage, uv).r, 0.0, 0.0, 1.0);
-}
-#endif
-)";
-
 ShaderLibrary makeDepthOnlyLibrary()
 {
     return Device::shared().makeShaderLibrary(
-        nativeVertexOnlySource(mslDepthOnly, hlslDepthOnly, glslDepthOnly));
+        nativeVertexOnlySource("VertexOnlyPipeline/depthOnly"));
 }
 
 ShaderSource solidSource()
 {
-    return nativeShaderSource(mslSolid, hlslSolid, glslSolid)
+    return nativeShaderSource("VertexOnlyPipeline/solid")
         .withVertex("vertexMain")
         .withFragment("fragmentMain");
 }
@@ -333,7 +144,7 @@ struct DepthOnlyView final : GPUView
         , depthOnly(makeDepthOnlyLibrary())
         , writer(makeDepthWriter(depthOnly))
         , showDepth(Device::shared().makeShaderLibrary(
-              nativeShaderSource(mslShowDepth, hlslShowDepth, glslShowDepth)
+              nativeShaderSource("VertexOnlyPipeline/showDepth")
                   .withVertex("vertexMain")
                   .withFragment("fragmentMain")))
         , reader(makeReader())
@@ -482,7 +293,7 @@ auto tFragmentStillRequired =
     if (!Device::shared().isValid())
         return;
 
-    auto source = nativeVertexOnlySource(mslDepthOnly, hlslDepthOnly, glslDepthOnly);
+    auto source = nativeVertexOnlySource("VertexOnlyPipeline/depthOnly");
     auto library =
         Device::shared().makeShaderLibrary(source.withFragment("fragmentMain"));
 

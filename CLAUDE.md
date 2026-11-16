@@ -44,14 +44,17 @@ platform's own 2D tier — `Graphics::Context`, `Font`, `TextMetrics`,
 Android),
 `EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
 the Core ML runner, `MLTests` and `Apps/ML`). The first three are
-`APPLE OR WIN32 OR LINUX OR ANDROID` — everywhere graphics builds at all — and stay
+`APPLE OR WIN32 OR LINUX OR ANDROID`, and `EACP_HAS_DRAW` and `EACP_HAS_GPU`
+the web as well, and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
 set of modules and a new port reaches them one at a time. The next three hang off
 `EACP_HAS_DRAW`: `CONTEXT` and `WEBVIEW` are Apple/Windows-only and `CAPTURE`
 is Apple, Windows and Android, so on Apple and Windows the first six are
 simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-None of the seven is on for the web (Emscripten), which builds no graphics.
+Of the seven only `EACP_HAS_DRAW` and `EACP_HAS_GPU` are on for the web
+(Emscripten) so far: a window there is a `<canvas>` and the GPU is WebGPU (see
+"The Web Target").
 Two more capability variables in the same block decide what the host can run
 rather than what it draws, both on everywhere but the web: `EACP_HAS_THREADS`
 (threads a body runs on; code asks its compile-time twin
@@ -77,8 +80,10 @@ and `eacp-ml-graph`, the graph builder and the MIL/protobuf/blob writers
 wraps glslang as a GLSL-to-SPIR-V compiler (`SpirvTests`); it is built on
 Linux only by default (`EACP_BUILD_SPIRV`), because only the Vulkan backend
 ships it, and macOS and Windows can opt in. Where it is built, every GLSL
-source the codegen tests emit — and every hand-written GLSL twin in `GPUTests` —
-is compiled by glslang inside the suite, so an emitter regression fails on every
+source the codegen tests emit — and every hand-written GLSL twin in `GPUTests`,
+the `.glsl` beside each shader's `.metal`, `.hlsl` and `.wgsl` under
+`Tests/GPU/Shaders/<suite>/` (embedded by `eacp_embed_test_shaders`, read
+through `Common.h`'s `nativeShaderSource("<suite>/<name>")`) — is compiled by glslang inside the suite, so an emitter regression fails on every
 Linux CI lane, the two with no Vulkan device included, rather than only as a
 wrong pixel on the lane that has a device. See the table in `Docs/Build.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
@@ -117,8 +122,9 @@ optional — three pkg-config groups: the Wayland client library,
 target; no Xlib symbol anywhere), and FreeType, HarfBuzz and fontconfig for the
 glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
-and reports `Device::isValid()` false. A web build adds nothing; it needs
-Emscripten and node installed.
+and reports `Device::isValid()` false. A web build fetches nothing; it needs
+Emscripten (which downloads its `emdawnwebgpu` port on first use) and node
+installed.
 
 Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
 the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
@@ -443,7 +449,8 @@ knows only how to apply geometry and request a frame; `ViewSurface` in
 `View-Linux.h` carries a tagged `NativeSurfaceHandle` (`Kind::None|Wayland|X11`,
 connection, surface, window id) instead of Wayland pointers.
 `Window/LinuxInput-Linux.{h,cpp}` holds the input state machines that are not
-protocol — xkbcommon keymap/state and the UTF-8 for a key, key repeat, click
+protocol — xkbcommon keymap/state and the UTF-8 for a key, key repeat, and,
+through the portable `Window/PointerTrackers.{h,cpp}` the web shares, click
 counting and double-click slop, held button and drag origin, wheel
 accumulation, cursor shape — `Window/LinuxSeat-Linux.h` the seat interface both
 `WaylandInput` and `X11Input` implement (polled key state, modifiers, keyboard
@@ -801,9 +808,11 @@ See `Lib/eacp/GPU/README.md`.
 
 `-DCMAKE_TOOLCHAIN_FILE=<emscripten>/cmake/Modules/Platform/Emscripten.cmake`
 (or `emcmake cmake`) builds wasm32 for a browser or node: `Core`, `Network`'s
-client half and the four device-free pieces, nothing that draws, and of the
-examples what the same capability gates as everywhere let through: `Apps/Web`
-(`HelloLoop`, `HelloNetwork`) and, unchanged, `Console`, `ZipDemo`,
+client half, the four device-free pieces, `Graphics` (windows, views and
+input) and `GPU` over WebGPU, and of the examples what the same capability
+gates as everywhere let through: `Apps/Web` (`HelloLoop`, `HelloNetwork`,
+`HelloInput`), the `Apps/GPU` examples with no 2D overlay and, unchanged,
+`Console`, `ZipDemo`,
 `OnlineResourceDemo`, `Http` and `BasicHttp` (no socket apps, no
 `Apps/Plugins`; `plan.md` is the roadmap to the rest). It is browser-first:
 one thread, no `-pthread`, so the output (`<app>.js` and `<app>.wasm`, no
@@ -843,8 +852,10 @@ group discovered at ctest time (`<suite>.discovery` fails when a suite cannot
 be listed), against `Tests/Network/Web/TestServer.mjs` as a fixture, with
 `EACP_WEB_TEST_NODE` a node that has JSPI (25+, or a node 24 named with
 `--experimental-wasm-jspi` as a list). `eacp_web_add_app_tests` registers
-`HelloLoop`, `HelloNetwork`, `Console`, `ZipDemo` and the
-`QuitWithTimerHarness` and `QuitWithFetchHarness` real-exit checks, built
+`HelloLoop`, `HelloNetwork`, `Console`, `ZipDemo`, the
+`QuitWithTimerHarness` and `QuitWithFetchHarness` real-exit checks and
+`WebWindowHarness` (a real canvas driven by synthesised DOM events in a page,
+a headless window under node), built
 without JSPI as apps are, and the `NESTED_PUMP` examples `OnlineResourceDemo`,
 `Http` and `BasicHttp` (each taking an httpbin-compatible server as its
 argument, `https://httpbingo.org` by default, given `TestServer.mjs` as a
@@ -854,6 +865,51 @@ Chrome configure found (`EACP_WEB_CHROME`). Every web executable links
 `CMake/Web/UncaughtException.js` as a `--post-js`, which turns a C++ exception
 escaping `main()` or a callback into an `abort()` with its message, so a page
 ends too (`ThrowFromMainHarness`). `Docs/Web.md` is the account.
+
+`EACP_HAS_DRAW` is on there: a `Window` is a `<canvas>` — the page's
+`Module.canvas` for the first, one of its own for every other
+(`Window/Window-Web.cpp`, the DOM half in the JS library
+`Window/Window-Web.js` that `eacp-graphics` adds to every link) — on the
+Linux-neutral seam Android reuses: `View-Linux.cpp`'s records,
+`LinuxWindowState`, the headless native under node or `headless`, and the
+click counter, wheel frame and cursor tracker now in the portable
+`Window/PointerTrackers.{h,cpp}` that the Linux seats share. Canvas pointer,
+wheel, key and focus events are dispatched from inside the DOM event (a kept
+key prevents the page's default); keys map from `KeyboardEvent.code`
+(`Graphics/Keyboard-Web.cpp`, native unit the `KeyCode`); `Display` is the
+screen, the viewport and `devicePixelRatio` (watched through `matchMedia`);
+`DisplayLink` and a presenting view's frame callback are
+`requestAnimationFrame` (`Helpers/AnimationFrame-Web.cpp`, a 60 Hz timeout
+under node). A presenting view gets the whole canvas as
+`NativeSurfaceHandle::Kind::Web`, `surface` the canvas's CSS selector as a
+`const char*`, `window` the window id; `EmbeddedView` is not built.
+
+`EACP_HAS_GPU` is on there too: `eacp-gpu` is a WebGPU backend
+(`GPU/WebGPU/WebGPUContext.h` and the `-Web.cpp` file beside each backend's)
+over Emscripten's `emdawnwebgpu` port, which `eacp-gpu` compiles with and puts
+on every link that takes it (`--use-port=emdawnwebgpu`). Shaders are WGSL from
+`eacp-gpu-codegen`'s own emitter (`ShaderBackend::WebGPU`, `emitWgsl`,
+`ShaderBuilder-Web.cpp`; device-free, so `GPUCodegenTests` checks it on every
+platform), and a hand-written source is `ShaderSource::wgsl`: nothing in a
+page compiles MSL, HLSL or GLSL. The bindings are one group — uniforms at 0,
+storage slot `n` at `1 + n`, texture slot `n` at `17 + n`, its sampler at
+`33 + n` (`Codegen/ShaderBindings.h`) — and the backend builds each
+pipeline's layout by reading the WGSL's one-line `@group(0) @binding(n) var`
+declarations. The device is asynchronous in a browser, so `CMake/Web/WebGPU.js`
+(a `--pre-js` from `eacp-gpu`) acquires it before `main()` through a run
+dependency, with every adapter feature and its highest limits; with no
+`navigator.gpu` (node) every `Device` is invalid. Readbacks, waits, shader
+messages and pipeline validation suspend through JSPI where the executable
+links the nested pump and are skipped (reads, with a message) or optimistic
+where it does not; ordering needs no wait. A `GPUView` is the canvas, in
+`bgra8unorm`, paced by `requestAnimationFrame`. `eacp_web_executable(<app>
+WEBGPU)` gives an app's headless runs Chrome's GPU (`Launch.mjs --webgpu`) and
+fails its ctest entries on a `WebGPU: ` validation line; `Compute` and
+`AsyncCompute` are such entries, and `GPUTests` runs in headless Chrome, one
+page per group (`eacp_web_discover_tests(GPUTests HEADLESS)`). Occlusion
+queries, timestamps, GPU mip generation, layered rendering, border colours,
+multisampled sampleable depth and off-grid storage offsets are not there yet
+(`Lib/eacp/GPU/README.md`, "The web").
 
 ## Architecture
 New source files are added directly to the module's CMakeLists.txt under the

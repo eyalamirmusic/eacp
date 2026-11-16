@@ -47,7 +47,7 @@ set(graphics_test_sources
 # The ones that need a platform image codec or a 2D Context. Listed rather than
 # left to self-skip: a suite that skips every case still reports as a pass.
 # Android and desktop Linux have a codec without a Context.
-if (EACP_HAS_CONTEXT OR ANDROID OR LINUX)
+if (EACP_HAS_CONTEXT OR ANDROID OR LINUX OR EMSCRIPTEN)
     list(APPEND graphics_test_sources ImageCodecTests.cpp)
 endif ()
 
@@ -64,6 +64,18 @@ if (LINUX)
             GameInputTests-Linux.cpp
             KeyCodeTests-Linux.cpp
             PathTests-Linux.cpp)
+endif ()
+
+# The pointer state machines the Linux seats and the web's DOM events share,
+# built only there.
+if (LINUX OR EMSCRIPTEN)
+    list(APPEND graphics_test_sources PointerTrackerTests.cpp)
+endif ()
+
+# The web's key table and the text and polled state its key events make; the
+# canvas itself is WebWindowHarness's, which runs in a page.
+if (EMSCRIPTEN)
+    list(APPEND graphics_test_sources KeyCodeTests-Web.cpp)
 endif ()
 
 # The macOS-only halves of the cursor, menu and scroll-wheel suites. Each
@@ -118,6 +130,16 @@ nano_add_executable(GraphicsTests
         SOURCES
             ${graphics_test_sources}
         TARGETS eacp-graphics)
+
+# The canvas itself, in a page: built as an app is, without JSPI, and run by
+# Tests/CMakeLists.txt under node, where it must come up headless, and in
+# headless Chrome, where it drives a real canvas with synthesised DOM events.
+if (EMSCRIPTEN)
+    add_executable(WebWindowHarness WebWindowHarness-Web.cpp)
+    target_link_libraries(WebWindowHarness PRIVATE eacp-graphics)
+    set_default_target_setting(WebWindowHarness)
+    eacp_web_executable(WebWindowHarness)
+endif ()
 
 if (APPLE AND NOT IOS)
     set_target_properties(GraphicsTests PROPERTIES OBJCXX_STANDARD 20)

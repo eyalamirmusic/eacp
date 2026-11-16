@@ -578,6 +578,93 @@ constexpr const char* glslTypeName(ValueType type)
     return "float";
 }
 
+constexpr const char* wgslTypeName(ValueType type)
+{
+    switch (type)
+    {
+        case ValueType::Float:
+            return "f32";
+        case ValueType::Float2:
+            return "vec2<f32>";
+        case ValueType::Float3:
+            return "vec3<f32>";
+        case ValueType::Float4:
+            return "vec4<f32>";
+        case ValueType::Float2x2:
+            return "mat2x2<f32>";
+        case ValueType::Float3x3:
+            return "mat3x3<f32>";
+        case ValueType::Float4x4:
+            return "mat4x4<f32>";
+        case ValueType::Float2x3:
+            return "mat2x3<f32>";
+        case ValueType::Float2x4:
+            return "mat2x4<f32>";
+        case ValueType::Float3x2:
+            return "mat3x2<f32>";
+        case ValueType::Float3x4:
+            return "mat3x4<f32>";
+        case ValueType::Float4x2:
+            return "mat4x2<f32>";
+        case ValueType::Float4x3:
+            return "mat4x3<f32>";
+        case ValueType::UInt:
+            return "u32";
+        case ValueType::UInt2:
+            return "vec2<u32>";
+        case ValueType::UInt3:
+            return "vec3<u32>";
+        case ValueType::UInt4:
+            return "vec4<u32>";
+        case ValueType::Int:
+            return "i32";
+        case ValueType::Int2:
+            return "vec2<i32>";
+        case ValueType::Int3:
+            return "vec3<i32>";
+        case ValueType::Int4:
+            return "vec4<i32>";
+        case ValueType::Bool:
+            return "bool";
+        case ValueType::Bool2:
+            return "vec2<bool>";
+        case ValueType::Bool3:
+            return "vec3<bool>";
+        case ValueType::Bool4:
+            return "vec4<bool>";
+        case ValueType::Half:
+            return "f16";
+        case ValueType::Half2:
+            return "vec2<f16>";
+        case ValueType::Half3:
+            return "vec3<f16>";
+        case ValueType::Half4:
+            return "vec4<f16>";
+        case ValueType::Half2x2:
+            return "mat2x2<f16>";
+        case ValueType::Half3x3:
+            return "mat3x3<f16>";
+        case ValueType::Half4x4:
+            return "mat4x4<f16>";
+        case ValueType::Half2x3:
+            return "mat2x3<f16>";
+        case ValueType::Half2x4:
+            return "mat2x4<f16>";
+        case ValueType::Half3x2:
+            return "mat3x2<f16>";
+        case ValueType::Half3x4:
+            return "mat3x4<f16>";
+        case ValueType::Half4x2:
+            return "mat4x2<f16>";
+        case ValueType::Half4x3:
+            return "mat4x3<f16>";
+        case ValueType::Struct:
+            return "struct";
+    }
+
+    return "f32";
+}
+
 // HLSL names a matrix rows first: MSL's float2x3, two columns of three rows,
 // is HLSL's float3x2. Every other type is spelled as typeName spells it - but
 // for the f16 family, which HLSL holds in float (FXC's SM5 has no 16-bit type
@@ -597,6 +684,19 @@ constexpr const char* glslTypeNameFor(std::string_view canonicalName)
 
         if (canonicalName == typeName(type))
             return glslTypeName(type);
+    }
+
+    return nullptr;
+}
+
+constexpr const char* wgslTypeNameFor(std::string_view canonicalName)
+{
+    for (auto raw = 0; raw <= static_cast<int>(lastValueType); ++raw)
+    {
+        auto type = static_cast<ValueType>(raw);
+
+        if (canonicalName == typeName(type))
+            return wgslTypeName(type);
     }
 
     return nullptr;

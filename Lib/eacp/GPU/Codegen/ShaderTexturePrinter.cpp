@@ -236,8 +236,16 @@ bool usesStorageQuery(TextureAccess access, Backend backend)
     if (backend == Backend::DirectX)
         return isStorageAccess(access);
 
-    return backend == Backend::Vulkan
+    auto bindsStorage = backend == Backend::Vulkan || backend == Backend::WebGPU;
+
+    return bindsStorage
            && (access == TextureAccess::Write || access == TextureAccess::ReadWrite);
+}
+
+int wgslGatherComponentOf(char component)
+{
+    auto found = std::string_view {"xyzw"}.find(component);
+    return found == std::string_view::npos ? 0 : (int) found;
 }
 
 constexpr auto queriedTextureKinds =
@@ -271,6 +279,7 @@ std::string getTextureQueryHelpers(const ShaderGraph& graph, Backend backend)
     return definitions;
 }
 
+// WGSL takes the layer beside the coordinates, as Metal does.
 std::string
     ExprPrinter::printStorageAddress(int slot, int coordinates, int layer) const
 {
@@ -289,7 +298,7 @@ std::string
 
     const auto index = printConverted(layer, scalar);
 
-    if (backend == Backend::Metal)
+    if (backend == Backend::Metal || backend == Backend::WebGPU)
         return Strings::format("{}, {}", texel, index);
 
     return Strings::format(
@@ -308,6 +317,9 @@ std::string ExprPrinter::printStorageLoad(const Expr& expr) const
 
     if (backend == Backend::Vulkan)
         return Strings::format("imageLoad({}, {})", name, address);
+
+    if (backend == Backend::WebGPU)
+        return Strings::format("textureLoad({}, {})", name, address);
 
     return widenToFour(Strings::format("{}[{}]", name, address),
                        getStorageChannelCount(graph.textureFormat(expr.index)),
@@ -330,6 +342,11 @@ std::string ExprPrinter::printStorageQuery(const Expr& expr) const
 
         return size + (volume ? ".xyz" : ".xy");
     }
+
+    if (backend == Backend::WebGPU)
+        return expr.text == "layers"
+                   ? Strings::format("textureNumLayers({})", name)
+                   : Strings::format("textureDimensions({})", name);
 
     if (expr.text == "layers")
         return Strings::format("uint(imageSize({}).z)", name);
@@ -357,7 +374,79 @@ std::string ExprPrinter::printTextureFunction(const Expr& expr) const
     if (backend == Backend::DirectX)
         return printHlslTextureFunction(expr);
 
+    if (backend == Backend::WebGPU)
+        return printWgslTextureFunction(expr);
+
     return printGlslTextureFunction(expr);
+}
+
+// The EDSL's texture functions are WGSL's own, so each is the call it names:
+// the layer beside the coordinate, a depth kind's level an integer, a colour
+// gather's component its first argument.
+std::string ExprPrinter::printWgslTextureFunction(const Expr& expr) const
+{
+    const auto kind = graph.textureKind(expr.index);
+    const auto function = textureFunctionNamed(expr.text);
+
+    if (function == TextureFunction::Load)
+        return printTexelLoad(expr);
+
+    const auto name = textureNameOf(expr);
+    const auto sampler = metalSamplerOf(expr);
+    auto location = printReference(expr.args[0]);
+
+    if (isLayered(kind))
+        location += ", " + printWgslArrayIndex(expr.args[1]);
+
+    auto extra = [&](int which)
+    { return printReference(textureExtra(graph, expr, which)); };
+    auto extraFloat = [&](int which)
+    { return printConverted(textureExtra(graph, expr, which), ValueType::Float); };
+
+    auto call = [&](std::string_view function, const std::string& rest)
+    {
+        return Strings::format(
+            "{}({}, {}, {}{})", function, name, sampler, location, rest);
+    };
+
+    switch (function)
+    {
+        case TextureFunction::Level:
+            return call("textureSampleLevel",
+                        ", "
+                            + (isDepth(kind) ? printWgslDepthLevel(
+                                                   textureExtra(graph, expr, 0))
+                                             : extraFloat(0)));
+
+        case TextureFunction::Bias:
+            return call("textureSampleBias", ", " + extraFloat(0));
+
+        case TextureFunction::Grad:
+            return call("textureSampleGrad",
+                        Strings::format(", {}, {}", extra(0), extra(1)));
+
+        case TextureFunction::Compare:
+            return call("textureSampleCompare", ", " + extraFloat(0));
+
+        case TextureFunction::CompareLevel:
+            return call("textureSampleCompareLevel", ", " + extraFloat(0));
+
+        case TextureFunction::Gather:
+            if (isDepth(kind))
+                return call("textureGather", {});
+
+            return Strings::format("textureGather({}, {}, {}, {})",
+                                   wgslGatherComponentOf(expr.op),
+                                   name,
+                                   sampler,
+                                   location);
+
+        case TextureFunction::GatherCompare:
+            return call("textureGatherCompare", ", " + extraFloat(0));
+
+        default:
+            return call("textureSample", {});
+    }
 }
 
 // The coordinate HLSL and GLSL take: an array's layer rides in it as a float.
@@ -623,6 +712,18 @@ std::string ExprPrinter::printTexelLoad(const Expr& expr) const
     const auto level = textureExtra(graph, expr, 0);
     const auto layered = isLayered(kind);
 
+    if (backend == Backend::WebGPU)
+    {
+        const auto layer =
+            layered ? printReference(expr.args[1]) + ", " : std::string {};
+
+        return Strings::format("textureLoad({}, {}, {}{})",
+                               name,
+                               printReference(expr.args[0]),
+                               layer,
+                               printReference(level));
+    }
+
     if (backend == Backend::Metal)
     {
         const auto coordinates = printConverted(
@@ -711,6 +812,21 @@ std::string ExprPrinter::printTextureQuery(const Expr& expr) const
             return info + ".z";
 
         return info + (volume ? ".xyz" : ".xy");
+    }
+
+    if (backend == Backend::WebGPU)
+    {
+        if (expr.text == "levels")
+            return Strings::format("textureNumLevels({})", name);
+
+        if (expr.text == "layers")
+            return Strings::format("textureNumLayers({})", name);
+
+        if (hasLevel)
+            return Strings::format(
+                "textureDimensions({}, {})", name, printReference(expr.args[0]));
+
+        return Strings::format("textureDimensions({})", name);
     }
 
     if (expr.text == "levels")

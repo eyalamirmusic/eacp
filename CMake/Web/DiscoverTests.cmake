@@ -1,7 +1,9 @@
 # Registers one ctest entry per case group of a web suite, each running
-# `<node> <suite>.js --test-group <group>`. Included by the script
-# eacp_web_discover_tests generates, which sets target, node, executable,
-# fixture, fixture_groups, cmake_command and discover_script.
+# `<node> <suite>.js --test-group <group>`, or `<run_prefix> --test-group
+# <group>` where the suite runs in a page (run_prefix is then its headless
+# launch command). Included by the script eacp_web_discover_tests generates,
+# which sets target, node, executable, fixture, fixture_groups, run_prefix,
+# cmake_command and discover_script.
 #
 # A suite whose cases cannot be listed - not built, a crash, nothing listed -
 # is one failing entry, <target>.discovery, rather than a quiet zero: that
@@ -50,7 +52,11 @@ endforeach ()
 list(REMOVE_DUPLICATES groups)
 
 foreach (group IN LISTS groups)
-    add_test("${group}" ${node} "${executable}" --test-group "${group}")
+    if (run_prefix STREQUAL "")
+        add_test("${group}" ${node} "${executable}" --test-group "${group}")
+    else ()
+        add_test("${group}" ${run_prefix} --test-group "${group}")
+    endif ()
 
     if (NOT fixture STREQUAL "" AND group MATCHES "${fixture_groups}")
         set_tests_properties("${group}" PROPERTIES FIXTURES_REQUIRED "${fixture}")

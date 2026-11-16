@@ -34,58 +34,9 @@ bool isRed(const Graphics::Color& c)
     return c.r > 0.5f && c.g < 0.5f;
 }
 
-const char* mslShader = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn { float2 position [[attribute(0)]]; };
-
-vertex float4 vertexMain(VertexIn in [[stage_in]])
-{
-    return float4(in.position, 0.0, 1.0);
-}
-
-fragment float4 fragmentMain() { return float4(0.0, 1.0, 0.0, 1.0); }
-)";
-
-const char* hlslShader = R"(
-struct VertexIn { float2 position : TEXCOORD0; };
-struct VertexOut { float4 position : SV_Position; };
-
-VertexOut vertexMain(VertexIn input)
-{
-    VertexOut o;
-    o.position = float4(input.position, 0.0, 1.0);
-    return o;
-}
-
-float4 fragmentMain(VertexOut input) : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
-)";
-
-const char* glslShader = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.0, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(0.0, 1.0, 0.0, 1.0);
-}
-#endif
-)";
-
 ShaderSource shaderSource()
 {
-    return nativeShaderSource(mslShader, hlslShader, glslShader);
+    return nativeShaderSource("BaseVertex/green");
 }
 
 struct BaseVertexView final : GPUView

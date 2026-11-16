@@ -39,6 +39,7 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ShaderStructEmission.cpp
         Codegen/ShaderTexturePrinter.cpp
         Codegen/ShaderValue.cpp
+        Codegen/ShaderWgslHelpers.cpp
         Codegen/TextureFunctions.cpp
         Codegen/UniformLayout.cpp
         Pipeline/VertexLayout.cpp
@@ -52,6 +53,8 @@ if (APPLE)
     target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Apple.cpp)
 elseif (WIN32)
     target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Windows.cpp)
+elseif (EMSCRIPTEN)
+    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Web.cpp)
 else ()
     target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Linux.cpp)
 endif ()
@@ -159,6 +162,35 @@ elseif (WIN32)
             d3dcompiler
             windowsapp
             runtimeobject)
+elseif (EMSCRIPTEN)
+    # The WebGPU backend, over Emscripten's emdawnwebgpu port: webgpu.h and the
+    # JS library behind it come with --use-port, and Web/WebGPU.js acquires
+    # the device before main(). Shaders are WGSL, emitted by eacp-gpu-codegen.
+    target_sources(eacp-gpu PRIVATE
+            Buffer/Buffer-Web.cpp
+            CommandBuffer/CommandBuffer-Web.cpp
+            CommandBuffer/CopyRecorder-Web.cpp
+            Device/Device-Web.cpp
+            Frame/ComputePass-Web.cpp
+            Frame/Frame-Web.cpp
+            Frame/OcclusionQueries-Web.cpp
+            Frame/RenderPass-Web.cpp
+            Pipeline/ComputePipeline-Web.cpp
+            Pipeline/RenderPipeline-Web.cpp
+            Shader/Dxc-Default.cpp
+            Shader/ShaderLibrary-Web.cpp
+            Texture/Texture-Web.cpp
+            Timing/GpuTimestamps-Web.cpp
+            View/GPUView-Web.cpp
+            WebGPU/WebGPUContext-Web.cpp)
+
+    get_filename_component(webgpu_pre_js
+            "${CMAKE_CURRENT_LIST_DIR}/../../../CMake/Web/WebGPU.js" ABSOLUTE)
+    target_compile_options(eacp-gpu PRIVATE --use-port=emdawnwebgpu)
+    target_link_options(eacp-gpu INTERFACE --use-port=emdawnwebgpu
+            "SHELL:--pre-js \"${webgpu_pre_js}\"")
+    set_property(TARGET eacp-gpu APPEND PROPERTY INTERFACE_LINK_DEPENDS
+            "${webgpu_pre_js}")
 else ()
     # The Vulkan backend. Nothing here links a window system: the connection,
     # surface and window it presents to arrive as a NativeSurfaceHandle, and

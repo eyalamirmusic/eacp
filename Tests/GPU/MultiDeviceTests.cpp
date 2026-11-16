@@ -101,7 +101,8 @@ auto tDevicesHaveTheirOwnQueue = test("GPU/devicesHaveTheirOwnQueue") = []
 
     check(worker.nativeQueue() != nullptr);
 
-    if constexpr (!Platform::isLinuxFamily())
+    // Every Device on the web is the page's one WebGPU device and its queue.
+    if constexpr (!Platform::isLinuxFamily() && !Platform::isWeb())
         check(worker.nativeQueue() != Device::shared().nativeQueue());
 
     // The underlying GPU is deliberately the same one: an MTLBuffer belongs to

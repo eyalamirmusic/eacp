@@ -73,8 +73,16 @@ constexpr auto atomicSpellings = Array<AtomicSpelling, 9> {
      "atomicCompSwap"},
 };
 
+// WGSL's are GLSL's names, with a subtraction of its own and a weak
+// compare-exchange, as Metal's is.
 std::string_view getAtomicFunction(AtomicOperation operation, Backend backend)
 {
+    if (backend == Backend::WebGPU && operation == AtomicOperation::Sub)
+        return "atomicSub";
+
+    if (backend == Backend::WebGPU && operation == AtomicOperation::CompareExchange)
+        return "atomicCompareExchangeWeak";
+
     for (const auto& spelling: atomicSpellings)
     {
         if (spelling.operation != operation)
@@ -83,7 +91,8 @@ std::string_view getAtomicFunction(AtomicOperation operation, Backend backend)
         if (backend == Backend::Metal)
             return spelling.metal;
 
-        return backend == Backend::Vulkan ? spelling.glsl : spelling.hlsl;
+        auto glslNamed = backend == Backend::Vulkan || backend == Backend::WebGPU;
+        return glslNamed ? spelling.glsl : spelling.hlsl;
     }
 
     return {};
@@ -155,7 +164,36 @@ std::string printCaseLabel(ValueType selector, std::int64_t value)
 
     return Strings::format("{}", value);
 }
+
+// WGSL names a clause's labels in one list, default among them where it is.
+std::string printWgslClauseLabels(const CaseLabels& labels, ValueType selector)
+{
+    auto list = std::string {};
+
+    for (auto value: labels.values)
+        list += (list.empty() ? "" : ", ") + printCaseLabel(selector, value);
+
+    if (labels.isDefault)
+        list += list.empty() ? "default" : ", default";
+
+    return labels.values.empty() ? list + ":" : "case " + list + ":";
+}
 } // namespace
+
+bool StageEmitter::isWgsl() const
+{
+    return printer.backend == Backend::WebGPU;
+}
+
+std::string StageEmitter::printDeclaration(std::string_view keyword,
+                                           const std::string& type,
+                                           const std::string& name) const
+{
+    if (isWgsl())
+        return Strings::format("{} {}: {}", keyword, name, type);
+
+    return Strings::format("{} {}", type, name);
+}
 
 StageEmitter::StageEmitter(const ShaderGraph& graphToUse,
                            Backend backend,
@@ -211,6 +249,9 @@ std::string StageEmitter::printArrayDeclaration(int slot,
     const auto& array = getGraph().arrays()[slot];
     auto qualifier = printer.backend == Backend::Vulkan ? "" : "const ";
 
+    if (isWgsl())
+        return printWgslArrayDeclaration(slot, indent);
+
     auto source =
         Strings::format("{}{}{} a{}[{}] = {{",
                         indent,
@@ -228,6 +269,24 @@ std::string StageEmitter::printArrayDeclaration(int slot,
     }
 
     return source + "};\n";
+}
+
+// A var, so a subscript computed at run time may index it.
+std::string StageEmitter::printWgslArrayDeclaration(int slot,
+                                                    std::string_view indent) const
+{
+    const auto& array = getGraph().arrays()[slot];
+    auto type =
+        Strings::format("array<{}, {}>",
+                        getDialectTypeName(printer.backend, array.elementType),
+                        array.elements.size());
+    auto elements = std::string {};
+
+    for (auto i = 0; i < array.elements.size(); ++i)
+        elements += (i > 0 ? ", " : "") + printer.printReference(array.elements[i]);
+
+    return Strings::format(
+        "{}var a{}: {} = {}({});\n", indent, slot, type, type, elements);
 }
 
 std::string StageEmitter::emitBlock(int block, std::string_view indentToUse)
@@ -336,12 +395,12 @@ std::string StageEmitter::emitLoopWithContinuing(const Statement& statement,
     auto pass = controlCount++;
     auto inner = Strings::format("{}{}", indent, nestedIndent);
 
-    auto source =
-        Strings::format("{}bool firstPass{} = true;\n{}while (true)\n{}{{\n",
-                        indent,
-                        pass,
-                        indent,
-                        indent);
+    auto source = Strings::format(
+        "{}{} = true;\n{}while (true)\n{}{{\n",
+        indent,
+        printDeclaration("var", "bool", Strings::format("firstPass{}", pass)),
+        indent,
+        indent);
     source += Strings::format("{}if (!firstPass{})\n", inner, pass);
     source += printLoopBlock(statement.continuing, inner);
     source += Strings::format("{}firstPass{} = false;\n", inner, pass);
@@ -403,6 +462,10 @@ std::string StageEmitter::emitArrayWrite(const Statement& statement,
     auto size = getGraph().variableArraySize(slot);
     auto type = printer.printVariableTypeName(slot);
     auto source = defineLocalsInScope({statement.value}, scope);
+
+    if (isWgsl())
+        return source + printWgslArrayFill(slot, type, size, statement, scope);
+
     source += Strings::format("{}{} v{}[{}];\n", scope.indent, type, slot, size);
     source += Strings::format("{}for (int fill{} = 0; fill{} < {}; ++fill{})\n",
                               scope.indent,
@@ -419,30 +482,56 @@ std::string StageEmitter::emitArrayWrite(const Statement& statement,
     return source;
 }
 
+std::string StageEmitter::printWgslArrayFill(int slot,
+                                             const std::string& type,
+                                             int size,
+                                             const Statement& statement,
+                                             const StatementScope& scope) const
+{
+    const auto& indent = scope.indent;
+
+    auto source =
+        Strings::format("{}var v{}: array<{}, {}>;\n", indent, slot, type, size);
+    source +=
+        Strings::format("{}for (var fill{} = 0; fill{} < {}; fill{}++)\n{}{{\n",
+                        indent,
+                        slot,
+                        slot,
+                        size,
+                        slot,
+                        indent);
+    source += Strings::format("{}{}v{}[fill{}] = {};\n",
+                              indent,
+                              nestedIndent,
+                              slot,
+                              slot,
+                              printer.printReference(statement.value));
+    return source + indent + "}\n";
+}
+
 std::string StageEmitter::emitVariableWrite(const Statement& statement,
                                             StatementScope& scope)
 {
     if (getGraph().variableArraySize(statement.slot) > 0)
         return emitArrayWrite(statement, scope);
 
-    auto type = std::string {};
+    auto target = printFieldTarget(getGraph(),
+                                   getGraph().variableStructType(statement.slot),
+                                   statement.member,
+                                   Strings::format("v{}", statement.slot));
 
     if (statement.kind == StatementKind::Declare)
     {
         variablesInScope[statement.slot] = 1;
-        type = printer.printVariableTypeName(statement.slot) + " ";
+        target = printDeclaration(
+            "var", printer.printVariableTypeName(statement.slot), target);
     }
 
     auto source = defineLocalsInScope({statement.value}, scope);
-    source += Strings::format(
-        "{}{}{} = {};\n",
-        scope.indent,
-        type,
-        printFieldTarget(getGraph(),
-                         getGraph().variableStructType(statement.slot),
-                         statement.member,
-                         Strings::format("v{}", statement.slot)),
-        printer.printReference(statement.value));
+    source += Strings::format("{}{} = {};\n",
+                              scope.indent,
+                              target,
+                              printer.printReference(statement.value));
     return source;
 }
 
@@ -514,7 +603,13 @@ std::string StageEmitter::emitSwitch(const Statement& statement,
     if (jumps != 0)
     {
         flag = controlCount++;
-        source += Strings::format("{}int jump{} = 0;\n", scope.indent, flag);
+        source += Strings::format(
+            "{}{} = 0;\n",
+            scope.indent,
+            printDeclaration(
+                "var",
+                std::string(getDialectTypeName(printer.backend, ValueType::Int)),
+                Strings::format("jump{}", flag)));
     }
 
     source += Strings::format(
@@ -529,8 +624,10 @@ std::string StageEmitter::emitSwitch(const Statement& statement,
 
     jumpTargets.pop_back();
 
-    if (printer.backend == Backend::DirectX
-        && !hasDefaultClause(getGraph(), statement.body))
+    auto needsDefault =
+        printer.backend == Backend::DirectX || printer.backend == Backend::WebGPU;
+
+    if (needsDefault && !hasDefaultClause(getGraph(), statement.body))
         source += clauseIndent + "default:\n" + clauseIndent + "{\n" + clauseIndent
                   + std::string(nestedIndent) + "break;\n" + clauseIndent + "}\n";
 
@@ -551,11 +648,14 @@ std::string StageEmitter::printClause(const Statement& clause,
     const auto& labels = getGraph().caseLabels(clause.slot);
     auto source = std::string {};
 
-    for (auto value: labels.values)
-        source +=
-            Strings::format("{}case {}:\n", indent, printCaseLabel(selector, value));
+    if (isWgsl())
+        source += indent + printWgslClauseLabels(labels, selector) + "\n";
+    else
+        for (auto value: labels.values)
+            source += Strings::format(
+                "{}case {}:\n", indent, printCaseLabel(selector, value));
 
-    if (labels.isDefault)
+    if (labels.isDefault && !isWgsl())
         source += indent + "default:\n";
 
     const auto inner = indent + std::string(nestedIndent);
@@ -623,11 +723,13 @@ std::string StageEmitter::emitCall(const Statement& statement, StatementScope& s
     variablesInScope[statement.slot] = 1;
 
     return source
-           + Strings::format("{}{} v{} = {};\n",
-                             scope.indent,
-                             printer.printVariableTypeName(statement.slot),
-                             statement.slot,
-                             call);
+           + Strings::format(
+               "{}{} = {};\n",
+               scope.indent,
+               printDeclaration("var",
+                                printer.printVariableTypeName(statement.slot),
+                                Strings::format("v{}", statement.slot)),
+               call);
 }
 
 bool StageEmitter::returnReadsOnlyVariablesInScope()
@@ -728,6 +830,9 @@ std::string StageEmitter::emitStore(const Statement& statement,
             scope.indent,
             element,
             stored);
+    else if (atomic && isWgsl())
+        source += Strings::format(
+            "{}atomicStore(&{}, {});\n", scope.indent, element, stored);
     else
         source += Strings::format("{}{} = {};\n", scope.indent, element, stored);
 
@@ -780,7 +885,8 @@ std::string StageEmitter::emitVectorStore(const Statement& statement,
         source += Strings::format("{}buffer{}[{}", indent, statement.slot, base);
 
         if (component > 0)
-            source += Strings::format(" + {}u", component);
+            source += Strings::format(
+                " + {}{}", component, getIndexOffsetSuffix(printer.backend));
 
         source += Strings::format(
             "] = ({}){};\n", stored, getVectorComponentSuffix(component));
@@ -814,6 +920,17 @@ std::string StageEmitter::emitAtomic(const Statement& statement,
 
     if (statement.atomic == AtomicOperation::CompareExchange)
         return source + formatCompareExchange(statement, call);
+
+    if (isWgsl())
+        return source
+               + Strings::format(
+                   "{}var {}: {} = {}(&{}, {});\n",
+                   call.indent,
+                   call.name,
+                   call.type,
+                   getAtomicFunction(statement.atomic, printer.backend),
+                   call.element,
+                   call.operand);
 
     if (statement.atomic == AtomicOperation::Sub && !isMetal())
         call.operand = type == ValueType::Int
@@ -878,6 +995,23 @@ std::string StageEmitter::formatCompareExchange(const Statement& statement,
                    call.operand);
 
     auto held = Strings::format("cx{}", statement.slot);
+
+    if (isWgsl())
+        return Strings::format("{}let {} = {}(&{}, {}, {});\n",
+                               call.indent,
+                               held,
+                               function,
+                               call.element,
+                               comparand,
+                               call.operand)
+               + Strings::format("{}var {}: {} = {}.old_value;\n",
+                                 call.indent,
+                                 call.name,
+                                 call.type,
+                                 held)
+               + Strings::format(
+                   "{}var {}: bool = {}.exchanged;\n", call.indent, exchanged, held);
+
     auto source =
         Strings::format("{}{} {} = {};\n", call.indent, call.type, held, comparand);
 
@@ -920,6 +1054,11 @@ std::string StageEmitter::emitSharedStore(const Statement& statement,
                    scope.indent,
                    element,
                    stored);
+
+    if (isWgsl() && getGraph().sharedArrays()[statement.slot].atomic)
+        return source
+               + Strings::format(
+                   "{}atomicStore(&{}, {});\n", scope.indent, element, stored);
 
     return source + Strings::format("{}{} = {};\n", scope.indent, element, stored);
 }
@@ -973,6 +1112,16 @@ std::string StageEmitter::emitTextureStore(const Statement& statement,
                                        printer.printReference(statement.index),
                                        printer.printReference(statement.indexY));
     auto color = printer.printReference(statement.value);
+
+    if (isWgsl())
+        return source
+               + Strings::format(
+                   "{}textureStore(texture{}, vec2<u32>({}, {}), {});\n",
+                   indent,
+                   statement.slot,
+                   printer.printConverted(statement.index, ValueType::UInt),
+                   printer.printConverted(statement.indexY, ValueType::UInt),
+                   color);
 
     if (printer.backend == Backend::Metal)
         return source
@@ -1028,6 +1177,14 @@ std::string StageEmitter::emitStorageStore(const Statement& statement,
     if (printer.backend == Backend::Vulkan)
         return source
                + Strings::format("{}imageStore(texture{}, {}, {});\n",
+                                 indent,
+                                 statement.slot,
+                                 address,
+                                 value);
+
+    if (isWgsl())
+        return source
+               + Strings::format("{}textureStore(texture{}, {}, {});\n",
                                  indent,
                                  statement.slot,
                                  address,
@@ -1102,10 +1259,11 @@ std::string
     locals[node] = localCount++;
     open.add(node);
 
-    return Strings::format("{}{} t{} = {};\n",
+    return Strings::format("{}{} = {};\n",
                            indent,
-                           printer.printTypeName(node),
-                           locals[node],
+                           printDeclaration("let",
+                                            printer.printTypeName(node),
+                                            Strings::format("t{}", locals[node])),
                            printer.print(node));
 }
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../View/View.h"
+#include "PointerTrackers.h"
 
 #include <xkbcommon/xkbcommon.h>
 
@@ -8,10 +8,10 @@
 #include <span>
 
 // What a seat's events mean, with none of the protocol that carried them: the
-// keymap, the repeat, the click count, the scroll a frame adds up to and the
-// cursor shape. Wayland and X11 both feed these; the evdev keycode is the unit
-// throughout, being what wl_keyboard.key carries and what an X11 keycode is
-// once 8 has been subtracted.
+// keymap and the repeat here, the click count, the scroll a frame adds up to and
+// the cursor shape in PointerTrackers.h, which the web shares. Wayland and X11
+// both feed these; the evdev keycode is the unit throughout, being what
+// wl_keyboard.key carries and what an X11 keycode is once 8 has been subtracted.
 
 namespace eacp::Threads
 {
@@ -107,83 +107,5 @@ private:
     Time::MS delay {0};
     uint64_t generation = 0;
     std::unique_ptr<Pending> pending;
-};
-
-// What no window system reports: the click count and the slop it allows, the
-// button held down and where it went down.
-class PointerTracker
-{
-public:
-    constexpr Point getPosition() const { return position; }
-    constexpr void setPosition(Point newPosition) { position = newPosition; }
-
-    // The click count this press earns.
-    int pressed(MouseButton button, uint32_t timeMilliseconds);
-    constexpr void released() { buttonHeld = false; }
-
-    constexpr bool isButtonHeld() const { return buttonHeld; }
-    constexpr MouseButton getHeldButton() const { return heldButton; }
-    constexpr Point getDownPosition() const { return downPosition; }
-    constexpr int getClickCount() const { return clickCount; }
-
-private:
-    Point position;
-    Point downPosition;
-
-    bool buttonHeld = false;
-    MouseButton heldButton = MouseButton::Left;
-
-    int clickCount = 0;
-    uint32_t lastClickTime = 0;
-    MouseButton lastClickButton = MouseButton::Left;
-    Point lastClickPosition;
-};
-
-// One frame's worth of scroll, however the server spelled it out.
-class WheelTracker
-{
-public:
-    // Both in MouseEvent::delta's orientation, not the server's.
-    void addDelta(Point delta);
-    void addNotches(Point notches);
-
-    void setSource(bool isPrecise, bool isGesture);
-    void setStopped();
-
-    constexpr bool isPending() const { return pending; }
-    constexpr bool isPrecise() const { return precise; }
-    constexpr bool isGesture() const { return gesture; }
-    constexpr bool hasStopped() const { return stopped; }
-
-    // Lines for a notched wheel, points for a trackpad.
-    Point getDelta() const;
-
-    // Keeps the source, which is a property of the device and not of a frame.
-    void endFrame();
-
-private:
-    Point delta;
-    Point notches;
-    bool hasNotches = false;
-    bool pending = false;
-    bool precise = false;
-    bool gesture = false;
-    bool stopped = false;
-};
-
-// The shape under the pointer, and whether a mouse lock has hidden it. Both
-// setters are true when the backend must apply the cursor again.
-class CursorTracker
-{
-public:
-    bool setShape(MouseCursor::Shape newShape);
-    bool setHidden(bool shouldHide);
-
-    constexpr MouseCursor::Shape getShape() const { return shape; }
-    constexpr bool isHidden() const { return hidden; }
-
-private:
-    MouseCursor::Shape shape = MouseCursor::Default;
-    bool hidden = false;
 };
 } // namespace eacp::Graphics

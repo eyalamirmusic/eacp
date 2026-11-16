@@ -15,48 +15,9 @@ namespace
 {
 constexpr auto count = 100;
 
-const char* mslKernel = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct Params { float scale; uint count; };
-
-kernel void computeMain(device const float* low [[buffer(7)]],
-                        device const float* high [[buffer(12)]],
-                        device float* result [[buffer(15)]],
-                        constant Params& params [[buffer(16)]],
-                        uint gid [[thread_position_in_grid]])
-{
-    if (gid >= params.count) return;
-    result[gid] = low[gid] + high[gid] * params.scale;
-}
-)";
-
-const char* glslKernel = R"(#version 450
-
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-
-layout(std140, set = 0, binding = 16) uniform Params
-{
-    float scale;
-    uint count;
-} params;
-
-layout(std430, set = 0, binding = 7) readonly buffer Low { float low[]; };
-layout(std430, set = 0, binding = 21) readonly buffer High { float high[]; };
-layout(std430, set = 0, binding = 24) buffer Result { float result[]; };
-
-void main()
-{
-    uint gid = gl_GlobalInvocationID.x;
-
-    if (gid >= params.count)
-        return;
-
-    result[gid] = low[gid] + high[gid] * params.scale;
-}
-)";
-
+static_assert(webgpuBufferBinding(7) == 8);
+static_assert(webgpuBufferBinding(12) == 13);
+static_assert(webgpuBufferBinding(15) == 16);
 static_assert(vulkanComputeBufferBinding(7) == 7);
 static_assert(vulkanComputeBufferBinding(12) == 21);
 static_assert(vulkanComputeBufferBinding(15) == 24);
@@ -89,7 +50,7 @@ Buffer makeFilled(float first, float step)
 
 ComputePipeline makeHighSlotPipeline()
 {
-    auto source = nativeComputeShaderSource(mslKernel, "", glslKernel)
+    auto source = nativeComputeShaderSource("ComputeBufferSlot/highSlots")
                       .withCompute("computeMain");
     auto library = Device::shared().makeShaderLibrary(source);
 

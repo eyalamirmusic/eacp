@@ -7,3 +7,7 @@ target_link_libraries(HotReloadGPUViews PRIVATE eacp-gpu)
 
 eacp_set_gui_subsystem(HotReloadGPU)
 set_default_target_setting(HotReloadGPU)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(HotReloadGPU WEBGPU)
+endif ()

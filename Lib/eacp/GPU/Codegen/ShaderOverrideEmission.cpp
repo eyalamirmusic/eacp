@@ -69,6 +69,20 @@ std::string formatHlslOverride(const ShaderGraph& graph, int id)
         macro);
 }
 
+// The id is the pipeline constant's, which a WebGPU pipeline is handed as the
+// key "<id>". Like GLSL's, an override without a default holds zero.
+std::string formatWgslOverride(const ShaderGraph& graph, int id)
+{
+    const auto& declaration = graph.overrides()[id];
+
+    return Strings::format(
+        "@id({}) override {}: {} = {};\n",
+        id,
+        getOverrideName(graph, id),
+        wgslTypeName(declaration.type),
+        printOverrideLiteral(Backend::WebGPU, declaredDefaultOf(declaration, id)));
+}
+
 std::string formatOverride(const ShaderGraph& graph, Backend backend, int id)
 {
     switch (backend)
@@ -77,6 +91,8 @@ std::string formatOverride(const ShaderGraph& graph, Backend backend, int id)
             return formatMetalOverride(graph, id);
         case Backend::DirectX:
             return formatHlslOverride(graph, id);
+        case Backend::WebGPU:
+            return formatWgslOverride(graph, id);
         case Backend::Vulkan:
             break;
     }

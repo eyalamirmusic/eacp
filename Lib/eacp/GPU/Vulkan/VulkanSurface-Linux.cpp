@@ -60,6 +60,7 @@ bool createWindowSystemSurface(VkInstance instance,
             return createXcbSurface(instance, handle, surface);
 
         case Kind::Android:
+        case Kind::Web:
         case Kind::None:
             return false;
     }

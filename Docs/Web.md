@@ -1,12 +1,14 @@
 # The web target
 
 The web target is eacp compiled to wasm32 with Emscripten, running in a
-browser page or under node. So far it is `Core` and `Network` and the
+browser page or under node. So far it is `Core` and `Network`, the
 device-free pieces that build everywhere — `eacp-gpu-codegen`,
-`eacp-cpu-compute`, `eacp-ml-graph` and `eacp-webview-bridge` — and nothing
-that draws: the seven drawing capability variables are all off there (see
-[Build.md](Build.md)), so `Graphics`, `GPU`, `Text`, `UI` and everything above
-them are not built. This page is the account of what the target is, how it is
+`eacp-cpu-compute`, `eacp-ml-graph` and `eacp-webview-bridge` — and
+`Graphics`: `EACP_HAS_DRAW` is on, a window being a `<canvas>` (see "Windows,
+views and input"), and so is `EACP_HAS_GPU`, over WebGPU (see "The GPU"),
+while the other drawing capability variables are still off (see
+[Build.md](Build.md)), so `Text`, `UI` and everything above them are not
+built. This page is the account of what the target is, how it is
 built and run, and where it behaves differently from the other platforms;
 `CLAUDE.md` has the short version.
 
@@ -53,11 +55,19 @@ look for itself: `emcmake` names it, and the toolchain file alone takes the
 shell `PATH` — the emulator is the test node (see "Testing").
 
 `Apps/` goes through the same capability variables there as everywhere, so
-what builds is what needs nothing that draws and no socket of its own: the two
-`Apps/Web` examples written for the browser's loop, `HelloLoop` and
-`HelloNetwork`, and five examples of every platform, unchanged — `Console`,
+what builds is what needs no text or 2D tier and no socket of its own: the
+three `Apps/Web` examples written for the browser, `HelloLoop`,
+`HelloNetwork` and `HelloInput` (a window on a canvas printing the pointer,
+wheel and key events its view receives; it never exits, so it has no ctest
+entry, and `HelloInput-run` is how to try it), and five examples of every
+platform, unchanged — `Console`,
 `ZipDemo` and `OnlineResourceDemo` from `Apps/Console`, `Http` and `BasicHttp`
-from `Apps/Network`. The servers, TCP and IPC examples are behind
+from `Apps/Network` — and the `Apps/GPU` examples that paint no 2D
+overlay: `Triangle`, `TriangleGen`, `RotatingTriangle`, `Teapot`,
+`ComputeParticles`, `ComputeImage`, `Paths`, `PathCoverage`, `Texture`,
+`Maze`, `Sprites`, `Clipping`, `StreamingStress`, `TextureAtlas` and
+`HotReloadGPU` in a window, and `Compute`, `AsyncCompute`, `CpuCompute` and
+`PathBench`, which compute and exit. The servers, TCP and IPC examples are behind
 `EACP_HAS_SOCKETS` and `Apps/Plugins` is never added. An app is an ordinary
 `eacp_add_app` or `add_executable`, which on the web produces `<app>.js` and
 `<app>.wasm`, plus one call:
@@ -78,7 +88,11 @@ as a `--post-js` (below, "Uncaught exceptions"). `NODE_FILESYSTEM` adds
 executable node-only; the test suites link that way, an app does not.
 `NESTED_PUMP` links `eacp-core-nested-pump` (see "The nested pump"), which is
 how an example that blocks in `main()` — `OnlineResourceDemo`, `Http`,
-`BasicHttp` — runs unchanged, at the price of needing JSPI. No HTML page is
+`BasicHttp` — runs unchanged, at the price of needing JSPI. `WEBGPU` marks an
+app that draws or computes through `eacp-gpu`: its headless runs give Chrome
+its GPU (`Launch.mjs --webgpu`, which otherwise passes `--disable-gpu`), and
+its ctest entries also fail on a `WebGPU: ` line, a validation error the
+device reported. No HTML page is
 produced: the build output is the `.js` and the `.wasm` beside it, and a page
 that defines `Module` and loads the `.js` is the deployer's.
 
@@ -335,6 +349,161 @@ socket. An `Apps::quit()` with an `asyncRequest` or a `WebSocket::Connection`
 still in flight therefore exits cleanly with the app's code, under node and in
 a page, and nothing calls into the exited runtime afterwards.
 
+## Windows, views and input
+
+`EACP_HAS_DRAW` is on, and `eacp-graphics` builds on the Linux-neutral seam
+Android already reuses (see [Linux.md](Linux.md)): `View/View-Linux.cpp` keeps
+the per-view records and syncs them, `Window/LinuxWindowNative-Linux.cpp` is
+the option-derived toplevel state (`LinuxWindowState`: constraints, `resizeTo`,
+activation, host visibility), `Window/HeadlessWindow-Linux.cpp` is the
+surfaceless window, and the pointer state machines — the click count and its
+slop, a frame's scroll, the cursor shape — are `Window/PointerTrackers.{h,cpp}`,
+split out of `LinuxInput-Linux` for both to share (`KeyRepeat` and the xkb
+keymap stay Linux's: the browser repeats keys itself and names their text).
+`Path` is the recorded geometry Android and Linux have, and the PNG/JPEG codec
+is desktop Linux's over stb (`Image/Image-Linux.cpp`). Menus, the tray, global
+hot keys and layers are the Linux stubs, `GameInput` has no feed of its own
+(`GameInput-Default.cpp`), and `EmbeddedView` and `NativeChildSurface` are not
+built, as on Android: a page has no foreign native view to embed in.
+
+What is the web's own is in `-Web` files, with the DOM half in one JS library,
+`Window/Window-Web.js`, that `eacp-graphics` adds to every link:
+
+- **A window is a `<canvas>`** (`Window/Window-Web.cpp`). The first window
+  takes the page's own canvas when the page set `Module.canvas`, as
+  Emscripten's shells do; every other window, and the first when there is
+  none, makes a canvas of its own, appended to the body, hidden until shown,
+  and removed when the window is destroyed. A canvas gets an id when it has
+  none (`eacp-canvas-<n>`), a `tabindex` so it takes keyboard focus, and
+  `touch-action: none`. The window's size is the canvas's CSS size in points;
+  its backing store (`width`/`height`) is that times `devicePixelRatio`, set by
+  the window on every resize and scale change. A canvas's layout changing
+  under it — the page's CSS on a page canvas, full screen — is read back
+  through a `ResizeObserver` and applied as a resize with no constraint, the
+  page's layout being the authority; a page canvas that already has a layout
+  when the window takes it keeps that size. `setSize` writes the CSS size.
+  `setVisible` is `display`, `setTitle` the document's title and the canvas's
+  `aria-label`, `setFullScreen` `requestFullscreen()` (granted only inside a
+  user gesture; `isFullScreen` follows `fullscreenchange`), `setMouseLocked`
+  the Pointer Lock API, and minimise, maximise and `setPosition` keep the
+  value and do nothing else. `Window::getHandle()` is the canvas's selector as
+  a `const char*`. No close request ever comes from a page.
+- **Headless.** With no `document` — under node — or with
+  `getAppEnvironment().headless`, a window is the Linux headless native: laid
+  out, sized and positioned, never shown, with no surface.
+- **Input.** The canvas's pointer events (`pointerenter`/`leave`/`move`/`down`/
+  `up`/`cancel`, captured on press so a drag continues outside it), `wheel`
+  (non-passive, its default prevented), `keydown`/`keyup`, `focus`/`blur` and
+  `contextmenu` (prevented, so the right button reaches the view) are forwarded
+  to `eacp_web_window_*` exports and dispatched at once, from inside the
+  browser's event, which is how a key a view kept prevents the page's default
+  action (Tab, Space, the arrows) and one every view passed on does not. A
+  pointer event carries every button held, so each change of that set is a
+  press or a release of its own. Positions are CSS pixels from the canvas's
+  top-left, which are points. Presses go through the shared click counter
+  (400 ms, 5 points), a move with a button held is a drag carrying its delta,
+  and the CSS cursor follows the shape of the view under the pointer. A wheel
+  event in pixels (`deltaMode` 0, what Chrome reports even for a notched
+  wheel) is a precise delta in points; lines and pages are notches, a page
+  counting ten; the sign is flipped into `MouseEvent::delta`'s. Touch arrives
+  as the same pointer events, so a finger is the left button with `fromTouch`
+  set; there are no `TouchEvent`s yet. Focus and blur are the window's
+  activation, and a blur forgets the keys held.
+- **Keys** (`Graphics/Keyboard-Web.{h,cpp}`). `KeyboardEvent.code`, the
+  physical key named for its place on a US layout, maps to `KeyCode` through
+  one table both ways; `KeyboardEvent.key` is the text when it is one
+  character, and Enter, Tab, Backspace, Escape and Delete type the control
+  characters the other platforms give them. `isRepeat` is the browser's own
+  repeat. `charactersIgnoringModifiers` and `keyCodeToCharacter` are what the
+  key last typed with nothing held — the only way a page learns its layout —
+  falling back to the US letter or digit. The polled `Keyboard` state is what
+  the key events left behind, and `Window::isKeyPressed`'s native unit is the
+  `KeyCode` itself, as on Android. Meta is `command`.
+- **Display** (`Window/Display-Web.cpp`). The frame is the screen's size, the
+  work area the viewport (`innerWidth` × `innerHeight`), which is what a canvas
+  can cover, and the backing scale `devicePixelRatio`; all read live. A change
+  of `devicePixelRatio` — a zoom, a move to another display — is caught by a
+  `matchMedia('(resolution: <n>dppx)')` query re-armed each time, and every
+  window takes the new scale: its backing size, then its presenting view's
+  surface, then `backingScaleChanged` down the tree. Under node the display is
+  the 1280 × 800 fallback at scale 1. `isSystemDarkMode` is
+  `prefers-color-scheme`.
+- **Frames** (`Helpers/AnimationFrame-Web.{h,cpp}`). One
+  `requestAnimationFrame` per request, or a 60 Hz timeout under node, which has
+  none; plain JS like the loop's timers, so it holds no runtime keepalive, and
+  every pending one is cancelled when the runtime exits. `DisplayLink`
+  (`Helpers/DisplayLink-Web.cpp`) re-requests one each frame and queues its
+  tick through `callAsync`, coalescing as the Linux pacing thread does, so it
+  stops while the page is hidden.
+
+The listeners, the observers, the scale query and the frames are all released
+when the runtime exits (`addOnExit`), so a quit with a window up calls nothing
+into the exited runtime.
+
+### The surface a presenter gets
+
+A presenting view (`requestViewSurface`, `View/View-Linux.h`) gets the whole
+canvas, whatever its bounds, one presenting view per window at a time, as on
+Android (`View/WebViewSurface-Web.cpp`). The record's `NativeSurfaceHandle` is:
+
+- `kind` — `NativeSurfaceHandle::Kind::Web`;
+- `surface` — a `const char*`, the canvas's CSS selector (`"#eacp-canvas-1"`,
+  or `"#" + CSS.escape(id)` for a page canvas with an id of its own),
+  NUL-terminated, owned by the window and valid until the record's `onLost`.
+  It is what `WGPUEmscriptenSurfaceSourceCanvasHTMLSelector` takes;
+- `window` — the window's id, never zero;
+- `connection` — null.
+
+`pixelWidth`/`pixelHeight` are the canvas's `width`/`height` attributes,
+which the window keeps at its CSS size times `devicePixelRatio`, so a presenter
+configures its context at that size and reads `onResized` for a change (a
+resize, a scale change); it never sets the canvas's size itself. `scale` is
+`devicePixelRatio`. `requestFrameCallback` is one `requestAnimationFrame`, and
+`onFrameDone` runs inside it rather than on a later turn, which is where a
+canvas is best drawn. `onAvailable` comes a turn after the request, once the
+window is shown; `onLost` when the window is hidden or destroyed, or the view
+leaves it or hides. Under node there is no canvas, so `onAvailable` never
+fires.
+
+## The GPU
+
+`EACP_HAS_GPU` is on: `eacp-gpu` is a WebGPU backend over Emscripten's
+`emdawnwebgpu` port, whose `--use-port=emdawnwebgpu` reaches every link that
+takes `eacp-gpu`, and its shaders are WGSL, which `eacp-gpu-codegen` emits
+itself (`ShaderBuilder` picks `ShaderBackend::WebGPU` on the web).
+`Lib/eacp/GPU/README.md`, "The web", is the account; what a web app sees:
+
+- **A device before `main()`.** A browser hands out the adapter and the device
+  asynchronously, and `GPU::Device` is not, so `CMake/Web/WebGPU.js`, a
+  `--pre-js` on every executable linking `eacp-gpu`, holds `main()` back with a
+  run dependency until the device is there (or has failed to come), with every
+  feature and the highest limits the adapter offers. Under node, or in a page
+  with no `navigator.gpu`, there is none, `Device::isValid()` is false, and
+  every GPU test and example stands down as on a machine with no GPU.
+- **Reading back needs the nested pump.** `Buffer::read`, `Texture::read`,
+  `CommandBuffer::wait`/`commit`, a shader's compile messages and a
+  pipeline's validation wait for a callback, which an executable linked with
+  `eacp-core-nested-pump` does by suspending through JSPI. Without it the reads
+  are skipped (with a message, once), the waits return at once and a pipeline
+  counts as valid; `commitAsync` and everything drawn still work. So a GPU
+  example that reads results back in `main()` is a `NESTED_PUMP` one
+  (`Compute`, `AsyncCompute`, `CpuCompute`, `PathBench`), and one that only
+  draws is not.
+- **A `GPUView` is the canvas.** It configures a WebGPU context on the
+  canvas the window hands over ("The surface a presenter gets") in
+  `bgra8unorm`, renders each frame into the context's current texture, and the
+  page shows it when the turn returns; continuous rendering is paced by
+  `requestAnimationFrame`.
+- **Errors are printed.** A validation error the device reports, and a lost
+  device, are printed on stderr as `WebGPU: ...`, which a `WEBGPU` app's ctest
+  entries fail on.
+
+Headless Chrome on macOS exposes WebGPU (Metal) only with its GPU process:
+`Launch.mjs headless --webgpu` drops the `--disable-gpu` every other run gets
+and adds `--enable-unsafe-webgpu`, which Linux needs and macOS ignores.
+SwiftShader (`--use-webgpu-adapter=swiftshader`) also works there, as a CPU
+adapter, if a machine has no GPU; nothing selects it yet.
+
 ## Files
 
 An app's file system is Emscripten's in-memory one: in a page it starts empty
@@ -384,7 +553,9 @@ callers need no special case:
 ## Testing
 
 `Tests/` builds `CoreTests`, `NetworkTests`, `GPUCodegenTests`,
-`CpuComputeTests`, `MLGraphTests` and `ScriptHostTests` for the web, each
+`CpuComputeTests`, `MLGraphTests`, `ScriptHostTests`, `GraphicsTests` and
+`GPUWidgetsTests` (whose device cases stand down there) for
+the web, each
 linked with `eacp-core-nested-pump` and `-sNODERAWFS=1`, and runs them under
 node. The node-only link options are given per target, to the suites and
 `CpuComputeBench`, not to the whole `Tests/` directory, so an executable there
@@ -406,7 +577,12 @@ cases and three web suites instead (`HttpWebTests-Web.cpp`,
 redirect can cross origins) that sends CORS headers unless asked not to. ctest
 starts it as a fixture (`WebTestServerStart`/`WebTestServerStop`) for the
 groups that need it, and the cases read its addresses from the state file it
-writes.
+writes. `GraphicsTests` runs headless, as its `TestMain` asks on every
+platform, so under node it is the suite desktop Linux's first CI lane runs:
+the portable cases, the image codec over stb, the shared pointer trackers
+(`PointerTrackerTests.cpp`, Linux's too) and the web's key table, key text and
+polled key state (`KeyCodeTests-Web.cpp`); its three cases that start a
+thread return early. The canvas itself is `WebWindowHarness`'s, below.
 
 NanoTest registers a cross-compiled suite as one entry, since it cannot run it
 at build time. `eacp_web_discover_tests` (`CMake/Web.cmake`,
@@ -456,7 +632,7 @@ is aborted or something calls into it after it exited (`Aborted`, `aborted:`,
 from Emscripten's `ASSERTIONS`, which a Debug build has; a Release web build
 prints none of them, so there the entries check little beyond the exit code
 and the timeout. The node entries are the point: the path real apps take
-is tested on a machine without Chrome. `Tests/CMakeLists.txt` registers these six first:
+is tested on a machine without Chrome. `Tests/CMakeLists.txt` registers these seven first:
 
 - `HelloLoop` runs `callAsync`, `callAfter` and a `Timer` on the page's loop
   in order and quits.
@@ -480,6 +656,17 @@ is tested on a machine without Chrome. `Tests/CMakeLists.txt` registers these si
 - `ZipDemo` (`Apps/Console/Zip`), unchanged: an archive built in memory,
   written to the in-memory file system, read back, extracted and deflated, in
   `main()` with no loop.
+- `WebWindowHarness` (`Tests/Graphics/WebWindowHarness-Web.cpp`) opens a
+  window with a recording view and a presenting child. In a page it checks
+  the canvas (shown, its CSS and backing sizes at `devicePixelRatio`), then
+  dispatches DOM events on it — a move, two quick presses counting 2, a drag
+  and its delta, a right press, a pixel and a line wheel, a key kept (its
+  default prevented, the polled state holding it) and released (passed on) —
+  checks the CSS cursor follows the view's, `setSize`, the presenting view's
+  `Kind::Web` surface (its selector, id and pixel size) and its one answered
+  frame, three `DisplayLink` ticks, and that the window's canvas goes with it.
+  Under node the same window must come up headless: no canvas, never shown,
+  sized and resized, and the `DisplayLink` ticking on its timeout.
 
 Each must exit 0, and none of them links `eacp-core-nested-pump`. Three more
 do, the network examples that block in `main()`, unchanged on every platform:
@@ -508,18 +695,38 @@ server needs, is not a dependency of the native tests.
 Last, `ThrowFromMainHarness` and `ThrowFromMainHarnessHeadless` run a
 `NESTED_PUMP` harness that throws out of `main()` from inside a nested pump,
 and pass on the `Aborted(uncaught exception: ...)` line within 20 s (see
-"Uncaught exceptions"). These are a few apps in one browser; nothing else runs
-in a browser automatically.
+"Uncaught exceptions").
+
+The GPU runs in the browser alone. `Compute` and `AsyncCompute` are
+`WEBGPU` app entries: under node they say there is no device and exit 0, and
+as `<app>Headless` they run their kernels on the page's device and fail on any
+`WebGPU: ` line. `GPUTests` needs WebGPU throughout, so it is built as a page
+(the nested pump, no node file system) and registered by
+`eacp_web_discover_tests(GPUTests HEADLESS)`: its cases are listed through
+node as every suite's are, and each group is an entry running
+`Launch.mjs headless GPUTests.js --webgpu -- --test-group <group>`, a page of
+its own; with no Chrome found it registers nothing. The whole suite in one page
+takes about twenty seconds on an M4 Max. The cases a backend
+feature the web lacks is behind fail rather than skip, and are listed in
+`plan.md` (Phase 3, open items).
 
 There is no web lane in CI: `.github/workflows/build.yml` neither installs
 Emscripten nor builds the target.
 
 ## Not there yet
 
-- **Graphics.** No window, view, input, GPU, text, UI or SVG: every drawing
-  capability variable is off, and `Apps/` builds only the seven examples that
-  draw nothing (`plan.md` is the roadmap to the rest). The shader codegen builds, and on the web takes the Linux builder,
-  so a `ShaderBuilder` emits GLSL for the Vulkan backend there.
+- **Graphics.** Windows, views, input and the GPU are there, but no text, UI,
+  SVG or 2D `Context`, so of `Apps/GPU` only the examples with no 2D overlay
+  build (`plan.md` is the roadmap to the rest). No
+  `TouchEvent`s (a finger is the left button), no `Magnify` from a pinch, no
+  gamepads, image cursors are the arrow, and a presenting view smaller than
+  its window still gets the whole canvas.
+- **GPU gaps.** No occlusion queries, GPU timestamps, GPU mip generation,
+  layered rendering, count-driven indirect draws, border-colour sampling,
+  multisampled sampleable depth, storage binds off WebGPU's 256-byte offset
+  grid, or worker-thread `Device`s; every `Device` shares the page's one
+  device and queue. `CpuCompute` builds but starts a thread, which the web
+  refuses.
 - **Persistence.** The in-memory file system is all there is; nothing written
   in a page survives it.
 - **Threads, opt-in.** A cross-origin isolated page could have them; the
@@ -528,5 +735,6 @@ Emscripten nor builds the target.
   files are the stubs above.
 - **Browsers.** Headless Chrome, through the `<app>Headless` entries, is the
   only browser anything has run in, beside node; Firefox and Safari are
-  untried, and so is the nested pump in any browser.
+  untried. The nested pump has run in Chrome (`GPUTests`, the `NESTED_PUMP`
+  GPU examples), and WebGPU only on macOS's Metal adapter.
 - **CI.** No lane builds or runs it.

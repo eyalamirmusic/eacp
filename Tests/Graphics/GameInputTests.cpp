@@ -166,6 +166,9 @@ auto tUnknownKeysIgnored = test("GameInput/keysOutsideTheTableAreIgnored") = []
 
 auto tManyProducers = test("GameInput/manyProducerThreadsLoseNoMovement") = []
 {
+    if constexpr (!eacp::Platform::hasThreads())
+        return;
+
     constexpr auto threadCount = 4;
     constexpr auto movesPerThread = 20000;
 
@@ -461,6 +464,9 @@ auto tManyGamepads = test("GameInput/eightGamepadsFitAndTheNinthIsIgnored") = []
 auto tRacingProducersLeaveNothingStuck =
     test("GameInput/racingProducersOnOneKeyLeaveNothingStuck") = []
 {
+    if constexpr (!eacp::Platform::hasThreads())
+        return;
+
     constexpr auto threadCount = 3;
     constexpr auto rounds = 300;
     constexpr auto togglesPerThread = 200;

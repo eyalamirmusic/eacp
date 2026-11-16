@@ -15,6 +15,9 @@
 //                              the JSON line with a baseUrl it prints, append
 //                              that URL to the app's arguments, stop it after
 //   --chrome <path>            Chrome for headless, which fails after 120 s
+//   --timeout <seconds>        that limit, for a suite that runs longer
+//   --webgpu                   give headless Chrome its GPU, so the page has
+//                              WebGPU (it runs with --disable-gpu otherwise)
 
 import {spawn} from 'node:child_process';
 import fs from 'node:fs';
@@ -64,10 +67,18 @@ function parseCommandLine(argv)
     const own = separator < 0 ? argv : argv.slice(0, separator);
     const appArguments = separator < 0 ? [] : argv.slice(separator + 1);
     const [mode, app, ...rest] = own;
-    const options = {mode, app, appArguments, companion: '', chrome: ''};
+    const options = {mode, app, appArguments, companion: '', chrome: '',
+                     webgpu: false, timeout: headlessTimeoutSeconds};
 
     for (let i = 0; i < rest.length; i += 2)
     {
+        if (rest[i] === '--webgpu')
+        {
+            options.webgpu = true;
+            --i;
+            continue;
+        }
+
         const value = rest[i + 1];
 
         if (value === undefined)
@@ -77,6 +88,8 @@ function parseCommandLine(argv)
             options.companion = path.resolve(value);
         else if (rest[i] === '--chrome')
             options.chrome = value;
+        else if (rest[i] === '--timeout')
+            options.timeout = Number(value);
         else
             throw new Error(`unknown option ${rest[i]}`);
     }
@@ -403,12 +416,20 @@ function killChromeNow(chrome)
     catch {}
 }
 
-function startHeadlessChrome(executable, url)
+// Headless Chrome exposes WebGPU only with its GPU process: with --webgpu the
+// GPU stays on, and --enable-unsafe-webgpu lets it through where the platform
+// has not shipped it yet (Linux).
+function headlessGpuFlags(webgpu)
+{
+    return webgpu ? ['--enable-unsafe-webgpu'] : ['--disable-gpu'];
+}
+
+function startHeadlessChrome(executable, url, webgpu)
 {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'eacp-launch-chrome-'));
     const chrome = spawn(executable,
                          ['--headless=new', '--no-first-run', '--no-default-browser-check',
-                          '--disable-gpu', `--user-data-dir=${profile}`, url],
+                          ...headlessGpuFlags(webgpu), `--user-data-dir=${profile}`, url],
                          {stdio: ['ignore', 'pipe', 'pipe'],
                           detached: process.platform !== 'win32'});
     let log = '';
@@ -451,10 +472,10 @@ async function runInBrowser(options, args)
         return fail('no Chrome; configure with -DEACP_WEB_CHROME=<path>, or pass '
                     + '--chrome <path>');
 
-    setTimeout(() => fail(`the app did not exit within ${headlessTimeoutSeconds} s`,
+    setTimeout(() => fail(`the app did not exit within ${options.timeout} s`,
                           timeoutExitCode),
-               headlessTimeoutSeconds * 1000).unref();
-    startHeadlessChrome(options.chrome, url);
+               options.timeout * 1000).unref();
+    startHeadlessChrome(options.chrome, url, options.webgpu);
 }
 
 async function main()

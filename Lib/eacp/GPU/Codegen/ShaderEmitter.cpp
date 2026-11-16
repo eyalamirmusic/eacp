@@ -7,6 +7,7 @@
 #include "ShaderFunctionEmission.h"
 #include "ShaderHelpers.h"
 #include "ShaderStageEmitter.h"
+#include "ShaderWgslHelpers.h"
 
 #include <eacp/Core/Utils/Format.h>
 
@@ -412,9 +413,16 @@ public:
                   "texture. Only a kernel writes one; a fragment shader reads a "
                   "storage texture declared StorageAccess::Read.");
 
+        assert((!isWgsl() || usesOnlyWgslIdentifiers(graph))
+               && "eacp: a struct, a member, a function or an override is named "
+                  "with a word WGSL reserves, or with a double underscore, which "
+                  "no WGSL identifier may be.");
+
         auto source = getSourcePreamble(graph, backend);
 
-        if (!isGlsl())
+        if (isWgsl())
+            source += printWgslStageStructs();
+        else if (!isGlsl())
             source += printStageStructs();
 
         source += printUniformBlock();
@@ -424,6 +432,9 @@ public:
 
         if (backend == Backend::DirectX)
             source += printHlslBindings();
+
+        if (isWgsl())
+            source += printWgslBindings();
 
         if (!isGlsl())
             source += printFunctions(getBothStagesRoots());
@@ -437,6 +448,150 @@ public:
 
 private:
     bool isGlsl() const { return backend == Backend::Vulkan; }
+
+    bool isWgsl() const { return backend == Backend::WebGPU; }
+
+    // WGSL's stage structs: the attributes and the varyings at their locations,
+    // the position and the fragment's extra outputs as builtins. A struct with
+    // no member is refused, so a vertex stage reading no attribute has none.
+    std::string printWgslStageStructs() const
+    {
+        auto source = std::string {};
+
+        if (!graph.inputs().empty())
+        {
+            source += "struct VertexIn\n{\n";
+
+            for (auto i = 0; i < graph.inputs().size(); ++i)
+                source += Strings::format("    @location({}) a{}: {},\n",
+                                          i,
+                                          i,
+                                          wgslTypeName(graph.inputs()[i]));
+
+            source += "}\n\n";
+        }
+
+        source +=
+            "struct VertexOut\n{\n    @builtin(position) position: vec4<f32>,\n";
+
+        for (auto i = 0; i < varyings.size(); ++i)
+            source += Strings::format(
+                "    @location({}){} v{}: {},\n",
+                i,
+                getWgslInterpolation(varyings[i].type, varyings[i].interpolation),
+                i,
+                wgslTypeName(varyings[i].type));
+
+        source += "}\n\n";
+
+        if (!hasFragmentOutStruct())
+            return source;
+
+        source += "struct FragmentOut\n{\n    @location(0) color: vec4<f32>,\n";
+
+        if (graph.fragmentDepth() >= 0)
+            source += "    @builtin(frag_depth) depth: f32,\n";
+
+        if (graph.sampleMask() >= 0)
+            source += "    @builtin(sample_mask) sampleMask: u32,\n";
+
+        return source + "}\n\n";
+    }
+
+    // Flat takes the first vertex's value whether First or Either was asked,
+    // as on the other backends; an integer varying is never anything else.
+    static std::string getWgslInterpolation(ValueType type,
+                                            Interpolation interpolation)
+    {
+        auto integer = isSignedInteger(type) || isUnsignedInteger(type);
+
+        if (integer || interpolation.type == InterpolationType::Flat)
+            return " @interpolate(flat)";
+
+        auto sampling = std::string_view {};
+
+        if (interpolation.sampling == InterpolationSampling::Centroid)
+            sampling = ", centroid";
+
+        if (interpolation.sampling == InterpolationSampling::Sample)
+            sampling = ", sample";
+
+        if (interpolation.type == InterpolationType::Linear)
+            return Strings::format(" @interpolate(linear{})", sampling);
+
+        if (sampling.empty())
+            return {};
+
+        return Strings::format(" @interpolate(perspective{})", sampling);
+    }
+
+    std::string printWgslBindings() const
+    {
+        auto source = std::string {};
+
+        for (auto i = 0; i < graph.textureCount(); ++i)
+            source += formatWgslTexture(graph, i);
+
+        if (graph.textureCount() > 0)
+            source += "\n";
+
+        for (auto i = 0; i < graph.storageBuffers().size(); ++i)
+            source += formatWgslBuffer(graph, BufferAccess::Read, i);
+
+        if (graph.storageBuffers().size() > 0)
+            source += "\n";
+
+        return source;
+    }
+
+    std::string printWgslVertexOpening() const
+    {
+        auto parameters = Vector<std::string> {};
+
+        if (!graph.inputs().empty())
+            parameters.add("input: VertexIn");
+
+        if (graph.usesVertexId())
+            parameters.add("@builtin(vertex_index) vertexId: u32");
+
+        if (graph.usesInstanceId())
+            parameters.add("@builtin(instance_index) instanceId: u32");
+
+        return Strings::format("@vertex\nfn vertexMain({}) -> VertexOut\n{{\n",
+                               joinWgslParameters(parameters));
+    }
+
+    std::string printWgslFragmentOpening() const
+    {
+        auto parameters = Vector<std::string> {"input: VertexOut"};
+
+        if (graph.usesBuiltIn(ShaderBuiltIn::FrontFacing))
+            parameters.add("@builtin(front_facing) frontFacing: bool");
+
+        if (graph.usesBuiltIn(ShaderBuiltIn::SampleIndex))
+            parameters.add("@builtin(sample_index) sampleIndex: u32");
+
+        if (graph.usesBuiltIn(ShaderBuiltIn::SampleMask))
+            parameters.add("@builtin(sample_mask) sampleMaskIn: u32");
+
+        auto result = hasFragmentOutStruct()
+                          ? std::string_view {"FragmentOut"}
+                          : std::string_view {"@location(0) vec4<f32>"};
+
+        return Strings::format("@fragment\nfn fragmentMain({}) -> {}\n{{\n",
+                               joinWgslParameters(parameters),
+                               result);
+    }
+
+    static std::string joinWgslParameters(const Vector<std::string>& parameters)
+    {
+        auto joined = std::string {};
+
+        for (const auto& parameter: parameters)
+            joined += (joined.empty() ? "" : ",\n    ") + parameter;
+
+        return joined;
+    }
 
     bool hasUniforms() const { return !graph.uniforms().empty(); }
 
@@ -736,6 +891,9 @@ private:
         if (isGlsl())
             return printGlslVertexOpening();
 
+        if (isWgsl())
+            return printWgslVertexOpening();
+
         return printHlslVertexOpening();
     }
 
@@ -777,8 +935,9 @@ private:
             return Strings::format("{}gl_Position = {};\n", indent, position)
                    + printVaryingAssignments(stage, "vary", indent);
 
-        return Strings::format("{}VertexOut output;\n{}output.position = {};\n",
+        return Strings::format("{}{};\n{}output.position = {};\n",
                                indent,
+                               stage.printDeclaration("var", "VertexOut", "output"),
                                indent,
                                position)
                + printVaryingAssignments(stage, "output.v", indent);
@@ -874,6 +1033,9 @@ private:
         if (isGlsl())
             return printGlslFragmentOpening();
 
+        if (isWgsl())
+            return printWgslFragmentOpening();
+
         return printHlslFragmentOpening();
     }
 
@@ -932,8 +1094,12 @@ private:
                                             const std::string& colour,
                                             std::string_view indent) const
     {
-        auto source = Strings::format(
-            "{}FragmentOut output;\n{}output.color = {};\n", indent, indent, colour);
+        auto source =
+            Strings::format("{}{};\n{}output.color = {};\n",
+                            indent,
+                            stage.printDeclaration("var", "FragmentOut", "output"),
+                            indent,
+                            colour);
 
         if (graph.fragmentDepth() >= 0)
             source +=
@@ -978,6 +1144,14 @@ private:
             return {};
 
         auto kill = backend == Backend::Metal ? "discard_fragment();" : "discard;";
+
+        if (isWgsl())
+            return Strings::format(
+                "{0}if ({1} < {2})\n{0}{{\n{0}{3}discard;\n{0}}}\n",
+                indent,
+                stage.printer.printReference(graph.discard()),
+                formatWgslFloatLiteral(graph.discardThreshold(), false),
+                stageIndent);
 
         return Strings::format("{}if ({} < {})\n{}{}{}\n",
                                indent,
@@ -1086,5 +1260,10 @@ std::string emitHlsl(const ShaderGraph& graph)
 std::string emitGlsl(const ShaderGraph& graph)
 {
     return emit(graph, Backend::Vulkan);
+}
+
+std::string emitWgsl(const ShaderGraph& graph)
+{
+    return emit(graph, Backend::WebGPU);
 }
 } // namespace eacp::GPU

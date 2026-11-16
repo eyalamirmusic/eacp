@@ -4,3 +4,7 @@ set_target_properties(StreamingStress PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(StreamingStress)
 set_default_target_setting(StreamingStress)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(StreamingStress WEBGPU)
+endif ()

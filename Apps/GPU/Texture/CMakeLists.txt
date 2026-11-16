@@ -4,3 +4,7 @@ set_target_properties(Texture PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(Texture)
 set_default_target_setting(Texture)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(Texture WEBGPU)
+endif ()

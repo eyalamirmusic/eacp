@@ -32,227 +32,6 @@ struct PositionVertex
     float position[2];
 };
 
-const char* mslHeights = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float3 column [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]],
-                            texture2d<float> heights [[texture(0)]],
-                            sampler heightSampler [[sampler(0)]])
-{
-    float2 uv = float2(in.column.y, 0.5);
-    float h = heights.sample(heightSampler, uv, level(0)).r;
-
-    VertexOut out;
-    out.position = float4(in.column.x, -1.0 + 2.0 * h * in.column.z, 0.0, 1.0);
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]])
-{
-    return float4(1.0);
-}
-)";
-
-const char* hlslHeights = R"(
-Texture2D<float> heights : register(t0);
-SamplerState heightSampler : register(s8);
-
-float4 vertexMain(float3 column : TEXCOORD0) : SV_Position
-{
-    float h = heights.SampleLevel(heightSampler, float2(column.y, 0.5), 0);
-    return float4(column.x, -1.0 + 2.0 * h * column.z, 0.0, 1.0);
-}
-
-float4 fragmentMain(float4 position : SV_Position) : SV_Target
-{
-    return float4(1.0, 1.0, 1.0, 1.0);
-}
-)";
-
-const char* glslHeights = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec3 attr0;
-layout(set = 0, binding = 8) uniform sampler2D heights;
-
-void main()
-{
-    float h = textureLod(heights, vec2(attr0.y, 0.5), 0.0).r;
-    gl_Position = vec4(attr0.x, -1.0 + 2.0 * h * attr0.z, 0.0, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(1.0);
-}
-#endif
-)";
-
-const char* mslCompareHeights = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float3 column [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]],
-                            depth2d<float> depthImage [[texture(0)]],
-                            sampler depthSampler [[sampler(0)]])
-{
-    float2 uv = float2(in.column.y, 0.5);
-    float passed = depthImage.sample_compare(depthSampler, uv, 0.5, level(0));
-    float h = 0.5 + 0.5 * passed;
-
-    VertexOut out;
-    out.position = float4(in.column.x, -1.0 + 2.0 * h * in.column.z, 0.0, 1.0);
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]])
-{
-    return float4(1.0);
-}
-)";
-
-const char* hlslCompareHeights = R"(
-Texture2D<float> depthImage : register(t0);
-SamplerComparisonState depthSampler : register(s8);
-
-float4 vertexMain(float3 column : TEXCOORD0) : SV_Position
-{
-    float2 uv = float2(column.y, 0.5);
-    float passed = depthImage.SampleCmpLevelZero(depthSampler, uv, 0.5);
-    float h = 0.5 + 0.5 * passed;
-    return float4(column.x, -1.0 + 2.0 * h * column.z, 0.0, 1.0);
-}
-
-float4 fragmentMain(float4 position : SV_Position) : SV_Target
-{
-    return float4(1.0, 1.0, 1.0, 1.0);
-}
-)";
-
-const char* glslCompareHeights = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec3 attr0;
-layout(set = 0, binding = 8) uniform sampler2DShadow depthImage;
-
-void main()
-{
-    float passed = textureLod(depthImage, vec3(attr0.y, 0.5, 0.5), 0.0);
-    float h = 0.5 + 0.5 * passed;
-    gl_Position = vec4(attr0.x, -1.0 + 2.0 * h * attr0.z, 0.0, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(1.0);
-}
-#endif
-)";
-
-const char* mslDepthWriter = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.25, 1.0);
-    return out;
-}
-)";
-
-const char* hlslDepthWriter = R"(
-float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
-{
-    return float4(position, 0.25, 1.0);
-}
-)";
-
-const char* glslDepthWriter = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.25, 1.0);
-}
-#endif
-)";
-
-const char* mslTwoStages = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float4 fromVertex;
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]],
-                            texture2d<float> vertexImage [[texture(12)]],
-                            sampler vertexSampler [[sampler(12)]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    out.fromVertex = vertexImage.sample(vertexSampler, float2(0.5), level(0));
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             texture2d<float> fragmentImage [[texture(12)]],
-                             sampler fragmentSampler [[sampler(12)]])
-{
-    float4 fromFragment = fragmentImage.sample(fragmentSampler, float2(0.5));
-    return float4(in.fromVertex.rgb + fromFragment.rgb, 1.0);
-}
-)";
-
 constexpr PositionVertex fullQuad[] = {
     {{-1.f, -1.f}},
     {{1.f, -1.f}},
@@ -399,8 +178,7 @@ struct HeightMapView final : GPUView
         : heights(makeHeights())
         , heightMap(
               Device::shared().makeTexture(describeHeightMap(), heights.data()))
-        , library(
-              makeLibrary(nativeShaderSource(mslHeights, hlslHeights, glslHeights)))
+        , library(makeLibrary(nativeShaderSource("VertexTexture/heights")))
         , pipeline(makePipeline())
         , grid(makeColumnGrid())
         , vertices(Device::shared().makeBuffer(
@@ -445,11 +223,10 @@ struct DepthCompareView final : GPUView
 {
     DepthCompareView()
         : scene(Device::shared().makeTexture(describeDepthScene()))
-        , writerLibrary(Device::shared().makeShaderLibrary(nativeVertexOnlySource(
-              mslDepthWriter, hlslDepthWriter, glslDepthWriter)))
+        , writerLibrary(Device::shared().makeShaderLibrary(
+              nativeVertexOnlySource("VertexTexture/depthWriter")))
         , writer(makeWriter())
-        , library(makeLibrary(nativeShaderSource(
-              mslCompareHeights, hlslCompareHeights, glslCompareHeights)))
+        , library(makeLibrary(nativeShaderSource("VertexTexture/compareHeights")))
         , pipeline(makePipeline())
         , grid(makeColumnGrid())
         , vertices(Device::shared().makeBuffer(
@@ -521,13 +298,16 @@ struct DepthCompareView final : GPUView
 };
 
 // Red at the vertex stage's slot 12 and green at the fragment stage's, summed:
-// yellow only if the two stages kept two textures at one slot number.
+// yellow only if the two stages kept two textures at one slot number. Only
+// built where the stages keep their own texture slots, which a WebGPU device
+// does not, so its shader has no WGSL twin.
 struct TwoStagesView final : GPUView
 {
     TwoStagesView()
         : red(makeOnePixel(0xff0000ff))
         , green(makeOnePixel(0xff00ff00))
-        , library(makeLibrary(ShaderSource::msl(mslTwoStages)))
+        , library(makeLibrary(
+              ShaderSource::msl(testShaderFile("VertexTexture/twoStages.metal"))))
         , pipeline(makePipeline())
         , vertices(Device::shared().makeBuffer(fullQuad))
         , sampler(Device::shared().makeSampler({}))

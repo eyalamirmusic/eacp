@@ -455,9 +455,10 @@ to fool the Linux check.
 
 The top-level `CMakeLists.txt` decides this once, in nine capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
-Seven decide what draws (and, last of them, Core ML); none of them is on for
-the web, which builds no graphics. The three drawing ones are on together on
-every platform that draws — they
+Seven decide what draws (and, last of them, Core ML); of them only
+`EACP_HAS_DRAW` and `EACP_HAS_GPU` are on for the web so far, a window being a
+`<canvas>` and the GPU WebGPU ([Web.md](Web.md)). The three drawing ones are on together on
+every other platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, capture excepted, which Android
@@ -472,8 +473,8 @@ host can run rather than what it draws; both are on everywhere but the web:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
-| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
+| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux, Android or the web | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one, though Android and the web have none — and `Tests/Graphics` |
+| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux, Android or the web | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
@@ -512,7 +513,15 @@ one that ships it, and the two Linux lanes without a Vulkan device build it
 too, so the GLSL dialect is compiled for real there before any device is
 involved — every GLSL source `GPUCodegenTests` emits, every hand-written GLSL
 twin in `GPUTests` and every module shader `UITests` reaches is compiled by
-glslang as part of the test. macOS and Windows skip the fetch; passing
+glslang as part of the test. The hand-written shaders a suite carries are files
+rather than string literals: one per dialect (`.metal`, `.hlsl`, `.glsl`,
+`.wgsl`) under the suite's `Shaders/` directory — `Tests/GPU/Shaders/<suite>/`,
+`Tests/Spirv/Shaders/` — embedded by `eacp_embed_test_shaders`
+(`Tests/CMakeLists.txt`) through ResEmbed, keyed by their path there, and read
+back with `testShaderFile` (`Tests/TestShaders.h`) or, for the four twins at
+once, `Tests/GPU/Common.h`'s `nativeShaderSource("<suite>/<name>")`, which
+hands each backend its own dialect. A shader a test composes per format or
+type stays in the code. macOS and Windows skip the fetch; passing
 `-DEACP_BUILD_SPIRV=ON` there builds it and turns those checks on. Passing
 `OFF` on Linux is only meaningful together with `-DEACP_BUILD_GRAPHICS=OFF`:
 the Vulkan backend has no shader compiler in the OS, so a Linux graphics build

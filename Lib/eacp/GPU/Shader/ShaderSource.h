@@ -8,7 +8,8 @@ enum class ShaderBackend
 {
     Metal,
     DirectX,
-    Vulkan
+    Vulkan,
+    WebGPU
 };
 
 enum class ShaderStage
@@ -47,6 +48,10 @@ struct ShaderSource
     // Both stages share one string behind #ifdef EACP_VERTEX / EACP_FRAGMENT, so
     // the entry is always main; only computeEntry is still read, by isCompute().
     static ShaderSource glsl(std::string sourceToUse);
+
+    // One WGSL module holding every entry point, each named by the entries
+    // below, its resources all in @group(0) (Codegen/ShaderBindings.h).
+    static ShaderSource wgsl(std::string sourceToUse);
 
     ShaderSource& withVertex(std::string entry);
 

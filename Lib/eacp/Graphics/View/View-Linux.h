@@ -19,20 +19,23 @@ struct NativeSurfaceHandle
         None,
         Wayland,
         X11,
-        Android
+        Android,
+        Web
     };
 
     constexpr bool isValid() const { return kind != Kind::None; }
 
     Kind kind = Kind::None;
 
-    // wl_display* or xcb_connection_t*, and null on Android.
+    // wl_display* or xcb_connection_t*, and null on Android and the web.
     void* connection = nullptr;
 
-    // wl_surface* or ANativeWindow*, and null on X11.
+    // wl_surface* or ANativeWindow*, and null on X11. On the web a const char*:
+    // the CSS selector of the window's <canvas> ("#eacp-canvas-1"), owned by
+    // the window and valid until the record's onLost.
     void* surface = nullptr;
 
-    // xcb_window_t, and zero elsewhere.
+    // xcb_window_t; on the web the window's id, never zero; zero elsewhere.
     uint32_t window = 0;
 };
 

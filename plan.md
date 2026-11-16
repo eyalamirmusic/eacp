@@ -69,16 +69,149 @@ machines (key repeat, click counting, wheel accumulation), `Display` from
 `devicePixelRatio` and `resize`/`matchMedia`, `DisplayLink` on
 `requestAnimationFrame`. Headless under node.
 
+- [x] `EACP_HAS_DRAW` on for Emscripten (top-level `CMakeLists.txt`); GPU,
+      TEXT, CONTEXT and the rest still off. `eacp-graphics` has an
+      `EMSCRIPTEN` branch ahead of `UNIX`, linking `Window/Window-Web.js`.
+- [x] The seam reused as Android does: `View-Linux.cpp` itself (no
+      `View-Web.cpp` was needed), `LinuxWindowState`/`LinuxWindowNative`, the
+      headless native, the Linux stubs (menus, tray, hot keys, layers),
+      `Path-Linux`, and the stb codec (`Image-Linux.cpp`).
+- [x] `Window-Web.cpp`: a window is `Module.canvas` for the first, a canvas of
+      its own otherwise; CSS size in points, backing store times
+      `devicePixelRatio`; `ResizeObserver` for a layout the page or full screen
+      changes; visibility, title, cursor, full screen and pointer lock.
+- [x] `ViewSurfaceBackend` handing the whole canvas to one presenting view
+      (`WebViewSurface-Web.cpp`), `NativeSurfaceHandle::Kind::Web` (`surface`
+      the canvas selector, `window` the id), frames on `requestAnimationFrame`.
+      Contract in `Docs/Web.md`, "The surface a presenter gets".
+- [x] Input: pointer, wheel, key, focus events dispatched synchronously; the
+      click counter, wheel frame and cursor tracker split out of
+      `LinuxInput-Linux` into the portable `Window/PointerTrackers.{h,cpp}`
+      (Linux unchanged otherwise). Key repeat is the browser's, not `KeyRepeat`,
+      and key text is `KeyboardEvent.key`, so the xkb half stays Linux's.
+- [x] `Keyboard-Web.cpp` (DOM `code` table, polled state, layout learnt from
+      plain presses), `Display-Web.cpp` (screen, viewport, `devicePixelRatio`,
+      `matchMedia` scale watch), `DisplayLink-Web.cpp` on
+      `AnimationFrame-Web.cpp`, `SystemAppearance-Web.cpp`
+      (`prefers-color-scheme`). `EmbeddedView` not built, as on Android.
+- [x] Tests: `GraphicsTests` under node (headless; three thread cases return
+      early), with `PointerTrackerTests.cpp` (Linux too) and
+      `KeyCodeTests-Web.cpp`; `WebWindowHarness` under node (headless) and in
+      headless Chrome (a real canvas driven by synthesised DOM events, checked
+      at 1x and by hand at 2x). `Apps/Web/HelloInput` for trying it by hand.
+- [x] Native unchanged: macOS target set diffed (identical), Graphics tests
+      run; on `linux` `GraphicsTests`, `X11WindowTests` (Xvfb) and
+      `WaylandWindowTests` (Weston) built and passed with the tracker split.
+
+Open items:
+
+- A presenting view smaller than its window still gets the whole canvas (the
+  Android rule). Per-view canvases stacked over the window's would match the
+  subsurface model if Phase 3 wants it.
+- Touch is the left button with `fromTouch`; no `TouchEvent`s, no pinch
+  `Magnify`, no gamepads, image cursors show the arrow (Phase 5).
+- A canvas size the page or full screen imposes skips the window's size
+  constraint.
+- `Lib/eacp/GPU/Vulkan/VulkanSurface-Linux.cpp`'s switch on
+  `NativeSurfaceHandle::Kind` now warns (`-Wswitch`) for `Kind::Web` until a
+  `case Kind::Web:` is added beside `Kind::Android` (GPU files were Phase 3's).
+
+Not yet verified:
+
+- A `devicePixelRatio` change while running (zoom, a move between displays):
+  the `matchMedia` path has not run; 2x was checked only as a launch flag.
+- Real (trusted) input in a visible browser: only synthesised events in
+  headless Chrome; `HelloInput-run` by hand is untried. Full screen and
+  pointer lock, which need a user gesture, are untried.
+- A page that sets `Module.canvas`: `Launch.mjs`'s page sets none, so only
+  owned canvases have run.
+- Firefox and Safari; Windows' clang-cl and MSVC with the tracker split
+  (reasoned: the files are Linux/web only).
+
 ### Phase 3: WebGPU backend and WGSL
 
-`EACP_HAS_GPU` on the web: `GPU/WebGPU/` over Emscripten's `emdawnwebgpu`.
-Shaders first by the shortcut — the existing GLSL emitter, glslang to SPIR-V
-(`eacp-spirv`), Tint to WGSL — then a native WGSL emitter in
-`eacp-gpu-codegen`. The adapter and device are async, so they are acquired
-before `main()` (a pre-run step in the generated JS) and handed in; readback
-(`Buffer::read`, `copyDrawable`) is async and waits through JSPI where the
-app links the nested pump, a callback otherwise. Brings `Apps/GPU` (minus the
-Context overlays) and `GPUTests` under headless Chrome.
+`EACP_HAS_GPU` on the web: `GPU/WebGPU/` over Emscripten's `emdawnwebgpu`,
+with a native WGSL emitter in `eacp-gpu-codegen`. Done, bar the open items.
+
+- [x] Shader path decided: a native WGSL emitter (`ShaderBackend::WebGPU`,
+      `emitWgsl`), not GLSL → glslang → Tint. The browser takes WGSL only;
+      Tint is a large slice of Dawn to build as a host tool or into the wasm,
+      and its SPIR-V reader refuses what the GLSL emitter leans on (combined
+      image samplers, format-less storage images). The EDSL was modelled on
+      WGSL's built-ins, so the dialect sits beside MSL/HLSL/GLSL, device-free
+      and checked by `GPUCodegenTests` everywhere (`WgslCodegenTests.cpp`).
+      660 of 663 programs emitted by the suites compiled in Chrome; the 3 are
+      device limits (read_write RG16Float/RG11B10Float/RG32Sint, 36 KB of
+      workgroup memory).
+- [x] `EACP_HAS_GPU` on for Emscripten (top-level `CMakeLists.txt`).
+- [x] The backend: device, buffers, textures (2D/cube/array/volume, mips,
+      block formats, MSAA and depth companions), samplers, compute pipelines
+      and dispatch (1D dispatches past 65535 groups fold into rows), render
+      pipelines (one variant per depth format; an empty fragment for a
+      vertex-only library), off-screen passes and multi-target passes,
+      copies, readback.
+- [x] Device acquired before `main()`: `CMake/Web/WebGPU.js`, a `--pre-js`
+      from `eacp-gpu`, with a run dependency; every adapter feature and its
+      highest limits; uncaptured errors printed as `WebGPU: ...`.
+- [x] Waiting (readback, `CommandBuffer::wait`, compile messages, pipeline
+      validation) suspends through JSPI with the nested pump, and is skipped
+      (reads, with a message) or optimistic without it.
+- [x] `GPUView` on the canvas (`GPUView-Web.cpp`), over Phase 2's
+      `NativeSurfaceHandle::Kind::Web`; continuous mode on
+      `requestAnimationFrame`.
+- [x] `GPUTests` in headless Chrome, one page per group
+      (`eacp_web_discover_tests(GPUTests HEADLESS)`, `Launch.mjs --webgpu`):
+      781 of 805 cases pass; every hand-written shader has a WGSL twin.
+      `GPUWidgetsTests` under node (device cases stand down).
+- [x] `Apps/GPU` without a 2D overlay build and run in a page: `Triangle`
+      (a `Triangle.wgsl` twin), `TriangleGen`, `RotatingTriangle`, `Teapot`,
+      `ComputeParticles`, `ComputeImage`, `Paths`, `PathCoverage`, `Texture`,
+      `Maze`, `Sprites`, `Clipping`, `StreamingStress`, `TextureAtlas` and
+      `HotReloadGPU` drew in headless Chrome with no validation error
+      (screenshots, by hand); `Compute`, `AsyncCompute` (ctest entries) and
+      `PathBench` (by hand) compute and exit 0. `eacp_web_executable(WEBGPU)`.
+- [x] Native unchanged: macOS `GPUCodegenTests` 322/322, `CpuComputeTests`
+      231/231, `GPUTests` 812/812, `GPUWidgetsTests` 77/77.
+- [x] `Docs/Web.md`, `Lib/eacp/GPU/README.md` ("The web"), `CLAUDE.md`,
+      `Docs/Build.md` updated.
+
+Open items (the 24 failing `GPUTests` cases, 11 ctest groups, all registered
+and red rather than hidden):
+
+- Occlusion queries (9) and GPU timestamps not wired up
+  (`supportsOcclusionQueries`/`supportsPassTimings` false).
+- Worker-thread `Device` cases (4): the web has no threads.
+- No border colour in WebGPU (`Sampler/clampToBorderReadsTheBorderColour`,
+  `SamplerBindingDevice/theBoundSamplerDecidesTheAddressMode`).
+- Multisampled sampleable depth refused: WebGPU resolves no depth (2).
+  A resolve shader would bring it.
+- Storage binds off the 256-byte offset grid bind nothing (`RenderRanges`, 2):
+  the tests bind at 16.
+- RG16Unorm/RGBA16Unorm sample only as unfilterable float, which a layout read
+  from WGSL cannot know (`Formats/sixteenBitAndPackedFormatsSample`); a
+  per-format pipeline variant, as storage formats have, would fix it.
+- A buffer a kernel writes and a dispatch reads indirectly in one pass is one
+  WebGPU usage scope (`IndirectDispatch/aGuardedStageStopsAtTheExactCount`).
+- `Precompiled` require-flag cases (2): no precompiled shaders on the web;
+  `CompilationInfoDevice/everyInvalidLibraryHoldsAnError` fails on the same
+  require-flag lines.
+- Not done: GPU mip generation (CPU chains only), layered rendering,
+  count-driven indirect draws, `copyDrawable` of a canvas only with
+  `setReadableDrawable`, a `Buffer::readAsync` for apps without the nested
+  pump, `CpuCompute`'s thread on the web, a web build of `Apps/Plugins`'
+  GPU demos (plugins are impossible anyway).
+
+Not yet verified:
+
+- WebGPU anywhere but Chrome 157 on macOS's Metal adapter: Linux and Windows
+  Chrome, SwiftShader (it comes up headless with
+  `--use-webgpu-adapter=swiftshader`), Firefox, Safari.
+- The `GPUTests` per-group ctest entries under `ctest -j` load (run at -j6
+  here, fine) and the whole-suite page beyond ~20 s.
+- A `GPUView` resize, scale change, transparency and MSAA on a real page (the
+  examples ran at a fixed size in headless Chrome); `HotReloadGPU` only
+  statically.
+- Release web builds of the GPU suite.
 
 ### Phase 4: Text
 

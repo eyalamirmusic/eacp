@@ -201,10 +201,61 @@ void main()
 )";
 }
 
+std::string wgslSource(int count)
+{
+    auto outputs = std::string {};
+    auto writes = std::string {};
+
+    for (auto index = 0; index < count; ++index)
+    {
+        const auto name = "c" + std::to_string(index);
+        outputs +=
+            "    @location(" + std::to_string(index) + ") " + name + ": vec4f,\n";
+
+        auto value = mslOutput(index);
+        auto at = value.find("float4");
+
+        if (at != std::string::npos)
+            value.replace(at, 6, "vec4f");
+
+        writes += "    out." + name + " = " + value + ";\n";
+    }
+
+    return R"(
+struct VertexOut
+{
+    @builtin(position) position: vec4f,
+    @location(0) color: vec4f,
+}
+
+struct FragmentOut
+{
+)" + outputs
+           + R"(}
+
+@vertex fn vertexMain(@location(0) position: vec3f, @location(1) color: vec4f)
+    -> VertexOut
+{
+    var out: VertexOut;
+    out.position = vec4f(position, 1.0);
+    out.color = color;
+    return out;
+}
+
+@fragment fn fragmentMain(in: VertexOut) -> FragmentOut
+{
+    var out: FragmentOut;
+)" + writes + R"(    return out;
+}
+)";
+}
+
 ShaderLibrary makeLibrary(int outputs)
 {
-    auto source = nativeShaderSource(
-        mslSource(outputs), hlslSource(outputs), glslSource(outputs));
+    auto source = nativeShaderSource(mslSource(outputs),
+                                     hlslSource(outputs),
+                                     glslSource(outputs),
+                                     wgslSource(outputs));
 
     return Device::shared().makeShaderLibrary(
         source.withVertex("vertexMain").withFragment("fragmentMain"));

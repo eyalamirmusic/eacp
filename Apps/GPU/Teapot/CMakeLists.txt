@@ -4,3 +4,7 @@ set_target_properties(Teapot PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(Teapot)
 set_default_target_setting(Teapot)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(Teapot WEBGPU)
+endif ()

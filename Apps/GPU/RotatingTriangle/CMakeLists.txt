@@ -6,3 +6,7 @@ eacp_set_gui_subsystem(RotatingTriangle)
 set_default_target_setting(RotatingTriangle)
 
 eacp_add_precompiled_shaders(RotatingTriangle SOURCES Shaders.cpp)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(RotatingTriangle WEBGPU)
+endif ()

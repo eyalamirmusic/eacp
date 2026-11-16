@@ -46,4 +46,33 @@ constexpr int vulkanComputeBufferBinding(int slot)
 
     return vulkanComputeUniformBinding + 1 + slot - ComputePass::portableBufferSlots;
 }
+
+// WGSL's bindings, every one in @group(0) and the same for a render program
+// and a kernel: the uniform block, then a run of sixteen for each of the
+// storage buffers, the textures and the samplers, by slot. A sampled texture's
+// own sampler is at its slot's sampler binding, as a sampler slot's is.
+constexpr int webgpuUniformBinding = 0;
+constexpr int webgpuBufferBindingBase = 1;
+constexpr int webgpuTextureBindingBase =
+    webgpuBufferBindingBase + ComputePass::maxBufferSlots;
+constexpr int webgpuSamplerBindingBase =
+    webgpuTextureBindingBase + RenderPass::maxStageTextureSlots;
+
+constexpr int webgpuBufferBinding(int slot)
+{
+    return webgpuBufferBindingBase + slot;
+}
+
+constexpr int webgpuTextureBinding(int slot)
+{
+    return webgpuTextureBindingBase + slot;
+}
+
+constexpr int webgpuSamplerBinding(int slot)
+{
+    return webgpuSamplerBindingBase + slot;
+}
+
+static_assert(webgpuTextureBinding(0) == 17 && webgpuSamplerBinding(0) == 33,
+              "the WebGPU backend builds its layouts from these numbers");
 } // namespace eacp::GPU

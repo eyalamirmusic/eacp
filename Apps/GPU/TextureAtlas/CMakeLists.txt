@@ -4,3 +4,7 @@ set_target_properties(TextureAtlas PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(TextureAtlas)
 set_default_target_setting(TextureAtlas)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(TextureAtlas WEBGPU)
+endif ()

@@ -5,6 +5,35 @@ find_package(NanoTest REQUIRED)
 set(NANO_TEST_GROUP_BY PREFIX)
 set(CMAKE_UNITY_BUILD ${EACP_UNITY_BUILD_TESTS})
 
+# The hand-written shaders a suite carries, one file per dialect, embedded and
+# keyed by their path under DIRECTORY (default: the suite's Shaders/), which
+# TestShaders.h reads back. FILES embeds those paths alone, for a suite that
+# shares a few of another's.
+function(eacp_embed_test_shaders target)
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "DIRECTORY" "FILES")
+
+    if (NOT ARG_DIRECTORY)
+        set(ARG_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Shaders")
+    endif ()
+
+    if (ARG_FILES)
+        list(TRANSFORM ARG_FILES PREPEND "${ARG_DIRECTORY}/" OUTPUT_VARIABLE shaders)
+    else ()
+        file(GLOB_RECURSE shaders CONFIGURE_DEPENDS
+                "${ARG_DIRECTORY}/*.metal"
+                "${ARG_DIRECTORY}/*.hlsl"
+                "${ARG_DIRECTORY}/*.glsl"
+                "${ARG_DIRECTORY}/*.wgsl")
+    endif ()
+
+    res_embed_add(${target}
+            FILES ${shaders}
+            BASE_DIRECTORY "${ARG_DIRECTORY}"
+            NAMESPACE TestShaders
+            CATEGORY TestShaders
+            TU_COUNT 8)
+endfunction()
+
 add_subdirectory(Core)
 
 if (APPLE)
@@ -81,7 +110,7 @@ if (EMSCRIPTEN)
     set(web_suites "")
 
     foreach (suite CoreTests NetworkTests GPUCodegenTests CpuComputeTests
-            MLGraphTests ScriptHostTests)
+            MLGraphTests ScriptHostTests GraphicsTests GPUWidgetsTests)
         if (TARGET ${suite})
             target_link_options(${suite} PRIVATE ${node_link_options})
             target_link_libraries(${suite} PRIVATE eacp-core-nested-pump)
@@ -89,6 +118,11 @@ if (EMSCRIPTEN)
             list(APPEND web_suites ${suite})
         endif ()
     endforeach ()
+
+    # Discovered by Tests/GPU itself, into headless Chrome rather than node.
+    if (TARGET GPUTests)
+        list(APPEND web_suites GPUTests)
+    endif ()
 
     file(WRITE "${CMAKE_BINARY_DIR}/CTestCustom.cmake"
             "set(CTEST_CUSTOM_TESTS_IGNORE ${web_suites})\n")
@@ -103,7 +137,7 @@ if (EMSCRIPTEN)
     # harness checks that a real exit with work in flight stays clean. Console
     # and ZipDemo are examples of every platform, run unchanged.
     foreach (app HelloLoop HelloNetwork QuitWithTimerHarness QuitWithFetchHarness
-            Console ZipDemo)
+            Console ZipDemo WebWindowHarness)
         if (TARGET ${app})
             eacp_web_add_app_tests(${app})
         endif ()
@@ -113,6 +147,15 @@ if (EMSCRIPTEN)
     # <app>-run talks to the public hosts they default to; their ctest entries
     # get the test server as a companion, whose URL they take as their last
     # argument, so the entries run offline.
+    # The GPU examples that compute and exit: under node, the path a page with
+    # no WebGPU takes (no device, said once); in headless Chrome, the kernels
+    # on the real device, failing on any validation error it reports.
+    foreach (app Compute AsyncCompute)
+        if (TARGET ${app})
+            eacp_web_add_app_tests(${app})
+        endif ()
+    endforeach ()
+
     foreach (app OnlineResourceDemo Http BasicHttp)
         if (TARGET ${app})
             set_target_properties(${app} PROPERTIES EACP_WEB_COMPANION

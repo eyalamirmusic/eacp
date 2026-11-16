@@ -101,6 +101,22 @@ set(EACP_WEB_DISCOVER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/Web/DiscoverTests.cmake"
 # EACP_WEB_TEST_FIXTURE_GROUPS property: how a suite gets a server that a wasm
 # program, which cannot listen, needs started beside it.
 function(eacp_web_discover_tests target)
+    cmake_parse_arguments(DISCOVER "HEADLESS" "" "" ${ARGN})
+    set(run_prefix "")
+
+    # HEADLESS runs each group as a page in headless Chrome with WebGPU (the
+    # cases are still listed through node), for a suite that needs the GPU.
+    # With no Chrome found, the suite registers nothing.
+    if (DISCOVER_HEADLESS)
+        if (NOT EACP_WEB_CHROME)
+            return()
+        endif ()
+
+        set(run_prefix ${EACP_WEB_TEST_NODE} "${EACP_WEB_LAUNCHER}" headless
+                "$<TARGET_FILE:${target}>" --webgpu --chrome "${EACP_WEB_CHROME}"
+                --timeout 300 --)
+    endif ()
+
     get_target_property(fixture ${target} EACP_WEB_TEST_FIXTURE)
     get_target_property(fixture_groups ${target} EACP_WEB_TEST_FIXTURE_GROUPS)
 
@@ -119,6 +135,7 @@ set(node ${EACP_WEB_TEST_NODE})
 set(executable [==[$<TARGET_FILE:${target}>]==])
 set(fixture [==[${fixture}]==])
 set(fixture_groups [==[${fixture_groups}]==])
+set(run_prefix [==[${run_prefix}]==])
 set(cmake_command [==[${CMAKE_COMMAND}]==])
 set(discover_script [==[${EACP_WEB_DISCOVER_SCRIPT}]==])
 include(\"\${discover_script}\")
@@ -162,6 +179,12 @@ function(eacp_web_launch_command out_var target mode)
         list(APPEND command --chrome "${EACP_WEB_CHROME}")
     endif ()
 
+    get_target_property(webgpu ${target} EACP_WEB_WEBGPU)
+
+    if (mode STREQUAL "headless" AND webgpu)
+        list(APPEND command --webgpu)
+    endif ()
+
     list(APPEND command --)
 
     if (arguments)
@@ -187,19 +210,27 @@ function(eacp_web_add_app_tests target)
         list(APPEND modes headless)
     endif ()
 
+    # A WebGPU app also fails on anything the device reported (WebGPU.js and
+    # the backend print those as "WebGPU: ...").
+    set(failures "Aborted;aborted:;Assertion failed;exitRuntime;after runtime exit")
+    get_target_property(webgpu ${target} EACP_WEB_WEBGPU)
+
+    if (webgpu)
+        list(APPEND failures "WebGPU: ")
+    endif ()
+
     foreach (name mode IN ZIP_LISTS names modes)
         eacp_web_launch_command(command ${target} ${mode})
         add_test(NAME ${name}
                 COMMAND ${command}
                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:${target}>")
         set_tests_properties(${name} PROPERTIES
-                FAIL_REGULAR_EXPRESSION
-                "Aborted;aborted:;Assertion failed;exitRuntime;after runtime exit"
+                FAIL_REGULAR_EXPRESSION "${failures}"
                 TIMEOUT 60)
     endforeach ()
 endfunction()
 
-# eacp_web_executable(<target> [NODE_FILESYSTEM] [NESTED_PUMP]
+# eacp_web_executable(<target> [NODE_FILESYSTEM] [NESTED_PUMP] [WEBGPU]
 #                     [COMPANION <script.mjs>] [ARGUMENTS <arg>...])
 #
 # An executable that can run in a browser (no NODE_FILESYSTEM) also gets
@@ -207,12 +238,20 @@ endfunction()
 # part of all, with COMPANION and ARGUMENTS kept as its properties for that
 # target and eacp_web_add_app_tests.
 #
+# WEBGPU marks an app that draws or computes through eacp-gpu: its headless
+# runs give Chrome its GPU (Launch.mjs --webgpu), and its ctest entries fail on
+# a device validation error.
+#
 # NESTED_PUMP links eacp-core-nested-pump, and with it JSPI, so blocking code
 # written for the other platforms - httpRequest, OnlineResource::fetch, a
 # runEventLoopFor in main() - runs unchanged, on an engine that has JSPI only.
 function(eacp_web_executable target)
-    cmake_parse_arguments(WEB "NODE_FILESYSTEM;NESTED_PUMP" "COMPANION" "ARGUMENTS"
-            ${ARGN})
+    cmake_parse_arguments(WEB "NODE_FILESYSTEM;NESTED_PUMP;WEBGPU" "COMPANION"
+            "ARGUMENTS" ${ARGN})
+
+    if (WEB_WEBGPU)
+        set_target_properties(${target} PROPERTIES EACP_WEB_WEBGPU TRUE)
+    endif ()
 
     if (WEB_NESTED_PUMP)
         target_link_libraries(${target} PRIVATE eacp-core-nested-pump)

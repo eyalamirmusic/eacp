@@ -4,3 +4,7 @@ set_target_properties(Paths PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(Paths)
 set_default_target_setting(Paths)
+
+if (EMSCRIPTEN)
+    eacp_web_executable(Paths WEBGPU)
+endif ()

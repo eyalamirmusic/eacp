@@ -25,243 +25,7 @@ struct ColorVertex
     float color[4];
 };
 
-constexpr auto mslSource = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float3 position [[attribute(0)]];
-    float4 color [[attribute(1)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float4 color;
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 1.0);
-    out.color = in.color;
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]])
-{
-    return in.color;
-}
-)";
-
-constexpr auto hlslSource = R"(
-struct VertexIn
-{
-    float3 position : TEXCOORD0;
-    float4 color : TEXCOORD1;
-};
-
-struct VertexOut
-{
-    float4 position : SV_Position;
-    float4 color : TEXCOORD0;
-};
-
-VertexOut vertexMain(VertexIn input)
-{
-    VertexOut o;
-    o.position = float4(input.position, 1.0);
-    o.color = input.color;
-    return o;
-}
-
-float4 fragmentMain(VertexOut input) : SV_Target
-{
-    return input.color;
-}
-)";
-
-constexpr auto glslSource = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec3 attr0;
-layout(location = 1) in vec4 attr1;
-layout(location = 0) out vec4 color;
-
-void main()
-{
-    gl_Position = vec4(attr0, 1.0);
-    color = attr1;
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) in vec4 color;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = color;
-}
-#endif
-)";
-
-// The layer is the instance: instance n lands in layer n of the pass's run,
-// coloured red n + 1 fifths of the way up.
-constexpr auto mslLayered = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float3 position [[attribute(0)]];
-    float4 color [[attribute(1)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float4 color;
-    uint layer [[render_target_array_index]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]],
-                            uint instance [[instance_id]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 1.0);
-    out.color = float4(float(instance + 1) * 0.2, 0.0, 0.0, 1.0);
-    out.layer = instance;
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]])
-{
-    return in.color;
-}
-)";
-
-constexpr auto hlslLayered = R"(
-struct VertexIn
-{
-    float3 position : TEXCOORD0;
-    float4 color : TEXCOORD1;
-    uint instance : SV_InstanceID;
-};
-
-struct VertexOut
-{
-    float4 position : SV_Position;
-    float4 color : TEXCOORD0;
-    uint layer : SV_RenderTargetArrayIndex;
-};
-
-VertexOut vertexMain(VertexIn input)
-{
-    VertexOut o;
-    o.position = float4(input.position, 1.0);
-    o.color = float4(float(input.instance + 1) * 0.2, 0.0, 0.0, 1.0);
-    o.layer = input.instance;
-    return o;
-}
-
-float4 fragmentMain(VertexOut input) : SV_Target
-{
-    return input.color;
-}
-)";
-
-constexpr auto glslLayered = R"(#version 450
-#extension GL_ARB_shader_viewport_layer_array : require
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec3 attr0;
-layout(location = 1) in vec4 attr1;
-layout(location = 0) out vec4 color;
-
-void main()
-{
-    gl_Position = vec4(attr0, 1.0);
-    color = vec4(float(gl_InstanceIndex + 1) * 0.2, 0.0, 0.0, 1.0);
-    gl_Layer = gl_InstanceIndex;
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) in vec4 color;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = color;
-}
-#endif
-)";
-
-// A 2x2 box filter from one level into the next: texel (x, y) of the output
-// is the mean of the four input texels under it.
-constexpr auto mslDownscale = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d<float, access::read> source [[texture(0)]],
-                        texture2d<float, access::write> target [[texture(1)]],
-                        uint2 gid [[thread_position_in_grid]])
-{
-    if (gid.x >= target.get_width() || gid.y >= target.get_height())
-        return;
-
-    uint2 at = gid * 2;
-    float4 sum = source.read(at) + source.read(at + uint2(1, 0))
-                 + source.read(at + uint2(0, 1)) + source.read(at + uint2(1, 1));
-    target.write(sum * 0.25, gid);
-}
-)";
-
-constexpr auto hlslDownscale = R"(
-RWTexture2D<float4> source : register(u8);
-RWTexture2D<float4> target : register(u9);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height;
-    target.GetDimensions(width, height);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    uint2 at = gid.xy * 2;
-    float4 sum = source[at] + source[at + uint2(1, 0)] + source[at + uint2(0, 1)]
-                 + source[at + uint2(1, 1)];
-    target[gid.xy] = sum * 0.25;
-}
-)";
-
-constexpr auto glslDownscale = R"(#version 450
-
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(set = 0, binding = 8) uniform sampler2D source;
-layout(set = 0, binding = 9, rgba8) uniform writeonly image2D target;
-
-void main()
-{
-    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(target);
-
-    if (gid.x >= size.x || gid.y >= size.y)
-        return;
-
-    ivec2 at = gid * 2;
-    vec4 sum = texelFetch(source, at, 0) + texelFetch(source, at + ivec2(1, 0), 0)
-               + texelFetch(source, at + ivec2(0, 1), 0)
-               + texelFetch(source, at + ivec2(1, 1), 0);
-    imageStore(target, gid, sum * 0.25);
-}
-)";
-
+static_assert(webgpuTextureBinding(1) == 18);
 static_assert(vulkanComputeTextureBinding(0) == 8);
 static_assert(vulkanComputeTextureBinding(1) == 9);
 
@@ -287,14 +51,17 @@ RenderPipeline makePipeline(const ShaderSource& source, bool depth = false)
 
 RenderPipeline makeColorPipeline(bool depth = false)
 {
-    auto source = nativeShaderSource(mslSource, hlslSource, glslSource);
+    auto source = nativeShaderSource("SubresourceTarget/color");
     source.withVertex("vertexMain").withFragment("fragmentMain");
     return makePipeline(source, depth);
 }
 
+// The layer is the instance: instance n lands in layer n of the pass's run,
+// coloured red n + 1 fifths of the way up. WGSL has no layer output, and a
+// WebGPU device reports no layered rendering, so it has no twin there.
 RenderPipeline makeLayeredPipeline(bool depth = false)
 {
-    auto source = nativeShaderSource(mslLayered, hlslLayered, glslLayered);
+    auto source = nativeShaderSource("SubresourceTarget/layered");
     source.withVertex("vertexMain").withFragment("fragmentMain");
     return makePipeline(source, depth);
 }
@@ -778,9 +545,10 @@ auto tSubresourceComputeLevels =
 
     texture.updateSubresource(TextureRegion::wholeLevel(0), levelZero.data());
 
-    auto source =
-        nativeComputeShaderSource(mslDownscale, hlslDownscale, glslDownscale)
-            .withCompute("computeMain");
+    // A 2x2 box filter from one level into the next: texel (x, y) of the output
+    // is the mean of the four input texels under it.
+    auto source = nativeComputeShaderSource("SubresourceTarget/downscale")
+                      .withCompute("computeMain");
     auto library = Device::shared().makeShaderLibrary(source);
     auto pipeline = Device::shared().makeComputePipeline(library);
 

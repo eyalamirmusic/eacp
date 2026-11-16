@@ -57,15 +57,20 @@ void runFrame(std::function<void(Frame&)> draw)
 }
 
 ComputePipeline makeKernel(
-    const std::string& msl,
-    const std::string& hlsl,
-    const std::string& glsl,
+    ShaderTwins twins,
     const std::source_location& location = std::source_location::current())
 {
-    auto source = nativeComputeShaderSource(msl, hlsl, glsl, location)
+    auto source = nativeComputeShaderSource(std::move(twins), location)
                       .withCompute("computeMain");
     auto library = Device::shared().makeShaderLibrary(source);
     return Device::shared().makeComputePipeline(library);
+}
+
+ComputePipeline makeKernel(
+    std::string_view name,
+    const std::source_location& location = std::source_location::current())
+{
+    return makeKernel(shaderTwins(name, location), location);
 }
 
 bool near(float value, float expected, float tolerance)
@@ -79,19 +84,20 @@ struct WrittenFormat
     TextureFormat format;
     const char* glslQualifier;
     int channels;
+    const char* wgslFormat;
 };
 
 constexpr WrittenFormat floatFormats[] = {
-    {TextureFormat::R8Unorm, "r8", 1},
-    {TextureFormat::RG8Unorm, "rg8", 2},
-    {TextureFormat::R16Float, "r16f", 1},
-    {TextureFormat::RG16Float, "rg16f", 2},
-    {TextureFormat::R32Float, "r32f", 1},
-    {TextureFormat::RG32Float, "rg32f", 2},
-    {TextureFormat::R16Unorm, "r16", 1},
-    {TextureFormat::RGBA8Unorm, "rgba8", 4},
-    {TextureFormat::RGBA16Float, "rgba16f", 4},
-    {TextureFormat::RGBA32Float, "rgba32f", 4},
+    {TextureFormat::R8Unorm, "r8", 1, "r8unorm"},
+    {TextureFormat::RG8Unorm, "rg8", 2, "rg8unorm"},
+    {TextureFormat::R16Float, "r16f", 1, "r16float"},
+    {TextureFormat::RG16Float, "rg16f", 2, "rg16float"},
+    {TextureFormat::R32Float, "r32f", 1, "r32float"},
+    {TextureFormat::RG32Float, "rg32f", 2, "rg32float"},
+    {TextureFormat::R16Unorm, "r16", 1, "r16unorm"},
+    {TextureFormat::RGBA8Unorm, "rgba8", 4, "rgba8unorm"},
+    {TextureFormat::RGBA16Float, "rgba16f", 4, "rgba16float"},
+    {TextureFormat::RGBA32Float, "rgba32f", 4, "rgba32float"},
 };
 
 float channelOf(TextureFormat format, const std::uint8_t* texel, int channel)
@@ -130,40 +136,6 @@ float channelOf(TextureFormat format, const std::uint8_t* texel, int channel)
 
 // Texel (x, y) gets a = (x + 4y + 1) / 255 and b = (3x + 2) / 255: a value of
 // its own in every texel, and one an 8-bit channel holds exactly.
-constexpr auto mslWriteFloats = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d<float, access::write> target [[texture(0)]],
-                        uint2 gid [[thread_position_in_grid]])
-{
-    if (gid.x >= target.get_width() || gid.y >= target.get_height())
-        return;
-
-    float a = float(gid.x + gid.y * 4 + 1) / 255.0;
-    float b = float(gid.x * 3 + 2) / 255.0;
-    target.write(float4(a, b, 0.5, 1.0), gid);
-}
-)";
-
-constexpr auto hlslWriteFloats = R"(
-RWTexture2D<float4> target : register(u8);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height;
-    target.GetDimensions(width, height);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    float a = float(gid.x + gid.y * 4 + 1) / 255.0;
-    float b = float(gid.x * 3 + 2) / 255.0;
-    target[gid.xy] = float4(a, b, 0.5, 1.0);
-}
-)";
-
 std::string glslWriteFloats(const char* qualifier)
 {
     return R"(#version 450
@@ -188,54 +160,28 @@ void main()
 )";
 }
 
-constexpr auto mslWriteUints = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d<uint, access::write> target [[texture(0)]],
-                        uint2 gid [[thread_position_in_grid]])
+std::string wgslWriteFloats(const char* format)
 {
-    if (gid.x >= target.get_width() || gid.y >= target.get_height())
-        return;
+    return R"(
+@group(0) @binding(17) var image: texture_storage_2d<)"
+           + std::string {format} + R"(, write>;
 
-    target.write(uint4((gid.x + gid.y * 4) * 1000003u + 7u, 0, 0, 0), gid);
-}
-)";
-
-constexpr auto hlslWriteUints = R"(
-RWTexture2D<uint> target : register(u8);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
+@compute @workgroup_size(8, 8)
+fn computeMain(@builtin(global_invocation_id) gid: vec3u)
 {
-    uint width, height;
-    target.GetDimensions(width, height);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    target[gid.xy] = (gid.x + gid.y * 4) * 1000003u + 7u;
-}
-)";
-
-constexpr auto glslWriteUints = R"(#version 450
-
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(set = 0, binding = 8, r32ui) uniform writeonly uimage2D target;
-
-void main()
-{
-    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(target);
+    let size = textureDimensions(image);
 
     if (gid.x >= size.x || gid.y >= size.y)
+    {
         return;
+    }
 
-    uint value = uint(gid.x + gid.y * 4) * 1000003u + 7u;
-    imageStore(target, gid, uvec4(value, 0u, 0u, 0u));
+    let a = f32(gid.x + gid.y * 4u + 1u) / 255.0;
+    let b = f32(gid.x * 3u + 2u) / 255.0;
+    textureStore(image, gid.xy, vec4f(a, b, 0.5, 1.0));
 }
 )";
+}
 
 Texture makeImage(TextureFormat format)
 {
@@ -293,44 +239,12 @@ bool holdsTheWrittenValues(const WrittenFormat& written, const Texture& texture)
 // Each texel seeded with s = (x + 4y + 1) / 32 - eight bits' worth, and
 // exact in a half - and rewritten as 1 - s through the one bind.
 constexpr WrittenFormat readWriteFormats[] = {
-    {TextureFormat::R32Float, "r32f", 1},
-    {TextureFormat::R16Float, "r16f", 1},
-    {TextureFormat::R8Unorm, "r8", 1},
-    {TextureFormat::RGBA8Unorm, "rgba8", 4},
-    {TextureFormat::RGBA16Float, "rgba16f", 4},
+    {TextureFormat::R32Float, "r32f", 1, "r32float"},
+    {TextureFormat::R16Float, "r16f", 1, "r16float"},
+    {TextureFormat::R8Unorm, "r8", 1, "r8unorm"},
+    {TextureFormat::RGBA8Unorm, "rgba8", 4, "rgba8unorm"},
+    {TextureFormat::RGBA16Float, "rgba16f", 4, "rgba16float"},
 };
-
-constexpr auto mslReadWriteFloats = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d<float, access::read_write> image [[texture(0)]],
-                        uint2 gid [[thread_position_in_grid]])
-{
-    if (gid.x >= image.get_width() || gid.y >= image.get_height())
-        return;
-
-    float4 value = image.read(gid);
-    image.write(float4(1.0 - value.x, value.yzw), gid);
-}
-)";
-
-constexpr auto hlslReadWriteFloats = R"(
-RWTexture2D<float4> image : register(u8);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height;
-    image.GetDimensions(width, height);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    float4 value = image[gid.xy];
-    image[gid.xy] = float4(1.0 - value.x, value.yzw);
-}
-)";
 
 std::string glslReadWriteFloats(const char* qualifier)
 {
@@ -355,55 +269,27 @@ void main()
 )";
 }
 
-constexpr auto mslReadWriteUints = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d<uint, access::read_write> image [[texture(0)]],
-                        uint2 gid [[thread_position_in_grid]])
+std::string wgslReadWriteFloats(const char* format)
 {
-    if (gid.x >= image.get_width() || gid.y >= image.get_height())
-        return;
+    return R"(
+@group(0) @binding(17) var image: texture_storage_2d<)"
+           + std::string {format} + R"(, read_write>;
 
-    uint value = image.read(gid).x;
-    image.write(uint4(value * 3u + 1u, 0, 0, 0), gid);
-}
-)";
-
-constexpr auto hlslReadWriteUints = R"(
-RWTexture2D<uint> image : register(u8);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
+@compute @workgroup_size(8, 8)
+fn computeMain(@builtin(global_invocation_id) gid: vec3u)
 {
-    uint width, height;
-    image.GetDimensions(width, height);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    image[gid.xy] = image[gid.xy] * 3u + 1u;
-}
-)";
-
-constexpr auto glslReadWriteUints = R"(#version 450
-
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(set = 0, binding = 8, r32ui) uniform uimage2D image;
-
-void main()
-{
-    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(image);
+    let size = textureDimensions(image);
 
     if (gid.x >= size.x || gid.y >= size.y)
+    {
         return;
+    }
 
-    uint value = imageLoad(image, gid).x;
-    imageStore(image, gid, uvec4(value * 3u + 1u, 0u, 0u, 0u));
+    let value = textureLoad(image, gid.xy);
+    textureStore(image, gid.xy, vec4f(1.0 - value.x, value.yzw));
 }
 )";
+}
 
 float seedAt(int x, int y)
 {
@@ -450,69 +336,9 @@ struct DepthVertex
     float position[3];
 };
 
-constexpr auto mslDepthQuad = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float3 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 1.0);
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]])
-{
-    return float4(1.0, 0.0, 0.0, 1.0);
-}
-)";
-
-constexpr auto hlslDepthQuad = R"(
-float4 vertexMain(float3 position : TEXCOORD0) : SV_Position
-{
-    return float4(position, 1.0);
-}
-
-float4 fragmentMain(float4 position : SV_Position) : SV_Target
-{
-    return float4(1.0, 0.0, 0.0, 1.0);
-}
-)";
-
-constexpr auto glslDepthQuad = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec3 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-}
-#endif
-)";
-
 RenderPipeline makeDepthPipeline()
 {
-    auto source = nativeShaderSource(mslDepthQuad, hlslDepthQuad, glslDepthQuad);
+    auto source = nativeShaderSource("KernelImage/depthQuad");
     auto library = Device::shared().makeShaderLibrary(
         source.withVertex("vertexMain").withFragment("fragmentMain"));
 
@@ -571,124 +397,6 @@ void drawDepth(Frame& frame,
     pass.draw(6);
 }
 
-constexpr auto mslCopyDepth = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(depth2d<float, access::read> depth [[texture(0)]],
-                        device float* values [[buffer(0)]],
-                        uint2 gid [[thread_position_in_grid]])
-{
-    if (gid.x >= depth.get_width() || gid.y >= depth.get_height())
-        return;
-
-    values[gid.y * depth.get_width() + gid.x] = depth.read(gid);
-}
-)";
-
-constexpr auto hlslCopyDepth = R"(
-Texture2D<float> depth : register(t8);
-RWStructuredBuffer<float> values : register(u0);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height;
-    depth.GetDimensions(width, height);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    values[gid.y * width + gid.x] = depth.Load(int3(gid.xy, 0));
-}
-)";
-
-constexpr auto glslCopyDepth = R"(#version 450
-
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(set = 0, binding = 8) uniform sampler2D depth;
-layout(std430, set = 0, binding = 0) buffer Values
-{
-    float values[];
-};
-
-void main()
-{
-    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = textureSize(depth, 0);
-
-    if (gid.x >= size.x || gid.y >= size.y)
-        return;
-
-    values[gid.y * size.x + gid.x] = texelFetch(depth, gid, 0).r;
-}
-)";
-
-constexpr auto mslCopyDepthLayer = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(depth2d_array<float, access::read> depth [[texture(0)]],
-                        device float* values [[buffer(0)]],
-                        constant uint& layer [[buffer(16)]],
-                        uint2 gid [[thread_position_in_grid]])
-{
-    if (gid.x >= depth.get_width() || gid.y >= depth.get_height())
-        return;
-
-    values[gid.y * depth.get_width() + gid.x] = depth.read(gid, layer);
-}
-)";
-
-constexpr auto hlslCopyDepthLayer = R"(
-Texture2DArray<float> depth : register(t8);
-RWStructuredBuffer<float> values : register(u0);
-
-cbuffer Params : register(b0)
-{
-    uint layer;
-};
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height, layers;
-    depth.GetDimensions(width, height, layers);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    values[gid.y * width + gid.x] = depth.Load(int4(gid.xy, layer, 0));
-}
-)";
-
-constexpr auto glslCopyDepthLayer = R"(#version 450
-
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(set = 0, binding = 8) uniform sampler2DArray depth;
-layout(std430, set = 0, binding = 0) buffer Values
-{
-    float values[];
-};
-layout(set = 0, binding = 16) uniform Params
-{
-    uint layer;
-};
-
-void main()
-{
-    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = textureSize(depth, 0).xy;
-
-    if (gid.x >= size.x || gid.y >= size.y)
-        return;
-
-    values[gid.y * size.x + gid.x] = texelFetch(depth, ivec3(gid, int(layer)), 0).r;
-}
-)";
-
 Vector<float> readFloats(const Buffer& buffer, int count)
 {
     auto values = Vector<float> {};
@@ -715,117 +423,6 @@ bool holdsHalfAndHalf(const Vector<float>& values, float left)
     return true;
 }
 
-// Face n gets its own colour, (40n + 20, 200 - 30n, 64, 255) in bytes.
-constexpr auto mslWriteFaces = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d_array<float, access::write> faces [[texture(0)]],
-                        uint3 gid [[thread_position_in_grid]])
-{
-    if (gid.x >= faces.get_width() || gid.y >= faces.get_height()
-        || gid.z >= faces.get_array_size())
-        return;
-
-    float face = float(gid.z);
-    faces.write(float4((40.0 * face + 20.0) / 255.0, (200.0 - 30.0 * face) / 255.0,
-                       64.0 / 255.0, 1.0),
-                gid.xy, gid.z);
-}
-)";
-
-constexpr auto hlslWriteFaces = R"(
-RWTexture2DArray<float4> faces : register(u8);
-
-[numthreads(4, 4, 4)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height, count;
-    faces.GetDimensions(width, height, count);
-
-    if (gid.x >= width || gid.y >= height || gid.z >= count)
-        return;
-
-    float face = float(gid.z);
-    faces[gid] = float4((40.0 * face + 20.0) / 255.0, (200.0 - 30.0 * face) / 255.0,
-                        64.0 / 255.0, 1.0);
-}
-)";
-
-constexpr auto glslWriteFaces = R"(#version 450
-
-layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
-
-layout(set = 0, binding = 8, rgba8) uniform writeonly image2DArray faces;
-
-void main()
-{
-    ivec3 gid = ivec3(gl_GlobalInvocationID);
-    ivec3 size = imageSize(faces);
-
-    if (gid.x >= size.x || gid.y >= size.y || gid.z >= size.z)
-        return;
-
-    float face = float(gid.z);
-    imageStore(faces, gid, vec4((40.0 * face + 20.0) / 255.0,
-                                (200.0 - 30.0 * face) / 255.0, 64.0 / 255.0, 1.0));
-}
-)";
-
-// Texel (1, 1) of every face, read back through the array view.
-constexpr auto mslReadFaces = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d_array<float, access::read> faces [[texture(0)]],
-                        device float4* values [[buffer(0)]],
-                        uint gid [[thread_position_in_grid]])
-{
-    if (gid >= faces.get_array_size())
-        return;
-
-    values[gid] = faces.read(uint2(1, 1), gid);
-}
-)";
-
-constexpr auto hlslReadFaces = R"(
-Texture2DArray<float4> faces : register(t8);
-RWStructuredBuffer<float4> values : register(u0);
-
-[numthreads(64, 1, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height, count;
-    faces.GetDimensions(width, height, count);
-
-    if (gid.x >= count)
-        return;
-
-    values[gid.x] = faces.Load(int4(1, 1, gid.x, 0));
-}
-)";
-
-constexpr auto glslReadFaces = R"(#version 450
-
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-
-layout(set = 0, binding = 8) uniform sampler2DArray faces;
-layout(std430, set = 0, binding = 0) buffer Values
-{
-    vec4 values[];
-};
-
-void main()
-{
-    int gid = int(gl_GlobalInvocationID.x);
-
-    if (gid >= textureSize(faces, 0).z)
-        return;
-
-    values[gid] = texelFetch(faces, ivec3(1, 1, gid), 0);
-}
-)";
-
 // A 6 x 1 target, column n sampling the cube along face n's axis.
 struct PositionVertex
 {
@@ -840,87 +437,6 @@ constexpr PositionVertex fullQuad[] = {
     {{1.f, 1.f}},
     {{-1.f, 1.f}},
 };
-
-constexpr auto mslSampleCube = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-constant float3 directions[6] = {
-    float3(1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0),
-    float3(0.0, 1.0, 0.0), float3(0.0, -1.0, 0.0),
-    float3(0.0, 0.0, 1.0), float3(0.0, 0.0, -1.0)};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             texturecube<float> cube [[texture(0)]],
-                             sampler cubeSampler [[sampler(0)]])
-{
-    return cube.sample(cubeSampler, directions[uint(in.position.x)]);
-}
-)";
-
-constexpr auto hlslSampleCube = R"(
-TextureCube<float4> cube : register(t0);
-SamplerState cubeSampler : register(s8);
-
-static const float3 directions[6] = {
-    float3(1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0),
-    float3(0.0, 1.0, 0.0), float3(0.0, -1.0, 0.0),
-    float3(0.0, 0.0, 1.0), float3(0.0, 0.0, -1.0)};
-
-float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
-{
-    return float4(position, 0.0, 1.0);
-}
-
-float4 fragmentMain(float4 position : SV_Position) : SV_Target
-{
-    return cube.Sample(cubeSampler, directions[uint(position.x)]);
-}
-)";
-
-constexpr auto glslSampleCube = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.0, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(set = 0, binding = 8) uniform samplerCube cube;
-layout(location = 0) out vec4 fragColor;
-
-const vec3 directions[6] = vec3[6](
-    vec3(1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0),
-    vec3(0.0, 1.0, 0.0), vec3(0.0, -1.0, 0.0),
-    vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0));
-
-void main()
-{
-    fragColor = texture(cube, directions[uint(gl_FragCoord.x)]);
-}
-#endif
-)";
 
 std::uint32_t faceColor(int face)
 {
@@ -1014,8 +530,10 @@ auto tKernelImageWritesEachFormat =
         if (!writable)
             continue;
 
-        auto pipeline = makeKernel(
-            mslWriteFloats, hlslWriteFloats, glslWriteFloats(written.glslQualifier));
+        auto twins = shaderTwins("KernelImage/writeFloats");
+        twins.glsl = glslWriteFloats(written.glslQualifier);
+        twins.wgsl = wgslWriteFloats(written.wgslFormat);
+        auto pipeline = makeKernel(std::move(twins));
 
         check(pipeline.isValid());
 
@@ -1032,7 +550,7 @@ auto tKernelImageWritesIntegers =
         return;
 
     auto texture = makeImage(TextureFormat::R32Uint);
-    auto pipeline = makeKernel(mslWriteUints, hlslWriteUints, glslWriteUints);
+    auto pipeline = makeKernel("KernelImage/writeUints");
 
     check(texture.isValid() && pipeline.isValid());
 
@@ -1058,9 +576,10 @@ auto tKernelImageReadWrite =
             continue;
 
         auto texture = makeImage(written.format);
-        auto pipeline = makeKernel(mslReadWriteFloats,
-                                   hlslReadWriteFloats,
-                                   glslReadWriteFloats(written.glslQualifier));
+        auto twins = shaderTwins("KernelImage/readWriteFloats");
+        twins.glsl = glslReadWriteFloats(written.glslQualifier);
+        twins.wgsl = wgslReadWriteFloats(written.wgslFormat);
+        auto pipeline = makeKernel(std::move(twins));
 
         check(texture.isValid() && pipeline.isValid());
 
@@ -1083,8 +602,7 @@ auto tKernelImageReadWrite =
     }
 
     auto integers = makeImage(TextureFormat::R32Uint);
-    auto pipeline =
-        makeKernel(mslReadWriteUints, hlslReadWriteUints, glslReadWriteUints);
+    auto pipeline = makeKernel("KernelImage/readWriteUints");
 
     check(integers.isValid() && pipeline.isValid());
 
@@ -1112,7 +630,7 @@ auto tKernelImageReadsDepth = test("KernelImage/aKernelReadsATargetsDepth") = []
     auto scene =
         Device::shared().makeTexture(describeDepthScene(TextureType::TwoD, 1));
     auto pipeline = makeDepthPipeline();
-    auto kernel = makeKernel(mslCopyDepth, hlslCopyDepth, glslCopyDepth);
+    auto kernel = makeKernel("KernelImage/copyDepth");
     auto quad = makeDepthQuad(0.f, 0.25f);
     auto values = Device::shared().makeBuffer(texelCount * (int) sizeof(float));
 
@@ -1145,8 +663,7 @@ auto tKernelImageReadsDepthLayer =
     auto scene =
         Device::shared().makeTexture(describeDepthScene(TextureType::TwoDArray, 2));
     auto pipeline = makeDepthPipeline();
-    auto kernel =
-        makeKernel(mslCopyDepthLayer, hlslCopyDepthLayer, glslCopyDepthLayer);
+    auto kernel = makeKernel("KernelImage/copyDepthLayer");
     auto farQuad = makeDepthQuad(0.f, 0.75f);
     auto nearQuad = makeDepthQuad(0.f, 0.25f);
     auto layerZero = Device::shared().makeBuffer(texelCount * (int) sizeof(float));
@@ -1199,11 +716,13 @@ auto tKernelImageCubeAsArray =
 
     auto columns = Device::shared().makeTexture(targetDescriptor);
 
-    auto writeFaces = makeKernel(mslWriteFaces, hlslWriteFaces, glslWriteFaces);
-    auto readFaces = makeKernel(mslReadFaces, hlslReadFaces, glslReadFaces);
+    // Face n gets its own colour, (40n + 20, 200 - 30n, 64, 255) in bytes, and
+    // texel (1, 1) of every face is read back through the array view.
+    auto writeFaces = makeKernel("KernelImage/writeFaces");
+    auto readFaces = makeKernel("KernelImage/readFaces");
     auto faceValues = Device::shared().makeBuffer(6 * 4 * (int) sizeof(float));
 
-    auto source = nativeShaderSource(mslSampleCube, hlslSampleCube, glslSampleCube);
+    auto source = nativeShaderSource("KernelImage/sampleCube");
     auto library = Device::shared().makeShaderLibrary(
         source.withVertex("vertexMain").withFragment("fragmentMain"));
 
@@ -1267,94 +786,13 @@ auto tKernelImageCubeAsArray =
 
 namespace
 {
-// The 2D kernel above, for D3D12, whose view of one slice is a one-slice
+// The 2D kernel above, with D3D12's own: its view of one slice is a one-slice
 // Texture2DArray rather than a Texture2D.
-constexpr auto hlslCopyDepthSlice = R"(
-Texture2DArray<float> depth : register(t8);
-RWStructuredBuffer<float> values : register(u0);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height, layers;
-    depth.GetDimensions(width, height, layers);
-
-    if (gid.x >= width || gid.y >= height)
-        return;
-
-    values[gid.y * width + gid.x] = depth.Load(int4(gid.xy, 0, 0));
-}
-)";
-
-// A full-screen quad whose fragment shader writes the depth2d at its pixel
-// into an R32Float target.
-constexpr auto mslDepthToColor = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.5, 1.0);
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             depth2d<float, access::read> depth [[texture(0)]])
-{
-    return float4(depth.read(uint2(in.position.xy)), 0.0, 0.0, 1.0);
-}
-)";
-
-constexpr auto hlslDepthToColor = R"(
-Texture2DArray<float> depth : register(t0);
-
-float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
-{
-    return float4(position, 0.5, 1.0);
-}
-
-float4 fragmentMain(float4 position : SV_Position) : SV_Target
-{
-    return float4(depth.Load(int4(position.xy, 0, 0)), 0.0, 0.0, 1.0);
-}
-)";
-
-constexpr auto glslDepthToColor = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.5, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(set = 0, binding = 8) uniform sampler2D depth;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(texelFetch(depth, ivec2(gl_FragCoord.xy), 0).r, 0.0, 0.0, 1.0);
-}
-#endif
-)";
-
 ComputePipeline makeSliceKernel()
 {
-    return makeKernel(mslCopyDepth, hlslCopyDepthSlice, glslCopyDepth);
+    auto twins = shaderTwins("KernelImage/copyDepth");
+    twins.hlsl = testShaderFile("KernelImage/copyDepthSlice.hlsl");
+    return makeKernel(std::move(twins));
 }
 
 // Every slice of `scene` has the far plane but `nearSlice`, whose left half
@@ -1451,8 +889,8 @@ auto tKernelImageFragmentDepthSlice =
 
     auto copy = Device::shared().makeTexture(targetDescriptor);
 
-    auto source =
-        nativeShaderSource(mslDepthToColor, hlslDepthToColor, glslDepthToColor);
+    // A full-screen quad whose fragment shader writes the depth2d at its pixel.
+    auto source = nativeShaderSource("KernelImage/depthToColor");
     auto library = Device::shared().makeShaderLibrary(
         source.withVertex("vertexMain").withFragment("fragmentMain"));
 
@@ -1589,7 +1027,7 @@ auto tKernelImageSeparateDepthTarget =
     auto volumeDepth =
         Device::shared().makeTexture(describeDepthScene(TextureType::TwoD, 1));
     auto pipeline = makeDepthPipeline();
-    auto kernel = makeKernel(mslCopyDepth, hlslCopyDepth, glslCopyDepth);
+    auto kernel = makeKernel("KernelImage/copyDepth");
     auto nearQuad = makeDepthQuad(0.f, 0.25f);
     auto arrayValues = Device::shared().makeBuffer(texelCount * (int) sizeof(float));
     auto volumeValues =
