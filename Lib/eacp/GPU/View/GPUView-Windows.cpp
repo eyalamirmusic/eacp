@@ -788,6 +788,8 @@ int GPUView::framesInFlight() const
 // Serves both events: the swapchain follows the new bounds or the new scale
 // (same logical bounds, different pixel count), and updateSize() fires
 // onBackingScaleChanged for itself when the scale is what moved.
+void GPUView::visibilityChanged(bool) {}
+
 void GPUView::resizeStarted()
 {
     impl->updateSize();
