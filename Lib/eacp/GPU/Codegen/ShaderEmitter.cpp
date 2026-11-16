@@ -422,7 +422,7 @@ public:
         if (isGlsl())
             source += printGlslBindings();
 
-        if (backend == Backend::DirectX)
+        if (isDialect(backend, Backend::DirectX))
             source += printHlslBindings();
 
         if (!isGlsl())
@@ -436,7 +436,7 @@ public:
     }
 
 private:
-    bool isGlsl() const { return backend == Backend::Vulkan; }
+    bool isGlsl() const { return isDialect(backend, Backend::Vulkan); }
 
     bool hasUniforms() const { return !graph.uniforms().empty(); }
 
@@ -507,7 +507,7 @@ private:
         if (!hasFragmentOutStruct())
             return {};
 
-        auto isMetal = backend == Backend::Metal;
+        auto isMetal = isDialect(backend, Backend::Metal);
         auto source = std::string {"struct FragmentOut\n{\n"};
         source += isMetal ? "    float4 color [[color(0)]];\n"
                           : "    float4 color : SV_Target;\n";
@@ -554,11 +554,12 @@ private:
 
         for (const auto& parameter: parameters)
             if (graph.usesBuiltIn(parameter.which))
-                source += Strings::format(
-                    "{}{} {}",
-                    separator,
-                    parameter.declaration,
-                    backend == Backend::Metal ? parameter.metal : parameter.hlsl);
+                source += Strings::format("{}{} {}",
+                                          separator,
+                                          parameter.declaration,
+                                          isDialect(backend, Backend::Metal)
+                                              ? parameter.metal
+                                              : parameter.hlsl);
 
         return source;
     }
@@ -730,7 +731,7 @@ private:
 
     std::string printVertexOpening() const
     {
-        if (backend == Backend::Metal)
+        if (isDialect(backend, Backend::Metal))
             return printMetalVertexOpening();
 
         if (isGlsl())
@@ -868,7 +869,7 @@ private:
 
     std::string printFragmentOpening() const
     {
-        if (backend == Backend::Metal)
+        if (isDialect(backend, Backend::Metal))
             return printMetalFragmentOpening();
 
         if (isGlsl())
@@ -977,7 +978,8 @@ private:
         if (graph.discard() < 0)
             return {};
 
-        auto kill = backend == Backend::Metal ? "discard_fragment();" : "discard;";
+        auto kill =
+            isDialect(backend, Backend::Metal) ? "discard_fragment();" : "discard;";
 
         return Strings::format("{}if ({} < {})\n{}{}{}\n",
                                indent,
@@ -999,6 +1001,11 @@ private:
 
 std::string emit(const ShaderGraph& graph, Backend backend)
 {
+    assert(isDialectLinked(backend) && "this shader dialect is not linked");
+
+    if (!isDialectLinked(backend))
+        return {};
+
     if (graph.isCompute())
         return emitCompute(graph, backend);
 

@@ -91,7 +91,7 @@ std::string_view findRename(std::span<const BuiltinRename> exact,
 // type name, so float2(v) leaves as vec2(v).
 std::string_view findDialectRename(Backend backend, const std::string& name)
 {
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
     {
         if (const auto* spelling = hlslTypeNameFor(name); spelling != nullptr)
             return spelling;
@@ -99,7 +99,7 @@ std::string_view findDialectRename(Backend backend, const std::string& name)
         return findRename(hlslRenames, hlslPrefixRenames, name);
     }
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return findExactRename(metalRenames, name);
 
     if (const auto* spelling = glslTypeNameFor(name); spelling != nullptr)

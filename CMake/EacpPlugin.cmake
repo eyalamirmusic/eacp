@@ -44,13 +44,14 @@ function(eacp_claim_copy executable)
     endif ()
 endfunction()
 
-function(eacp_collect_link_targets target out_var)
+function(eacp_collect_link_targets app target out_var)
     set(found ${${out_var}})
     get_target_property(links ${target} LINK_LIBRARIES)
     get_target_property(interface_links ${target} INTERFACE_LINK_LIBRARIES)
 
     foreach (link IN LISTS links interface_links)
         string(REGEX REPLACE "\\$<LINK_ONLY:([^>]*)>" "\\1" link "${link}")
+        eacp_resolve_shader_dialect_link(${app} "${link}" link)
 
         if (WIN32)
             eacp_unwrapped_link_item(${target} "${link}" link)
@@ -73,10 +74,28 @@ function(eacp_collect_link_targets target out_var)
         endif ()
 
         list(APPEND found ${link})
-        eacp_collect_link_targets(${link} found)
+        eacp_collect_link_targets(${app} ${link} found)
     endforeach ()
 
     set(${out_var} ${found} PARENT_SCOPE)
+endfunction()
+
+# eacp-gpu-codegen links one of its two copies by the linking executable's
+# EACP_ALL_SHADER_DIALECTS property; the closure reads that property on the app now.
+function(eacp_resolve_shader_dialect_link app item out_var)
+    set(choice "^\\$<IF:\\$<BOOL:\\$<TARGET_PROPERTY:EACP_ALL_SHADER_DIALECTS>>,([^,<>]+),([^,<>]+)>$")
+
+    if (item MATCHES "${choice}")
+        get_target_property(isLinkingAllDialects ${app} EACP_ALL_SHADER_DIALECTS)
+
+        if (isLinkingAllDialects)
+            set(item ${CMAKE_MATCH_1})
+        else ()
+            set(item ${CMAKE_MATCH_2})
+        endif ()
+    endif ()
+
+    set(${out_var} "${item}" PARENT_SCOPE)
 endfunction()
 
 # A link item with the wrappers that change nothing at build time taken off:
@@ -116,6 +135,7 @@ function(eacp_collect_system_links owner links out_var)
 
     while (pending)
         list(POP_FRONT pending link)
+        eacp_resolve_shader_dialect_link(${owner} "${link}" link)
         eacp_unwrapped_link_item(${owner} "${link}" link)
 
         if (link MATCHES "^(|debug|optimized|general)$" OR link IN_LIST visited)
@@ -225,7 +245,7 @@ function(eacp_link_hot_reload app module)
 
     get_target_property(direct ${app} LINK_LIBRARIES)
     set(closure "")
-    eacp_collect_link_targets(${app} closure)
+    eacp_collect_link_targets(${app} ${app} closure)
     set(archives "")
 
     foreach (target IN LISTS closure)

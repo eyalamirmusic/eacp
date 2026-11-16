@@ -140,7 +140,7 @@ std::string printKernelUniformBlock(const ShaderGraph& graph, Backend backend)
 // HLSL and GLSL act atomically on plain integers; Metal needs its atomic types.
 std::string_view getSharedElementType(const SharedArray& shared, Backend backend)
 {
-    if (shared.atomic && backend == Backend::Metal)
+    if (shared.atomic && isDialect(backend, Backend::Metal))
         return shared.elementType == ValueType::Int ? "atomic_int" : "atomic_uint";
 
     return getDialectTypeName(backend, shared.elementType);
@@ -475,10 +475,10 @@ std::string printKernelOpening(const ShaderGraph& graph,
                                Backend backend,
                                const std::string& functions)
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return functions + printMetalKernelOpening(graph);
 
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return printGlslKernelOpening(graph, functions);
 
     return printHlslKernelOpening(graph, functions);
@@ -532,7 +532,7 @@ std::string printKernelPrologue(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
 
-    if (backend != Backend::Metal && graph.simdMatrixCount() > 0)
+    if (!isDialect(backend, Backend::Metal) && graph.simdMatrixCount() > 0)
         source += formatSimdMatrixPreamble(backend);
 
     if (!graph.usesBarrier())

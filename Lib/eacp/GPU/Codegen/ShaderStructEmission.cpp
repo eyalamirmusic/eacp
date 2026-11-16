@@ -42,7 +42,7 @@ std::string formatStructPadding(int bytes, int& padCount)
 std::string formatStructBody(const ShaderGraph& graph, Backend backend, int structId)
 {
     const auto& type = graph.structType(structId);
-    auto laysOut = backend == Backend::Metal && type.hostShareable;
+    auto laysOut = isDialect(backend, Backend::Metal) && type.hostShareable;
     auto source = Strings::format("struct {}\n{{\n", type.name);
     auto cursor = 0;
     auto pads = 0;
@@ -92,7 +92,7 @@ std::string
                            type.name,
                            parameters,
                            assignments,
-                           backend == Backend::Metal ? " = {}" : "");
+                           isDialect(backend, Backend::Metal) ? " = {}" : "");
 }
 
 // Where one element of an HLSL struct buffer starts: the index times the
@@ -296,7 +296,7 @@ std::string getStructDeclarations(const ShaderGraph& graph, Backend backend)
     {
         source += formatStructBody(graph, backend, structId);
 
-        if (backend != Backend::Vulkan)
+        if (!isDialect(backend, Backend::Vulkan))
             source += formatStructConstructor(graph, backend, structId);
     }
 
@@ -310,7 +310,7 @@ std::string printStructConstruct(const ShaderGraph& graph,
 {
     const auto& name = getStructName(graph, structId);
 
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return Strings::format("{}({})", name, members);
 
     return Strings::format("eacpMake{}({})", name, members);
@@ -325,7 +325,7 @@ std::string printFieldRead(const ShaderGraph& graph,
     const auto& target = graph.structType(structId).fields[field];
     auto access = Strings::format("{}.{}", base, target.path);
 
-    if (backend == Backend::Metal
+    if (isDialect(backend, Backend::Metal)
         && isPackedStructMember(graph, target.owner, target.type))
         return Strings::format("{}({})", typeName(target.type), access);
 

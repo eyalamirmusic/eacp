@@ -80,10 +80,10 @@ std::string_view getAtomicFunction(AtomicOperation operation, Backend backend)
         if (spelling.operation != operation)
             continue;
 
-        if (backend == Backend::Metal)
+        if (isDialect(backend, Backend::Metal))
             return spelling.metal;
 
-        return backend == Backend::Vulkan ? spelling.glsl : spelling.hlsl;
+        return isDialect(backend, Backend::Vulkan) ? spelling.glsl : spelling.hlsl;
     }
 
     return {};
@@ -209,7 +209,7 @@ std::string StageEmitter::printArrayDeclaration(int slot,
                                                 std::string_view indent) const
 {
     const auto& array = getGraph().arrays()[slot];
-    auto qualifier = printer.backend == Backend::Vulkan ? "" : "const ";
+    auto qualifier = isDialect(printer.backend, Backend::Vulkan) ? "" : "const ";
 
     auto source =
         Strings::format("{}{}{} a{}[{}] = {{",
@@ -529,7 +529,7 @@ std::string StageEmitter::emitSwitch(const Statement& statement,
 
     jumpTargets.pop_back();
 
-    if (printer.backend == Backend::DirectX
+    if (isDialect(printer.backend, Backend::DirectX)
         && !hasDefaultClause(getGraph(), statement.body))
         source += clauseIndent + "default:\n" + clauseIndent + "{\n" + clauseIndent
                   + std::string(nestedIndent) + "break;\n" + clauseIndent + "}\n";
@@ -672,7 +672,7 @@ std::string StageEmitter::emitStructStore(const Statement& statement,
     auto source = defineLocalsInScope({statement.index, statement.value}, scope);
     auto structId = getGraph().storageStructType(statement.slot);
 
-    if (printer.backend == Backend::DirectX)
+    if (isDialect(printer.backend, Backend::DirectX))
     {
         source +=
             holdOperand(statement.index, statement.slot, scope.indent, scope.open);
@@ -716,13 +716,13 @@ std::string StageEmitter::emitStore(const Statement& statement,
     auto atomic =
         getGraph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
     auto halfWords =
-        printer.backend == Backend::DirectX
+        isDialect(printer.backend, Backend::DirectX)
         && getGraph().storageElementType(statement.slot) == ValueType::Half;
 
     if (halfWords)
         source += printHlslHalfStore(
             statement.slot, printer.printReference(statement.index), stored, scope);
-    else if (atomic && printer.backend == Backend::Metal)
+    else if (atomic && isDialect(printer.backend, Backend::Metal))
         source += Strings::format(
             "{}atomic_store_explicit(&{}, {}, memory_order_relaxed);\n",
             scope.indent,
@@ -766,7 +766,7 @@ std::string StageEmitter::emitVectorStore(const Statement& statement,
     auto stored = printer.printReference(statement.value);
     auto type = getGraph().expr(statement.value).type;
 
-    if (printer.backend == Backend::Metal)
+    if (isDialect(printer.backend, Backend::Metal))
         return source
                + Strings::format("{}*((device {}*) (buffer{} + {})) = {};\n",
                                  indent,
@@ -832,7 +832,7 @@ std::string StageEmitter::emitAtomic(const Statement& statement,
                                  call.element,
                                  call.operand);
 
-    if (printer.backend == Backend::Vulkan)
+    if (isDialect(printer.backend, Backend::Vulkan))
         return source
                + Strings::format("{}{} {} = {}({}, {});\n",
                                  call.indent,
@@ -881,7 +881,7 @@ std::string StageEmitter::formatCompareExchange(const Statement& statement,
     auto source =
         Strings::format("{}{} {} = {};\n", call.indent, call.type, held, comparand);
 
-    if (printer.backend == Backend::Vulkan)
+    if (isDialect(printer.backend, Backend::Vulkan))
         source += Strings::format("{}{} {} = {}({}, {}, {});\n",
                                   call.indent,
                                   call.type,
@@ -967,14 +967,14 @@ std::string StageEmitter::emitTextureStore(const Statement& statement,
     auto source = defineLocalsInScope(
         {statement.index, statement.indexY, statement.value}, scope);
 
-    auto pair = printer.backend == Backend::Vulkan ? "ivec2" : "uint2";
+    auto pair = isDialect(printer.backend, Backend::Vulkan) ? "ivec2" : "uint2";
     auto coordinates = Strings::format("{}({}, {})",
                                        pair,
                                        printer.printReference(statement.index),
                                        printer.printReference(statement.indexY));
     auto color = printer.printReference(statement.value);
 
-    if (printer.backend == Backend::Metal)
+    if (isDialect(printer.backend, Backend::Metal))
         return source
                + Strings::format("{}texture{}.write({}, {});\n",
                                  indent,
@@ -982,7 +982,7 @@ std::string StageEmitter::emitTextureStore(const Statement& statement,
                                  color,
                                  coordinates);
 
-    if (printer.backend == Backend::Vulkan)
+    if (isDialect(printer.backend, Backend::Vulkan))
         return source
                + Strings::format("{}imageStore(texture{}, {}, {});\n",
                                  indent,
@@ -1013,7 +1013,7 @@ std::string StageEmitter::emitStorageStore(const Statement& statement,
         statement.slot, statement.index, statement.layer);
     const auto value = printer.printReference(statement.value);
 
-    if (printer.backend == Backend::Metal)
+    if (isDialect(printer.backend, Backend::Metal))
     {
         source += Strings::format(
             "{}texture{}.write({}, {});\n", indent, statement.slot, value, address);
@@ -1025,7 +1025,7 @@ std::string StageEmitter::emitStorageStore(const Statement& statement,
         return source;
     }
 
-    if (printer.backend == Backend::Vulkan)
+    if (isDialect(printer.backend, Backend::Vulkan))
         return source
                + Strings::format("{}imageStore(texture{}, {}, {});\n",
                                  indent,
@@ -1135,7 +1135,7 @@ std::string StageEmitter::holdTheVector(const Statement& statement,
 {
     auto source = std::string {};
 
-    if (printer.backend != Backend::Metal)
+    if (!isDialect(printer.backend, Backend::Metal))
         source += holdOperand(statement.index, statement.slot, indent, open);
 
     return source + holdOperand(statement.value, statement.slot, indent, open);

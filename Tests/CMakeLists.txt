@@ -1,5 +1,8 @@
 set(CMAKE_FOLDER Tests)
 
+# Deferred to the end of this file, so it reaches every test target added below.
+cmake_language(DEFER CALL eacp_link_all_shader_dialects ${CMAKE_CURRENT_SOURCE_DIR})
+
 find_package(NanoTest REQUIRED)
 
 set(NANO_TEST_GROUP_BY PREFIX)

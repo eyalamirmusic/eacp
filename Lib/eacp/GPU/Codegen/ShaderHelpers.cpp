@@ -1154,7 +1154,7 @@ const auto bitHelpers = Array<BitHelper, 8> {
 
 std::string_view getHelperDefinition(const ShaderHelper& helper, Backend backend)
 {
-    switch (backend)
+    switch (getEmittedDialect(backend))
     {
         case Backend::Metal:
             return helper.metal;
@@ -1173,7 +1173,7 @@ bool doesHelperWidenPackedSimdMatrix(const ShaderGraph& graph,
                                      std::string_view name,
                                      Backend backend)
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return false;
 
     if (name == "eacpReadHalf")
@@ -1204,7 +1204,7 @@ bool isHelperUsed(const ShaderGraph& graph, std::string_view name, Backend backe
 
 std::string_view getBitHelperDefinition(const BitHelper& helper, Backend backend)
 {
-    switch (backend)
+    switch (getEmittedDialect(backend))
     {
         case Backend::Metal:
             return helper.metal;
@@ -1318,7 +1318,7 @@ std::string getBitHelperDefinitions(const ShaderGraph& graph, Backend backend)
 // vector implicitly, so the float overloads above do not take one.
 std::string getMetalHalfAsinhDefinitions(const ShaderGraph& graph, Backend backend)
 {
-    if (backend != Backend::Metal)
+    if (!isDialect(backend, Backend::Metal))
         return {};
 
     auto definitions = std::string {};
@@ -1407,7 +1407,7 @@ std::string getRoundHalfMatrixOverload(ValueType type)
 // per type that is rounded somewhere; a matrix's leans on its rows'.
 std::string getRoundHalfDefinitions(const ShaderGraph& graph, Backend backend)
 {
-    if (backend != Backend::DirectX)
+    if (!isDialect(backend, Backend::DirectX))
         return {};
 
     auto vectors = Array<bool, 5> {};
@@ -1462,7 +1462,7 @@ std::string getHelperDefinitions(const ShaderGraph& graph, Backend backend)
 // only where the shader uses them, so every other source is unchanged.
 std::string getDialectHeader(const ShaderGraph& graph, Backend backend)
 {
-    switch (backend)
+    switch (getEmittedDialect(backend))
     {
         case Backend::Metal:
             return "#include <metal_stdlib>\nusing namespace metal;\n\n";

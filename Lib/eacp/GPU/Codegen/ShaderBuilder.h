@@ -20,11 +20,11 @@ namespace eacp::GPU
 {
 namespace detail
 {
-// The platform's backend (Metal on Apple, DirectX on Windows, Vulkan everywhere
-// else). Defined per-platform in ShaderBuilder-Apple.cpp / -Windows.cpp /
-// -Linux.cpp, mirroring the rest of the GPU module, so build() needs no
-// preprocessor branch.
-ShaderBackend nativeShaderBackend();
+// The platform's backend: Metal on Apple, DirectX on Windows, Vulkan elsewhere.
+constexpr ShaderBackend nativeShaderBackend()
+{
+    return ShaderBackend::EACP_HOST_SHADER_DIALECT;
+}
 
 // The C++ type an override of handle type T takes its default and its value
 // in, and its encoding as a pipeline constant.
