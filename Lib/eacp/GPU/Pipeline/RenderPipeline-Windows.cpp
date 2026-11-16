@@ -3,6 +3,7 @@
 #include "RenderPipeline.h"
 
 #include "../Device/Device.h"
+#include "../NativeFormatTable.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Windows/D3D12Types.h"
 
@@ -55,104 +56,65 @@ D3D12_PRIMITIVE_TOPOLOGY_TYPE toTopologyType(PrimitiveTopology topology)
     return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 }
 
-DXGI_FORMAT toDXGIFormat(VertexFormat format)
-{
-    switch (format)
-    {
-        case VertexFormat::Float:
-            return DXGI_FORMAT_R32_FLOAT;
-        case VertexFormat::Float2:
-            return DXGI_FORMAT_R32G32_FLOAT;
-        case VertexFormat::Float3:
-            return DXGI_FORMAT_R32G32B32_FLOAT;
-        case VertexFormat::Float4:
-            return DXGI_FORMAT_R32G32B32A32_FLOAT;
-
+constexpr auto dxgiFormatsByVertexFormat =
+    std::to_array<NativeFormatMapping<VertexFormat, DXGI_FORMAT>>({
+        {VertexFormat::Float, DXGI_FORMAT_R32_FLOAT},
+        {VertexFormat::Float2, DXGI_FORMAT_R32G32_FLOAT},
+        {VertexFormat::Float3, DXGI_FORMAT_R32G32B32_FLOAT},
+        {VertexFormat::Float4, DXGI_FORMAT_R32G32B32A32_FLOAT},
         // UNORM and SNORM rather than UINT and SINT: the shader reads these as
         // 0..1 and -1..1, which is what the Normalized Metal formats give. The
         // integer variants would deliver raw 0..255 and disagree with the other
         // backend rather than fail, which is why VertexFormatTests compares a
         // packed render against an unpacked one instead of trusting either.
-        case VertexFormat::UByte4Norm:
-            return DXGI_FORMAT_R8G8B8A8_UNORM;
-        case VertexFormat::Half2:
-            return DXGI_FORMAT_R16G16_FLOAT;
-        case VertexFormat::Half4:
-            return DXGI_FORMAT_R16G16B16A16_FLOAT;
-        case VertexFormat::Short2Norm:
-            return DXGI_FORMAT_R16G16_SNORM;
-        case VertexFormat::Short4Norm:
-            return DXGI_FORMAT_R16G16B16A16_SNORM;
-
+        {VertexFormat::UByte4Norm, DXGI_FORMAT_R8G8B8A8_UNORM},
+        {VertexFormat::Half2, DXGI_FORMAT_R16G16_FLOAT},
+        {VertexFormat::Half4, DXGI_FORMAT_R16G16B16A16_FLOAT},
+        {VertexFormat::Short2Norm, DXGI_FORMAT_R16G16_SNORM},
+        {VertexFormat::Short4Norm, DXGI_FORMAT_R16G16B16A16_SNORM},
         // The integer formats are UINT and SINT, which an HLSL uint or int
         // input reads unconverted; Metal's plain MTLVertexFormatUChar4 and
         // friends are the same thing. R10G10B10A2_UNORM has x in the low bits,
         // as Metal's UInt1010102Normalized does.
-        case VertexFormat::UByte:
-            return DXGI_FORMAT_R8_UINT;
-        case VertexFormat::UByte2:
-            return DXGI_FORMAT_R8G8_UINT;
-        case VertexFormat::UByte4:
-            return DXGI_FORMAT_R8G8B8A8_UINT;
-        case VertexFormat::UByteNorm:
-            return DXGI_FORMAT_R8_UNORM;
-        case VertexFormat::UByte2Norm:
-            return DXGI_FORMAT_R8G8_UNORM;
-        case VertexFormat::Byte:
-            return DXGI_FORMAT_R8_SINT;
-        case VertexFormat::Byte2:
-            return DXGI_FORMAT_R8G8_SINT;
-        case VertexFormat::Byte4:
-            return DXGI_FORMAT_R8G8B8A8_SINT;
-        case VertexFormat::ByteNorm:
-            return DXGI_FORMAT_R8_SNORM;
-        case VertexFormat::Byte2Norm:
-            return DXGI_FORMAT_R8G8_SNORM;
-        case VertexFormat::Byte4Norm:
-            return DXGI_FORMAT_R8G8B8A8_SNORM;
-        case VertexFormat::UShort:
-            return DXGI_FORMAT_R16_UINT;
-        case VertexFormat::UShort2:
-            return DXGI_FORMAT_R16G16_UINT;
-        case VertexFormat::UShort4:
-            return DXGI_FORMAT_R16G16B16A16_UINT;
-        case VertexFormat::UShortNorm:
-            return DXGI_FORMAT_R16_UNORM;
-        case VertexFormat::UShort2Norm:
-            return DXGI_FORMAT_R16G16_UNORM;
-        case VertexFormat::UShort4Norm:
-            return DXGI_FORMAT_R16G16B16A16_UNORM;
-        case VertexFormat::Short:
-            return DXGI_FORMAT_R16_SINT;
-        case VertexFormat::Short2:
-            return DXGI_FORMAT_R16G16_SINT;
-        case VertexFormat::Short4:
-            return DXGI_FORMAT_R16G16B16A16_SINT;
-        case VertexFormat::ShortNorm:
-            return DXGI_FORMAT_R16_SNORM;
-        case VertexFormat::Half:
-            return DXGI_FORMAT_R16_FLOAT;
-        case VertexFormat::UInt1010102Norm:
-            return DXGI_FORMAT_R10G10B10A2_UNORM;
-        case VertexFormat::UInt:
-            return DXGI_FORMAT_R32_UINT;
-        case VertexFormat::UInt2:
-            return DXGI_FORMAT_R32G32_UINT;
-        case VertexFormat::UInt3:
-            return DXGI_FORMAT_R32G32B32_UINT;
-        case VertexFormat::UInt4:
-            return DXGI_FORMAT_R32G32B32A32_UINT;
-        case VertexFormat::Int:
-            return DXGI_FORMAT_R32_SINT;
-        case VertexFormat::Int2:
-            return DXGI_FORMAT_R32G32_SINT;
-        case VertexFormat::Int3:
-            return DXGI_FORMAT_R32G32B32_SINT;
-        case VertexFormat::Int4:
-            return DXGI_FORMAT_R32G32B32A32_SINT;
-    }
+        {VertexFormat::UByte, DXGI_FORMAT_R8_UINT},
+        {VertexFormat::UByte2, DXGI_FORMAT_R8G8_UINT},
+        {VertexFormat::UByte4, DXGI_FORMAT_R8G8B8A8_UINT},
+        {VertexFormat::UByteNorm, DXGI_FORMAT_R8_UNORM},
+        {VertexFormat::UByte2Norm, DXGI_FORMAT_R8G8_UNORM},
+        {VertexFormat::Byte, DXGI_FORMAT_R8_SINT},
+        {VertexFormat::Byte2, DXGI_FORMAT_R8G8_SINT},
+        {VertexFormat::Byte4, DXGI_FORMAT_R8G8B8A8_SINT},
+        {VertexFormat::ByteNorm, DXGI_FORMAT_R8_SNORM},
+        {VertexFormat::Byte2Norm, DXGI_FORMAT_R8G8_SNORM},
+        {VertexFormat::Byte4Norm, DXGI_FORMAT_R8G8B8A8_SNORM},
+        {VertexFormat::UShort, DXGI_FORMAT_R16_UINT},
+        {VertexFormat::UShort2, DXGI_FORMAT_R16G16_UINT},
+        {VertexFormat::UShort4, DXGI_FORMAT_R16G16B16A16_UINT},
+        {VertexFormat::UShortNorm, DXGI_FORMAT_R16_UNORM},
+        {VertexFormat::UShort2Norm, DXGI_FORMAT_R16G16_UNORM},
+        {VertexFormat::UShort4Norm, DXGI_FORMAT_R16G16B16A16_UNORM},
+        {VertexFormat::Short, DXGI_FORMAT_R16_SINT},
+        {VertexFormat::Short2, DXGI_FORMAT_R16G16_SINT},
+        {VertexFormat::Short4, DXGI_FORMAT_R16G16B16A16_SINT},
+        {VertexFormat::ShortNorm, DXGI_FORMAT_R16_SNORM},
+        {VertexFormat::Half, DXGI_FORMAT_R16_FLOAT},
+        {VertexFormat::UInt1010102Norm, DXGI_FORMAT_R10G10B10A2_UNORM},
+        {VertexFormat::UInt, DXGI_FORMAT_R32_UINT},
+        {VertexFormat::UInt2, DXGI_FORMAT_R32G32_UINT},
+        {VertexFormat::UInt3, DXGI_FORMAT_R32G32B32_UINT},
+        {VertexFormat::UInt4, DXGI_FORMAT_R32G32B32A32_UINT},
+        {VertexFormat::Int, DXGI_FORMAT_R32_SINT},
+        {VertexFormat::Int2, DXGI_FORMAT_R32G32_SINT},
+        {VertexFormat::Int3, DXGI_FORMAT_R32G32B32_SINT},
+        {VertexFormat::Int4, DXGI_FORMAT_R32G32B32A32_SINT},
+    });
 
-    return DXGI_FORMAT_R32G32B32_FLOAT;
+static_assert(mapsEveryFormatOnce(dxgiFormatsByVertexFormat));
+
+DXGI_FORMAT toDXGIFormat(VertexFormat format)
+{
+    return findNativeFormat(
+        dxgiFormatsByVertexFormat, format, DXGI_FORMAT_R32G32B32_FLOAT);
 }
 
 // The attachment the pipeline writes. It has to match whatever the pass binds

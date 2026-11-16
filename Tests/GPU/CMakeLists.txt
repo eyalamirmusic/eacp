@@ -11,6 +11,7 @@ nano_add_executable(GPUCodegenTests
             FunctionCodegenTests.cpp
             GroupReductionCodegenTests.cpp
             InterpolationCodegenTests.cpp
+            NativeFormatTableTests.cpp
             OverrideCodegenTests.cpp
             ReflectionCodegenTests.cpp
             SamplerBindingCodegenTests.cpp
