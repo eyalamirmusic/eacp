@@ -110,6 +110,10 @@ public:
 
     ~ShapeBatch() override;
 
+    // Whether the pass begin() is given has a depth attachment, as a scene's
+    // own pass does. Shapes are drawn over it either way: the depth test is off.
+    void setPassHasDepthAttachment(bool hasDepthAttachment);
+
     void begin(GPU::RenderPass& passToUse);
     void end();
     void flush();
@@ -196,6 +200,7 @@ private:
 
     void flushInto(GPU::RenderPass& endingPass) override;
     void detach();
+    void preparePipeline();
 
     // The core primitive every call above becomes: a parallelogram carrying a
     // rounded-box field of `halfSize`, grown by the antialiasing margin.
@@ -226,6 +231,7 @@ private:
     float pixelScale = 1.f;
     int sampleCount = 1;
     GPU::PixelFormat colorFormat = GPU::PixelFormat::BGRA8Unorm;
+    bool passHasDepthAttachment = false;
 
     OwningPointer<Program> program;
     Vector<ShapeInstance> instances;
