@@ -147,6 +147,18 @@ std::string Device::name() const
     return getVulkanShared().getAdapterName();
 }
 
+AdapterDescription Device::describeAdapter() const
+{
+    if (!isValid())
+    {
+        auto unavailable = AdapterDescription {};
+        unavailable.name = name();
+        return unavailable;
+    }
+
+    return getVulkanShared().getAdapter();
+}
+
 // The intersection of the three masks a pass touches.
 bool Device::supportsSampleCount(int count) const
 {

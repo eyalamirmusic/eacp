@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AdapterDescription.h"
 #include "../Buffer/Buffer.h"
 #include "../CommandBuffer/CommandBuffer.h"
 #include "../Pipeline/ComputePipeline.h"
@@ -156,6 +157,11 @@ public:
     // that prints one. An invalid Device names itself rather than returning
     // nothing, so a caller can print it either way.
     std::string name() const;
+
+    // The adapter's name, ids, memory, driver and API level, read once when
+    // the backend device was made, for crash-report tags. An invalid Device
+    // answers with name() and every other field at its default.
+    AdapterDescription describeAdapter() const;
 
     // Whether a render target of this many samples can be created on this
     // device - TextureDescriptor::sampleCount, and the drawable's

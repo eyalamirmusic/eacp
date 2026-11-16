@@ -189,6 +189,18 @@ std::string Device::name() const
     return getD3D12Shared().getAdapterName();
 }
 
+AdapterDescription Device::describeAdapter() const
+{
+    if (!isValid())
+    {
+        auto unavailable = AdapterDescription {};
+        unavailable.name = name();
+        return unavailable;
+    }
+
+    return getD3D12Shared().getAdapter();
+}
+
 // D3D12 answers per format rather than per device, so this asks about the two
 // formats a multisampled attachment is ever created in here: the colour targets
 // eacp makes (BGRA8, the drawable's own) and the combined depth-stencil the
