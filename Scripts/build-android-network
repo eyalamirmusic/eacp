@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Configures an Android build and builds eacp-network and the HelloNetwork app.
+set -euo pipefail
+
+buildDirectory="${1:-build-android}"
+cd "$(dirname "$0")/.."
+
+cmake -G Ninja -B "$buildDirectory" -DCMAKE_SYSTEM_NAME=Android \
+      -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
+cmake --build "$buildDirectory" --target eacp-network HelloNetwork
