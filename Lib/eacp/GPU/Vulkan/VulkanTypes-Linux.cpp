@@ -241,7 +241,9 @@ const ImageUse& VulkanTextureData::restingUse() const
     return isComputeWritable() ? imageStorage : imageSampled;
 }
 
-void VulkanTextureBindings::add(int slot, VkDescriptorType type)
+void VulkanTextureBindings::add(int slot,
+                                VkDescriptorType type,
+                                VkImageViewType viewType)
 {
     if (slot < 0 || slot >= maxTextureSlots)
         return;
@@ -255,13 +257,14 @@ void VulkanTextureBindings::add(int slot, VkDescriptorType type)
 
     declared |= 1u << slot;
     types[slot] = type;
+    viewTypes[slot] = viewType;
 }
 
 void VulkanTextureBindings::merge(const VulkanTextureBindings& other)
 {
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
         if (other.has(slot))
-            add(slot, other.typeAt(slot));
+            add(slot, other.typeAt(slot), other.viewTypeAt(slot));
 }
 
 std::uint32_t VulkanRenderPipeline::strideForSlot(int slot) const
