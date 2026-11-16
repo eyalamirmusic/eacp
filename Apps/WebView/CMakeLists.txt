@@ -11,6 +11,10 @@ add_subdirectory(FancyWindow)
 add_subdirectory(WebViewEmbed)
 add_subdirectory(WebViewReactAnim)
 add_subdirectory(WebViewTodo)
+
+# WebView::focused: two WebViews in one window, zoom acts on the focused one.
+add_subdirectory(FocusedZoom)
+
 add_subdirectory(WebViewSubApi)
 add_subdirectory(WebViewSubApiReact)
 add_subdirectory(WebViewCamera)
