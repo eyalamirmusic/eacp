@@ -59,6 +59,11 @@ public:
     // single-sample pipeline.
     void setSampleCount(int count);
 
+    // Whether the pass flush() draws into has a depth attachment - a scene's
+    // own pass does. The pipelines declare it so the pass accepts them, with
+    // the test off and no write, so text still draws over everything.
+    void setPassHasDepthAttachment(bool hasDepthAttachment);
+
     void begin();
 
     // Queues one glyph. Mask and colour glyphs go to separate queues because
@@ -94,6 +99,7 @@ private:
 
     Graphics::Point viewport {1.f, 1.f};
     int sampleCount = 1;
+    bool passHasDepthAttachment = false;
     bool prepared = false;
 };
 } // namespace eacp::Text
