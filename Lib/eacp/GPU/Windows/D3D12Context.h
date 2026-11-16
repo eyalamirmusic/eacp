@@ -494,7 +494,8 @@ public:
 
     // Offers a default-heap buffer up for reuse. Held until its fence has
     // passed, on the same terms as deferRelease, and released rather than kept
-    // if the free list is already carrying enough.
+    // if the free list is already carrying enough, or if it was made on a device
+    // this context has since replaced.
     void recycleDefaultBuffer(winrt::com_ptr<ID3D12Resource> resource,
                               std::size_t capacity,
                               D3D12_RESOURCE_FLAGS flags);
@@ -538,6 +539,8 @@ public:
     void followMainThread() { mainThreadOwned = true; }
 
 private:
+    bool isMadeOnThisDevice(ID3D12DeviceChild& object) const;
+
     struct DescriptorAllocator
     {
         winrt::com_ptr<ID3D12DescriptorHeap> heap;
