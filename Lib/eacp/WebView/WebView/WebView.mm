@@ -450,6 +450,19 @@ void webViewDelegateDidFailNavigation(
         });
 }
 
+// Reload here, not later: a deferred reload is lost in WebKit's post-crash reset.
+void webViewDelegateWebContentProcessDidTerminate(id self, SEL, WKWebView* webView)
+{
+    [webView reload];
+
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onContentProcessTerminated();
+        });
+}
+
 void webViewDelegateObserveValue(id self,
                                  SEL,
                                  NSString* keyPath,
@@ -875,6 +888,8 @@ Class getWebViewDelegateClass()
             webViewDelegateDidFailProvisionalNavigation);
         builder->addMethod(@selector(webView:didFailNavigation:withError:),
                            webViewDelegateDidFailNavigation);
+        builder->addMethod(@selector(webViewWebContentProcessDidTerminate:),
+                           webViewDelegateWebContentProcessDidTerminate);
         builder->addMethod(
             @selector(observeValueForKeyPath:ofObject:change:context:),
             webViewDelegateObserveValue);

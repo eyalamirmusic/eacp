@@ -351,6 +351,9 @@ public:
     std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};
     std::function<void(const std::string& title)> onTitleChanged = [](auto&&) {};
 
+    // The content process died (Apple; never on Windows). Re-issue a loadHTML here.
+    std::function<void()> onContentProcessTerminated = [] {};
+
     std::function<bool(OwningPointer<WebView> popup, const std::string& url)>
         onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
