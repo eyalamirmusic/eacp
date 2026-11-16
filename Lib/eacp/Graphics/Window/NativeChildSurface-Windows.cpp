@@ -40,10 +40,38 @@ const auto nativeChildClassNameStorage =
 const wchar_t* nativeChildClassName = nativeChildClassNameStorage.c_str();
 bool nativeChildClassRegistered = false;
 
+// What a container HWND's GWLP_USERDATA points at: the surface it belongs to,
+// and the surface's own record of the handle, which the window clears as it is
+// destroyed.
+//
+// The container is a child window, and a child window goes down with its
+// top-level window whether or not we destroy it. A host closing the window an
+// editor was in does exactly that, and the surface outlives it to be put in the
+// next window — where a handle kept from before would name a destroyed window,
+// or by then a stranger that reused the number, and a plugin would be parented
+// into it. WM_NCDESTROY is the last message any window receives, however it was
+// destroyed, so clearing the handle there is what lets ensureWindow make a new
+// one under the new parent.
+struct ContainerLink
+{
+    NativeChildSurface* surface = nullptr;
+    HWND hwnd = nullptr;
+};
+
+ContainerLink* linkOf(HWND hwnd)
+{
+    return reinterpret_cast<ContainerLink*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+}
+
+NativeChildSurface* surfaceOf(HWND hwnd)
+{
+    auto* link = linkOf(hwnd);
+    return link != nullptr ? link->surface : nullptr;
+}
+
 bool offerUnhandledKey(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    auto* surface = reinterpret_cast<NativeChildSurface*>(
-        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    auto* surface = surfaceOf(hwnd);
 
     if (surface == nullptr)
         return false;
@@ -74,9 +102,19 @@ LRESULT CALLBACK nativeChildWindowProc(HWND hwnd,
 
     if (msg == dpiChangedAfterParent)
     {
-        if (auto* surface = reinterpret_cast<NativeChildSurface*>(
-                GetWindowLongPtrW(hwnd, GWLP_USERDATA)))
+        if (auto* surface = surfaceOf(hwnd))
             surface->refreshPlacement();
+    }
+
+    if (msg == WM_NCDESTROY)
+    {
+        if (auto* link = linkOf(hwnd))
+        {
+            if (link->hwnd == hwnd)
+                link->hwnd = nullptr;
+
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        }
     }
 
     if (isPlainKeyMessage(msg) && offerUnhandledKey(hwnd, msg, wParam, lParam))
@@ -148,6 +186,7 @@ struct NativeChildSurface::Native
     explicit Native(NativeChildSurface& ownerToUse)
         : owner(&ownerToUse)
     {
+        link.surface = owner;
     }
 
     ~Native() { destroyWindow(); }
@@ -172,14 +211,17 @@ struct NativeChildSurface::Native
         if (host == nullptr)
             return nullptr;
 
-        if (hwnd == nullptr)
+        // Null again if the last container went down with the window it was in
+        // (see ContainerLink), so a surface moved out of a closed window gets a
+        // new one here, under the window it is in now.
+        if (link.hwnd == nullptr)
             createWindow(host);
-        else if (GetParent(hwnd) != host)
-            SetParent(hwnd, host); // The view was moved to another window.
+        else if (GetParent(link.hwnd) != host)
+            SetParent(link.hwnd, host); // The view was moved to another window.
 
         place();
 
-        return hwnd;
+        return link.hwnd;
     }
 
     void createWindow(HWND host)
@@ -197,26 +239,28 @@ struct NativeChildSurface::Native
 
         // Placed at nothing and sized by place() immediately below, so there is
         // one piece of code deciding where the surface goes.
-        hwnd = CreateWindowExW(0,
-                               nativeChildClassName,
-                               L"",
-                               style,
-                               0,
-                               0,
-                               0,
-                               0,
-                               host,
-                               nullptr,
-                               (HINSTANCE) Plugins::getCurrentModuleHandle(),
-                               nullptr);
+        link.hwnd = CreateWindowExW(0,
+                                    nativeChildClassName,
+                                    L"",
+                                    style,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    host,
+                                    nullptr,
+                                    (HINSTANCE) Plugins::getCurrentModuleHandle(),
+                                    nullptr);
 
-        if (hwnd != nullptr)
+        if (link.hwnd != nullptr)
             SetWindowLongPtrW(
-                hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(owner));
+                link.hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&link));
     }
 
     void place()
     {
+        auto hwnd = link.hwnd;
+
         if (hwnd == nullptr)
             return;
 
@@ -249,6 +293,8 @@ struct NativeChildSurface::Native
 
     void setVisible(bool shouldBeVisible)
     {
+        auto hwnd = link.hwnd;
+
         if (hwnd == nullptr)
             return;
 
@@ -267,6 +313,8 @@ struct NativeChildSurface::Native
     // is a backstop rather than the normal path.
     void destroyWindow()
     {
+        auto hwnd = link.hwnd;
+
         if (hwnd == nullptr)
             return;
 
@@ -282,11 +330,15 @@ struct NativeChildSurface::Native
 
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         DestroyWindow(hwnd);
-        hwnd = nullptr;
+        link.hwnd = nullptr;
     }
 
     NativeChildSurface* owner {};
-    HWND hwnd {};
+
+    // The container and the surface it belongs to, which the container's
+    // GWLP_USERDATA points at. A member so its address is the surface's for
+    // the surface's whole life.
+    ContainerLink link;
 };
 
 NativeChildSurface::NativeChildSurface()
