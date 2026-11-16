@@ -151,11 +151,12 @@ auto tMouseWheelScrollsPage = test("WebViewMouse/wheelScrollsThePage") = []
 
     auto wheel = createMouseEvent(MouseEventType::Wheel, clickPosition);
     wheel.delta = Point {0, wheelLinesTowardTheEnd};
-    fix.getRoutedView().mouseWheel(wheel);
-
+    // Sent again on every poll: in full runs and on CI a single wheel sent
+    // straight after the first navigation sometimes never scrolls the page.
     check(Threads::runEventLoopUntil(
-        [&fix]
+        [&fix, &wheel]
         {
+            fix.getRoutedView().mouseWheel(wheel);
             return fix.webView.callJS("String(window.scrollY > 0)")
                        .waitFor(webViewResultTimeout)
                    == "true";
