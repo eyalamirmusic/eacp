@@ -3,6 +3,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <thread>
 
@@ -27,6 +28,16 @@ constexpr auto headerSize = 4;
 // Refuses lengths no honest peer would send, so a framing bug surfaces as
 // an error instead of a gigabyte allocation.
 constexpr auto maxMessageSize = 1 << 30;
+
+// A peer that leaves this much unread has stopped reading; the conversation
+// ends rather than the outbox growing without limit.
+constexpr auto maxUnsentBytes = std::size_t {64} << 20;
+
+// Teardown gives queued messages this long to reach a peer that is still
+// reading, so a last word sent just before destruction is not lost.
+constexpr auto unsentFlushLimit = Time::MS {1000};
+
+constexpr auto streamThreadCount = 2;
 
 Array<char, headerSize> encodeHeader(int size)
 {
@@ -102,9 +113,9 @@ std::optional<std::string> receiveFrame(Channel& channel)
 
 // Shared with every delivery queued onto the main thread: a delivery that
 // fires after the Messenger died still finds the stop flag (and backs off)
-// instead of dangling. The mutex guards the channel's existence for
-// senders; the reader uses it without locking, which the Channel's
-// one-sender-one-receiver contract allows.
+// instead of dangling. The channel is emplaced once and then only closed by
+// whichever stream thread leaves last, so the reader and the writer use it
+// without locking, as the Channel's one-sender-one-receiver contract allows.
 struct Messenger::Impl
 {
     std::string name;
@@ -112,13 +123,21 @@ struct Messenger::Impl
 
     std::mutex mutex;
     std::optional<Channel> channel;
+    std::atomic<bool> connected = false;
+    std::atomic<bool> conversationEnded = false;
 
     std::atomic<bool> stop = false;
     std::atomic<bool> workerDone = false;
+    std::atomic<bool> writerDone = false;
+    std::atomic<int> streamThreadsRunning = streamThreadCount;
     std::thread worker;
+    std::thread writer;
 
     std::mutex stopMutex;
     std::condition_variable stopSignal;
+
+    std::deque<std::string> outbox;
+    std::size_t unsentBytes = 0;
 
     void requestStop()
     {
@@ -128,6 +147,86 @@ struct Messenger::Impl
         }
 
         stopSignal.notify_all();
+    }
+
+    void endConversation()
+    {
+        {
+            auto guard = std::lock_guard {stopMutex};
+            connected = false;
+            conversationEnded = true;
+            outbox.clear();
+            unsentBytes = 0;
+        }
+
+        stopSignal.notify_all();
+    }
+
+    void adoptDialedChannel(Channel opened)
+    {
+        {
+            auto guard = std::lock_guard {mutex};
+            channel.emplace(std::move(opened));
+        }
+
+        {
+            auto guard = std::lock_guard {stopMutex};
+            connected = true;
+        }
+
+        stopSignal.notify_all();
+    }
+
+    void interruptChannel()
+    {
+        auto guard = std::lock_guard {mutex};
+
+        if (channel)
+            channel->interrupt();
+    }
+
+    void closeChannelIfLastStreamThread()
+    {
+        if (streamThreadsRunning.fetch_sub(1) != 1 || stop)
+            return;
+
+        auto guard = std::lock_guard {mutex};
+        channel.reset();
+    }
+
+    [[nodiscard]] bool hasMessageToWrite() const
+    {
+        return !stop && connected && !outbox.empty();
+    }
+
+    [[nodiscard]] bool isWriterNeeded() const
+    {
+        return stop || conversationEnded || workerDone || hasMessageToWrite();
+    }
+
+    void markSent(std::size_t byteCount)
+    {
+        {
+            auto guard = std::lock_guard {stopMutex};
+
+            if (!conversationEnded)
+                unsentBytes -= byteCount;
+        }
+
+        stopSignal.notify_all();
+    }
+
+    void waitForUnsentMessagesToLeave()
+    {
+        auto guard = std::unique_lock {stopMutex};
+        auto isFlushed = [this] { return conversationEnded || unsentBytes == 0; };
+        stopSignal.wait_for(
+            guard, std::chrono::milliseconds(unsentFlushLimit.count), isFlushed);
+    }
+
+    [[nodiscard]] bool areStreamThreadsDone() const
+    {
+        return workerDone && writerDone;
     }
 
     void waitBeforeRetrying(Time::MS interval)
@@ -151,45 +250,49 @@ Messenger::Messenger(Channel connectedChannel)
     : impl(std::make_shared<Impl>())
 {
     impl->channel.emplace(std::move(connectedChannel));
+    impl->connected = true;
 }
 
 Messenger::~Messenger()
 {
+    impl->waitForUnsentMessagesToLeave();
     impl->requestStop();
 
-    // Interrupt until the reader acknowledges: on POSIX the first pass
-    // wakes it for good; on Windows a cancel only reaches a read already
-    // in flight, so keep knocking (see Channel::interrupt).
-    while (impl->worker.joinable() && !impl->workerDone)
+    // Interrupt until both stream threads acknowledge: on POSIX the first
+    // pass wakes them for good; on Windows a cancel only reaches I/O
+    // already in flight, so keep knocking (see Channel::interrupt).
+    while (impl->worker.joinable() && !impl->areStreamThreadsDone())
     {
-        {
-            auto guard = std::lock_guard {impl->mutex};
-
-            if (impl->channel)
-                impl->channel->interrupt();
-        }
-
+        impl->interruptChannel();
         Time::sleep(interruptRetry);
     }
 
     if (impl->worker.joinable())
         impl->worker.join();
+
+    if (impl->writer.joinable())
+        impl->writer.join();
 }
 
 void Messenger::begin()
 {
+    impl->writer = std::thread([this] { writeUntilGone(); });
     impl->worker = std::thread([this] { work(); });
+}
+
+void Messenger::abandonUnsentMessages()
+{
+    impl->endConversation();
 }
 
 bool Messenger::finished() const
 {
-    return impl->workerDone;
+    return impl->areStreamThreadsDone();
 }
 
 bool Messenger::isConnected() const
 {
-    auto guard = std::lock_guard {impl->mutex};
-    return impl->channel && impl->channel->isOpen();
+    return impl->connected;
 }
 
 void Messenger::send(const std::string& message)
@@ -197,22 +300,75 @@ void Messenger::send(const std::string& message)
     if (message.size() > (std::size_t) maxMessageSize)
         throw Error("message is too large to frame");
 
-    auto guard = std::lock_guard {impl->mutex};
+    auto isOverflowing = false;
 
-    if (!impl->channel || !impl->channel->isOpen())
+    {
+        auto guard = std::lock_guard {impl->stopMutex};
+
+        if (!impl->connected)
+            return;
+
+        isOverflowing = !impl->outbox.empty()
+                        && impl->unsentBytes + message.size() > maxUnsentBytes;
+
+        if (!isOverflowing)
+        {
+            impl->outbox.push_back(message);
+            impl->unsentBytes += message.size();
+        }
+    }
+
+    if (isOverflowing)
+    {
+        impl->endConversation();
+        impl->interruptChannel();
         return;
+    }
 
+    impl->stopSignal.notify_all();
+}
+
+std::optional<std::string> Messenger::takeNextUnsentMessage()
+{
+    auto guard = std::unique_lock {impl->stopMutex};
+    impl->stopSignal.wait(guard, [this] { return impl->isWriterNeeded(); });
+
+    if (!impl->hasMessageToWrite())
+        return std::nullopt;
+
+    auto message = std::move(impl->outbox.front());
+    impl->outbox.pop_front();
+    return message;
+}
+
+void Messenger::writeUntilGone()
+{
     try
     {
-        // Header and payload go out as two writes so framing never copies
-        // the payload - the mutex keeps them adjacent on the stream.
-        auto header = encodeHeader((int) message.size());
-        impl->channel->send({header.data(), (std::size_t) headerSize});
-        impl->channel->send(message);
+        while (auto message = takeNextUnsentMessage())
+        {
+            auto header = encodeHeader((int) message->size());
+            impl->channel->send({header.data(), (std::size_t) headerSize});
+            impl->channel->send(*message);
+            impl->markSent(message->size());
+        }
     }
     catch (const Error&)
     {
-        // The reader is about to hear the same news and report it.
+        impl->endConversation();
+    }
+
+    interruptUntilReaderLeaves();
+    impl->writerDone = true;
+    impl->closeChannelIfLastStreamThread();
+}
+
+void Messenger::interruptUntilReaderLeaves()
+{
+    while (!impl->workerDone && !impl->stop)
+    {
+        impl->interruptChannel();
+        Time::sleep(interruptRetry);
     }
 }
 
@@ -225,7 +381,7 @@ void Messenger::work()
         if (!impl->stop)
             notifyMain([this] { onDisconnected(); });
 
-        impl->workerDone = true;
+        finishReading();
         return;
     }
 
@@ -233,7 +389,33 @@ void Messenger::work()
         notifyMain([this] { onConnected(); });
 
     readUntilGone();
-    impl->workerDone = true;
+    finishReading();
+}
+
+void Messenger::finishReading()
+{
+    {
+        auto guard = std::lock_guard {impl->stopMutex};
+        impl->connected = false;
+        impl->conversationEnded = true;
+        impl->workerDone = true;
+    }
+
+    impl->stopSignal.notify_all();
+    impl->closeChannelIfLastStreamThread();
+}
+
+bool Messenger::tryConnectingOnce()
+{
+    try
+    {
+        impl->adoptDialedChannel(Channel::connect(impl->name, Time::MS {0}));
+        return true;
+    }
+    catch (const Error&)
+    {
+        return false;
+    }
 }
 
 bool Messenger::dial()
@@ -242,19 +424,11 @@ bool Messenger::dial()
 
     while (!impl->stop)
     {
-        try
-        {
-            auto opened = Channel::connect(impl->name, Time::MS {0});
-
-            auto guard = std::lock_guard {impl->mutex};
-            impl->channel.emplace(std::move(opened));
+        if (tryConnectingOnce())
             return true;
-        }
-        catch (const Error&)
-        {
-            if (deadline.expired())
-                return false;
-        }
+
+        if (deadline.expired())
+            return false;
 
         auto remaining = deadline.remaining();
         impl->waitBeforeRetrying(remaining < dialRetry ? remaining : dialRetry);
@@ -292,11 +466,7 @@ void Messenger::readUntilGone()
     if (impl->stop)
         return;
 
-    {
-        auto guard = std::lock_guard {impl->mutex};
-        impl->channel.reset();
-    }
-
+    impl->endConversation();
     notifyMain([this] { onDisconnected(); });
 }
 
@@ -357,7 +527,11 @@ MessageServer::~MessageServer()
 
     // The sessions die here, on the main thread, not whenever the last
     // queued delivery lets go of impl: each Messenger destructor is what
-    // guarantees its callbacks never fire again.
+    // guarantees its callbacks never fire again. A closing server owes its
+    // clients nothing more, so no session waits to flush.
+    for (auto& session: impl->sessions)
+        session->abandonUnsentMessages();
+
     impl->sessions.clear();
     impl->ending.clear();
 }
