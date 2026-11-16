@@ -28,6 +28,7 @@ if (NOT IOS)
             IpcChannelTests.cpp
             IpcLockTests.cpp
             IpcMessengerTests.cpp
+            IpcRecoveryTests.cpp
             IpcRpcTests.cpp)
 endif ()
 
@@ -48,4 +49,9 @@ if (NOT IOS)
             EACP_IPC_LOCK_HARNESS="$<TARGET_FILE:IpcLockHarness>"
             EACP_IPC_CHANNEL_HARNESS="$<TARGET_FILE:IpcChannelHarness>")
     add_dependencies(NetworkTests IpcLockHarness IpcChannelHarness)
+
+    # Replaces the global allocator, so it cannot share a binary.
+    nano_add_executable(IpcSessionReuseTests
+            SOURCES IpcSessionReuseTests.cpp
+            TARGETS eacp-network-rpc)
 endif ()
