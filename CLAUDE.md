@@ -1300,6 +1300,24 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `CFRef<T>`: RAII wrapper for Core Foundation types
 - `AutoReleasePool`: RAII wrapper for NSAutoreleasePool
 
+**Platform/** - What the app runs on and what it uses of it
+- `Platform.h`: the compile-time OS checks, `isStandalone`/`isDLL`, AppInfo
+- `MachineUsage.h`, for telemetry: `getMemoryUsage()` is this process's
+  memory as the platform's monitor shows it (`phys_footprint` on Apple, the
+  private working set on Windows, resident pages from `/proc/self/statm` on
+  Linux and Android) and the machine's total and used memory, used being the
+  total less what is available (Activity Monitor's "Memory Used" on Apple,
+  `MemAvailable` on Linux, `ullAvailPhys` on Windows); a figure the system
+  would not give is 0. `CpuLoadMeter::measureSinceLastCall()` is a
+  `CpuLoad`: the cores this process kept busy since the last call (or since
+  construction), process CPU time over steady-clock time, not divided by the
+  core count, and `systemFraction`, the whole machine's busy share from
+  `host_statistics`, `GetSystemTimes` or `/proc/stat`, empty where it cannot
+  be read, which is every Android app since 8. Windows counts CPU time in
+  15.6 ms ticks, so closer calls read in whole ticks there.
+  `Tests/Core/MachineUsageTests.cpp` (8 `MachineUsage/` cases);
+  `Apps/Console/MachineUsage [--busy-threads N]` prints both once a second
+
 **Utils/** - Generic patterns
 - `FilePath::appSupportDirectory()` / `appCacheDirectory()`: this app's own
   folder under the per-user data and cache roots, `<root>/<Company>/<App>`.

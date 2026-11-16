@@ -127,6 +127,8 @@ explains how a frame is built.
   written in bounded memory.
 - **Processes** — a child with args, env, stdin and captured output, and a
   build runner that reruns one command on demand.
+- **CPU and memory use** — how many cores the app keeps busy and how much
+  memory it holds, and the same for the whole machine, for telemetry.
 - **Plugins and hot reload** — shared libraries loaded at runtime, and a
   function or object rebuilt on save and swapped into the running app
   ([`Docs/HotReload.md`](Docs/HotReload.md)).
