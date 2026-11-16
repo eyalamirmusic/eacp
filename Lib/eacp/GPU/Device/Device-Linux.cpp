@@ -147,6 +147,11 @@ std::string Device::name() const
     return getVulkanShared().getAdapterName();
 }
 
+AdapterDescription Device::describeValidAdapter() const
+{
+    return getVulkanShared().getAdapterDescription();
+}
+
 // The intersection of the three masks a pass touches.
 bool Device::supportsSampleCount(int count) const
 {
