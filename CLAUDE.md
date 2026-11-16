@@ -1300,6 +1300,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `CFRef<T>`: RAII wrapper for Core Foundation types
 - `AutoReleasePool`: RAII wrapper for NSAutoreleasePool
 
+**Platform/** - What the app runs on and what it uses of it
+- `Platform.h`: the compile-time OS checks, `isStandalone`/`isDLL`, AppInfo
+- `MachineUsage.h`: `getMemoryUsage()` and `CpuLoadMeter`, this process's and
+  the machine's memory and CPU use, for telemetry
+
 **Utils/** - Generic patterns
 - `FilePath::appSupportDirectory()` / `appCacheDirectory()`: this app's own
   folder under the per-user data and cache roots, `<root>/<Company>/<App>`.
