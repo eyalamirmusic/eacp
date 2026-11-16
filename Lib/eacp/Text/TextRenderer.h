@@ -91,6 +91,10 @@ public:
     // a multisampled scene.
     void setSampleCount(int count);
 
+    // Whether that pass has a depth attachment, as a scene's own pass does.
+    // Text is drawn over it either way: the depth test is off.
+    void setPassHasDepthAttachment(bool hasDepthAttachment);
+
     // The face used by the calls that name none. Changing it costs nothing but
     // the glyphs of the new face: sizes coexist in one atlas, so the old one is
     // still there for whatever is still drawing in it.
@@ -191,6 +195,7 @@ private:
     Graphics::Point viewportSize {0.0f, 0.0f};
     float deviceScale = 1.0f;
     int sampleCount = 1;
+    bool passHasDepthAttachment = false;
 
     OwningPointer<GlyphAtlas> atlas;
     std::optional<GlyphRenderer> glyphs;
