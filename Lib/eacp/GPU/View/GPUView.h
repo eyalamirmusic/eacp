@@ -134,6 +134,15 @@ public:
     void setFramesInFlight(int count);
     int framesInFlight() const;
 
+    // Renders fewer pixels than the view covers and lets the window system
+    // stretch them over it: 0.5 draws a quarter of them. Clamped to [0.25, 1].
+    // Layout and input stay in points; Frame::pixelSize() and backingScale()
+    // report the smaller drawable. No effect on X11 or on Wayland without
+    // wp_viewporter, where renderScale() still reports what was asked for.
+    // GPU/README.md, "Rendering fewer pixels than the view covers", has more.
+    void setRenderScale(float scale);
+    float renderScale() const;
+
     // Device pixels per logical point for the display this view is on: 2 on a
     // Retina screen, 1 on a conventional one, and fractional under a Windows
     // display scale. The public geometry (Rect, Point, the view's bounds) is all
@@ -204,7 +213,9 @@ private:
     // backingScale() reports then, so the masks, glyphs and scissor rects of
     // that frame are built for the pixels it is rendered into rather than for
     // the display the view happens to be on. Zero between renders.
-    float renderScale = 0.f;
+    float snapshotScale = 0.f;
+
+    static float clampRenderScale(float scale);
 
     struct Native;
     Pimpl<Native> impl;
