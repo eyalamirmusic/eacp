@@ -27,6 +27,14 @@ void TextRenderer::setSampleCount(int count)
         glyphs->setSampleCount(count);
 }
 
+void TextRenderer::setPassHasDepthAttachment(bool hasDepthAttachment)
+{
+    passHasDepthAttachment = hasDepthAttachment;
+
+    if (glyphs.has_value())
+        glyphs->setPassHasDepthAttachment(hasDepthAttachment);
+}
+
 void TextRenderer::setFont(const Font& font)
 {
     defaultFont = font;
@@ -101,6 +109,7 @@ void TextRenderer::begin()
     {
         glyphs.emplace();
         glyphs->setSampleCount(sampleCount);
+        glyphs->setPassHasDepthAttachment(passHasDepthAttachment);
     }
 
     glyphs->setViewportSize(viewportSize);
