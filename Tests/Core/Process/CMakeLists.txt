@@ -1,6 +1,7 @@
 # The Process cases relaunch ProcessTests itself as their child
 # (ProcessChildModes, dispatched from TestMain.cpp), so they need no shell.
 set(process_test_sources
+        ProcessChildEnvironmentTests.cpp
         ProcessChildModes.cpp
         ProcessConcurrentPipesTests.cpp
         ProcessInheritStdioTests.cpp
