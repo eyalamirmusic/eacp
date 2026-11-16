@@ -10,6 +10,17 @@ using eacp::Threads::callAsync;
 
 namespace
 {
+struct Refusal : std::runtime_error
+{
+    explicit Refusal(int codeToUse)
+        : std::runtime_error("refused")
+        , code(codeToUse)
+    {
+    }
+
+    int code;
+};
+
 Async<int> coroReturning(int value)
 {
     co_return value;
@@ -30,6 +41,32 @@ Async<int> coroThatThrows()
 {
     throw std::runtime_error("boom");
     co_return 0;
+}
+
+Async<int> coroThatRefuses(int code)
+{
+    throw Refusal {code};
+    co_return 0;
+}
+
+Async<int> coroThatThrowsNonStd()
+{
+    throw 7;
+    co_return 0;
+}
+
+Async<int> coroCatchingRefusal(Async<int> upstream)
+{
+    try
+    {
+        co_await std::move(upstream);
+    }
+    catch (const Refusal& refusal)
+    {
+        co_return refusal.code;
+    }
+
+    co_return -1;
 }
 
 Async<int> coroChain(AsyncPromise<int> a, AsyncPromise<int> b)
@@ -84,12 +121,75 @@ auto tCoroExceptionBecomesRejection =
     {
         coro.waitFor(eacp::Time::MS {1000});
     }
-    catch (const AsyncError& e)
+    catch (const std::runtime_error& e)
     {
         threw = true;
         check(std::string {e.what()} == "boom");
     }
     check(threw);
+};
+
+auto tCoroTypedExceptionSurvivesAwait =
+    test("Async/coro/typedExceptionSurvivesAwait") = []
+{
+    auto result =
+        coroCatchingRefusal(coroThatRefuses(42)).waitFor(eacp::Time::MS {1000});
+    check(result == 42);
+};
+
+auto tCoroTypedExceptionSurvivesPendingAwait =
+    test("Async/coro/typedExceptionSurvivesPendingAwait") = []
+{
+    auto producer = AsyncPromise<int>();
+    auto coro = coroCatchingRefusal(producer.get());
+
+    callAsync([producer] { producer.reject(std::make_exception_ptr(Refusal {9})); });
+
+    check(coro.waitFor(eacp::Time::MS {1000}) == 9);
+};
+
+auto tCoroTypedExceptionSurvivesWaitFor =
+    test("Async/coro/typedExceptionSurvivesWaitFor") = []
+{
+    auto code = 0;
+    try
+    {
+        coroThatRefuses(5).waitFor(eacp::Time::MS {1000});
+    }
+    catch (const Refusal& refusal)
+    {
+        code = refusal.code;
+    }
+    check(code == 5);
+};
+
+auto tCoroTypedExceptionReachesErrorCallbackAsMessage =
+    test("Async/coro/typedExceptionReachesErrorCallbackAsMessage") = []
+{
+    auto received = std::string();
+    coroThatRefuses(1).then([](int) {}, [&](const std::string& e) { received = e; });
+    check(received == "refused");
+};
+
+auto tCoroNonStdExceptionSurvivesWaitFor =
+    test("Async/coro/nonStdExceptionSurvivesWaitFor") = []
+{
+    auto coro = coroThatThrowsNonStd();
+
+    auto received = std::string();
+    coro.then([](int) {}, [&](const std::string& e) { received = e; });
+    check(received == "Unknown exception in Async coroutine");
+
+    auto thrown = 0;
+    try
+    {
+        coro.waitFor(eacp::Time::MS {1000});
+    }
+    catch (int value)
+    {
+        thrown = value;
+    }
+    check(thrown == 7);
 };
 
 auto tCoroChainsMultipleAwaits = test("Async/coro/chainsMultipleAwaits") = []
