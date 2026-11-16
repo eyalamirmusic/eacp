@@ -24,3 +24,9 @@ add_subdirectory(WebViewToggle)
 
 # Options::userAgent and Options::loadDeclinedPopupsInline, tested by one page.
 add_subdirectory(UserAgent)
+
+# WebView::onContentProcessTerminated: a button kills the page's content process
+# and the page comes back on its own. WKWebView's, so macOS only.
+if (APPLE AND NOT IOS)
+    add_subdirectory(ContentProcessRecovery)
+endif ()
