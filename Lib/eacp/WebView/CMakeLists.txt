@@ -19,7 +19,8 @@ target_sources(eacp-webview-bridge PRIVATE
         WebView/Bridge.cpp
         WebView/JsStringLiteral.cpp
         WebView/ScriptHost.cpp
-        WebView/StateBridge.cpp)
+        WebView/StateBridge.cpp
+        WebView/WebViewMessages.cpp)
 
 # The bridge's own page script, embedded for
 # ResEmbed::get("bridge-shim.js", "EacpWebView"). Its own NAMESPACE (the
@@ -103,6 +104,10 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-webview PRIVATE
             WebView/WebView-Windows.cpp
+            WebView/WebViewCreation-Windows.cpp
+            WebView/WebViewEvents-Windows.cpp
+            WebView/WebViewInput-Windows.cpp
+            WebView/WebViewResources-Windows.cpp
             WebView/FileDrag-Windows.cpp)
 
     find_package(WebView2 REQUIRED)
