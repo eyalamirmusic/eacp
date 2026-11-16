@@ -78,6 +78,10 @@ void channelCancel(NativeChannel channel) noexcept;
 // safe to call.
 void channelClose(NativeChannel channel) noexcept;
 
+// Closes a connected endpoint without waiting for the peer to read what was
+// written; unread bytes are dropped. A no-op on invalidChannel.
+void channelCloseWithoutWaiting(NativeChannel channel) noexcept;
+
 // Closes the listening endpoint and retires its name (POSIX unlinks the
 // socket file; the caller still holds the server lock, so no successor can
 // be mid-bind). A no-op on invalidChannel.
