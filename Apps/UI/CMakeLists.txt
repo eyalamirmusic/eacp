@@ -68,3 +68,7 @@ add_subdirectory(GPUComponents)
 # A layout function rebuilt and reloaded on save under EACP_HOT_RELOAD, and
 # compiled into the app as it stands otherwise.
 add_subdirectory(HotReload)
+
+# Graphics::GlobalMouseMonitor: mouse events from anywhere on the desktop, of
+# the kinds ticked in the window, listed as they arrive. Never fires on Linux.
+add_subdirectory(GlobalMouseMonitorDemo)
