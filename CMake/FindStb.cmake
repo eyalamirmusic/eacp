@@ -10,7 +10,8 @@ CPMAddPackage(
         NAME stb
         GITHUB_REPOSITORY nothings/stb
         GIT_TAG 4e9b368bfc071e97206ea5c6adba68dd0cbf8897
-        DOWNLOAD_ONLY YES)
+        DOWNLOAD_ONLY YES
+        ${EACP_FETCH_QUIET})
 
 if (NOT TARGET eacp-stb)
     add_library(eacp-stb INTERFACE)

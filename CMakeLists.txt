@@ -4,6 +4,14 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android" AND NOT CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/CMake/AndroidToolchain.cmake")
 endif ()
 
+option(EACP_WASM_SETUP "Default WASM setup" OFF)
+
+if (EACP_WASM_SETUP)
+    if (APPLE)
+        set(CMAKE_TOOLCHAIN_FILE "/opt/homebrew/opt/emscripten/libexec/cmake/Modules/Platform/Emscripten.cmake" CACHE INTERNAL "")
+    endif ()
+endif ()
+
 project(eacp VERSION 0.1.0 LANGUAGES C CXX)
 
 # The web is wasm32 by design: wasm64 is not what browsers run by default.
@@ -139,6 +147,8 @@ set(EACP_HAS_COREML OFF)
 if (EACP_HAS_GPU AND APPLE)
     set(EACP_HAS_COREML ON)
 endif ()
+
+
 
 include(TargetSetup)
 include(EacpSchema)

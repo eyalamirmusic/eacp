@@ -43,7 +43,7 @@ endif ()
 # prints a sub-build configure report and nine build lines. The packages that
 # are added as subdirectories go through FetchContent_MakeAvailable, which
 # FETCHCONTENT_QUIET already covers. CPM hashes a package's arguments into its
-# CPM_SOURCE_CACHE directory name, so flipping this re-downloads those three
+# CPM_SOURCE_CACHE directory name, so flipping this re-downloads those four
 # once for anyone who keeps such a cache; nothing here does.
 set(EACP_FETCH_QUIET QUIET)
 
