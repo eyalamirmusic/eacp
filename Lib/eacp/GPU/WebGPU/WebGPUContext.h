@@ -5,16 +5,18 @@
 #include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <webgpu/webgpu_cpp.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
+#include <utility>
 
 namespace eacp::GPU
 {
@@ -56,14 +58,14 @@ struct WebGPUBinding
     wgpu::StorageTextureAccess storageAccess = wgpu::StorageTextureAccess::WriteOnly;
 };
 
-std::vector<WebGPUBinding> scanWgslBindings(std::string_view source);
+Vector<WebGPUBinding> scanWgslBindings(std::string_view source);
 
 // A compiled module and what it declares, which is what every pipeline built
 // from the library reads.
 struct WebGPUShaderProgram
 {
     wgpu::ShaderModule module;
-    std::vector<WebGPUBinding> bindings;
+    Vector<WebGPUBinding> bindings;
     std::string source;
 };
 
@@ -80,7 +82,7 @@ struct WebGPUStorageFormat
 // given for its binding: WGSL fixes the format in the declaration, where MSL,
 // HLSL and GLSL's unformatted writes take it from the texture bound.
 std::string withStorageFormats(std::string source,
-                               const std::vector<WebGPUStorageFormat>& formats);
+                               const Vector<WebGPUStorageFormat>& formats);
 
 wgpu::ShaderModule makeWgslModule(const wgpu::Device& device,
                                   std::string_view source);
@@ -91,7 +93,7 @@ struct WebGPUBindingLayout
 {
     wgpu::BindGroupLayout group;
     wgpu::PipelineLayout pipeline;
-    std::vector<WebGPUBinding> bindings;
+    Vector<WebGPUBinding> bindings;
 };
 
 // A compute pipeline, and the same kernel rebuilt for storage textures bound
@@ -101,9 +103,8 @@ struct WebGPUComputePipeline
     wgpu::ComputePipeline pipeline;
     WebGPUBindingLayout layout;
 
-    std::function<const WebGPUComputePipeline*(
-        const std::vector<WebGPUStorageFormat>&)>
-        variantFor = [](const std::vector<WebGPUStorageFormat>&)
+    std::function<const WebGPUComputePipeline*(const Vector<WebGPUStorageFormat>&)>
+        variantFor = [](const Vector<WebGPUStorageFormat>&)
     { return static_cast<const WebGPUComputePipeline*>(nullptr); };
 };
 
@@ -116,7 +117,7 @@ struct WebGPURenderPipeline
     WebGPUBindingLayout layout;
     std::function<wgpu::RenderPipeline(wgpu::TextureFormat)> build =
         [](wgpu::TextureFormat) { return wgpu::RenderPipeline {}; };
-    std::vector<std::pair<wgpu::TextureFormat, wgpu::RenderPipeline>> variants;
+    Vector<std::pair<wgpu::TextureFormat, wgpu::RenderPipeline>> variants;
     bool valid = false;
 };
 
@@ -129,8 +130,8 @@ struct WebGPUConstantEntries
     WebGPUConstantEntries(const WebGPUConstantEntries&) = delete;
     WebGPUConstantEntries& operator=(const WebGPUConstantEntries&) = delete;
 
-    std::vector<std::string> keys;
-    std::vector<wgpu::ConstantEntry> entries;
+    Vector<std::string> keys;
+    Vector<wgpu::ConstantEntry> entries;
 };
 
 // One command encoder: the recording a Frame or a CommandBuffer fills, and
@@ -255,7 +256,7 @@ private:
     Resource& resourceAt(int binding);
     const Resource* findResource(int binding) const;
 
-    std::vector<Resource> resources;
+    Vector<Resource> resources;
     bool dirty = true;
 };
 
@@ -277,7 +278,7 @@ public:
     // Device::storageBufferOffsetAlignment. A bind off it binds nothing.
     bool isStorageOffset(std::uint64_t offset) const;
 
-    std::unique_ptr<WebGPURecording> beginRecording();
+    OwningPointer<WebGPURecording> beginRecording();
     void submit(WebGPURecording& recording);
 
     WebGPUUniformSlice uploadUniforms(WebGPURecording& recording,
@@ -293,7 +294,7 @@ public:
     wgpu::TextureView getEmptyTextureView(const WebGPUBinding& binding);
     wgpu::Sampler getEmptySampler(wgpu::SamplerBindingType type);
 
-    WebGPUBindingLayout makeBindingLayout(const std::vector<WebGPUBinding>& bindings,
+    WebGPUBindingLayout makeBindingLayout(const Vector<WebGPUBinding>& bindings,
                                           bool compute);
 
     // Blocks until everything submitted has finished, where waiting is possible.
@@ -313,7 +314,7 @@ private:
 
     std::array<wgpu::Sampler, samplingConfigurations> samplers;
     wgpu::Buffer emptyBuffer;
-    std::vector<std::pair<std::string, wgpu::TextureView>> emptyViews;
+    Vector<std::pair<std::string, wgpu::TextureView>> emptyViews;
     wgpu::Sampler emptyFiltering;
     wgpu::Sampler emptyComparison;
 };
@@ -335,4 +336,8 @@ wgpu::CompareFunction toWGPUCompare(CompareFunction compare);
 wgpu::TextureViewDimension sampledDimension(TextureType kind);
 
 std::uint64_t alignTo(std::uint64_t value, std::uint64_t alignment);
+
+// A buffer's byte count as the host's size_t, which is 32 bits on wasm32:
+// anything mapped or copied into memory already fits in the address space.
+std::size_t toHostSize(std::uint64_t bytes);
 } // namespace eacp::GPU

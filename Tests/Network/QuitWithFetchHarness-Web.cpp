@@ -1,7 +1,6 @@
 #include <eacp/Core/Core.h>
 #include <eacp/Network/Network.h>
 
-#include <memory>
 #include <tuple>
 
 using namespace eacp;
@@ -10,7 +9,7 @@ struct QuitWithFetchHarness
 {
     QuitWithFetchHarness()
     {
-        auto args = Apps::commandLineArgs();
+        const auto& args = Apps::commandLineArgs();
 
         if (args.size() < 2)
         {
@@ -19,14 +18,13 @@ struct QuitWithFetchHarness
             return;
         }
 
-        auto server = args.back();
+        const auto& server = args.back();
 
         HTTP::asyncRequest(HTTP::Request {server + "/slow-headers?ms=800"},
                            [this](const HTTP::Response&)
                            { fail("the request answered before the quit"); });
 
-        webSocket = std::make_unique<WebSocket::Connection>(
-            "ws" + server.substr(4) + "/ws", WebSocket::Callbacks {});
+        webSocket.create("ws" + server.substr(4) + "/ws", WebSocket::Callbacks {});
 
         Threads::callAfter(Time::MS {200}, [this] { quitWithBothInFlight(); });
     }
@@ -53,7 +51,7 @@ struct QuitWithFetchHarness
 
     void leaveTheSocketOpenAcrossTheExit() { std::ignore = webSocket.release(); }
 
-    std::unique_ptr<WebSocket::Connection> webSocket;
+    OwningPointer<WebSocket::Connection> webSocket;
     bool failed = false;
 };
 

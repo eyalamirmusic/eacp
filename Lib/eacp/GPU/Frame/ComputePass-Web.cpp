@@ -7,8 +7,6 @@
 #include "../WebGPU/WebGPUContext.h"
 
 #include <algorithm>
-#include <memory>
-#include <vector>
 
 namespace eacp::GPU
 {
@@ -97,7 +95,7 @@ struct ComputePass::Native
             }
         }
 
-        storageFormats.push_back({binding, format});
+        storageFormats.create(binding, format);
     }
 
     wgpu::TextureFormat boundStorageFormat(int binding) const
@@ -113,7 +111,7 @@ struct ComputePass::Native
     // they differ from the ones its WGSL declares.
     const WebGPUComputePipeline* pipelineForBoundFormats() const
     {
-        auto wanted = std::vector<WebGPUStorageFormat> {};
+        auto wanted = Vector<WebGPUStorageFormat> {};
         auto differs = false;
 
         for (const auto& binding: pipeline->layout.bindings)
@@ -126,7 +124,7 @@ struct ComputePass::Native
             if (bound == wgpu::TextureFormat::Undefined)
                 continue;
 
-            wanted.push_back({binding.binding, bound});
+            wanted.create(binding.binding, bound);
             differs = differs || bound != binding.storageFormat;
         }
 
@@ -164,12 +162,12 @@ struct ComputePass::Native
         return true;
     }
 
-    std::unique_ptr<WebGPUComputeEncoder> encoder;
+    OwningPointer<WebGPUComputeEncoder> encoder;
     WebGPUContext* contextPointer = nullptr;
     const WebGPUComputePipeline* pipeline = nullptr;
     const WebGPUComputePipeline* active = nullptr;
     WebGPUBindingTable bindings;
-    std::vector<WebGPUStorageFormat> storageFormats;
+    Vector<WebGPUStorageFormat> storageFormats;
     wgpu::BindGroup group;
 };
 

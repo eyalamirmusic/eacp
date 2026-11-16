@@ -6,7 +6,6 @@
 #include <eacp/Core/Utils/Logging.h>
 
 #include <cstring>
-#include <vector>
 
 namespace eacp::GPU
 {
@@ -54,14 +53,15 @@ struct Buffer::Native
         if (bufferData.buffer == nullptr)
             return;
 
-        auto* mapped = bufferData.buffer.GetMappedRange(0, descriptor.size);
+        const auto mappedSize = toHostSize(descriptor.size);
+        auto* mapped = bufferData.buffer.GetMappedRange(0, mappedSize);
 
         if (mapped != nullptr)
         {
-            std::memset(mapped, 0, descriptor.size);
+            std::memset(mapped, 0, mappedSize);
 
             if (data != nullptr)
-                std::memcpy(mapped, data, bufferData.size);
+                std::memcpy(mapped, data, toHostSize(bufferData.size));
         }
 
         bufferData.buffer.Unmap();
@@ -86,15 +86,16 @@ struct Buffer::Native
 
         if (start == offset && end == offset + count)
         {
-            context.getQueue().WriteBuffer(bufferData.buffer, offset, data, count);
+            context.getQueue().WriteBuffer(
+                bufferData.buffer, offset, data, toHostSize(count));
             return;
         }
 
-        auto words = std::vector<std::uint8_t>(end - start, 0);
+        auto words = Vector<std::uint8_t>(static_cast<int>(toHostSize(end - start)));
         readInto(words.data(), start, end - start);
-        std::memcpy(words.data() + (offset - start), data, count);
+        std::memcpy(words.data() + (offset - start), data, toHostSize(count));
         context.getQueue().WriteBuffer(
-            bufferData.buffer, start, words.data(), words.size());
+            bufferData.buffer, start, words.data(), words.getSize());
     }
 
     // A copy into a mappable staging buffer, submitted behind everything
@@ -125,7 +126,7 @@ struct Buffer::Native
 
         staging.MapAsync(wgpu::MapMode::Read,
                          0,
-                         length,
+                         toHostSize(length),
                          wgpu::CallbackMode::AllowSpontaneous,
                          [&](wgpu::MapAsyncStatus status, wgpu::StringView)
                          {
@@ -138,11 +139,11 @@ struct Buffer::Native
         if (!mapped)
             return false;
 
-        const auto* bytes =
-            static_cast<const std::uint8_t*>(staging.GetConstMappedRange(0, length));
+        const auto* bytes = static_cast<const std::uint8_t*>(
+            staging.GetConstMappedRange(0, toHostSize(length)));
 
         if (bytes != nullptr)
-            std::memcpy(dst, bytes + (offset - start), count);
+            std::memcpy(dst, bytes + (offset - start), toHostSize(count));
 
         staging.Unmap();
         staging.Destroy();

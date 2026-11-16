@@ -44,41 +44,40 @@ auto tPoolHasNoThreads = test("Threadless/aPoolHasNoThreads") = []
 auto tOnePerTurn = test("Threadless/poolWorkRunsOneTaskPerLoopTurn") = []
 {
     auto pool = ThreadPool {};
-    auto order = std::vector<std::string> {};
+    auto order = Vector<std::string> {};
 
-    pool.submit([&order] { order.push_back("a"); });
-    pool.submit([&order] { order.push_back("b"); });
-    callAsync([&order] { order.push_back("turn"); });
+    pool.submit([&order] { order.create("a"); });
+    pool.submit([&order] { order.create("b"); });
+    callAsync([&order] { order.create("turn"); });
 
     check(order.empty());
     check(runEventLoopUntil([&] { return order.size() == 3; }, bound));
-    check(order == std::vector<std::string> {"a", "turn", "b"});
+    check(order == Vector<std::string> {"a", "turn", "b"});
     check(pool.isIdle());
 };
 
 auto tMainThreadCallbacks = test("Threadless/onMainThreadAndOnCancelled") = []
 {
     auto pool = ThreadPool {};
-    auto events = std::vector<std::string> {};
+    auto events = Vector<std::string> {};
 
-    pool.submit(PoolTask {.work = [&events] { events.push_back("work"); },
-                          .onMainThread = [&events] { events.push_back("done"); }});
+    pool.submit(PoolTask {.work = [&events] { events.create("work"); },
+                          .onMainThread = [&events] { events.create("done"); }});
 
-    pool.submit(
-        PoolTask {.work = [&events] { events.push_back("never"); },
-                  .onMainThread = [&events] { events.push_back("never"); },
-                  .onCancelled = [&events] { events.push_back("cancelled"); }});
+    pool.submit(PoolTask {.work = [&events] { events.create("never"); },
+                          .onMainThread = [&events] { events.create("never"); },
+                          .onCancelled = [&events] { events.create("cancelled"); }});
 
     check(pool.cancelPending() == 2);
     check(runEventLoopUntil([&] { return pool.isIdle(); }, bound));
-    check(events == std::vector<std::string> {"cancelled"});
+    check(events == Vector<std::string> {"cancelled"});
 
     events.clear();
-    pool.submit(PoolTask {.work = [&events] { events.push_back("work"); },
-                          .onMainThread = [&events] { events.push_back("done"); }});
+    pool.submit(PoolTask {.work = [&events] { events.create("work"); },
+                          .onMainThread = [&events] { events.create("done"); }});
 
     check(runEventLoopUntil([&] { return pool.isIdle(); }, bound));
-    check(events == std::vector<std::string> {"work", "done"});
+    check(events == Vector<std::string> {"work", "done"});
 };
 
 auto tWaitRunsInline = test("Threadless/waitUntilIdleRunsTheQueueInline") = []
@@ -125,14 +124,14 @@ auto tGroupDestroyedByItsTask =
     test("Threadless/aGroupDestroyedByItsOwnTaskDeliversNothing") = []
 {
     auto pool = ThreadPool {};
-    auto group = std::make_unique<TaskGroup>(pool);
+    auto group = makeOwned<TaskGroup>(pool);
     auto delivered = false;
 
     group->submit(PoolTask {.work =
                                 [&]
                             {
                                 group.reset();
-                                group = std::make_unique<TaskGroup>(pool);
+                                group.create(pool);
                             },
                             .onMainThread = [&delivered] { delivered = true; }});
 
@@ -145,14 +144,14 @@ auto tGroupDestroyedByItsCallback =
     test("Threadless/aGroupDestroyedByItsOwnCallbackStaysConsistent") = []
 {
     auto pool = ThreadPool {};
-    auto group = std::make_unique<TaskGroup>(pool);
+    auto group = makeOwned<TaskGroup>(pool);
     auto delivered = false;
 
     group->submit(PoolTask {.onMainThread = [&]
                             {
                                 delivered = true;
                                 group.reset();
-                                group = std::make_unique<TaskGroup>(pool);
+                                group.create(pool);
                             }});
 
     check(runEventLoopUntil([&] { return pool.isIdle(); }, bound));
@@ -205,7 +204,8 @@ auto tRunAsyncResolves = test("Threadless/runAsyncResolvesWithoutAThread") = []
     options.executable = "/bin/sh";
 
     auto result = std::optional<Processes::ProcessResult> {};
-    Processes::runAsync(options).then([&result](auto value) { result = value; });
+    Processes::runAsync(options).then([&result](const auto& value)
+                                      { result = value; });
 
     check(runEventLoopUntil([&] { return result.has_value(); }, bound));
     check(!result->launched);

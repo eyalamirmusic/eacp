@@ -292,8 +292,7 @@ std::optional<WebGPUBinding> parseBindingLine(std::string_view line)
     return std::nullopt;
 }
 
-const WebGPUBinding* findBinding(const std::vector<WebGPUBinding>& bindings,
-                                 int number)
+const WebGPUBinding* findBinding(const Vector<WebGPUBinding>& bindings, int number)
 {
     for (const auto& binding: bindings)
         if (binding.binding == number)
@@ -336,7 +335,7 @@ bool isComparedThrough(std::string_view source,
     return false;
 }
 
-void pairSamplersWithTextures(std::vector<WebGPUBinding>& bindings,
+void pairSamplersWithTextures(Vector<WebGPUBinding>& bindings,
                               std::string_view source)
 {
     for (auto& binding: bindings)
@@ -487,24 +486,23 @@ double constantValueOf(const PipelineConstant& constant)
 WebGPUConstantEntries::WebGPUConstantEntries(const PipelineConstants& constants)
 {
     for (const auto& constant: constants.values)
-        keys.push_back(std::to_string(constant.id));
+        keys.add(std::to_string(constant.id));
 
     auto index = 0;
 
     for (const auto& constant: constants.values)
     {
-        const auto& key = keys[static_cast<std::size_t>(index++)];
-        auto entry = wgpu::ConstantEntry {};
+        const auto& key = keys[index++];
+        auto& entry = entries.create();
         entry.key = wgpu::StringView {key.data(), key.size()};
         entry.value = constantValueOf(constant);
-        entries.push_back(entry);
     }
 }
 
-std::vector<WebGPUBinding> scanWgslBindings(std::string_view source)
+Vector<WebGPUBinding> scanWgslBindings(std::string_view source)
 {
     const auto original = source;
-    auto bindings = std::vector<WebGPUBinding> {};
+    auto bindings = Vector<WebGPUBinding> {};
 
     while (!source.empty())
     {
@@ -514,7 +512,7 @@ std::vector<WebGPUBinding> scanWgslBindings(std::string_view source)
         if (line.find("@binding(") != std::string_view::npos)
             if (auto binding = parseBindingLine(line))
                 if (findBinding(bindings, binding->binding) == nullptr)
-                    bindings.push_back(*binding);
+                    bindings.add(*binding);
 
         if (end == std::string_view::npos)
             break;
@@ -540,8 +538,9 @@ WebGPUBindingTable::Resource& WebGPUBindingTable::resourceAt(int binding)
         if (resource.binding == binding)
             return resource;
 
-    resources.push_back(Resource {binding});
-    return resources.back();
+    auto& added = resources.create();
+    added.binding = binding;
+    return added;
 }
 
 const WebGPUBindingTable::Resource*
@@ -587,11 +586,11 @@ wgpu::BindGroup WebGPUBindingTable::makeGroup(WebGPUContext& context,
     if (layout.group == nullptr)
         return {};
 
-    auto entries = std::vector<wgpu::BindGroupEntry> {};
+    auto entries = Vector<wgpu::BindGroupEntry> {};
 
     for (const auto& binding: layout.bindings)
     {
-        auto entry = wgpu::BindGroupEntry {};
+        auto& entry = entries.create();
         entry.binding = static_cast<std::uint32_t>(binding.binding);
         const auto* bound = findResource(binding.binding);
 
@@ -631,19 +630,17 @@ wgpu::BindGroup WebGPUBindingTable::makeGroup(WebGPUContext& context,
                 break;
             }
         }
-
-        entries.push_back(entry);
     }
 
     auto descriptor = wgpu::BindGroupDescriptor {};
     descriptor.layout = layout.group;
-    descriptor.entryCount = entries.size();
+    descriptor.entryCount = entries.getSize();
     descriptor.entries = entries.data();
     return context.getDevice().CreateBindGroup(&descriptor);
 }
 
 std::string withStorageFormats(std::string source,
-                               const std::vector<WebGPUStorageFormat>& formats)
+                               const Vector<WebGPUStorageFormat>& formats)
 {
     constexpr auto storagePrefix = std::string_view {"texture_storage_"};
 
@@ -721,6 +718,11 @@ std::uint64_t alignTo(std::uint64_t value, std::uint64_t alignment)
     return (value + alignment - 1) / alignment * alignment;
 }
 
+std::size_t toHostSize(std::uint64_t bytes)
+{
+    return static_cast<std::size_t>(bytes);
+}
+
 wgpu::RenderPipeline
     WebGPURenderPipeline::pipelineFor(wgpu::TextureFormat depthFormat)
 {
@@ -729,7 +731,7 @@ wgpu::RenderPipeline
             return pipeline;
 
     auto pipeline = build(depthFormat);
-    variants.emplace_back(depthFormat, pipeline);
+    variants.create(depthFormat, pipeline);
     return pipeline;
 }
 
@@ -768,12 +770,12 @@ bool WebGPUContext::isStorageOffset(std::uint64_t offset) const
     return offset % grid == 0;
 }
 
-std::unique_ptr<WebGPURecording> WebGPUContext::beginRecording()
+OwningPointer<WebGPURecording> WebGPUContext::beginRecording()
 {
     if (!isValid())
-        return nullptr;
+        return {};
 
-    auto recording = std::make_unique<WebGPURecording>();
+    auto recording = makeOwned<WebGPURecording>();
     recording->encoder = device.CreateCommandEncoder();
     return recording;
 }
@@ -815,12 +817,12 @@ WebGPUUniformSlice WebGPUContext::uploadUniforms(WebGPURecording& recording,
         recording.uniformCapacity = descriptor.size;
     }
 
-    auto padded = std::vector<std::uint8_t>(size, 0);
+    auto padded = Vector<std::uint8_t>(static_cast<int>(toHostSize(size)));
     std::memcpy(padded.data(), data, bytes);
 
     auto slice =
         WebGPUUniformSlice {recording.uniformChunk, recording.uniformOffset, size};
-    queue.WriteBuffer(slice.buffer, slice.offset, padded.data(), padded.size());
+    queue.WriteBuffer(slice.buffer, slice.offset, padded.data(), padded.getSize());
 
     recording.uniformOffset = alignTo(recording.uniformOffset + size, alignment);
     return slice;
@@ -915,7 +917,7 @@ wgpu::TextureView WebGPUContext::getEmptyTextureView(const WebGPUBinding& bindin
     viewDescriptor.dimension = binding.dimension;
     auto view = texture.CreateView(&viewDescriptor);
 
-    emptyViews.emplace_back(key, view);
+    emptyViews.create(key, view);
     return view;
 }
 
@@ -938,7 +940,7 @@ wgpu::Sampler WebGPUContext::getEmptySampler(wgpu::SamplerBindingType type)
 }
 
 WebGPUBindingLayout
-    WebGPUContext::makeBindingLayout(const std::vector<WebGPUBinding>& bindings,
+    WebGPUContext::makeBindingLayout(const Vector<WebGPUBinding>& bindings,
                                      bool compute)
 {
     auto layout = WebGPUBindingLayout {};
@@ -947,13 +949,13 @@ WebGPUBindingLayout
     if (!isValid())
         return layout;
 
-    auto entries = std::vector<wgpu::BindGroupLayoutEntry> {};
+    auto entries = Vector<wgpu::BindGroupLayoutEntry> {};
 
     for (const auto& binding: bindings)
-        entries.push_back(layoutEntryFor(binding, compute));
+        entries.add(layoutEntryFor(binding, compute));
 
     auto groupDescriptor = wgpu::BindGroupLayoutDescriptor {};
-    groupDescriptor.entryCount = entries.size();
+    groupDescriptor.entryCount = entries.getSize();
     groupDescriptor.entries = entries.data();
     layout.group = device.CreateBindGroupLayout(&groupDescriptor);
 

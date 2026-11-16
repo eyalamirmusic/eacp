@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <memory>
 
 namespace eacp::GPU
 {
@@ -200,7 +199,7 @@ struct RenderPass::Native
             record(static_cast<std::uint64_t>(plan.offset + draw * plan.stride));
     }
 
-    std::unique_ptr<WebGPURenderEncoder> encoder;
+    OwningPointer<WebGPURenderEncoder> encoder;
     int targetWidth = 0;
     int targetHeight = 0;
     WebGPURenderPipeline* pipeline = nullptr;

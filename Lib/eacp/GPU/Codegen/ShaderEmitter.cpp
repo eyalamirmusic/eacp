@@ -549,13 +549,13 @@ private:
         auto parameters = Vector<std::string> {};
 
         if (!graph.inputs().empty())
-            parameters.add("input: VertexIn");
+            parameters.create("input: VertexIn");
 
         if (graph.usesVertexId())
-            parameters.add("@builtin(vertex_index) vertexId: u32");
+            parameters.create("@builtin(vertex_index) vertexId: u32");
 
         if (graph.usesInstanceId())
-            parameters.add("@builtin(instance_index) instanceId: u32");
+            parameters.create("@builtin(instance_index) instanceId: u32");
 
         return Strings::format("@vertex\nfn vertexMain({}) -> VertexOut\n{{\n",
                                joinWgslParameters(parameters));
@@ -566,13 +566,13 @@ private:
         auto parameters = Vector<std::string> {"input: VertexOut"};
 
         if (graph.usesBuiltIn(ShaderBuiltIn::FrontFacing))
-            parameters.add("@builtin(front_facing) frontFacing: bool");
+            parameters.create("@builtin(front_facing) frontFacing: bool");
 
         if (graph.usesBuiltIn(ShaderBuiltIn::SampleIndex))
-            parameters.add("@builtin(sample_index) sampleIndex: u32");
+            parameters.create("@builtin(sample_index) sampleIndex: u32");
 
         if (graph.usesBuiltIn(ShaderBuiltIn::SampleMask))
-            parameters.add("@builtin(sample_mask) sampleMaskIn: u32");
+            parameters.create("@builtin(sample_mask) sampleMaskIn: u32");
 
         auto result = hasFragmentOutStruct()
                           ? std::string_view {"FragmentOut"}

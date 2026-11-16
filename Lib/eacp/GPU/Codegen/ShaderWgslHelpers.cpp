@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <span>
 
 namespace eacp::GPU::ShaderEmission
 {

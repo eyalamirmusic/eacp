@@ -322,7 +322,7 @@ void webKeyboardEvent(const KeyEvent& event)
     state.pressed.removeIndexesMatching(isThisKey);
 
     if (event.type == KeyEventType::Down)
-        state.pressed.add(Key {event.keyCode, event.charactersIgnoringModifiers});
+        state.pressed.create(event.keyCode, event.charactersIgnoringModifiers);
 }
 
 void webKeyboardReset()

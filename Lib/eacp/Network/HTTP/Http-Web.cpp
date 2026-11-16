@@ -49,7 +49,7 @@ using WebHttpFile = std::unique_ptr<std::FILE, WebHttpFileCloser>;
 struct WebHttpTransfer
 {
     Request request;
-    WebHttpDone done = [](Response) {};
+    WebHttpDone done = [](const Response&) {};
     std::string filePath;
     std::int64_t resumeFrom = 0;
 
@@ -64,8 +64,8 @@ struct WebHttpTransfer
 
 struct WebHttpTransfers
 {
-    std::map<int, std::unique_ptr<WebHttpTransfer>> live;
-    std::unique_ptr<Threads::Timer> checker;
+    std::map<int, OwningPointer<WebHttpTransfer>> live;
+    std::optional<Threads::Timer> checker;
     int nextId = 1;
 };
 
@@ -103,7 +103,8 @@ void finishWebHttp(int id, Response response)
     if (transfers.live.empty())
         transfers.checker.reset();
 
-    Threads::callAsync([done, response] { done(response); });
+    Threads::callAsync([done = std::move(done), response = std::move(response)]
+                       { done(response); });
 }
 
 // Ends a transfer the JS side may still be running.
@@ -167,10 +168,10 @@ std::string webHttpHeaderLines(const Request& req)
 
     for (const auto& [name, value]: req.headers)
         if (!isWebHttpHeaderTheRuntimeSets(name))
-            lines += name + ":" + value + "\n";
+            lines.append(name).append(":").append(value).append("\n");
 
     if (auto agent = userAgentToAdd(req); !agent.empty())
-        lines += "User-Agent:" + agent + "\n";
+        lines.append("User-Agent:").append(agent).append("\n");
 
     return lines;
 }
@@ -336,16 +337,14 @@ void startWebHttpTransfer(const Request& req,
     auto& transfers = webHttpTransfers();
     auto id = transfers.nextId++;
 
-    auto transfer = std::make_unique<WebHttpTransfer>();
+    auto* transfer = transfers.live[id].create();
     transfer->request = req;
     transfer->done = std::move(done);
     transfer->filePath = filePath;
     transfer->resumeFrom = resumeFrom;
-    transfers.live[id] = std::move(transfer);
 
-    if (transfers.checker == nullptr)
-        transfers.checker = std::make_unique<Threads::Timer>(checkWebHttpTransfers,
-                                                             webHttpCheckInterval);
+    if (!transfers.checker)
+        transfers.checker.emplace(checkWebHttpTransfers, webHttpCheckInterval);
 
     eacp_web_http_start(id,
                         req.url.c_str(),

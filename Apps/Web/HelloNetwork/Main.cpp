@@ -16,7 +16,7 @@ using Done = std::function<void(bool passed, const std::string& detail)>;
 struct Check
 {
     std::string name;
-    std::function<void(Done)> run = [](Done) {};
+    std::function<void(const Done&)> run = [](const Done&) {};
 };
 
 constexpr auto answerLimit = Time::MS {10000};
@@ -64,12 +64,13 @@ void request(
     std::function<std::pair<bool, std::string>(const HTTP::Response&)> judge,
     const Done& done)
 {
-    HTTP::asyncRequest(req,
-                       [judge, done](const HTTP::Response& response)
-                       {
-                           auto [passed, detail] = judge(response);
-                           done(passed, detail);
-                       });
+    HTTP::asyncRequest(
+        req,
+        [judge = std::move(judge), done](const HTTP::Response& response)
+        {
+            auto [passed, detail] = judge(response);
+            done(passed, detail);
+        });
 }
 } // namespace
 
@@ -90,7 +91,7 @@ struct HelloNetwork
                                        " against ",
                                        server,
                                        ", ",
-                                       (int) checks.size(),
+                                       checks.size(),
                                        " checks"));
         runNext();
     }
@@ -110,7 +111,7 @@ struct HelloNetwork
 
     void runNext()
     {
-        if (next == (int) checks.size())
+        if (next == checks.size())
             return finish();
 
         auto index = next++;
@@ -132,14 +133,14 @@ struct HelloNetwork
 
         Threads::callAfter(answerLimit,
                            [report] { report(false, "no answer in time"); });
-        checks[(std::size_t) index].run(report);
+        checks[index].run(report);
     }
 
     void record(int index, bool passed, const std::string& detail)
     {
         failures += passed ? 0 : 1;
         Console::print(Strings::concat(passed ? "  ok    " : "  FAIL  ",
-                                       checks[(std::size_t) index].name,
+                                       checks[index].name,
                                        detail.empty() ? "" : ": ",
                                        detail));
     }
@@ -151,7 +152,7 @@ struct HelloNetwork
         Apps::quit(failures == 0 ? 0 : 1);
     }
 
-    void checkBlockingIsRefused(const Done& done)
+    void checkBlockingIsRefused(const Done& done) const
     {
         auto response = HTTP::httpRequest(HTTP::Request {url("/get")});
         auto refused = response.statusCode == 0
@@ -174,7 +175,7 @@ struct HelloNetwork
         done(refused && fetchRefused, response.error);
     }
 
-    void checkGet(const Done& done)
+    void checkGet(const Done& done) const
     {
         request(
             HTTP::Request {url("/get")},
@@ -192,7 +193,7 @@ struct HelloNetwork
             done);
     }
 
-    void checkPost(const Done& done)
+    void checkPost(const Done& done) const
     {
         auto req = HTTP::Request::post(url("/echo"), "posted-body");
         req.headers["X-Test"] = "abc";
@@ -206,9 +207,9 @@ struct HelloNetwork
                 HTTP::setDefaultUserAgent("");
                 auto body = response.content;
                 auto passed = response.statusCode == 200
-                              && contains(body, "\"method\":\"POST\"")
+                              && contains(body, R"("method":"POST")")
                               && contains(body, "posted-body")
-                              && contains(body, "\"x-test\":\"abc\"")
+                              && contains(body, R"("x-test":"abc")")
                               && !contains(body, "elsewhere.example");
                 auto agent = contains(body, "HelloNetwork/1.0")
                                  ? "our User-Agent sent"
@@ -218,7 +219,7 @@ struct HelloNetwork
             done);
     }
 
-    void checkNotFound(const Done& done)
+    void checkNotFound(const Done& done) const
     {
         request(
             HTTP::Request {url("/status?code=404")},
@@ -231,7 +232,7 @@ struct HelloNetwork
             done);
     }
 
-    void checkTimeout(const Done& done)
+    void checkTimeout(const Done& done) const
     {
         auto req = HTTP::Request {url("/slow-headers?ms=3000")};
         req.timeout = Time::MS {300};
@@ -246,7 +247,7 @@ struct HelloNetwork
             done);
     }
 
-    void checkFollowedRedirects(const Done& done)
+    void checkFollowedRedirects(const Done& done) const
     {
         request(
             HTTP::Request {url("/chain?n=3")},
@@ -254,14 +255,14 @@ struct HelloNetwork
             {
                 return std::pair {
                     response.statusCode == 200
-                        && contains(response.content, "\"path\":\"/echo\""),
+                        && contains(response.content, R"("path":"/echo")"),
                     describe(response)};
             },
             done);
     }
 
     // A browser hides a redirect it is told not to follow; node returns it.
-    void checkUnfollowedRedirect(const Done& done)
+    void checkUnfollowedRedirect(const Done& done) const
     {
         auto req = HTTP::Request {url("/redirect?code=302&to=/get")};
         req.followRedirects = false;
@@ -280,7 +281,7 @@ struct HelloNetwork
             done);
     }
 
-    void checkDownload(const Done& done)
+    void checkDownload(const Done& done) const
     {
         auto download = HTTP::DownloadRequest {
             url("/bytes?size=" + std::to_string(downloadSize)),
@@ -299,7 +300,7 @@ struct HelloNetwork
 
     // Twice: the second revalidates with If-None-Match, which a browser
     // preflights, and keeps the copy on the server's 304.
-    void checkOnlineResource(const Done& done)
+    void checkOnlineResource(const Done& done) const
     {
         auto options = OnlineResource::Options {};
         options.info.url = url("/etag?tag=hello-network&size=5000");
@@ -344,29 +345,29 @@ struct HelloNetwork
                      + std::to_string(status.code));
         };
 
-        webSocket =
-            std::make_unique<WebSocket::Connection>(webSocketUrl("/ws"), callbacks);
+        webSocket.create(webSocketUrl("/ws"), callbacks);
     }
 
     std::string server = serverFromArguments();
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
-    std::unique_ptr<WebSocket::Connection> webSocket;
+    OwningPointer<WebSocket::Connection> webSocket;
     std::string echoed;
     int next = 0;
     int failures = 0;
 
-    std::vector<Check> checks {
+    Vector<Check> checks {
         {"a blocking call is refused",
-         [this](Done d) { checkBlockingIsRefused(d); }},
-        {"GET", [this](Done d) { checkGet(d); }},
-        {"POST", [this](Done d) { checkPost(d); }},
-        {"404", [this](Done d) { checkNotFound(d); }},
-        {"timeout", [this](Done d) { checkTimeout(d); }},
-        {"followed redirects", [this](Done d) { checkFollowedRedirects(d); }},
-        {"unfollowed redirect", [this](Done d) { checkUnfollowedRedirect(d); }},
-        {"download and read back", [this](Done d) { checkDownload(d); }},
-        {"fetchAsync twice", [this](Done d) { checkOnlineResource(d); }},
-        {"WebSocket echo and close", [this](Done d) { checkWebSocket(d); }},
+         [this](const Done& d) { checkBlockingIsRefused(d); }},
+        {"GET", [this](const Done& d) { checkGet(d); }},
+        {"POST", [this](const Done& d) { checkPost(d); }},
+        {"404", [this](const Done& d) { checkNotFound(d); }},
+        {"timeout", [this](const Done& d) { checkTimeout(d); }},
+        {"followed redirects", [this](const Done& d) { checkFollowedRedirects(d); }},
+        {"unfollowed redirect",
+         [this](const Done& d) { checkUnfollowedRedirect(d); }},
+        {"download and read back", [this](const Done& d) { checkDownload(d); }},
+        {"fetchAsync twice", [this](const Done& d) { checkOnlineResource(d); }},
+        {"WebSocket echo and close", [this](const Done& d) { checkWebSocket(d); }},
     };
 };
 

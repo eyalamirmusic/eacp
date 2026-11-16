@@ -8,9 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <memory>
 #include <string>
-#include <vector>
 
 namespace eacp::GPU
 {
@@ -260,10 +258,10 @@ wgpu::ColorWriteMask toWGPUWriteMask(const ColorWriteMask& mask)
 // Everything a pipeline descriptor points into, kept alive while one is built.
 struct PipelineParts
 {
-    std::vector<wgpu::VertexBufferLayout> buffers;
-    std::vector<std::vector<wgpu::VertexAttribute>> attributes;
-    std::vector<wgpu::ColorTargetState> targets;
-    std::vector<wgpu::BlendState> blends;
+    Vector<wgpu::VertexBufferLayout> buffers;
+    Vector<Vector<wgpu::VertexAttribute>> attributes;
+    Vector<wgpu::ColorTargetState> targets;
+    Vector<wgpu::BlendState> blends;
 };
 
 void describeVertexBuffers(const VertexLayout& layout, PipelineParts& parts)
@@ -271,24 +269,23 @@ void describeVertexBuffers(const VertexLayout& layout, PipelineParts& parts)
     const auto slotCount =
         layout.buffers.empty() ? 1 : static_cast<int>(layout.buffers.size());
 
-    parts.attributes.resize(static_cast<std::size_t>(slotCount));
+    parts.attributes.resize(slotCount);
 
     for (auto i = 0; i < layout.attributes.size(); ++i)
     {
         const auto& from = layout.attributes[i];
         const auto slot = std::clamp(from.bufferIndex, 0, slotCount - 1);
 
-        auto attribute = wgpu::VertexAttribute {};
+        auto& attribute = parts.attributes[slot].create();
         attribute.format = toWGPUVertexFormat(from.format);
         attribute.offset = static_cast<std::uint64_t>(from.offset);
         attribute.shaderLocation = static_cast<std::uint32_t>(i);
-        parts.attributes[static_cast<std::size_t>(slot)].push_back(attribute);
     }
 
     for (auto slot = 0; slot < slotCount; ++slot)
     {
-        const auto& attributes = parts.attributes[static_cast<std::size_t>(slot)];
-        auto buffer = wgpu::VertexBufferLayout {};
+        const auto& attributes = parts.attributes[slot];
+        auto& buffer = parts.buffers.create();
 
         if (layout.buffers.empty())
         {
@@ -303,13 +300,11 @@ void describeVertexBuffers(const VertexLayout& layout, PipelineParts& parts)
                                   : wgpu::VertexStepMode::Vertex;
         }
 
-        buffer.attributeCount = attributes.size();
+        buffer.attributeCount = attributes.getSize();
         buffer.attributes = attributes.data();
 
         if (attributes.empty())
             buffer.stepMode = wgpu::VertexStepMode::Undefined;
-
-        parts.buffers.push_back(buffer);
     }
 
     if (layout.attributes.empty())
@@ -321,28 +316,26 @@ void describeColorTargets(const RenderPipelineDescriptor& descriptor,
                           PipelineParts& parts)
 {
     const auto count = descriptor.colorTargetCount();
-    parts.blends.reserve(static_cast<std::size_t>(count));
+    parts.blends.reserve(count);
 
     for (auto index = 0; index < count; ++index)
     {
         const auto target = writtenColorTarget(descriptor, index, hasFragment);
         const auto blend = resolvedBlend(target);
 
-        auto state = wgpu::ColorTargetState {};
+        auto& state = parts.targets.create();
         state.format = toWGPUFormat(target.format);
         state.writeMask = toWGPUWriteMask(target.writeMask);
 
         if (blend.enabled)
         {
-            auto& blendState = parts.blends.emplace_back();
+            auto& blendState = parts.blends.create();
             blendState.color = toWGPUBlendComponent(
                 blend.sourceColor, blend.destinationColor, blend.colorOperation);
             blendState.alpha = toWGPUBlendComponent(
                 blend.sourceAlpha, blend.destinationAlpha, blend.alphaOperation);
             state.blend = &blendState;
         }
-
-        parts.targets.push_back(state);
     }
 }
 
@@ -445,9 +438,9 @@ struct RenderPipeline::Native
         pipeline.vertex.module = program.module;
         pipeline.vertex.entryPoint =
             wgpu::StringView {vertexEntry.data(), vertexEntry.size()};
-        pipeline.vertex.bufferCount = parts.buffers.size();
+        pipeline.vertex.bufferCount = parts.buffers.getSize();
         pipeline.vertex.buffers = parts.buffers.data();
-        pipeline.vertex.constantCount = constants.entries.size();
+        pipeline.vertex.constantCount = constants.entries.getSize();
         pipeline.vertex.constants = constants.entries.data();
 
         pipeline.primitive.topology = toWGPUTopology(descriptor.topology);
@@ -469,12 +462,12 @@ struct RenderPipeline::Native
         fragment.entryPoint = hasFragment ? wgpu::StringView {fragmentEntry.data(),
                                                               fragmentEntry.size()}
                                           : wgpu::StringView {"main", 4};
-        fragment.targetCount = parts.targets.size();
+        fragment.targetCount = parts.targets.getSize();
         fragment.targets = parts.targets.data();
 
         if (hasFragment)
         {
-            fragment.constantCount = constants.entries.size();
+            fragment.constantCount = constants.entries.getSize();
             fragment.constants = constants.entries.data();
         }
 

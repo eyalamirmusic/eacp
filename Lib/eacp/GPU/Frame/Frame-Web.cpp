@@ -7,7 +7,6 @@
 #include <eacp/Core/Utils/Logging.h>
 
 #include <array>
-#include <memory>
 
 namespace eacp::GPU
 {
@@ -206,7 +205,7 @@ struct Frame::Native
     Device* device = nullptr;
     WebGPUDrawable* drawable = nullptr;
     WebGPUTextureData* target = nullptr;
-    std::unique_ptr<WebGPURecording> recording;
+    OwningPointer<WebGPURecording> recording;
 };
 
 Frame::Frame(Device& device,

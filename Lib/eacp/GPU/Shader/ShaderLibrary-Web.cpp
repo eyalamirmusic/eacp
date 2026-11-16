@@ -7,7 +7,6 @@
 
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace eacp::GPU
 {
@@ -48,14 +47,13 @@ CompilationInfo collectMessages(const wgpu::ShaderModule& module)
                 for (auto i = std::size_t {0}; i < result->messageCount; ++i)
                 {
                     const auto& from = result->messages[i];
-                    auto message = CompilationMessage {};
+                    auto& message = info.messages.create();
                     message.type = messageTypeOf(from.type);
                     message.message =
                         std::string(from.message.data, from.message.length);
                     message.line = static_cast<int>(from.lineNum);
                     message.column = static_cast<int>(from.linePos);
                     message.length = static_cast<int>(from.length);
-                    info.messages.add(message);
                 }
             }
 
@@ -68,15 +66,15 @@ CompilationInfo collectMessages(const wgpu::ShaderModule& module)
 
 // The entry points a pipeline will ask the module for. An empty module is
 // valid WGSL, so a library is only whole once the source declares them.
-std::vector<std::string> entriesOf(const ShaderSource& source)
+Vector<std::string> entriesOf(const ShaderSource& source)
 {
     if (source.isCompute())
         return {source.computeEntry};
 
-    auto entries = std::vector<std::string> {source.vertexEntry};
+    auto entries = Vector<std::string> {source.vertexEntry};
 
     if (!source.fragmentEntry.empty())
-        entries.push_back(source.fragmentEntry);
+        entries.add(source.fragmentEntry);
 
     return entries;
 }

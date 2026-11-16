@@ -481,7 +481,7 @@ struct Texture::Native
 
         staging.MapAsync(wgpu::MapMode::Read,
                          0,
-                         bytes,
+                         toHostSize(bytes),
                          wgpu::CallbackMode::AllowSpontaneous,
                          [&](wgpu::MapAsyncStatus status, wgpu::StringView)
                          {
@@ -494,8 +494,8 @@ struct Texture::Native
         if (!mapped)
             return;
 
-        const auto* from =
-            static_cast<const std::uint8_t*>(staging.GetConstMappedRange(0, bytes));
+        const auto* from = static_cast<const std::uint8_t*>(
+            staging.GetConstMappedRange(0, toHostSize(bytes)));
         auto* out = static_cast<std::uint8_t*>(dst);
 
         if (from != nullptr)

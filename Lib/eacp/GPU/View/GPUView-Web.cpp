@@ -278,7 +278,7 @@ struct GPUView::Native
         descriptor.depth = depthEnabled;
         descriptor.stencil = stencilEnabled;
 
-        companionTexture = std::make_unique<Texture>(gpu, descriptor, nullptr);
+        companionTexture.create(gpu, descriptor, nullptr);
 
         if (companionTexture->isValid())
             companions =
@@ -374,7 +374,7 @@ struct GPUView::Native
     bool companionsStale = true;
     bool rendering = false;
 
-    std::unique_ptr<Texture> companionTexture;
+    OwningPointer<Texture> companionTexture;
     WebGPUTextureData companions;
 
     float backingScale = 0.f;

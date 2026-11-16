@@ -6,14 +6,19 @@
 
 #include <eacp/Core/Utils/Logging.h>
 
-#include <memory>
 #include <string>
-#include <vector>
 
 namespace eacp::GPU
 {
 struct ComputePipeline::Native
 {
+    // The kernel rebuilt for one set of bound storage formats.
+    struct Variant
+    {
+        Vector<WebGPUStorageFormat> formats;
+        OwningPointer<WebGPUComputePipeline> pipeline;
+    };
+
     Native(Device& device,
            const ShaderLibrary& library,
            const PipelineConstants& constantsToUse)
@@ -30,13 +35,13 @@ struct ComputePipeline::Native
         program = *compiled;
         build(state, program.module, program.bindings);
 
-        state.variantFor = [this](const std::vector<WebGPUStorageFormat>& formats)
+        state.variantFor = [this](const Vector<WebGPUStorageFormat>& formats)
         { return variantFor(formats); };
     }
 
     bool build(WebGPUComputePipeline& target,
                const wgpu::ShaderModule& module,
-               const std::vector<WebGPUBinding>& bindings)
+               const Vector<WebGPUBinding>& bindings)
     {
         target.layout = context.makeBindingLayout(bindings, true);
 
@@ -47,7 +52,7 @@ struct ComputePipeline::Native
         descriptor.compute.module = module;
         descriptor.compute.entryPoint =
             wgpu::StringView {entry.data(), entry.size()};
-        descriptor.compute.constantCount = overrides.entries.size();
+        descriptor.compute.constantCount = overrides.entries.getSize();
         descriptor.compute.constants = overrides.entries.data();
 
         auto message = std::string {};
@@ -70,13 +75,13 @@ struct ComputePipeline::Native
 
     // The kernel recompiled with the storage formats bound, once per set.
     const WebGPUComputePipeline*
-        variantFor(const std::vector<WebGPUStorageFormat>& formats)
+        variantFor(const Vector<WebGPUStorageFormat>& formats)
     {
-        for (const auto& [key, variant]: variants)
-            if (key == formats)
-                return variant.get();
+        for (const auto& variant: variants)
+            if (variant.formats == formats)
+                return variant.pipeline.get();
 
-        auto variant = std::make_unique<WebGPUComputePipeline>();
+        auto* variant = variants.create(Variant {formats, {}}).pipeline.create();
         const auto source = withStorageFormats(program.source, formats);
 
         if (!build(*variant,
@@ -84,8 +89,7 @@ struct ComputePipeline::Native
                    scanWgslBindings(source)))
             variant->pipeline = nullptr;
 
-        variants.emplace_back(formats, std::move(variant));
-        return variants.back().second.get();
+        return variant;
     }
 
     WebGPUContext& context;
@@ -93,9 +97,7 @@ struct ComputePipeline::Native
     std::string entry;
     WebGPUShaderProgram program;
     WebGPUComputePipeline state;
-    std::vector<std::pair<std::vector<WebGPUStorageFormat>,
-                          std::unique_ptr<WebGPUComputePipeline>>>
-        variants;
+    Vector<Variant> variants;
 };
 
 ComputePipeline::ComputePipeline(Device& device, const ShaderLibrary& library)

@@ -38,7 +38,7 @@ struct CommandBuffer::Native
 
     Device* device = nullptr;
     WebGPUContext& context;
-    std::unique_ptr<WebGPURecording> recording;
+    OwningPointer<WebGPURecording> recording;
     std::shared_ptr<bool> completed = std::make_shared<bool>(false);
     CommandTimer timer;
     bool committed = false;
@@ -100,7 +100,8 @@ void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
     descriptor.mappedAtCreation = true;
 
     auto pattern = impl->context.getDevice().CreateBuffer(&descriptor);
-    auto* bytes = static_cast<std::uint8_t*>(pattern.GetMappedRange(0, length));
+    auto* bytes =
+        static_cast<std::uint8_t*>(pattern.GetMappedRange(0, toHostSize(length)));
 
     if (bytes != nullptr)
         std::fill(bytes, bytes + length, value);
