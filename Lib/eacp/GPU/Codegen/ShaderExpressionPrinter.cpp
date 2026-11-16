@@ -64,8 +64,9 @@ std::string ExprPrinter::printReference(int node) const
 
 ValueType ExprPrinter::getBroadcastType(const Expr& call) const
 {
-    auto widens = (backend == Backend::Vulkan && isGenTypeCall(call.text))
-                  || (backend == Backend::Metal && isMetalGenTypeCall(call.text));
+    auto widens =
+        (isDialect(backend, Backend::Vulkan) && isGenTypeCall(call.text))
+        || (isDialect(backend, Backend::Metal) && isMetalGenTypeCall(call.text));
 
     if (!widens)
         return ValueType::Float;
@@ -116,14 +117,14 @@ std::string ExprPrinter::printLayerSample(const Expr& expr,
     auto uv = expr.args[0];
     auto layer = expr.args[1];
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format("{}.sample({}, {}, {})",
                                name,
                                sampler,
                                printReference(uv),
                                printMetalLayer(layer));
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
         return Strings::format(
             "{}.Sample({}, {})", name, sampler, printLayeredCoordinate(uv, layer));
 
@@ -142,7 +143,7 @@ std::string ExprPrinter::printCompareSample(const Expr& expr,
     auto uv = expr.args[0];
     auto reference = printReference(expr.args.back());
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
     {
         auto layer = layered ? Strings::format("{}, ", printMetalLayer(expr.args[1]))
                              : std::string {};
@@ -155,7 +156,7 @@ std::string ExprPrinter::printCompareSample(const Expr& expr,
                                reference);
     }
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
     {
         auto coordinate =
             layered ? printLayeredCoordinate(uv, expr.args[1]) : printReference(uv);
@@ -251,7 +252,7 @@ std::string ExprPrinter::print(int node) const
 std::string ExprPrinter::printRoundedToHalf(const Expr& expr,
                                             const std::string& text) const
 {
-    if (backend != Backend::DirectX || !isRoundedToHalf(expr))
+    if (!isDialect(backend, Backend::DirectX) || !isRoundedToHalf(expr))
         return text;
 
     return Strings::format("{}({})", getRoundHalfFunction(expr.type), text);
@@ -277,7 +278,7 @@ std::string ExprPrinter::printUniform(const Expr& expr) const
 {
     auto name = printNumberedName("uniforms.u", expr.index);
 
-    if (backend != Backend::Metal || !isMetalWidenedUniform(expr.type))
+    if (!isDialect(backend, Backend::Metal) || !isMetalWidenedUniform(expr.type))
         return name;
 
     auto columns = std::string {};
@@ -323,7 +324,7 @@ std::string ExprPrinter::printConstruct(const Expr& expr) const
     if (expr.type == ValueType::Struct)
         return printStructValue(expr);
 
-    auto transposes = backend == Backend::DirectX && isMatrix(expr.type);
+    auto transposes = isDialect(backend, Backend::DirectX) && isMatrix(expr.type);
     auto name = transposes ? std::string_view {typeName(floatEquivalent(expr.type))}
                            : getDialectTypeName(backend, expr.type);
     auto text =
@@ -348,7 +349,7 @@ std::string ExprPrinter::printFunctionCall(const Expr& expr) const
     for (auto argument: expr.args)
         arguments.add(printReference(argument));
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         for (const auto& name: getMetalFunctionArguments(graph, expr.index))
             arguments.add(name);
 
@@ -367,7 +368,7 @@ std::string ExprPrinter::printMatrixColumn(const Expr& expr) const
     auto matrix = printReference(expr.args[0]);
     auto index = printReference(expr.args[1]);
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
         return Strings::format("transpose({})[{}]", matrix, index);
 
     return Strings::format("({})[{}]", matrix, index);
@@ -388,7 +389,7 @@ std::string ExprPrinter::printCall(const Expr& expr) const
 // The operand gets its own parentheses so -(-1.0) never prints as --1.0.
 std::string ExprPrinter::printUnary(const Expr& expr) const
 {
-    auto isGlslMaskNegation = backend == Backend::Vulkan && expr.op == '!'
+    auto isGlslMaskNegation = isDialect(backend, Backend::Vulkan) && expr.op == '!'
                               && componentCount(expr.type) > 1;
 
     if (isGlslMaskNegation)
@@ -399,12 +400,12 @@ std::string ExprPrinter::printUnary(const Expr& expr) const
 
 bool ExprPrinter::isGlslShift(const std::string& op) const
 {
-    return backend == Backend::Vulkan && isShiftOperator(op);
+    return isDialect(backend, Backend::Vulkan) && isShiftOperator(op);
 }
 
 bool ExprPrinter::isGlslSignedRemainder(const std::string& op, ValueType type) const
 {
-    return backend == Backend::Vulkan && op == "%" && isSignedInteger(type);
+    return isDialect(backend, Backend::Vulkan) && op == "%" && isSignedInteger(type);
 }
 
 // GLSL refuses a scalar on the left of a vector shift, and leaves % undefined
@@ -428,7 +429,7 @@ std::string ExprPrinter::printCompare(const Expr& expr) const
     auto left = printReference(expr.args[0]);
     auto right = printReference(expr.args[1]);
 
-    if (backend == Backend::Vulkan && componentCount(expr.type) > 1)
+    if (isDialect(backend, Backend::Vulkan) && componentCount(expr.type) > 1)
         if (auto name = getGlslComparisonFunction(expr.text); !name.empty())
             return Strings::format("{}({}, {})", name, left, right);
 
@@ -463,7 +464,7 @@ std::string ExprPrinter::printMul(const Expr& expr) const
     auto left = printReference(expr.args[0]);
     auto right = printReference(expr.args[1]);
 
-    if (backend != Backend::DirectX)
+    if (!isDialect(backend, Backend::DirectX))
         return Strings::format("({} * {})", left, right);
 
     return Strings::format("mul({}, {})", left, right);
@@ -472,7 +473,7 @@ std::string ExprPrinter::printMul(const Expr& expr) const
 std::string ExprPrinter::printSample(const Expr& expr) const
 {
     auto name = printNumberedName("texture", expr.index);
-    auto sampler = backend == Backend::Metal
+    auto sampler = isDialect(backend, Backend::Metal)
                        ? printNumberedName("sampler", expr.index)
                        : getHlslSamplerName(graph.textureSampling(expr.index));
 
@@ -493,7 +494,7 @@ std::string ExprPrinter::printPlainSample(const Expr& expr,
     auto uv = printReference(expr.args[0]);
     auto hasLevel = expr.args.size() >= 2;
 
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
     {
         auto call = hasLevel ? Strings::format("textureLod({}, {}, {})",
                                                name,
@@ -509,13 +510,13 @@ std::string ExprPrinter::printPlainSample(const Expr& expr,
 
     if (!hasLevel)
     {
-        auto method = backend == Backend::Metal ? "sample" : "Sample";
+        auto method = isDialect(backend, Backend::Metal) ? "sample" : "Sample";
         return Strings::format("{}.{}({}, {})", name, method, sampler, uv);
     }
 
     auto level = printReference(expr.args[1]);
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format(
             "{}.sample({}, {}, level({}))", name, sampler, uv, level);
 
@@ -534,10 +535,10 @@ std::string ExprPrinter::printFetch(const Expr& expr) const
             : Strings::format(
                   "{}({})", getDialectTypeName(backend, ValueType::Int2), given);
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format("{}.read(uint2({}))", name, coordinates);
 
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return Strings::format("texelFetch({}, {}, 0)", name, coordinates);
 
     return Strings::format("{}.Load(int3({}, 0))", name, coordinates);
@@ -552,7 +553,7 @@ std::string ExprPrinter::printThreadId(const Expr& expr) const
 std::string ExprPrinter::printBufferElementRead(int slot,
                                                 const std::string& index) const
 {
-    if (backend == Backend::DirectX
+    if (isDialect(backend, Backend::DirectX)
         && graph.storageElementType(slot) == ValueType::Half)
         return Strings::format(
             "f16tof32(buffer{0}[({1}) >> 1u] >> ((({1}) & 1u) << 4u))", slot, index);
@@ -564,7 +565,7 @@ std::string ExprPrinter::printStructBufferRead(const Expr& expr) const
 {
     auto index = printReference(expr.args[0]);
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
         return printHlslStructLoad(graph, expr.index, index, expr.member);
 
     return printFieldRead(graph,
@@ -619,7 +620,7 @@ std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
     auto base = printReference(expr.args[0]);
     auto type = getDialectTypeName(backend, expr.type);
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format("{}(*((device const {}*) ({} + {})))",
                                type,
                                getMetalPackedVectorType(expr.type),
@@ -647,7 +648,7 @@ std::string ExprPrinter::printAtomicLoad(const Expr& expr) const
     auto element =
         printSubscript("buffer", expr.index, printReference(expr.args[0]));
 
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return Strings::format("atomic_load_explicit(&{}, memory_order_relaxed)",
                                element);
 
@@ -681,7 +682,8 @@ std::string ExprPrinter::printSharedRead(const Expr& expr) const
 {
     auto element = printSubscript("s", expr.index, printReference(expr.args[0]));
 
-    if (backend == Backend::Metal && graph.sharedArrays()[expr.index].atomic)
+    if (isDialect(backend, Backend::Metal)
+        && graph.sharedArrays()[expr.index].atomic)
         return Strings::format("atomic_load_explicit(&{}, memory_order_relaxed)",
                                element);
 
@@ -690,7 +692,7 @@ std::string ExprPrinter::printSharedRead(const Expr& expr) const
 
 std::string ExprPrinter::printSimdGroupIndex(const Expr&) const
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return "simdIndex";
 
     return Strings::format("({} / {}u)", getGroupLaneName(backend), simdGroupWidth);
@@ -705,10 +707,10 @@ std::string ExprPrinter::printBuiltInNode(const Expr& expr) const
 // HLSL's SV_Position gives clip w where the others give 1 / w.
 std::string ExprPrinter::printFragmentCoordinate() const
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return "gl_FragCoord";
 
-    if (backend == Backend::DirectX)
+    if (isDialect(backend, Backend::DirectX))
         return "float4(input.position.xyz, 1.0 / input.position.w)";
 
     return "input.position";
@@ -729,10 +731,10 @@ std::string ExprPrinter::printMetalGroupCount() const
 // supplied over the group, rounded up: what every direct dispatch encodes.
 std::string ExprPrinter::printGroupCount() const
 {
-    if (backend == Backend::Metal)
+    if (isDialect(backend, Backend::Metal))
         return printMetalGroupCount();
 
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return "gl_NumWorkGroups";
 
     const auto rank = graph.dispatchRank();
@@ -754,8 +756,8 @@ std::string ExprPrinter::printGroupCount() const
 
 std::string ExprPrinter::printBuiltIn(ShaderBuiltIn which) const
 {
-    auto isGlsl = backend == Backend::Vulkan;
-    auto isMetal = backend == Backend::Metal;
+    auto isGlsl = isDialect(backend, Backend::Vulkan);
+    auto isMetal = isDialect(backend, Backend::Metal);
 
     switch (which)
     {

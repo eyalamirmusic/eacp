@@ -221,6 +221,7 @@ function(eacp_add_precompiled_shaders app)
 
     add_executable(${tool} "${tool_main}" ${ARG_SOURCES})
     target_link_libraries(${tool} PRIVATE eacp-shader-compiler eacp-gpu ${ARG_LINK})
+    set_property(TARGET ${tool} PROPERTY EACP_ALL_SHADER_DIALECTS ON)
     set_default_warnings_level(${tool})
     eacp_allow_counter_macro(${tool})
     set_target_properties(${tool} PROPERTIES EXCLUDE_FROM_ALL ON)

@@ -99,7 +99,7 @@ constexpr std::string_view getPackedSimdMatrixHelper(SimdMatrixElement element)
 
 constexpr std::string_view getBitsOfFloatFunction(Backend backend)
 {
-    return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
+    return isDialect(backend, Backend::Vulkan) ? "floatBitsToUint" : "asuint";
 }
 
 } // namespace
@@ -169,11 +169,11 @@ std::string formatFoldedPair(GroupReduction operation,
 
 std::string formatBarrierStatement(Backend backend, const std::string& indent)
 {
-    if (backend == Backend::Vulkan)
+    if (isDialect(backend, Backend::Vulkan))
         return Strings::format(
             "{}memoryBarrierShared();\n{}barrier();\n", indent, indent);
 
-    auto barrier = backend == Backend::Metal
+    auto barrier = isDialect(backend, Backend::Metal)
                        ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
                        : "GroupMemoryBarrierWithGroupSync();\n";
     return indent + barrier;
@@ -208,7 +208,7 @@ std::string printSimdMatrixLaneColumn(int which)
 std::string StageEmitter::formatGroupReduction(const Statement& statement,
                                                const StatementScope& scope)
 {
-    if (printer.backend == Backend::Metal)
+    if (isDialect(printer.backend, Backend::Metal))
         return formatMetalGroupReduction(statement, scope);
 
     return formatTreeGroupReduction(statement, scope);
@@ -322,7 +322,7 @@ std::string StageEmitter::formatTreeGroupReduction(const Statement& statement,
 
 bool StageEmitter::isMetal() const
 {
-    return printer.backend == Backend::Metal;
+    return isDialect(printer.backend, Backend::Metal);
 }
 
 // Without wave matrix operations a fragment is spread over the lanes, and the
