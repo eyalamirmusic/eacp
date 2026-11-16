@@ -3,6 +3,7 @@
 #include "RenderPass.h"
 
 #include "IndirectDrawPlan.h"
+#include "RenderPassRegions.h"
 
 #include "../Buffer/Buffer.h"
 #include "../Device/Device.h"
@@ -12,8 +13,6 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
-#include <algorithm>
-#include <cmath>
 
 namespace eacp::GPU
 {
@@ -97,6 +96,16 @@ struct RenderPass::Native
     int targetWidth = 0;
     int targetHeight = 0;
 
+    Graphics::Rect getTargetRectangle() const
+    {
+        return makeTargetRectangle(targetWidth, targetHeight);
+    }
+
+    bool canSetTargetState() const
+    {
+        return encoder.get() != nil && !getTargetRectangle().isEmpty();
+    }
+
     // Metal takes the primitive type per draw call, so the pass remembers the
     // bound pipeline's topology.
     MTLPrimitiveType primitiveType = MTLPrimitiveTypeTriangle;
@@ -126,22 +135,15 @@ void RenderPass::setScissorRect(const Graphics::Rect& rect)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
-    // Round outward before clamping: rounding a scrolled region's edge inward
-    // would shave a column of glyph coverage off the boundary.
-    const auto left = std::clamp((int) std::floor(rect.x), 0, impl->targetWidth);
-    const auto top = std::clamp((int) std::floor(rect.y), 0, impl->targetHeight);
-    const auto right =
-        std::clamp((int) std::ceil(rect.x + rect.w), left, impl->targetWidth);
-    const auto bottom =
-        std::clamp((int) std::ceil(rect.y + rect.h), top, impl->targetHeight);
+    const auto pixels = calculateScissorRectangle(rect, impl->getTargetRectangle());
 
-    const MTLScissorRect scissor {(NSUInteger) left,
-                                  (NSUInteger) top,
-                                  (NSUInteger) (right - left),
-                                  (NSUInteger) (bottom - top)};
+    const MTLScissorRect scissor {(NSUInteger) pixels.x,
+                                  (NSUInteger) pixels.y,
+                                  (NSUInteger) pixels.w,
+                                  (NSUInteger) pixels.h};
 
     [activeEncoder setScissorRect:scissor];
 }
@@ -150,7 +152,7 @@ void RenderPass::clearScissorRect()
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
     const MTLScissorRect scissor {
@@ -165,14 +167,10 @@ void RenderPass::setViewport(const Graphics::Rect& rect,
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
-    // No rounding, unlike the scissor: a viewport is a float rectangle in both
-    // APIs, and rounding it would move the mapping rather than the clip.
-    if (rect.w <= 0.f || rect.h <= 0.f || rect.x < 0.f || rect.y < 0.f
-        || rect.x + rect.w > (float) impl->targetWidth
-        || rect.y + rect.h > (float) impl->targetHeight)
+    if (!impl->getTargetRectangle().contains(rect) || rect.isEmpty())
         return;
 
     const MTLViewport viewport {rect.x, rect.y, rect.w, rect.h, nearDepth, farDepth};
@@ -184,7 +182,7 @@ void RenderPass::clearViewport()
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+    if (!impl->canSetTargetState())
         return;
 
     const MTLViewport viewport {
