@@ -94,26 +94,47 @@ std::wstring upper(std::wstring text)
     return text;
 }
 
-// Windows needs the full environment block, so merge any overrides on top of
-// the current process environment. Returns empty to mean "inherit unchanged".
-std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
+bool isRemovedEntry(const std::wstring& entry, const Vector<std::string>& removed)
 {
-    if (overrides.empty())
-        return {};
+    auto key = upper(nameOf(entry));
 
+    for (const auto& candidate: removed)
+        if (upper(Strings::widen(candidate)) == key)
+            return true;
+
+    return false;
+}
+
+Vector<std::wstring>
+    readEnvironmentEntriesWithout(const Vector<std::string>& removed)
+{
     auto entries = Vector<std::wstring> {};
+    auto existing = GetEnvironmentStringsW();
 
-    if (auto existing = GetEnvironmentStringsW())
+    if (existing == nullptr)
+        return entries;
+
+    for (auto p = existing; *p;)
     {
-        for (auto p = existing; *p;)
-        {
-            auto entry = std::wstring {p};
-            entries.push_back(entry);
-            p += entry.size() + 1;
-        }
+        auto entry = std::wstring {p};
 
-        FreeEnvironmentStringsW(existing);
+        if (!isRemovedEntry(entry, removed))
+            entries.push_back(entry);
+
+        p += entry.size() + 1;
     }
+
+    FreeEnvironmentStringsW(existing);
+    return entries;
+}
+
+// The current process environment without the removed names, with the
+// overrides merged on top (replaced by case-insensitive name, else appended).
+Vector<std::wstring>
+    collectEnvironmentEntries(const Vector<EnvironmentVariable>& overrides,
+                              const Vector<std::string>& removed)
+{
+    auto entries = readEnvironmentEntriesWithout(removed);
 
     for (const auto& var: overrides)
     {
@@ -135,6 +156,18 @@ std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
             entries.push_back(combined);
     }
 
+    return entries;
+}
+
+// Windows needs the full environment block. Returns empty to mean "inherit
+// unchanged".
+std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides,
+                                   const Vector<std::string>& removed)
+{
+    if (overrides.empty() && removed.empty())
+        return {};
+
+    auto entries = collectEnvironmentEntries(overrides, removed);
     auto block = std::wstring {};
 
     for (const auto& entry: entries)
@@ -192,6 +225,26 @@ HANDLE startInJobOfItsOwn(const PROCESS_INFORMATION& info)
 
     ResumeThread(info.hThread);
     return job;
+}
+
+// A copy of this process's own std handle, for a child to inherit: the inherit
+// flag is then set on the copy, not on a handle a harness handed us. Null when
+// this process has no such handle.
+HANDLE duplicateOwnStdHandle(DWORD channel)
+{
+    auto original = GetStdHandle(channel);
+    auto copy = HANDLE {nullptr};
+
+    if (original != nullptr && original != INVALID_HANDLE_VALUE)
+        DuplicateHandle(GetCurrentProcess(),
+                        original,
+                        GetCurrentProcess(),
+                        &copy,
+                        0,
+                        FALSE,
+                        DUPLICATE_SAME_ACCESS);
+
+    return copy;
 }
 
 struct ChildStdHandles
@@ -254,7 +307,8 @@ bool createProcessWithStdHandles(const ProcessOptions& options,
 
     auto commandLine = commandLineFor(options);
     auto workingDir = Strings::widen(options.workingDirectory);
-    auto environment = buildEnvironmentBlock(options.environment);
+    auto environment =
+        buildEnvironmentBlock(options.environment, options.removedEnvironment);
 
     auto created = CreateProcessW(
         nullptr,
@@ -404,7 +458,6 @@ private:
 
         HANDLE inRead = nullptr, inWrite = nullptr;
         HANDLE outRead = nullptr, outWrite = nullptr;
-        HANDLE errRead = nullptr, errWrite = nullptr;
 
         if (!CreatePipe(&inRead, &inWrite, nullptr, 0))
             return;
@@ -416,10 +469,10 @@ private:
             return;
         }
 
-        // Merged stderr shares the stdout pipe, so there is no error pipe.
-        const auto merge = options.mergeErrorOutput;
+        HANDLE errRead = nullptr;
+        HANDLE childError = nullptr;
 
-        if (!merge && !CreatePipe(&errRead, &errWrite, nullptr, 0))
+        if (!openChildError(options, outWrite, errRead, childError))
         {
             CloseHandle(inRead);
             CloseHandle(inWrite);
@@ -430,13 +483,13 @@ private:
 
         PROCESS_INFORMATION info {};
         auto created = createProcessWithStdHandles(
-            options, {inRead, outWrite, merge ? outWrite : errWrite}, info);
+            options, {inRead, outWrite, childError}, info);
 
         CloseHandle(inRead);
         CloseHandle(outWrite);
 
-        if (errWrite != nullptr)
-            CloseHandle(errWrite);
+        if (childError != nullptr && !options.mergeErrorOutput)
+            CloseHandle(childError);
 
         if (!created)
         {
@@ -460,6 +513,29 @@ private:
                 std::thread([this, errRead] { drain(errRead, errBuffer, nullptr); });
     }
 
+    // Where the child's stderr goes: the stdout pipe when merged, a copy of the
+    // launcher's own stderr when inherited, else a pipe of its own whose read
+    // end is errRead. False only when that pipe cannot be made.
+    static bool openChildError(const ProcessOptions& options,
+                               HANDLE outWrite,
+                               HANDLE& errRead,
+                               HANDLE& childError)
+    {
+        if (options.mergeErrorOutput)
+        {
+            childError = outWrite;
+            return true;
+        }
+
+        if (options.inheritErrorOutput)
+        {
+            childError = duplicateOwnStdHandle(STD_ERROR_HANDLE);
+            return true;
+        }
+
+        return CreatePipe(&errRead, &childError, nullptr, 0) != FALSE;
+    }
+
     // No pipes: the child writes straight to the launcher's stdio, so a
     // long-running child's output streams instead of buffering unbounded.
     // The launcher's std handles are duplicated first, so the inherit flag is
@@ -471,18 +547,7 @@ private:
             STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
 
         for (auto i = 0; i < 3; ++i)
-        {
-            auto original = GetStdHandle(channels[i]);
-
-            if (original != nullptr && original != INVALID_HANDLE_VALUE)
-                DuplicateHandle(GetCurrentProcess(),
-                                original,
-                                GetCurrentProcess(),
-                                &handles[i],
-                                0,
-                                FALSE,
-                                DUPLICATE_SAME_ACCESS);
-        }
+            handles[i] = duplicateOwnStdHandle(channels[i]);
 
         PROCESS_INFORMATION info {};
         auto created = createProcessWithStdHandles(
@@ -516,7 +581,8 @@ private:
         auto commandLine = commandLineFor(options);
 
         auto workingDir = Strings::widen(options.workingDirectory);
-        auto environment = buildEnvironmentBlock(options.environment);
+        auto environment =
+            buildEnvironmentBlock(options.environment, options.removedEnvironment);
 
         // DETACHED_PROCESS: no inherited console, so the child survives the
         // launcher's console/job the way a setsid'd POSIX child survives its
@@ -703,5 +769,16 @@ std::string Process::output() const
 std::string Process::errorOutput() const
 {
     return impl->errorOutput();
+}
+
+Vector<std::string> makeChildEnvironment(const ProcessOptions& options)
+{
+    auto entries = Vector<std::string> {};
+
+    for (const auto& entry:
+         collectEnvironmentEntries(options.environment, options.removedEnvironment))
+        entries.push_back(Strings::narrow(entry));
+
+    return entries;
 }
 } // namespace eacp::Processes
