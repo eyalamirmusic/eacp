@@ -56,7 +56,10 @@ public:
     // and Linux means until this view is in a Window or an EmbeddedView: a
     // child window needs a parent window at creation, unlike an NSView. The
     // Linux id then stays the same for the surface's life, through hiding and
-    // moving to another window. Ask for it once the
+    // moving to another window. The Windows HWND follows the view into another
+    // window too, but a child window goes down with its top-level window: once
+    // the window holding it is destroyed, the next call makes a new HWND under
+    // whichever window the view is in then. Ask for it once the
     // view is parented — an Editor's onAttached(), which is exactly when a
     // plugin format wants it — and not from a constructor.
     void* getNativeParentHandle();

@@ -112,6 +112,7 @@ if (WIN32)
             KeyForwardingTests-Windows.cpp
             MouseDeltaTests-Windows.cpp
             MouseWheelTests-Windows.cpp
+            NativeChildSurfaceTests-Windows.cpp
             WindowGeometryTests-Windows.cpp
             WindowLayoutTests-Windows.cpp)
 endif ()
