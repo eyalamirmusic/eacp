@@ -1,5 +1,8 @@
 #pragma once
 
+#include "View.h"
+
+@class NSEvent;
 @class NSView;
 
 namespace eacp::Graphics
@@ -13,4 +16,11 @@ namespace eacp::Graphics
 // OUT of an eacp hierarchy — EmbedderKeyForwarder — has to walk past every one
 // of them to reach the responder that embeds us.
 bool isFrameworkNativeView(NSView* view);
+
+MouseButton mouseButtonFromEvent(NSEvent* event);
+
+// The phase of a magnify or a scroll gesture; a scroll's momentum after
+// lift-off included.
+ScrollPhase gesturePhaseFromEvent(NSEvent* event);
+ScrollPhase scrollPhaseFromEvent(NSEvent* event);
 } // namespace eacp::Graphics
