@@ -145,6 +145,9 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `architectureName()` — `"arm64"` or `"x64"`
 - `isStandalone()` / `isDLL()` — app or plugin copy
 - `getAppName()`, `getCompanyName()`, `getAppVersion()` — from AppInfo
+- `getMemoryUsage()` (`MachineUsage.h`) — this process's bytes, the machine's used and total
+- `CpuLoadMeter::measureSinceLastCall()` (`MachineUsage.h`) — cores this
+  process kept busy, and the machine's busy fraction where readable
 - Not here: `isDebuggerAttached`
 
 ## Processes — `Core/Process/Process.h` (`eacp::Processes`)

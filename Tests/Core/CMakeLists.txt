@@ -35,6 +35,8 @@ set(core_test_sources
         GeometryTests.cpp
         HashTests.cpp
         HotReloadLoopTests.cpp
+        # Burns a core for half a second twice and touches 128 MiB.
+        MachineUsageTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
         PlatformTests.cpp
