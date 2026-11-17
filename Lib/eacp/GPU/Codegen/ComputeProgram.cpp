@@ -1,6 +1,7 @@
 #include "ComputeProgram.h"
 #include "../Device/Device.h"
 #include "../Frame/ComputePass.h"
+#include "../Shader/ShaderLibraryCache.h"
 
 #include <eacp/Core/Utils/Logging.h>
 
@@ -476,7 +477,7 @@ void ComputeProgram::prepare(Device& device, const OverrideValues& overrides)
         return;
     }
 
-    shaderLibrary.emplace(device, source());
+    shaderLibrary = ShaderLibraryCache::of(device).acquire(device, source());
     specialize(overrides);
 }
 
@@ -587,7 +588,7 @@ bool ComputeProgram::isValid() const
 
 bool ComputeProgram::isPrecompiled() const
 {
-    return shaderLibrary.has_value() && shaderLibrary->isPrecompiled();
+    return shaderLibrary != nullptr && shaderLibrary->isPrecompiled();
 }
 
 void ComputeProgram::bindResources(ComputePass& pass)
@@ -617,7 +618,7 @@ void ComputeProgram::reportSimdWidthMismatch() const
 
 void ComputeProgram::buildRefusedPipeline(Device& device)
 {
-    shaderLibrary.emplace(device, ShaderSource {});
+    shaderLibrary = std::make_shared<const ShaderLibrary>(device, ShaderSource {});
     useRefusedPipeline(device);
 }
 

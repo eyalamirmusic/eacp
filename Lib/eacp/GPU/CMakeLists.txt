@@ -80,6 +80,7 @@ target_sources(eacp-gpu PRIVATE
         Buffer/StreamingBuffers.cpp
         Codegen/ComputeProgram.cpp
         Codegen/ShaderProgram.cpp
+        Codegen/ShaderWarmUp.cpp
         CommandBuffer/CommandBuffer.cpp
         CommandBuffer/Copy.cpp
         CommandBuffer/CopyPlan.cpp
@@ -92,6 +93,7 @@ target_sources(eacp-gpu PRIVATE
         Pipeline/RenderPipeline.cpp
         Shader/PrecompiledShaders.cpp
         Shader/ShaderLibrary.cpp
+        Shader/ShaderLibraryCache.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
         Texture/MipChain.cpp

@@ -1,5 +1,7 @@
 #include "ShaderProgram.h"
 
+#include "../Shader/ShaderLibraryCache.h"
+
 #include <eacp/Core/Utils/Logging.h>
 
 #include <algorithm>
@@ -570,14 +572,16 @@ void ShaderProgram::prepare(RenderPipelineDescriptor descriptor,
 
     if (!fitsFloat16 || !fitsSampleRate)
     {
-        shaderLibrary.emplace(Device::shared(), ShaderSource {});
+        shaderLibrary =
+            std::make_shared<const ShaderLibrary>(Device::shared(), ShaderSource {});
         useRefusedPipeline();
         return;
     }
 
-    shaderLibrary.emplace(Device::shared(), generated.source);
+    auto& device = Device::shared();
+    shaderLibrary = ShaderLibraryCache::of(device).acquire(device, generated.source);
 
-    descriptor.library = &*shaderLibrary;
+    descriptor.library = shaderLibrary.get();
     descriptor.vertexLayout = generated.vertexLayout;
     preparedDescriptor = descriptor;
 
@@ -633,7 +637,7 @@ const RenderPipeline& ShaderProgram::pipeline() const
 
 bool ShaderProgram::isPrecompiled() const
 {
-    return shaderLibrary.has_value() && shaderLibrary->isPrecompiled();
+    return shaderLibrary != nullptr && shaderLibrary->isPrecompiled();
 }
 
 const Buffer& ShaderProgram::vertices() const

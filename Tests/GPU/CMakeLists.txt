@@ -130,6 +130,7 @@ set(gpu_test_sources
         SelectTests.cpp
         ShaderBlendTests.cpp
         ShaderCompileTests.cpp
+        ShaderWarmUpTests.cpp
         ShadowSamplingTests.cpp
         SharedMemoryTests.cpp
         SimdMatrixTests.cpp

@@ -75,9 +75,11 @@ public:
     // pipeline built is the kernel specialised with them, and the ones left
     // out take their defaults. Values the kernel refuses - an unknown name, a
     // value of the wrong type, an override with no default given none - leave
-    // a pipeline that is not valid, and log why. Every prepare() compiles the
-    // library afresh and forgets the pipelines built before it, which is what
-    // a restored device needs.
+    // a pipeline that is not valid, and log why. Every prepare() forgets the
+    // pipelines built before it, which is what a restored device needs, and
+    // takes the library from the device's ShaderLibraryCache: compiled once
+    // per source, again after the backend device was rebuilt, and found there
+    // when a ShaderWarmUp compiled it first.
     void prepare(Device& device, const OverrideValues& overrides);
     void prepare(const OverrideValues& overrides);
 
@@ -200,7 +202,7 @@ private:
 
     Device* preparedDevice = nullptr;
     bool refused = false;
-    std::optional<ShaderLibrary> shaderLibrary;
+    std::shared_ptr<const ShaderLibrary> shaderLibrary;
     OwnedVector<Specialization> specializations;
     std::optional<ShaderLibrary> refusedLibrary;
     std::optional<ComputePipeline> refusedPipeline;

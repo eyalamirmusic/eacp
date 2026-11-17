@@ -24,6 +24,7 @@ struct PrecompiledState
     std::vector<std::unique_ptr<PrecompiledBytes>> retired;
     std::optional<bool> requiredOverride;
     std::set<std::string, std::less<>> reported;
+    std::uint64_t generation = 0;
 };
 
 PrecompiledState& precompiledState()
@@ -86,6 +87,7 @@ void setForTesting(std::string resourceName, Vector<std::uint8_t> bytes)
         s.retired.push_back(std::move(slot));
 
     slot = std::make_unique<PrecompiledBytes>(std::move(bytes));
+    ++s.generation;
 }
 
 void clearForTesting()
@@ -98,6 +100,14 @@ void clearForTesting()
 
     s.injected.clear();
     s.requiredOverride.reset();
+    ++s.generation;
+}
+
+std::uint64_t configurationGeneration()
+{
+    auto& s = precompiledState();
+    auto lock = std::lock_guard(s.mutex);
+    return s.generation;
 }
 
 bool isRequired()
@@ -118,6 +128,7 @@ void setRequiredForTesting(bool required)
     auto& s = precompiledState();
     auto lock = std::lock_guard(s.mutex);
     s.requiredOverride = required;
+    ++s.generation;
 }
 
 bool isAvailable()
