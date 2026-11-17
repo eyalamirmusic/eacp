@@ -105,8 +105,8 @@ void addRenderingDeviceReplacedListener(std::function<void()> listener)
     renderingDeviceReplacedListeners().add(std::move(listener));
 }
 
-// Registers what releaseSharedDevices runs before it releases the compositor:
-// eacp-gpu's release of its D3D12 device. The same rules as above.
+// Declared in SharedDevices.h, which says what registers here and in which
+// order the listeners run.
 void addSharedDevicesReleaseListener(std::function<void()> listener)
 {
     sharedDevicesReleaseListeners().add(std::move(listener));

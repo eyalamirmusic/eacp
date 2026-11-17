@@ -9,6 +9,7 @@
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Core/Utils/Singleton.h>
 #include <eacp/Core/Utils/Strings.h>
+#include <eacp/Graphics/Graphics/SharedDevices.h>
 
 #include <d3dcompiler.h>
 
@@ -531,7 +532,6 @@ namespace eacp::Graphics
 {
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
 void addRenderingDeviceReplacedListener(std::function<void()> listener);
-void addSharedDevicesReleaseListener(std::function<void()> listener);
 } // namespace eacp::Graphics
 
 namespace eacp::GPU
