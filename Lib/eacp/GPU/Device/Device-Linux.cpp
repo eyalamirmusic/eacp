@@ -3,6 +3,8 @@
 #include "../Vulkan/VulkanContext.h"
 #include "../Vulkan/VulkanTypes.h"
 
+#include <eacp/Core/Utils/Singleton.h>
+
 #include <algorithm>
 
 namespace eacp::GPU
@@ -118,7 +120,10 @@ Device::Device()
 
 Device& Device::shared()
 {
-    static Device instance;
+    // Never destroyed: a GPU view closed after main returns - from an exit
+    // handler, or by a static built before it - still releases its resources
+    // on this device, after every function-local static made since is gone.
+    static auto& instance = Singleton::getImmortal<Device>();
 
     // Belongs to the main thread whichever thread asked for it first.
     [[maybe_unused]] static const auto boundToMainThread =
