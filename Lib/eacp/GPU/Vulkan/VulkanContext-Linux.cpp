@@ -1,6 +1,7 @@
 #include "../Common.h"
 
 #include "VulkanContext.h"
+#include "VulkanLegacySync.h"
 #include "VulkanSurface.h"
 #include "VulkanTypes.h"
 
@@ -12,6 +13,7 @@
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/Core/Utils/Singleton.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
 #include <cassert>
@@ -62,6 +64,13 @@ bool prefersSoftwareDevice()
 bool forcesRenderPasses()
 {
     return vulkanEnvironmentFlag("EACP_VK_RENDER_PASSES");
+}
+
+// EACP_VK_LEGACY_SYNC=1 runs a synchronization2 device on the vkCmdPipelineBarrier
+// path a device without the extension takes.
+bool forcesLegacySync()
+{
+    return vulkanEnvironmentFlag("EACP_VK_LEGACY_SYNC");
 }
 
 // EACP_VK_VALIDATION=1 turns on the validation layer and a logging messenger.
@@ -306,21 +315,37 @@ VKAPI_ATTR VkBool32 VKAPI_CALL
     return VK_FALSE;
 }
 
-// The floor the backend is written against: Vulkan 1.3 core, or 1.1 with extensions.
-struct RequiredFeatures
+// The floor the backend is written against - Vulkan 1.3 core, or 1.1 with
+// extensions - and synchronization2, which it uses where a device has it.
+struct DeviceCapabilities
 {
     bool timelineSemaphore = false;
-    bool descriptorBindingPartiallyBound = false;
-    bool synchronization2 = false;
-    bool rendering = false;
+    bool renderingOrRenderPass2 = false;
     bool shaderStorageImageWriteWithoutFormat = false;
 
-    bool allPresent() const
+    bool synchronization2 = false;
+
+    // Empty when the floor is met.
+    Vector<std::string> describeMissingFloor() const
     {
-        return timelineSemaphore && descriptorBindingPartiallyBound
-               && synchronization2 && rendering
-               && shaderStorageImageWriteWithoutFormat;
+        auto missing = Vector<std::string> {};
+
+        if (!timelineSemaphore)
+            missing.add("timeline semaphores");
+
+        if (!renderingOrRenderPass2)
+        {
+            missing.add("dynamic rendering or VK_KHR_create_renderpass2 with "
+                        "VK_KHR_depth_stencil_resolve");
+        }
+
+        if (!shaderStorageImageWriteWithoutFormat)
+            missing.add("format-less storage image writes");
+
+        return missing;
     }
+
+    bool meetsFloor() const { return describeMissingFloor().empty(); }
 };
 
 bool reachesCoreFloor(std::uint32_t apiVersion)
@@ -328,14 +353,7 @@ bool reachesCoreFloor(std::uint32_t apiVersion)
     return apiVersion >= VK_API_VERSION_1_3;
 }
 
-constexpr auto floorExtensions =
-    std::array {VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-                VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-                VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-                VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-                VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME};
-
-RequiredFeatures probeCoreFeatures(VkPhysicalDevice candidate)
+DeviceCapabilities probeCoreCapabilities(VkPhysicalDevice candidate)
 {
     VkPhysicalDeviceVulkan13Features features13 = {};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -350,62 +368,70 @@ RequiredFeatures probeCoreFeatures(VkPhysicalDevice candidate)
 
     vkGetPhysicalDeviceFeatures2(candidate, &features);
 
-    auto required = RequiredFeatures {};
-    required.timelineSemaphore = features12.timelineSemaphore == VK_TRUE;
-    required.descriptorBindingPartiallyBound =
-        features12.descriptorBindingPartiallyBound == VK_TRUE;
-    required.synchronization2 = features13.synchronization2 == VK_TRUE;
-    required.rendering = features13.dynamicRendering == VK_TRUE;
-    required.shaderStorageImageWriteWithoutFormat =
+    auto capabilities = DeviceCapabilities {};
+    capabilities.timelineSemaphore = features12.timelineSemaphore == VK_TRUE;
+    capabilities.renderingOrRenderPass2 = features13.dynamicRendering == VK_TRUE;
+    capabilities.shaderStorageImageWriteWithoutFormat =
         features.features.shaderStorageImageWriteWithoutFormat == VK_TRUE;
+    capabilities.synchronization2 = features13.synchronization2 == VK_TRUE;
 
-    return required;
+    return capabilities;
 }
 
 // A feature struct is only filled in for an extension the device offers, so
-// the extensions are checked first.
-RequiredFeatures probeExtensionFeatures(VkPhysicalDevice candidate)
+// each is chained only behind its extension.
+DeviceCapabilities probeExtensionCapabilities(VkPhysicalDevice candidate)
 {
-    for (const auto* name: floorExtensions)
-        if (!hasDeviceExtension(candidate, name))
-            return {};
+    const auto hasTimeline =
+        hasDeviceExtension(candidate, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+    const auto hasSynchronization2 =
+        hasDeviceExtension(candidate, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+
+    VkPhysicalDeviceFeatures2 features = {};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+
+    const auto chain = [&features](auto& feature)
+    {
+        feature.pNext = features.pNext;
+        features.pNext = &feature;
+    };
+
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {};
+    timeline.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
 
     VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
     synchronization2.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
 
-    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {};
-    timeline.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
-    timeline.pNext = &synchronization2;
+    if (hasTimeline)
+        chain(timeline);
 
-    VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing = {};
-    indexing.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    indexing.pNext = &timeline;
-
-    VkPhysicalDeviceFeatures2 features = {};
-    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features.pNext = &indexing;
+    if (hasSynchronization2)
+        chain(synchronization2);
 
     vkGetPhysicalDeviceFeatures2(candidate, &features);
 
-    auto required = RequiredFeatures {};
-    required.timelineSemaphore = timeline.timelineSemaphore == VK_TRUE;
-    required.descriptorBindingPartiallyBound =
-        indexing.descriptorBindingPartiallyBound == VK_TRUE;
-    required.synchronization2 = synchronization2.synchronization2 == VK_TRUE;
-    required.rendering = true;
-    required.shaderStorageImageWriteWithoutFormat =
+    auto capabilities = DeviceCapabilities {};
+    capabilities.timelineSemaphore = timeline.timelineSemaphore == VK_TRUE;
+    capabilities.renderingOrRenderPass2 =
+        hasDeviceExtension(candidate, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME)
+        && hasDeviceExtension(candidate,
+                              VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+    capabilities.shaderStorageImageWriteWithoutFormat =
         features.features.shaderStorageImageWriteWithoutFormat == VK_TRUE;
+    capabilities.synchronization2 = synchronization2.synchronization2 == VK_TRUE;
 
-    return required;
+    return capabilities;
 }
 
-RequiredFeatures probeFeatures(VkPhysicalDevice candidate, std::uint32_t apiVersion)
+DeviceCapabilities probeCapabilities(VkPhysicalDevice candidate,
+                                     std::uint32_t apiVersion)
 {
-    return reachesCoreFloor(apiVersion) ? probeCoreFeatures(candidate)
-                                        : probeExtensionFeatures(candidate);
+    if (reachesCoreFloor(apiVersion))
+        return probeCoreCapabilities(candidate);
+
+    return probeExtensionCapabilities(candidate);
 }
 
 bool probeDrawIndirectCount(VkPhysicalDevice candidate, bool coreFloor)
@@ -492,17 +518,26 @@ bool offersSpirv14(VkPhysicalDevice candidate)
 }
 
 // The KHR structures and flags are the core ones; only the entry points differ.
-bool aliasExtensionEntryPoints()
+// The synchronization2 three are null on a device without the extension.
+bool aliasExtensionEntryPoints(bool withSynchronization2)
 {
-    vkCmdPipelineBarrier2 = vkCmdPipelineBarrier2KHR;
-    vkCmdWriteTimestamp2 = vkCmdWriteTimestamp2KHR;
-    vkQueueSubmit2 = vkQueueSubmit2KHR;
     vkWaitSemaphores = vkWaitSemaphoresKHR;
     vkGetSemaphoreCounterValue = vkGetSemaphoreCounterValueKHR;
     vkCreateRenderPass2 = vkCreateRenderPass2KHR;
 
-    return vkCmdPipelineBarrier2 != nullptr && vkCmdWriteTimestamp2 != nullptr
-           && vkQueueSubmit2 != nullptr && vkWaitSemaphores != nullptr
+    if (withSynchronization2)
+    {
+        vkCmdPipelineBarrier2 = vkCmdPipelineBarrier2KHR;
+        vkCmdWriteTimestamp2 = vkCmdWriteTimestamp2KHR;
+        vkQueueSubmit2 = vkQueueSubmit2KHR;
+    }
+
+    const auto synchronization2Loaded =
+        !withSynchronization2
+        || (vkCmdPipelineBarrier2 != nullptr && vkCmdWriteTimestamp2 != nullptr
+            && vkQueueSubmit2 != nullptr);
+
+    return synchronization2Loaded && vkWaitSemaphores != nullptr
            && vkGetSemaphoreCounterValue != nullptr
            && vkCreateRenderPass2 != nullptr;
 }
@@ -568,23 +603,14 @@ void addLayoutBinding(Vector<VkDescriptorSetLayoutBinding>& bindings,
     bindings.add(entry);
 }
 
-// Partially bound, so a shader may leave declared slots unwritten.
+// Fully bound: every slot a pipeline uses is written at each bind, with a
+// placeholder where the app bound nothing.
 bool makePipelineLayouts(VkDevice device,
                          const Vector<VkDescriptorSetLayoutBinding>& bindings,
                          PipelineLayouts& layouts)
 {
-    auto flags = Vector<VkDescriptorBindingFlags> {};
-    flags.resize(bindings.size(), VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
-
-    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlags = {};
-    bindingFlags.sType =
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    bindingFlags.bindingCount = static_cast<std::uint32_t>(flags.size());
-    bindingFlags.pBindingFlags = flags.data();
-
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.pNext = &bindingFlags;
     layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
@@ -645,150 +671,6 @@ VkSampler makeSampler(VkDevice device, int index)
 }
 } // namespace
 
-VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
-                                           int firstBinding)
-{
-    auto bindings = VulkanTextureBindings {};
-
-    // Magic number, version, generator, id bound, schema.
-    constexpr auto headerWords = 5;
-
-    if (words.size() <= headerWords)
-        return bindings;
-
-    constexpr auto opTypeImage = std::uint32_t {25};
-    constexpr auto opTypeSampler = std::uint32_t {26};
-    constexpr auto opTypeSampledImage = std::uint32_t {27};
-    constexpr auto opTypePointer = std::uint32_t {32};
-    constexpr auto opVariable = std::uint32_t {59};
-    constexpr auto opDecorate = std::uint32_t {71};
-    constexpr auto decorationBinding = std::uint32_t {33};
-
-    // OpTypeImage's Sampled operand: 1 is read through a sampler, 2 read or
-    // written with the image instructions.
-    constexpr auto sampledThroughASampler = std::uint32_t {1};
-
-    const auto bound = static_cast<int>(words[3]);
-
-    if (bound <= 0)
-        return bindings;
-
-    enum class IdKind
-    {
-        unknown,
-        sampledImage, // OpTypeSampledImage: a combined image sampler
-        storageImage, // OpTypeImage with Sampled = 2
-        readImage, // OpTypeImage with Sampled = 1, unpaired
-        sampler // OpTypeSampler: a sampler binding of its own
-    };
-
-    auto kinds = Vector<IdKind> {};
-    kinds.resize(bound, IdKind::unknown);
-
-    // For an OpTypePointer, the id of what it points at; 0 for everything else.
-    auto pointee = Vector<std::uint32_t> {};
-    pointee.resize(bound, 0u);
-
-    // Collected rather than resolved inline: a module puts its annotations ahead
-    // of its types.
-    auto variableType = Vector<std::uint32_t> {};
-    variableType.resize(bound, 0u);
-
-    auto slotOfId = Vector<int> {};
-    slotOfId.resize(bound, -1);
-
-    const auto inRange = [&](std::uint32_t id)
-    { return id < (std::uint32_t) bound; };
-
-    auto index = headerWords;
-
-    while (index < words.size())
-    {
-        const auto instruction = words[index];
-        const auto wordCount = static_cast<int>(instruction >> 16);
-        const auto opcode = instruction & 0xffffu;
-
-        // A zero-length instruction cannot be stepped over, and one past the end
-        // means the module is not what it says it is.
-        if (wordCount <= 0 || index + wordCount > words.size())
-            break;
-
-        if (opcode == opDecorate && wordCount >= 4
-            && words[index + 2] == decorationBinding && inRange(words[index + 1]))
-        {
-            const auto slot = static_cast<int>(words[index + 3]) - firstBinding;
-
-            if (slot >= 0 && slot < maxTextureSlots)
-                slotOfId[static_cast<int>(words[index + 1])] = slot;
-        }
-        else if (opcode == opTypeImage && wordCount >= 9
-                 && inRange(words[index + 1]))
-        {
-            kinds[static_cast<int>(words[index + 1])] =
-                words[index + 7] == sampledThroughASampler ? IdKind::readImage
-                                                           : IdKind::storageImage;
-        }
-        else if (opcode == opTypeSampledImage && wordCount >= 3
-                 && inRange(words[index + 1]))
-        {
-            kinds[static_cast<int>(words[index + 1])] = IdKind::sampledImage;
-        }
-        else if (opcode == opTypeSampler && wordCount >= 2
-                 && inRange(words[index + 1]))
-        {
-            kinds[static_cast<int>(words[index + 1])] = IdKind::sampler;
-        }
-        else if (opcode == opTypePointer && wordCount >= 4
-                 && inRange(words[index + 1]))
-        {
-            pointee[static_cast<int>(words[index + 1])] = words[index + 3];
-        }
-        else if (opcode == opVariable && wordCount >= 4 && inRange(words[index + 2]))
-        {
-            variableType[static_cast<int>(words[index + 2])] = words[index + 1];
-        }
-
-        index += wordCount;
-    }
-
-    for (auto id = 0; id < bound; ++id)
-    {
-        const auto slot = slotOfId[id];
-
-        if (slot < 0 || variableType[id] == 0u || !inRange(variableType[id]))
-            continue;
-
-        const auto pointed = pointee[static_cast<int>(variableType[id])];
-
-        if (!inRange(pointed))
-            continue;
-
-        switch (kinds[static_cast<int>(pointed)])
-        {
-            case IdKind::sampledImage:
-                bindings.add(slot, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                break;
-
-            case IdKind::storageImage:
-                bindings.add(slot, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-                break;
-
-            case IdKind::readImage:
-                bindings.add(slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
-                break;
-
-            case IdKind::sampler:
-                bindings.add(slot, VK_DESCRIPTOR_TYPE_SAMPLER);
-                break;
-
-            case IdKind::unknown:
-                break;
-        }
-    }
-
-    return bindings;
-}
-
 void CommandContext::rewindUploads()
 {
     for (auto& chunk: uploads)
@@ -832,6 +714,17 @@ bool VulkanShared::supportsSampleRateShading() const
     return features.sampleRateShading == VK_TRUE;
 }
 
+void VulkanShared::fillPlaceholders(VulkanTextureBindings& bindings)
+{
+    if (!isValid())
+        return;
+
+    auto comparing = TextureSampling {};
+    comparing.compare = TextureCompare::LessEqual;
+
+    placeholders.fill(bindings, getSampler({}), getSampler(comparing));
+}
+
 VkSampler VulkanShared::getSampler(const TextureSampling& sampling) const
 {
     if (device == VK_NULL_HANDLE)
@@ -848,7 +741,10 @@ VulkanShared::VulkanShared()
 VulkanShared::~VulkanShared()
 {
     if (allocator != nullptr)
+    {
+        placeholders.destroy();
         vmaDestroyAllocator(allocator);
+    }
 
     if (device != VK_NULL_HANDLE)
     {
@@ -898,6 +794,17 @@ void VulkanShared::createAll()
     if (!selectPhysicalDevice() || !createDevice() || !createAllocator()
         || !createComputeLayouts() || !createRenderLayouts())
     {
+        return;
+    }
+
+    const auto placeholderTarget = VulkanPlaceholders::Target {
+        physicalDevice, device, allocator, queue, queueFamily};
+    placeholdersReady =
+        placeholders.create(placeholderTarget, properties.limits, features);
+
+    if (!placeholdersReady)
+    {
+        LOG("Vulkan: the placeholder descriptors could not be created");
         return;
     }
 
@@ -1021,7 +928,7 @@ bool VulkanShared::selectPhysicalDevice()
 
     auto best = VkPhysicalDevice {VK_NULL_HANDLE};
     auto bestRank = -1;
-    auto sawIncompleteDevice = false;
+    auto capabilities = DeviceCapabilities {};
 
     for (auto candidate: candidates)
     {
@@ -1038,14 +945,18 @@ bool VulkanShared::selectPhysicalDevice()
             continue;
         }
 
-        if (!probeFeatures(candidate, candidateProperties.apiVersion).allPresent())
+        const auto candidateCapabilities =
+            probeCapabilities(candidate, candidateProperties.apiVersion);
+
+        if (!candidateCapabilities.meetsFloor())
         {
             LOG("Vulkan: ",
                 candidateProperties.deviceName,
                 " (API ",
                 apiVersionText(candidateProperties.apiVersion),
-                ") lacks part of the feature set eacp needs, so it is skipped");
-            sawIncompleteDevice = true;
+                ") lacks ",
+                Strings::join(candidateCapabilities.describeMissingFloor(), ", "),
+                ", so it is skipped");
             continue;
         }
 
@@ -1066,19 +977,12 @@ bool VulkanShared::selectPhysicalDevice()
             bestRank = rank;
             best = candidate;
             properties = candidateProperties;
+            capabilities = candidateCapabilities;
         }
     }
 
     if (best == VK_NULL_HANDLE)
-    {
-        if (sawIncompleteDevice)
-            LOG("Vulkan: no device offers the feature set eacp needs "
-                "(timeline semaphores, synchronization2, dynamic rendering or "
-                "VK_KHR_create_renderpass2 with VK_KHR_depth_stencil_resolve, "
-                "partially bound descriptors, format-less storage image writes)");
-
         return false;
-    }
 
     physicalDevice = best;
     queueFamily = static_cast<std::uint32_t>(findQueueFamily(physicalDevice));
@@ -1096,6 +1000,7 @@ bool VulkanShared::selectPhysicalDevice()
     indirectCountSupported = probeDrawIndirectCount(physicalDevice, coreFloor);
     layeredRenderingSupported = probeLayeredRendering(physicalDevice, coreFloor);
     shaderFloat16Supported = probeShaderFloat16(physicalDevice, coreFloor);
+    synchronization2Path = capabilities.synchronization2 && !forcesLegacySync();
 
     if (coreFloor)
         spirvTarget = Spirv::Target::vulkan13Spirv16;
@@ -1133,49 +1038,26 @@ bool VulkanShared::createDevice()
 
     VkPhysicalDeviceShaderFloat16Int8Features float16 = {};
     float16.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
-    float16.pNext = &storage16;
     float16.shaderFloat16 = VK_TRUE;
 
-    // The five probeFeatures asked about, plus demotion: every 1.3 device has
-    // it, and glslang lowers GLSL's discard to it when targeting SPIR-V 1.6.
+    // Exactly what selectPhysicalDevice found and chose to use, plus demotion:
+    // every 1.3 device has it, and glslang lowers GLSL's discard to it when
+    // targeting SPIR-V 1.6.
     VkPhysicalDeviceVulkan13Features features13 = {};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-    features13.pNext = shaderFloat16Supported ? &storage16 : nullptr;
-    features13.synchronization2 = VK_TRUE;
+    features13.synchronization2 = synchronization2Path ? VK_TRUE : VK_FALSE;
     features13.dynamicRendering = VK_TRUE;
     features13.shaderDemoteToHelperInvocation = VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features features12 = {};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    features12.pNext = &features13;
     features12.timelineSemaphore = VK_TRUE;
-    features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.drawIndirectCount = indirectCountSupported ? VK_TRUE : VK_FALSE;
     features12.shaderOutputLayer = layeredRenderingSupported ? VK_TRUE : VK_FALSE;
     features12.shaderFloat16 = shaderFloat16Supported ? VK_TRUE : VK_FALSE;
 
-    VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
-    synchronization2.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
-    synchronization2.pNext = shaderFloat16Supported ? &float16 : nullptr;
-    synchronization2.synchronization2 = VK_TRUE;
-
-    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures = {};
-    timelineFeatures.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
-    timelineFeatures.pNext = &synchronization2;
-    timelineFeatures.timelineSemaphore = VK_TRUE;
-
-    VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing = {};
-    indexing.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    indexing.pNext = &timelineFeatures;
-    indexing.descriptorBindingPartiallyBound = VK_TRUE;
-
     VkPhysicalDeviceFeatures2 enabled = {};
     enabled.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    enabled.pNext =
-        coreFloor ? static_cast<void*>(&features12) : static_cast<void*>(&indexing);
     enabled.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
     enabled.features.samplerAnisotropy = features.samplerAnisotropy;
     enabled.features.imageCubeArray = features.imageCubeArray;
@@ -1188,13 +1070,45 @@ bool VulkanShared::createDevice()
     enabled.features.shaderStorageImageExtendedFormats =
         features.shaderStorageImageExtendedFormats;
 
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures = {};
+    timelineFeatures.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+    timelineFeatures.timelineSemaphore = VK_TRUE;
+
+    VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
+    synchronization2.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
+    synchronization2.synchronization2 = VK_TRUE;
+
+    const auto chain = [&enabled](auto& feature)
+    {
+        feature.pNext = enabled.pNext;
+        enabled.pNext = &feature;
+    };
+
     // Absent rather than fatal; GPUView then stays on the off-screen path.
     auto extensions = Vector<const char*> {};
 
-    if (!coreFloor)
+    if (shaderFloat16Supported)
+        chain(storage16);
+
+    if (coreFloor)
     {
-        for (const auto* name: floorExtensions)
-            extensions.add(name);
+        chain(features13);
+        chain(features12);
+    }
+    else
+    {
+        extensions.add(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        extensions.add(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);
+        extensions.add(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+        chain(timelineFeatures);
+
+        if (synchronization2Path)
+        {
+            extensions.add(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+            chain(synchronization2);
+        }
 
         if (spirvTarget == Spirv::Target::vulkan11Spirv14)
         {
@@ -1209,7 +1123,10 @@ bool VulkanShared::createDevice()
             extensions.add(VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
 
         if (shaderFloat16Supported)
+        {
             extensions.add(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
+            chain(float16);
+        }
     }
 
     const auto swapchainOffered =
@@ -1238,7 +1155,7 @@ bool VulkanShared::createDevice()
     // One device in the process, so the dispatch table can be volk's global one.
     volkLoadDevice(device);
 
-    if (!coreFloor && !aliasExtensionEntryPoints())
+    if (!coreFloor && !aliasExtensionEntryPoints(synchronization2Path))
     {
         LOG("Vulkan: ", adapterName, " did not load its extension entry points");
         vkDestroyDevice(device, nullptr);
@@ -1248,6 +1165,14 @@ bool VulkanShared::createDevice()
 
     if (!coreFloor && indirectCountSupported)
         indirectCountSupported = aliasDrawIndirectCount();
+
+    if (synchronization2Path)
+        LOG("Vulkan: synchronization2 barriers");
+    else
+        LOG("Vulkan: legacy barriers (no synchronization2)");
+
+    if (!synchronization2Path)
+        installLegacySynchronization();
 
     vkGetDeviceQueue(device, queueFamily, 0, &queue);
 
@@ -2211,8 +2136,8 @@ VkDescriptorSet VulkanContext::allocateDescriptorSet(CommandContext& commands,
         ++commands.descriptorCursor;
     }
 
-    // Both image types at full width, which of the two a slot takes being per
-    // shader. The overcount is headroom, not memory.
+    // Every image type at full width, which one a slot takes being per shader.
+    // The overcount is headroom, not memory.
     const VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          vulkanSetsPerDescriptorPool
