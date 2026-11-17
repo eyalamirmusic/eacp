@@ -294,15 +294,24 @@ bool StalenessQuery::doesReadWhatMoved(const Expr& expr) const
 
 bool StalenessQuery::doesReadStaleValue(int node)
 {
-    if (node < 0 || !seen.visit(node))
+    if (node < 0)
         return false;
 
-    const auto& expr = graph.expr(node);
+    if (!seen.visit(node))
+        return seen.isMarked(node);
 
-    if (doesReadWhatMoved(expr))
+    if (doesReadWhatMoved(graph.expr(node)) || doesAnArgumentReadStaleValue(node))
+    {
+        seen.mark(node);
         return true;
+    }
 
-    for (auto argument: expr.args)
+    return false;
+}
+
+bool StalenessQuery::doesAnArgumentReadStaleValue(int node)
+{
+    for (auto argument: graph.expr(node).args)
         if (doesReadStaleValue(argument))
             return true;
 
