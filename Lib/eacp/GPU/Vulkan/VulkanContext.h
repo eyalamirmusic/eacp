@@ -300,6 +300,10 @@ public:
     // Null before the device came up.
     VkSampler getSampler(const TextureSampling& sampling) const;
 
+    // Writes the pipeline cache to disk. getVulkanShared() never destroys its
+    // object, so it calls this from an exit handler instead.
+    void savePipelineCache() const;
+
 private:
     void createAll();
     bool createInstance();
@@ -310,10 +314,9 @@ private:
     bool createRenderLayouts();
     void createDebugMessenger();
 
-    // Both silent: a cache that could not be read, written or created only
-    // costs the compile it would have saved.
+    // Silent, as savePipelineCache is: a cache that could not be read, written
+    // or created only costs the compile it would have saved.
     void createPipelineCache();
-    void savePipelineCache() const;
 
     VkInstance instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
