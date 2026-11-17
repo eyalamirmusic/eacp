@@ -1143,8 +1143,10 @@ so the empty set is the library as compiled and a default given is the same
 set as one left out. That set is the key: `ComputeProgram` and `ShaderProgram`
 keep one pipeline per set since their last `prepare()`, `specialize(values)`
 makes the one for `values` current - the existing one, or one built now on the
-same library - and `prepare()` compiles the library afresh and forgets them all,
-which is what a restored device needs. Below the EDSL a hand-written source
+same library - and `prepare()` forgets them all, which is what a restored
+device needs, taking the library from the device's cache (compiled again only
+after the device was rebuilt; see "Compiling shaders ahead of time on a
+worker"). Below the EDSL a hand-written source
 marks itself `ShaderSource::withPipelineConstants()` and its pipelines take
 `RenderPipelineDescriptor::constants` or the `ComputePipeline` constructor's
 `PipelineConstants`, keyed by id.
@@ -1567,6 +1569,285 @@ and the SPIR-V hold the unspecialised functions, and each pipeline specialises
 them at load - `OverrideDevice/aPrecompiledKernelSpecialisesAtLoad` loads one
 under the require flag and runs it with two value sets. The DXBC is the
 source with its defaults, so on D3D12 only the default set is precompiled.
+
+## Compiling shaders ahead of time on a worker
+
+Where the build cannot compile a shader, or an app would rather not embed it,
+the compile can still move off the frame that first draws: a
+`GPU::ShaderWarmUp` (`Codegen/ShaderWarmUp.h`) compiles a list of shaders on
+one worker thread while the main thread carries on — showing a progress screen,
+say — and the `GPUView` made once it finishes prepares its programs with no
+compile left to do.
+
+```cpp
+auto warmUp = GPU::ShaderWarmUp {};                 // on Device::shared()
+warmUp.add<SkyShader>()                             // built on the worker
+    .add<SpriteShader>(TextureSampling::nearest)    // one variant per args
+    .addRegisteredSets()                            // every EACP_SHADER_SET
+    .addGraphs("layers", &UI::LayerRenderer::forEachShaderGraph);
+UI::addComponentHostShaders(warmUp);                // the ComponentHost's own
+
+warmUp.start().then([this](const GPU::ShaderWarmUp::Result& result)
+                    { content.set(makeOwned<GameView>()); });
+
+// any thread, e.g. from a Threads::Timer driving the progress bar
+auto progress = warmUp.progress();   // state, completed, total, fraction, current
+```
+
+### The library cache
+
+The handoff is not the warm-up's programs but the device's
+`ShaderLibraryCache` (`Shader/ShaderLibraryCache.h`), one per `Device` through
+`perDevice` and destroyed with it. `ShaderProgram::prepare` and
+`ComputeProgram::prepare` take their library from it with `acquire`, so a
+second `prepare`, a second instance and a second window of the same shader
+compile nothing — before, every `prepare` compiled its library again — and the
+warm-up's worker compiles into it with `warm`. `Device::makeShaderLibrary` and
+a `ShaderLibrary` constructed directly are untouched: they always compile.
+Programs hold their library as a `shared_ptr<const ShaderLibrary>`; nothing
+about `ShaderLibrary` itself changed, D3D12's per-constants variants
+(`variantFor`, already locked) included.
+
+An entry's key is a SHA-256 (`Core/Utils/Sha256.h`) over, length-prefixed,
+everything that decides what the compile produces: the backend, the vertex,
+fragment and compute entry points, the thread group, whether the source
+declares pipeline constants, `Precompiled::configurationGeneration()` (bumped
+by every `setForTesting`, `clearForTesting` and `setRequiredForTesting`, so a
+library loaded from an injected blob is never handed out once the blob is
+gone), on D3D12 the DXC configuration (enabled, its state, version and
+arguments; `acquire` runs `Dxc::load()` first on the owning thread, which is
+what its first compile would have done), and the source text. A hash rather
+than the text itself so the cache does not keep a second copy of every source;
+SHA-256 rather than the FNV-1a the precompiled blob names use because a
+collision here would hand a program the wrong shader rather than miss a blob.
+
+A key being compiled is an entry in flight. A second asker — the main thread's
+`prepare` of the shader the worker is on, or the worker reaching one the main
+thread is compiling — waits on the cache's condition variable for it rather
+than compiling it twice (`Stats::waits`). A library that failed is kept, with
+its `compilationInfo()`, so a warm-up reports the messages; the next `acquire`
+of it compiles it again, as `prepare` always did, so a failure is never served
+from the cache to a program and its messages are always fresh. A library
+loaded from a precompiled blob is cached like any other. A waiter waits only
+for the one key it asked for: the lock is held to claim, find and publish an
+entry, never across a compile. `stats()` counts
+compiles, hits, waits and entries; `contains` and `isInFlight` answer for one
+source — which is what the tests read.
+
+**Who releases a library.** Destroying a Vulkan library defers its modules into
+the device's release list, which has no lock and is drained on the owning
+thread, so the worker must never be the one to drop the last reference. `warm`
+holds no library outside the cache's lock: it hands the one it built to the
+entry under the lock and reports a copy of what the library says. Libraries
+leave the cache only in `acquire` — a failed one or a stale one, moved out of
+its entry under the lock and released after it, on the owning thread — and
+with the cache itself, which dies with the `Device`. The worker records nothing
+on a command buffer, and builds pipelines (`addWithPipeline`, below) only on
+Metal, whose device makes and releases them from any thread, and on D3D12,
+where it builds a bare pipeline state into the device's `RenderPipelineCache`
+rather than a `RenderPipeline` (below). On Vulkan a pipeline's construction
+reaches shared state of the backend's (compatible render passes) and its
+destruction the owning thread's release list, so the worker builds none there.
+`find(source)` hands out a usable library to share, which the D3D12 worker
+builds from; on Vulkan nothing may call it off the owning thread, since the
+caller can end up holding the last reference.
+
+**Device restore.** Only D3D12 rebuilds a device after a loss. Its
+generation is `Device::backendGeneration()` (always 0 on Metal and Vulkan,
+whose loss is terminal), and `acquire` drops every finished library compiled
+under an older one before it looks — the D3D12 library keeps a reference to
+the device DXC was asked for, taken through `D3D12Shared::deviceReference()`
+under the lock recovery replaces the device under, since the worker compiles
+too — and compiles again for the programs that
+`onDeviceRestored` re-prepares. An entry still in flight across the rebuild is
+dropped when it is next asked for. `warm` cannot read the generation itself —
+on D3D12 it is the owning thread's to read — so it stamps entries with the one
+the cache last followed: `followBackendGeneration(device)` on the owning thread
+takes it up, `acquire` does so first, and `ShaderWarmUp::start()` calls it
+before the worker starts. A cache that has followed none stamps a generation no
+device has, so a `warm` without it is dropped on every backend rather than only
+on D3D12, whose generation starts at 1.
+
+The precompiled-blob fallback on Vulkan destroys the modules of a binary it
+gave up on with `vkDestroyShaderModule` at once rather than through the
+device's deferred-release list, which belongs to the owning thread: no pipeline
+has seen them, and a warm-up builds libraries on its worker.
+
+### The pipeline-state cache (D3D12)
+
+Metal's driver serves an identical pipeline request from a cache of its own;
+D3D12's does not — every `CreateGraphicsPipelineState` runs the driver's
+compile of the bytecode again — so a pipeline state built ahead on a worker
+has to be handed over. `RenderPipelineCache` (`Pipeline/RenderPipelineCache.h`;
+its D3D12 half is `D3D12PipelineCache`, `Windows/D3D12PipelineCache.h`, one per
+`Device` through `perDevice`) holds the states one device built, and every
+D3D12 `RenderPipeline` takes its state from it with `acquire`, so a second
+pipeline with the same description shares the first one's state wherever it
+was built. Elsewhere the namespace's calls do nothing and `isSupported()` is
+false.
+
+A state's key is a SHA-256 over the whole `D3D12_GRAPHICS_PIPELINE_STATE_DESC`,
+field by field so no padding byte reaches it, with the input layout's
+semantics and the bytes of every shader stage rather than their pointers — the
+library's variant for the descriptor's constants is part of what it hashes. The
+root signature is left out: it is the one the generation followed, and only a
+rebuilt device brings a new one. An entry in flight is waited for rather than
+built twice, as in the library cache; a state that fails to build is not kept.
+`ID3D12PipelineLibrary` was the alternative: it is a serialisable store keyed
+by name, made for persisting states across launches, and it would still need a
+lock and a naming scheme of its own for in-process reuse, while what is missing
+here is only the handover inside one process.
+
+Entries are stamped with the backend generation the cache last followed.
+`follow(device)` on the owning thread takes up `Device::backendGeneration()`
+with references of its own to the shared device and the render root signature
+(`D3D12Shared::deviceReference()` and `renderRootSignatureReference()`, read
+under the lock `recreateAfterDeviceLoss` replaces them under), dropping every
+finished state from an older generation; every `RenderPipeline` follows before
+it asks, and `ShaderWarmUp::start()` follows before the worker starts. `warm`
+builds against that snapshot, never reading the generation or the shared
+device itself, and refuses once the snapshot is out of date; a state it
+finishes after a rebuild keeps the old stamp and is dropped by the next
+`acquire` rather than handed out. States leave the cache only on the owning
+thread, in `follow` or `acquire`, or with the cache itself, and releasing the
+cache's reference is safe at any of those points because every `RenderPipeline`
+holds a reference of its own and defers its release through
+`D3D12Context::deferRelease`; the worker builds no `RenderPipeline`, so it never
+touches that unlocked list. Every state built is kept for the device's
+lifetime, as every library is. `stats()` counts builds, hits, waits and
+entries, which is what the tests and the example read.
+
+### The warm-up
+
+`add<T>(args...)` constructs `T` — any `ShaderProgram` or `ComputeProgram` —
+**on the worker** from a copy of `args` and takes its `source()`, so recording
+and emission move off the main thread too; a shader's constructor may call
+`compile()` and must not touch a device (`setVertices` there would assert).
+`addNamed<T>(name, args...)` is the same under a name for `progress().current`
+and the failures, which otherwise use the type's. `add(name, source)` takes a
+source already emitted, `add(set)` and `addRegisteredSets()` run
+`EACP_SHADER_SET`s, and `addGraphs(name, hook)` takes a module's
+`forEachShaderGraph`; each graph is built for the platform's own backend
+(`buildShader(graph, detail::nativeShaderBackend())`), the text a program's
+`compile()` produces. A set is run on the worker, so the same set must not be
+run anywhere else meanwhile — `ShaderSetDefinition::run` swaps its visitor.
+`addRecipe` is the general form: a function handed a sink for named sources.
+
+`addWithPipeline<T>(descriptor, args...)` and `addNamedWithPipeline<T>(name,
+descriptor, args...)` take a `ShaderProgram` and the `RenderPipelineDescriptor`
+the app will `prepare` it with (its library and vertex layout ignored, as
+`prepare` ignores them). Where `buildsPipelines()` — on Metal and D3D12, for a
+warm-up on `Device::shared()`, the device `prepare` uses — the worker keeps the
+program it recorded and, once the library is in, builds its pipeline there, so
+the GPU's own compile is done by the time the main thread prepares the same
+program with the same descriptor; a different descriptor compiles again. On
+Metal it calls `prepare(descriptor)` on the program, and Metal serves the main
+thread's identical request from its own cache. On D3D12 it asks the program for
+`pipelineDescriptorFor(descriptor, library)` — what `prepare` would build from,
+with the overrides at their defaults — over the library it takes from the cache
+with `find`, and builds that state into the `RenderPipelineCache`. Either way
+it is the pipeline for the overrides at their defaults, which is what
+`prepare(descriptor)` builds and which on D3D12 is the library as compiled; a
+`specialize()` to other values compiles its FXC/DXC variant and builds its
+pipeline on the main thread later, as before, since `addWithPipeline` has no
+way to name them. `Result::pipelines` counts them, a pipeline that did not build is a failure,
+and the shader's timing includes it. On Vulkan, and on another device, such a
+shader is compiled exactly as `add` compiles it.
+`UI::addComponentHostShaders(warmUp)` (`UI/Host/ComponentHostShaders.h`, in
+`eacp-ui`, so `eacp-gpu` knows nothing of it) adds the shape, mesh, image,
+layer and glyph renderers' hooks; the clip, path and gradient programs have no
+hook yet and still compile on first use.
+
+`start()` records every recipe in order, then compiles each source in turn into
+the cache of the warm-up's device (`Device::shared()`, or the `Device&` it was
+built with, which must outlive it), and resolves its `Async<Result>` on the
+main thread: the total, how many it compiled, how many were cached already or
+compiled meanwhile by someone else, how many came from a blob, each failure
+with its name and `CompilationInfo` — a recording that threw is one too — and
+whether it was cancelled, with the elapsed time, the part of it spent recording
+(`recording`) and each shader's own compile time in order (`timings`, a cache
+hit's included, `simulatedCompileTime` too). One shader failing does not
+stop the rest. `progress()` is safe from any thread (atomics, and a mutex for
+the name of the shader in flight): `idle`, `recording` (total still 0),
+`compiling`, then `done`, `cancelled` or `failed`. `Options::onProgress` is
+called on the main thread after each shader and at the end. `cancel()` takes
+effect between shaders — the one in flight finishes and is cached. While one
+run is going a second `start()` is rejected; after it, `start()` runs again
+(and finds everything cached). With DXC enabled, `start()` calls `Dxc::load()`
+on the main thread first, since the locator is the app's and may want that
+thread. Destroying the warm-up — on the main thread — cancels, joins the
+worker (so nothing is left compiling into a dying device) and abandons the
+`Async`; no callback runs after it. `Options::simulatedCompileTime` holds each
+shader in flight that much longer, its entry claimed, for watching a progress
+bar move or catching a shader in flight in a test.
+
+What it does not do:
+
+- **Pipelines are built on the main thread**, in `prepare`, except for shaders
+  added with `addWithPipeline` on Metal and D3D12. That is not cheap for a
+  large shader on Metal:
+  `newLibraryWithSource:` stops at AIR, and the GPU's own compile runs when the
+  pipeline state is made. The example's scenes take about 0.35 s each as a
+  library and another 0.18 s each as a pipeline on an M4 Max; added with `add`,
+  its view blocked the main thread 2.2 s (3.2 s in Debug) preparing twelve of
+  them, the window frozen on its last progress frame and deaf to resizing,
+  while with `addWithPipeline` it prepares them in about 60 ms. On D3D12 the
+  drivers measured defer most of that work past `CreateGraphicsPipelineState`:
+  on an RTX 5070 Ti (driver 32.0.16.1088), and on WARP, the example's twelve
+  states cost the main thread about 20-30 ms in Debug without the warm-up's,
+  FXC or DXC alike, and the same prepares with every state taken from the
+  cache still take about 20 ms, over half of it the library cache's SHA-256
+  of each 37 KB source. On Vulkan the pipelines
+  are still made on the main thread (through the persisted `VkPipelineCache`).
+  Compute pipelines are not warmed anywhere.
+- **A program constructed on the main thread is recorded and emitted again**
+  there, to find its library: a few milliseconds for the example's scenes in
+  Release, about 80 ms each unoptimised, which is most of what its view still
+  takes in Debug.
+- **The progress screen's own shaders compile synchronously**, before it can
+  show anything.
+- The worker compiles on `Device::shared()` from another thread, which the
+  `Device` rules allow for compiling; it makes nothing else there.
+
+`Apps/GPU/ShaderWarmUp` is the example — a ComponentHost progress screen,
+then a grid of twelve raymarched scenes, added with their pipeline, whose
+`prepare`s log "0 compiled, 12 found in the cache". Each scene's distance function is written out at record
+time, one term per shape, and inlined at its eleven uses per pixel, so the
+compile is genuinely slow: about 0.35 s a scene on Metal and 0.45 s on glslang
+at the default 24 shapes, 4-6 s in all. FXC's time climbs far faster than
+linearly with the shape count — about 0.3 s a scene at 4 shapes, 3-4 s at 6,
+minutes at 24 — so the default on Windows is 4. `--complexity N`
+(`EACP_SHADER_WARMUP_COMPLEXITY`) sets the shapes per scene, and `--dxc`
+(`EACP_D3D12_DXC=1`) compiles through DXC, fetched with
+`Dxc::enableFromOnlineResource()`, rather than FXC on D3D12. Every source
+carries a per-launch salt that changes its text and not its image, so the
+system's own compile cache (Metal's, the driver's) misses on every launch;
+`--reuse-system-cache` (`EACP_SHADER_WARMUP_REUSE_SYSTEM_CACHE=1`) leaves it
+out, and a second launch then compiles in milliseconds on Metal. The log gives
+each scene's record, emit and compile times, the totals, the view's prepare
+time - split into constructing the programs, finding their libraries and
+preparing their pipelines, with the pipeline states built and found on D3D12 -
+and, in snapshot mode, the frame cost. `--delay-ms` slows every shader
+further, and `ShaderWarmUp out.png` writes the scenes and, beside them, the
+progress screen a third of the way through, with no window.
+`--measure-responsiveness` resizes the window 20 times a second and logs how
+late a 250 Hz timer ran on the main thread, how long each `setSize` and each
+progress frame took, while compiling and for 4.5 s after, through the swap to
+the scenes, then quits; the swap is where a pipeline left to the main thread
+shows, as one stall as long as the view's prepare. On an M4 Max in Release the
+worst lateness is about 20 ms while compiling, and after it about 60-80 ms at
+the swap with every pipeline warmed, where it was 2.5 s with none (3.4 s and,
+warmed, 1.1 s in Debug). A live resize, which AppKit tracks in a loop of its
+own, delays timers by up to about 150 ms whatever the worker is doing.
+`Tests/GPU/ShaderWarmUpTests.cpp` covers progress, the timings, cache hits
+after a warm-up and between two programs, a `prepare` waiting on the worker's
+entry, cancelling, destroying mid-run, a failure among good shaders, sets,
+rendering on the main thread while the worker compiles, and pipelines built on
+the worker (on Metal and D3D12, and not for a device of its own), with, on
+D3D12, the main thread's `prepare` taking the state the worker built, for the
+default override values too. `Tests/GPU/RenderPipelineCacheTests-Windows.cpp`
+covers identical pipelines sharing a state, and a new generation dropping every
+state and never handing out one built under another.
 
 ## Compiling with DXC at run time
 

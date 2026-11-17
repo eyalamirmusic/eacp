@@ -130,6 +130,7 @@ set(gpu_test_sources
         SelectTests.cpp
         ShaderBlendTests.cpp
         ShaderCompileTests.cpp
+        ShaderWarmUpTests.cpp
         ShadowSamplingTests.cpp
         SharedMemoryTests.cpp
         SimdMatrixTests.cpp
@@ -210,6 +211,10 @@ endif ()
 # whole suite under it.
 if (WIN32)
     list(APPEND gpu_test_sources DxcTests-Windows.cpp)
+endif ()
+
+if (WIN32)
+    list(APPEND gpu_test_sources RenderPipelineCacheTests-Windows.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through

@@ -609,7 +609,13 @@ void D3D12Shared::createDevice()
     // Before the device, and not merely first: the probe's own device has to
     // be gone before this one is made. See probeDriverQuirks.
     quirks = probeDriverQuirks();
-    device = createHardwareOrWarpDevice();
+    auto created = createHardwareOrWarpDevice();
+
+    {
+        auto lock = std::lock_guard {referenceLock};
+        device = created;
+    }
+
     adapterName = describeAdapter(device.get());
 }
 
@@ -740,7 +746,12 @@ void D3D12Shared::createRootSignatures()
     renderDesc.pStaticSamplers = staticSamplers;
     renderDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-    renderRootSignature = makeRootSignature(device.get(), renderDesc);
+    auto renderSignature = makeRootSignature(device.get(), renderDesc);
+
+    {
+        auto lock = std::lock_guard {referenceLock};
+        renderRootSignature = renderSignature;
+    }
 
     D3D12_DESCRIPTOR_RANGE computeSrvRanges[maxTextureSlots] = {};
     D3D12_DESCRIPTOR_RANGE computeUavRanges[maxTextureSlots] = {};
@@ -1117,9 +1128,25 @@ ID3D12PipelineState* D3D12Shared::getMipShader(int kind)
     return state.get();
 }
 
+winrt::com_ptr<ID3D12Device> D3D12Shared::deviceReference() const
+{
+    auto lock = std::lock_guard {referenceLock};
+    return device;
+}
+
+winrt::com_ptr<ID3D12RootSignature> D3D12Shared::renderRootSignatureReference() const
+{
+    auto lock = std::lock_guard {referenceLock};
+    return renderRootSignature;
+}
+
 void D3D12Shared::recreateAfterDeviceLoss()
 {
-    renderRootSignature = nullptr;
+    {
+        auto lock = std::lock_guard {referenceLock};
+        renderRootSignature = nullptr;
+    }
+
     computeRootSignature = nullptr;
     dispatchSignature = nullptr;
     drawSignatures.clear();
@@ -1130,7 +1157,10 @@ void D3D12Shared::recreateAfterDeviceLoss()
     for (auto& state: mipShaders)
         state = nullptr;
 
-    device = nullptr;
+    {
+        auto lock = std::lock_guard {referenceLock};
+        device = nullptr;
+    }
 
     ++generation;
     createAll();

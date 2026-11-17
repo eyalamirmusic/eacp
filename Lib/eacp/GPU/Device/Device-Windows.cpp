@@ -181,6 +181,11 @@ bool Device::isValid() const
     return impl->context.isValid();
 }
 
+std::uint64_t Device::backendGeneration() const
+{
+    return getD3D12Shared().getGeneration();
+}
+
 std::string Device::name() const
 {
     if (!isValid())

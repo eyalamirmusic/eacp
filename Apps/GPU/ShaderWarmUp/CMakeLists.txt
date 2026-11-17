@@ -1,0 +1,6 @@
+eacp_add_app(ShaderWarmUp Main.cpp)
+target_link_libraries(ShaderWarmUp PRIVATE eacp-ui eacp-gpu-dxc)
+set_target_properties(ShaderWarmUp PROPERTIES MACOSX_BUNDLE TRUE)
+
+eacp_set_gui_subsystem(ShaderWarmUp)
+set_default_target_setting(ShaderWarmUp)

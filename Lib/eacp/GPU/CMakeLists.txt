@@ -80,6 +80,7 @@ target_sources(eacp-gpu PRIVATE
         Buffer/StreamingBuffers.cpp
         Codegen/ComputeProgram.cpp
         Codegen/ShaderProgram.cpp
+        Codegen/ShaderWarmUp.cpp
         CommandBuffer/CommandBuffer.cpp
         CommandBuffer/Copy.cpp
         CommandBuffer/CopyPlan.cpp
@@ -92,6 +93,7 @@ target_sources(eacp-gpu PRIVATE
         Pipeline/RenderPipeline.cpp
         Shader/PrecompiledShaders.cpp
         Shader/ShaderLibrary.cpp
+        Shader/ShaderLibraryCache.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
         Texture/MipChain.cpp
@@ -116,6 +118,7 @@ if (APPLE)
             Pipeline/ComputePipeline-Apple.mm
             Pipeline/MetalFunctions-Apple.mm
             Pipeline/RenderPipeline-Apple.mm
+            Pipeline/RenderPipelineCache-Default.cpp
             Shader/Dxc-Default.cpp
             Shader/ShaderLibrary-Apple.mm
             Texture/Texture-Apple.mm
@@ -152,6 +155,7 @@ elseif (WIN32)
             Timing/GpuTimestamps-Windows.cpp
             View/GPUView-Windows.cpp
             Windows/D3D12Context-Windows.cpp
+            Windows/D3D12PipelineCache-Windows.cpp
             Windows/D3D12Types-Windows.cpp)
     target_link_libraries(eacp-gpu PRIVATE
             d3d12
@@ -185,6 +189,7 @@ else ()
             Frame/RenderPass-Linux.cpp
             Pipeline/ComputePipeline-Linux.cpp
             Pipeline/RenderPipeline-Linux.cpp
+            Pipeline/RenderPipelineCache-Default.cpp
             Shader/Dxc-Default.cpp
             Shader/ShaderLibrary-Linux.cpp
             Texture/Texture-Linux.cpp

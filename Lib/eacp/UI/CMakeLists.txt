@@ -13,6 +13,7 @@ target_sources(eacp-ui PRIVATE
         DragAndDrop/DragAndDrop.cpp
         Graphics/Graphics.cpp
         Host/ComponentHost.cpp
+        Host/ComponentHostShaders.cpp
         Render/ClipShader.cpp
         Render/CoverageAtlas.cpp
         Render/DrawList.cpp

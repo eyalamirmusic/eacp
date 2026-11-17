@@ -10,6 +10,7 @@
 #include "DragAndDrop/FileDropTarget.h"
 #include "Graphics/Graphics.h"
 #include "Host/ComponentHost.h"
+#include "Host/ComponentHostShaders.h"
 #include "Render/ClipMask.h"
 #include "Render/CoverageAtlas.h"
 #include "Render/DrawList.h"
