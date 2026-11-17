@@ -1,10 +1,7 @@
-eacp_add_app(TextureAtlas Main.cpp DISPLAY_NAME "Texture Atlas")
+eacp_add_app(TextureAtlas Main.cpp DISPLAY_NAME "Texture Atlas"
+        DESCRIPTION "An atlas filled one tile at a time through region updates.")
 target_link_libraries(TextureAtlas PRIVATE eacp-sprites)
 set_target_properties(TextureAtlas PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(TextureAtlas)
 set_default_target_setting(TextureAtlas)
-
-if (EMSCRIPTEN)
-    eacp_web_executable(TextureAtlas WEBGPU)
-endif ()

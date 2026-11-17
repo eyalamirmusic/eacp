@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eacp web examples</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafaf9;
+    --panel: #ffffff;
+    --text: #1c1917;
+    --muted: #78716c;
+    --line: #e7e5e4;
+    --accent: #2563eb;
+    --ok: #15803d;
+    --bad: #b91c1c;
+    --warn: #a16207;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0a09;
+      --panel: #1c1917;
+      --text: #e7e5e4;
+      --muted: #a8a29e;
+      --line: #292524;
+      --accent: #60a5fa;
+      --ok: #4ade80;
+      --bad: #f87171;
+      --warn: #facc15;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 var(--sans);
+  }
+  header { padding: 20px 24px 8px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  #notice { margin: 12px 24px 0; color: var(--bad); }
+  #notice:empty { display: none; }
+  #list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    padding: 16px 24px 24px;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: inherit;
+    text-decoration: none;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .card p { margin: 0; color: var(--muted); flex: 1; }
+  .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+  .badge {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .badge.webgpu { color: var(--accent); border-color: currentColor; }
+  .badge.jspi { color: var(--ok); border-color: currentColor; }
+  .badge.companion { color: var(--warn); border-color: currentColor; }
+</style>
+</head>
+<body>
+<header>
+  <h1>eacp web examples</h1>
+  <p>Each opens as a page of its own. Pick one.</p>
+</header>
+<div id="notice"></div>
+<div id="list"></div>
+<script>
+// The apps web-gallery wrote in (apps.json beside this holds the same), each
+// a link to its own page with gallery=1, which gives that page its way back
+// here. Nothing is fetched, so the list opens from file:// as well.
+(() =>
+{
+    const manifest = @EACP_WEB_GALLERY_MANIFEST@;
+    const list = document.getElementById('list');
+    const notice = document.getElementById('notice');
+
+    const badgesOf = app =>
+    {
+        const badges = [];
+
+        if (app.webgpu)
+            badges.push(['webgpu', 'WebGPU']);
+
+        if (app.jspi)
+            badges.push(['jspi', 'JSPI']);
+
+        if (app.console)
+            badges.push(['console', 'console']);
+
+        if (app.companion)
+            badges.push(['companion', 'needs ' + app.companion]);
+
+        return badges;
+    };
+
+    const element = (tag, className, text) =>
+    {
+        const node = document.createElement(tag);
+
+        if (className)
+            node.className = className;
+
+        if (text)
+            node.textContent = text;
+
+        return node;
+    };
+
+    const cardFor = app =>
+    {
+        const card = element('a', 'card');
+        card.href = app.page + '?gallery=1';
+        card.append(element('h2', '', app.name), element('p', '', app.description || ''));
+
+        const badges = element('div', 'badges');
+
+        for (const [kind, label] of badgesOf(app))
+            badges.append(element('span', 'badge ' + kind, label));
+
+        card.append(badges);
+        return card;
+    };
+
+    list.replaceChildren(...manifest.apps.map(cardFor));
+
+    if (location.protocol === 'file:' && manifest.apps.some(app => !app.singleFile))
+        notice.textContent = 'These apps keep their .wasm in a file of its own, which a '
+                             + 'page opened from file:// cannot fetch: serve this folder '
+                             + 'over http, or build with EACP_WEB_SINGLE_FILE on.';
+})();
+</script>
+</body>
+</html>

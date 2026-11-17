@@ -1,10 +1,7 @@
-eacp_add_app(StreamingStress Main.cpp)
+eacp_add_app(StreamingStress Main.cpp
+        DESCRIPTION "Two thousand small meshes streamed to the GPU, each its own draw, every frame.")
 target_link_libraries(StreamingStress PRIVATE eacp-gpu)
 set_target_properties(StreamingStress PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(StreamingStress)
 set_default_target_setting(StreamingStress)
-
-if (EMSCRIPTEN)
-    eacp_web_executable(StreamingStress WEBGPU)
-endif ()

@@ -1,15 +1,18 @@
 // Runs one built web app. Plain node, no packages.
 //
 //   node Launch.mjs <node|browser|headless> <app.js> [options] [-- <app arguments>...]
+//   node Launch.mjs open <file>
 //
 //   node       runs <app.js> under this node
-//   browser    serves it as plain static files on a loopback port and opens
-//              it in the default browser
-//   headless   the same in headless Chrome, for CI and checks
+//   browser    serves its directory as plain static files on a loopback port
+//              and opens its own page, <app>.html, in the default browser
+//   headless   the same in headless Chrome, for CI and checks, in a bare page
+//   open       opens <file> (an app's page, the gallery's index.html) in the
+//              default browser as a file:// URL and exits: no server
 //
-// In the browser modes the page relays the app's output and exit code back,
-// so this prints the same lines node would and exits with the app's code; an
-// app that never exits is served until this is interrupted.
+// In the browser and headless modes the page relays the app's output and exit
+// code back, so this prints the same lines node would and exits with the
+// app's code; an app that never exits is served until this is interrupted.
 //
 //   --companion <script.mjs>   start `node <script.mjs> serve` first, wait for
 //                              the JSON line with a baseUrl it prints, append
@@ -25,6 +28,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import {pathToFileURL} from 'node:url';
 
 const timeoutExitCode = 124;
 const headlessTimeoutSeconds = 120;
@@ -94,10 +98,10 @@ function parseCommandLine(argv)
             throw new Error(`unknown option ${rest[i]}`);
     }
 
-    if (!['node', 'browser', 'headless'].includes(mode) || !app)
+    if (!['node', 'browser', 'headless', 'open'].includes(mode) || !app)
         throw new Error('usage: Launch.mjs <node|browser|headless> <app.js> '
                         + '[--companion <script>] [--chrome <path>] '
-                        + '[-- <app arguments>...]');
+                        + '[-- <app arguments>...], or Launch.mjs open <file>');
 
     options.app = path.resolve(app);
 
@@ -289,9 +293,58 @@ function pageFor(appFile, args)
 `;
 }
 
-const contentTypes = {'.js': 'text/javascript', '.mjs': 'text/javascript',
+// UTF-8 named, since a -sSINGLE_FILE .js carries its wasm as UTF-8 text.
+const contentTypes = {'.js': 'text/javascript; charset=utf-8',
+                      '.mjs': 'text/javascript; charset=utf-8',
                       '.wasm': 'application/wasm', '.json': 'application/json',
-                      '.html': 'text/html', '.map': 'application/json'};
+                      '.html': 'text/html; charset=utf-8', '.map': 'application/json',
+                      '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png'};
+
+function appName(appFile)
+{
+    return path.basename(appFile).replace(/\.js$/, '');
+}
+
+// The app's own page, relaying (relay=1), with these arguments in place of
+// the ones written into it; force=1 when a companion is running, which the
+// page otherwise says a static host lacks.
+function appPageUrl(options, args)
+{
+    const params = new URLSearchParams({relay: '1'});
+
+    if (options.companion)
+        params.set('force', '1');
+
+    for (const arg of args)
+        params.append('arg', arg);
+
+    return `/${encodeURIComponent(appName(options.app))}.html?${params}`;
+}
+
+// What each mode serves from the app's directory: headless the bare page at /,
+// which the ctest entries were written against; browser the directory, with /
+// sent to the app's page.
+function siteFor(options, args)
+{
+    const root = path.dirname(options.app);
+
+    if (options.mode === 'headless')
+        return {root, redirect: '', pages: {'/': ['text/html; charset=utf-8',
+                                                  pageFor(path.basename(options.app), args)]}};
+
+    return {root, redirect: appPageUrl(options, args), pages: {}};
+}
+
+function fileIn(root, pathname)
+{
+    const file = path.resolve(root, '.' + pathname);
+
+    if (file.startsWith(root + path.sep) && fs.statSync(file, {throwIfNoEntry: false})
+                                                ?.isFile())
+        return file;
+
+    return '';
+}
 
 const noCache = {'Cache-Control': 'no-store'};
 
@@ -307,8 +360,7 @@ async function readBody(req)
 
 function serveApp(options, args, onEvent)
 {
-    const directory = path.dirname(options.app);
-    const page = pageFor(path.basename(options.app), args);
+    const site = siteFor(options, args);
 
     const server = http.createServer(async (req, res) =>
     {
@@ -326,17 +378,25 @@ function serveApp(options, args, onEvent)
             return;
         }
 
-        if (url.pathname === '/')
+        const page = site.pages[url.pathname];
+
+        if (page)
         {
-            res.writeHead(200, {...noCache, 'Content-Type': 'text/html'});
-            return res.end(page);
+            res.writeHead(200, {...noCache, 'Content-Type': page[0]});
+            return res.end(page[1]);
         }
 
-        const file = path.resolve(directory, '.' + decodeURIComponent(url.pathname));
-
-        if (!file.startsWith(directory + path.sep))
+        if (url.pathname === '/' && site.redirect)
         {
-            res.writeHead(403, noCache);
+            res.writeHead(302, {...noCache, Location: site.redirect});
+            return res.end();
+        }
+
+        const file = fileIn(site.root, decodeURIComponent(url.pathname));
+
+        if (!file)
+        {
+            res.writeHead(404, noCache);
             return res.end();
         }
 
@@ -386,6 +446,7 @@ function exitAfterAWhile(code)
     appExitCode = appExitCode || code;
 }
 
+// Resolves to whether the opener started.
 function openInDefaultBrowser(url)
 {
     const [command, args] = {darwin: ['open', [url]],
@@ -394,8 +455,24 @@ function openInDefaultBrowser(url)
 
     const child = spawn(command, args, {stdio: 'ignore', detached: true,
                                         windowsVerbatimArguments: true});
-    child.on('error', error => console.error(`launch: cannot open ${url}: ${error.message}`));
     child.unref();
+
+    return new Promise(resolve =>
+    {
+        child.once('spawn', () => resolve(true));
+        child.once('error', error =>
+        {
+            console.error(`launch: cannot open ${url}: ${error.message}`);
+            resolve(false);
+        });
+    });
+}
+
+async function openFile(file)
+{
+    const url = pathToFileURL(file).href;
+    console.error(`launch: opening ${url}`);
+    return finish(await openInDefaultBrowser(url) ? 0 : 1);
 }
 
 function stopChrome(chrome)
@@ -459,6 +536,12 @@ function startHeadlessChrome(executable, url, webgpu)
 
 async function runInBrowser(options, args)
 {
+    const page = options.app.replace(/\.js$/, '.html');
+
+    if (options.mode === 'browser' && !fs.existsSync(page))
+        return fail(`no ${path.basename(page)} beside the app; eacp_web_executable `
+                    + 'writes it when CMake configures');
+
     const url = await serveApp(options, args, relayEvent);
 
     if (options.mode === 'browser')
@@ -487,6 +570,9 @@ async function main()
 
     try { options = parseCommandLine(process.argv.slice(2)); }
     catch (error) { return fail(error.message, 2); }
+
+    if (options.mode === 'open')
+        return openFile(options.app);
 
     const args = [...options.appArguments];
 

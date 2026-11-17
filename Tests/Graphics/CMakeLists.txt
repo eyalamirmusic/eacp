@@ -138,7 +138,7 @@ if (EMSCRIPTEN)
     add_executable(WebWindowHarness WebWindowHarness-Web.cpp)
     target_link_libraries(WebWindowHarness PRIVATE eacp-graphics)
     set_default_target_setting(WebWindowHarness)
-    eacp_web_executable(WebWindowHarness)
+    eacp_web_executable(WebWindowHarness NO_GALLERY)
 endif ()
 
 if (APPLE AND NOT IOS)

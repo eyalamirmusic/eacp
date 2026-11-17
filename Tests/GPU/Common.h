@@ -62,14 +62,10 @@ inline ShaderTwins shaderTwins(
 
 inline eacp::GPU::ShaderSource nativeDialect(ShaderTwins twins)
 {
-    if constexpr (eacp::Platform::isWindows())
-        return eacp::GPU::ShaderSource::hlsl(std::move(twins.hlsl));
-    else if constexpr (eacp::Platform::isWeb())
-        return eacp::GPU::ShaderSource::wgsl(std::move(twins.wgsl));
-    else if constexpr (eacp::Platform::isLinuxFamily())
-        return eacp::GPU::ShaderSource::glsl(std::move(twins.glsl));
-    else
-        return eacp::GPU::ShaderSource::msl(std::move(twins.msl));
+    return eacp::GPU::ShaderSource::native({std::move(twins.msl),
+                                            std::move(twins.hlsl),
+                                            std::move(twins.glsl),
+                                            std::move(twins.wgsl)});
 }
 
 inline eacp::GPU::ShaderSource nativeDialect(

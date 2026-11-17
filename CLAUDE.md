@@ -209,8 +209,11 @@ since assets live in the APK; `FilePath`'s data and cache roots are
 `eacp_add_app` builds an example as an
 executable, or on Android as the shared library NativeActivity loads, with
 `BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON`,
-`ORIENTATION` (`portrait` or `landscape`, applied on iOS and Android) and
-`PERMISSIONS` (Android's manifest permissions). The
+`ORIENTATION` (`portrait` or `landscape`, applied on iOS and Android),
+`PERMISSIONS` (Android's manifest permissions) and `DESCRIPTION` (one line,
+the target's `EACP_APP_DESCRIPTION`, which the web page and gallery show); on the web
+it is also the app's `eacp_web_executable`, given `NESTED_PUMP`, `CONSOLE`
+and `COMPANION`, which nothing else reads, so no example has a web branch. The
 prerequisites are Android Studio with an NDK (the SDK Manager installs it),
 CMake and Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
 build-android -DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is
@@ -815,16 +818,39 @@ gates as everywhere let through: `Apps/Web` (`HelloLoop`, `HelloNetwork`,
 `Console`, `ZipDemo`,
 `OnlineResourceDemo`, `Http` and `BasicHttp` (no socket apps, no
 `Apps/Plugins`; `plan.md` is the roadmap to the rest). It is browser-first:
-one thread, no `-pthread`, so the output (`<app>.js` and `<app>.wasm`, no
-page) is plain static files needing no cross-origin isolation headers.
+one thread, no `-pthread`, so the output is plain static files needing no
+cross-origin isolation headers: `<app>.js` with the wasm embedded
+(`-sSINGLE_FILE=1` under `EACP_WEB_SINGLE_FILE`, default `ON`, for every
+browser-capable `eacp_web_executable`; `OFF` puts `<app>.wasm` beside it), so
+a page runs from `file://` with no server.
 `CMake/Web.cmake` (included before any target, for `-fwasm-exceptions`
-everywhere) gives `eacp_web_executable(<app> [NESTED_PUMP])`: the shared link
+everywhere) gives `eacp_web_executable(<app> [NESTED_PUMP])`, which
+`eacp_add_app` calls itself there (a harness made with `add_executable` calls
+it directly): the shared link
 options (`-sEXIT_RUNTIME=1`, growable memory, 1 MB stack), with `NESTED_PUMP`
 linking `eacp-core-nested-pump` for an example that blocks in `main()` and
 running its launcher under the test node, and one `<app>-run` target
 that opens the app in the default browser through `CMake/Web/Launch.mjs`,
 whose `node` and `headless` (headless Chrome) modes only the ctest entries
-use. Per-platform files are `Thing-Web.cpp`, and the
+use. Every such app also gets its own `<app>.html` beside its `.js`:
+`CMake/Web/Host/app.html` with its name, description, flags,
+companion and arguments filled into `@EACP_WEB_PAGE_...@` placeholders at the
+end of configure, which sets `Module` with a `canvas` and the output pane and
+checks for WebGPU and JSPI first (`?arg=` replaces the arguments, `relay=1`
+reports to the launcher, `gallery=1` shows the link back to the list), one
+page per app since a runtime lives on its global `Module` and exits for good;
+`<app>-run` opens that page as a `file://` URL and returns (`Launch.mjs
+open`), or, for an app with a `COMPANION` or with `EACP_WEB_SINGLE_FILE` off,
+serves the app's directory, opens it from there and relays its output and exit
+code (`browser`); `web-gallery` lays out every app `eacp_web_executable`
+registered (with its `DESCRIPTION`; `NO_GALLERY` for a harness) in
+`<build>/web/`, pruning what it no longer writes, whose `index.html` has the
+app list written in at configure (`@EACP_WEB_GALLERY_MANIFEST@`, no fetch)
+and links to each page, and which `web-gallery-run` opens from `file://`.
+Its `webgpu` and `console` flags are read off the app's links
+(`eacp_web_links_target`: links `eacp-gpu`; links no `eacp-graphics`, or says
+`CONSOLE`) once configure has made them all.
+Per-platform files are `Thing-Web.cpp`, and the
 `EMSCRIPTEN` branch comes before `UNIX`, which Emscripten also sets.
 `EventLoop-Web.cpp` makes the browser's loop eacp's: `callAsync` drains on a
 later turn, `callAfter` is one JS timeout for the nearest deadline, `Timer` is
@@ -902,9 +928,10 @@ dependency, with every adapter feature and its highest limits; with no
 messages and pipeline validation suspend through JSPI where the executable
 links the nested pump and are skipped (reads, with a message) or optimistic
 where it does not; ordering needs no wait. A `GPUView` is the canvas, in
-`bgra8unorm`, paced by `requestAnimationFrame`. `eacp_web_executable(<app>
-WEBGPU)` gives an app's headless runs Chrome's GPU (`Launch.mjs --webgpu`) and
-fails its ctest entries on a `WebGPU: ` validation line; `Compute` and
+`bgra8unorm`, paced by `requestAnimationFrame`. An app that links `eacp-gpu`
+gets Chrome's GPU in its headless runs (`Launch.mjs --webgpu`) and fails its
+ctest entries on a `WebGPU: ` validation line; a hand-written shader is picked
+for the backend by `ShaderSource::native(ShaderDialects)`, as `Triangle` does; `Compute` and
 `AsyncCompute` are such entries, and `GPUTests` runs in headless Chrome, one
 page per group (`eacp_web_discover_tests(GPUTests HEADLESS)`). Occlusion
 queries, timestamps, GPU mip generation, layered rendering, border colours,

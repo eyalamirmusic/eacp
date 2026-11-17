@@ -301,11 +301,11 @@ endif ()
 if (EMSCRIPTEN)
     add_executable(QuitWithTimerHarness QuitWithTimerHarness-Web.cpp)
     target_link_libraries(QuitWithTimerHarness PRIVATE eacp-core)
-    eacp_web_executable(QuitWithTimerHarness)
+    eacp_web_executable(QuitWithTimerHarness NO_GALLERY)
 
     # Throws out of a main() suspended in a nested pump, which must end the run
     # at once with the message and a non-zero code (Tests/CMakeLists.txt).
     add_executable(ThrowFromMainHarness ThrowFromMainHarness-Web.cpp)
     target_link_libraries(ThrowFromMainHarness PRIVATE eacp-core)
-    eacp_web_executable(ThrowFromMainHarness NESTED_PUMP)
+    eacp_web_executable(ThrowFromMainHarness NESTED_PUMP NO_GALLERY)
 endif ()

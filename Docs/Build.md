@@ -294,8 +294,9 @@ or `emcmake cmake ...`, configures the web target: wasm32, single-threaded,
 `CMake/Web.cmake` is included before any target, so every object, dependencies
 included, is compiled with `-fwasm-exceptions`, and the top-level 64-bit check
 lets wasm32 through. Of the examples only `Apps/Web` is built. An app is an
-`eacp_add_app` plus `eacp_web_executable(<app>)`, which links it with a
-growable memory, a 1 MB stack and `-sEXIT_RUNTIME=1` and gives it an
+`eacp_add_app`, which there calls `eacp_web_executable(<app>)` itself (with
+the `NESTED_PUMP`, `CONSOLE` and `COMPANION` it was given; a plain
+`add_executable` calls it directly), which links it with a growable memory, a 1 MB stack and `-sEXIT_RUNTIME=1` and gives it an
 `<app>-run` target, not part of `all`, that opens it in the default browser;
 `eacp_web_add_app_tests(<app>)` makes
 its node and headless Chrome runs ctest entries. `eacp_add_plugin` is a
@@ -314,6 +315,12 @@ cache variables are the target's own:
 - `EACP_WEB_CHROME` — the Chrome, found once at configure, that the
   `<app>Headless` ctest entries run in; those entries exist only when one is
   found, and a `STATUS` line says when none was.
+- `EACP_WEB_SINGLE_FILE` (default `ON`) — links every executable that can run
+  in a browser `-sSINGLE_FILE=1`, its wasm embedded in its `.js`, so its page,
+  `<app>-run` and the `web-gallery` folder open from `file://` with no server.
+  `OFF` keeps `<app>.wasm` beside the `.js`, which a page fetches only over
+  http, and `<app>-run` then serves the page as it does for an app with a
+  companion.
 
 [Web.md](Web.md) is the account: the loop and `run()`/`quit()`, the nested
 pump, threads, the network's browser differences, the file system and the

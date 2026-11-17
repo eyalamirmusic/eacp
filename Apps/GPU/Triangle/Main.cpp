@@ -19,43 +19,23 @@ const Vertex triangleVertices[] = {
     {{0.8f, -0.8f}, {0.2f, 0.2f, 1.0f}},
 };
 
-const char* triangleShaderFile()
+std::string embeddedShader(const char* fileName)
 {
-    if constexpr (Platform::isWindows())
-        return "Triangle.hlsl";
-    else if constexpr (Platform::isWeb())
-        return "Triangle.wgsl";
-    else if constexpr (Platform::isLinuxFamily())
-        return "Triangle.glsl";
-    else
-        return "Triangle.metal";
-}
-
-ShaderSource shaderSourceFrom(std::string text)
-{
-    if constexpr (Platform::isWindows())
-        return ShaderSource::hlsl(std::move(text));
-    else if constexpr (Platform::isWeb())
-        return ShaderSource::wgsl(std::move(text));
-    else if constexpr (Platform::isLinuxFamily())
-        return ShaderSource::glsl(std::move(text));
-    else
-        return ShaderSource::msl(std::move(text));
+    auto shader = ResEmbed::get(fileName, "TriangleShaders");
+    return shader ? shader.toString() : std::string {};
 }
 
 ShaderSource loadTriangleShader()
 {
-    auto fileName = triangleShaderFile();
+    auto shader = ShaderSource::native({embeddedShader("Triangle.metal"),
+                                        embeddedShader("Triangle.hlsl"),
+                                        embeddedShader("Triangle.glsl"),
+                                        embeddedShader("Triangle.wgsl")});
 
-    auto shader = ResEmbed::get(fileName, "TriangleShaders");
+    if (shader.source.empty())
+        throw std::runtime_error("Triangle: no embedded shader for this backend");
 
-    if (!shader)
-        throw std::runtime_error(std::string("Triangle: embedded ") + fileName
-                                 + " not found");
-
-    return shaderSourceFrom(shader.toString())
-        .withVertex("vertexMain")
-        .withFragment("fragmentMain");
+    return shader.withVertex("vertexMain").withFragment("fragmentMain");
 }
 } // namespace
 

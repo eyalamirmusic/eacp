@@ -100,5 +100,6 @@ if (EMSCRIPTEN)
     # exited runtime (Tests/CMakeLists.txt registers it).
     add_executable(QuitWithFetchHarness QuitWithFetchHarness-Web.cpp)
     target_link_libraries(QuitWithFetchHarness PRIVATE eacp-network)
-    eacp_web_executable(QuitWithFetchHarness COMPANION "${web_test_server}")
+    eacp_web_executable(QuitWithFetchHarness NO_GALLERY
+            COMPANION "${web_test_server}")
 endif ()

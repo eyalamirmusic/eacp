@@ -1,10 +1,7 @@
-eacp_add_app(Texture Main.cpp)
+eacp_add_app(Texture Main.cpp
+        DESCRIPTION "A textured quad sampled in a fragment shader.")
 target_link_libraries(Texture PRIVATE eacp-gpu)
 set_target_properties(Texture PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(Texture)
 set_default_target_setting(Texture)
-
-if (EMSCRIPTEN)
-    eacp_web_executable(Texture WEBGPU)
-endif ()

@@ -1,4 +1,5 @@
-eacp_add_app(Triangle Main.cpp)
+eacp_add_app(Triangle Main.cpp
+        DESCRIPTION "The hello-world triangle, from a hand-written WGSL shader.")
 target_link_libraries(Triangle PRIVATE eacp-gpu)
 
 res_embed_add(Triangle
@@ -10,7 +11,3 @@ set_target_properties(Triangle PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(Triangle)
 set_default_target_setting(Triangle)
-
-if (EMSCRIPTEN)
-    eacp_web_executable(Triangle WEBGPU)
-endif ()

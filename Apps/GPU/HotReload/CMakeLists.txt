@@ -1,4 +1,5 @@
-eacp_add_app(HotReloadGPU Main.cpp)
+eacp_add_app(HotReloadGPU Main.cpp
+        DESCRIPTION "The hot-reload GPU example, linked statically as it is on the web.")
 target_link_libraries(HotReloadGPU PRIVATE eacp-gpu)
 set_target_properties(HotReloadGPU PROPERTIES MACOSX_BUNDLE TRUE)
 
@@ -7,7 +8,3 @@ target_link_libraries(HotReloadGPUViews PRIVATE eacp-gpu)
 
 eacp_set_gui_subsystem(HotReloadGPU)
 set_default_target_setting(HotReloadGPU)
-
-if (EMSCRIPTEN)
-    eacp_web_executable(HotReloadGPU WEBGPU)
-endif ()

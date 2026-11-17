@@ -123,8 +123,18 @@ Not yet verified:
 - Real (trusted) input in a visible browser: only synthesised events in
   headless Chrome; `HelloInput-run` by hand is untried. Full screen and
   pointer lock, which need a user gesture, are untried.
-- A page that sets `Module.canvas`: `Launch.mjs`'s page sets none, so only
-  owned canvases have run.
+- [x] A page that sets `Module.canvas`: each app's own `<app>.html` does
+      (`CMake/Web/Host/app.html`, `web-gallery`). Checked in headless Chrome on the
+      Studio: `HelloInput`, `Triangle`, `Teapot`, `Maze`, `ComputeParticles`
+      and `Sprites` claim it, size to the frame through the `ResizeObserver`
+      and render; `HelloInput` gets synthesised pointer, wheel and key events
+      on it. `Launch.mjs`'s headless page still sets none, so the ctest
+      entries run owned canvases only.
+- [x] Pages and the gallery from `file://` (`EACP_WEB_SINGLE_FILE`, the list
+      written into `index.html`). Checked in headless Chrome on the Studio
+      with no server: `Teapot` renders, `HelloLoop` and `Http` (against
+      httpbingo.org from a null origin) exit 0, `HelloInput` gets its events.
+      Not tried from `file://` in Firefox or Safari.
 - Firefox and Safari; Windows' clang-cl and MSVC with the tracker split
   (reasoned: the files are Linux/web only).
 

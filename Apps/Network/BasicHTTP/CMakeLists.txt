@@ -1,15 +1,7 @@
-add_executable(BasicHttp Main.cpp)
-target_link_libraries(BasicHttp PRIVATE eacp-network Miro)
-
-set(BUNDLE_ID "com.eacp.basichttprequest")
-
-set_target_properties(BasicHttp PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Basic Http Request App"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
-
 # main() makes blocking requests, each waiting in a nested pump.
-if (EMSCRIPTEN)
-    eacp_web_executable(BasicHttp NESTED_PUMP)
-endif ()
+eacp_add_app(BasicHttp Main.cpp NESTED_PUMP
+        BUNDLE_ID com.eacp.basichttprequest
+        DISPLAY_NAME "Basic Http Request App"
+        DESCRIPTION "A reflected struct POSTed as JSON ten times to httpbingo.org, echoed back.")
+target_link_libraries(BasicHttp PRIVATE eacp-network Miro)
+set_target_properties(BasicHttp PROPERTIES MACOSX_BUNDLE TRUE)

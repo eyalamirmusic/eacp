@@ -68,38 +68,73 @@ overlay: `Triangle`, `TriangleGen`, `RotatingTriangle`, `Teapot`,
 `Maze`, `Sprites`, `Clipping`, `StreamingStress`, `TextureAtlas` and
 `HotReloadGPU` in a window, and `Compute`, `AsyncCompute`, `CpuCompute` and
 `PathBench`, which compute and exit. The servers, TCP and IPC examples are behind
-`EACP_HAS_SOCKETS` and `Apps/Plugins` is never added. An app is an ordinary
-`eacp_add_app` or `add_executable`, which on the web produces `<app>.js` and
-`<app>.wasm`, plus one call:
+`EACP_HAS_SOCKETS` and `Apps/Plugins` is never added. An app joins the web
+by being an `eacp_add_app`, the same call that makes it everywhere else, and
+on the web produces `<app>.js`, with the wasm inside it (or beside it as
+`<app>.wasm`, see `EACP_WEB_SINGLE_FILE` below); its CMake has no web branch:
 
 ```cmake
-eacp_add_app(HelloLoop Main.cpp)
+eacp_add_app(HelloLoop Main.cpp
+        DESCRIPTION "callAsync, callAfter and a Timer on the page's own loop.")
 target_link_libraries(HelloLoop PRIVATE eacp-core)
-eacp_web_executable(HelloLoop)
 ```
 
-`eacp_web_executable(<target> [NODE_FILESYSTEM] [NESTED_PUMP]
-[COMPANION <script.mjs>] [ARGUMENTS <arg>...])` gives it the link options every
+Under Emscripten `eacp_add_app` calls `eacp_web_executable` itself, handing
+it the three keywords only that branch reads — `NESTED_PUMP`, `CONSOLE` and
+`COMPANION <script.mjs>` — while `DESCRIPTION` is a general one, kept on every
+platform as the target's `EACP_APP_DESCRIPTION` property, whose readers so far
+are the app's page and the gallery. A plain `add_executable`, which the test harnesses are, calls
+it directly.
+
+`eacp_web_executable(<target> [NODE_FILESYSTEM] [NESTED_PUMP] [CONSOLE]
+[NO_GALLERY] [DESCRIPTION <text>] [COMPANION <script.mjs>]
+[ARGUMENTS <arg>...])` gives it the link options every
 web executable shares (`eacp_web_link_options`): `-sALLOW_MEMORY_GROWTH=1`, a
 1 MB stack (`-sSTACK_SIZE=1MB`) and `-sEXIT_RUNTIME=1`, so the runtime exits
 with the code `Apps::quit` or `main()` gives it, and `CMake/Web/UncaughtException.js`
 as a `--post-js` (below, "Uncaught exceptions"). `NODE_FILESYSTEM` adds
 `-sNODERAWFS=1`, node's own file system under the program, which makes the
-executable node-only; the test suites link that way, an app does not.
+executable node-only; the test suites link that way, an app does not. Every
+other executable, harnesses included, is linked `-sSINGLE_FILE=1` while
+`EACP_WEB_SINGLE_FILE` is on (the default): the wasm is embedded in the `.js`
+as UTF-8 text (Emscripten's binary encoding: Teapot's debug `.js` is 13%
+larger than its `.js` and `.wasm` were, where base64 would add a third), so
+the page loads one script and fetches nothing, and runs from a `file://`
+URL. The script must then be read as UTF-8:
+the pages say `<meta charset="utf-8">`, which a classic script inherits, and
+`Launch.mjs` serves `.js` with `charset=utf-8`. `OFF` keeps the `.wasm` beside
+the `.js`, which a page can fetch only over http. The node-only suites and
+`GPUTests` (which runs in headless Chrome but is not an `eacp_web_executable`)
+keep their `.wasm` either way.
 `NESTED_PUMP` links `eacp-core-nested-pump` (see "The nested pump"), which is
 how an example that blocks in `main()` — `OnlineResourceDemo`, `Http`,
-`BasicHttp` — runs unchanged, at the price of needing JSPI. `WEBGPU` marks an
-app that draws or computes through `eacp-gpu`: its headless runs give Chrome
-its GPU (`Launch.mjs --webgpu`, which otherwise passes `--disable-gpu`), and
-its ctest entries also fail on a `WebGPU: ` line, a validation error the
-device reported. No HTML page is
-produced: the build output is the `.js` and the `.wasm` beside it, and a page
-that defines `Module` and loads the `.js` is the deployer's.
+`BasicHttp` — runs unchanged, at the price of needing JSPI.
+
+What else an app is follows from what it links, read once its links are all
+made (`eacp_web_links_target`, which walks `LINK_LIBRARIES` and
+`INTERFACE_LINK_LIBRARIES` through every target reached, aliases resolved and
+generator expressions skipped). One that links `eacp-gpu` is a WebGPU app: its
+headless runs give Chrome its GPU (`Launch.mjs --webgpu`, which otherwise
+passes `--disable-gpu`), and its ctest entries also fail on a `WebGPU: ` line,
+a validation error the device reported. One that links no `eacp-graphics` is
+a console app, which prints rather than draws; `CONSOLE` says so of one that
+does link it and opens no window, as the GPU examples that compute and exit
+do, since `eacp-gpu` links `eacp-graphics`. `DESCRIPTION` (else the
+`eacp_add_app` one) and `NO_GALLERY` (a test harness) are for the page and
+the gallery (below, "The host page"). An app's build output is the `.js` (and
+the `.wasm` beside it when not single-file) and its own `<app>.html`, which
+runs it; a deployer may equally write a page of their own that defines
+`Module` and loads the `.js`.
 
 An executable that can run in a browser also gets one launcher target,
-`<app>-run`, not part of `all`: it builds the app, serves it on a loopback
-port and opens it in the default browser. It is `CMake/Web/Launch.mjs`, plain
-node with no packages, in its `browser` mode; the same script has a `node`
+`<app>-run`, not part of `all`: it builds the app and opens its `<app>.html`
+in the default browser. It is `CMake/Web/Launch.mjs`, plain node with no
+packages. A single-file app with no `COMPANION` is opened as a `file://` URL
+(`open` mode) and the target returns at once: no server, and the output and
+exit code stay in the page. One with a companion, or any app with
+`EACP_WEB_SINGLE_FILE` off, goes through `browser` mode, which serves the
+app's directory on a loopback port, opens the page from there and relays the
+page back to the terminal (below). The same script has a `node`
 mode, which runs the app under node, and a `headless` mode, which does what
 `browser` does in the headless Chrome named by `--chrome` (the ctest entries
 pass `EACP_WEB_CHROME`), failing with 124 if the app has not exited within
@@ -110,11 +145,16 @@ are
 ```bash
 node CMake/Web/Launch.mjs node <app>.js [--companion <script.mjs>] [-- <args>...]
 node CMake/Web/Launch.mjs headless <app>.js --chrome <chrome> [-- <args>...]
+node CMake/Web/Launch.mjs open <file.html>
 ```
 
-with `CMake/Web/Launch.mjs` given by its path in the source tree. In the
-browser modes it serves the app's directory as static files and a generated
-page that hands the program its arguments through `Module.arguments`, relays
+with `CMake/Web/Launch.mjs` given by its path in the source tree. `open`
+hands the file's `file://` URL to the platform's opener (`open`, `cmd /c
+start`, `xdg-open`) and exits, 1 when the opener could not start; which
+program shows it is the one the system has for `.html`, normally the default
+browser. In the
+browser modes it serves the app's directory as static files and a page that
+hands the program its arguments through `Module.arguments`, relays
 every line it prints and its exit code back to the launcher, and exits with
 that code — so the browser run prints what the node run would. The launcher
 keeps relaying for 1 s after the page reports its exit, and a later non-zero
@@ -126,11 +166,103 @@ node script started first as `node <script> serve`, whose printed `baseUrl` is
 appended to the app's arguments; that is how `HelloNetwork` gets the test
 server it talks to. `eacp_web_executable` keeps `COMPANION` and `ARGUMENTS` as
 the target's `EACP_WEB_COMPANION` and `EACP_WEB_LAUNCH_ARGUMENTS` properties,
-which are read when a launch command is made: by `eacp_web_executable` itself
-for `<app>-run`, and by `eacp_web_add_app_tests` for the ctest entries
-(see "Testing"). They are therefore given to `eacp_web_executable`; a property
-set on the target afterwards reaches only an `eacp_web_add_app_tests` called
-after that.
+which are read when a launch command is made: for `<app>-run`, by a call
+`eacp_web_executable` defers to the end of the app's directory, so the app's
+links are known, and by `eacp_web_add_app_tests` for the ctest entries (see
+"Testing"), which `Tests/` makes after `Apps/`. They are therefore given to
+`eacp_web_executable`; a property set on the target afterwards reaches only an
+`eacp_web_add_app_tests` called after that.
+
+## The host page
+
+Every executable that can run in a browser gets a page of its own,
+`<app>.html` beside its `<app>.js`, harnesses included
+(their `<app>-run` opens it). It is `CMake/Web/Host/app.html` with the app's
+settings written in at the end of the app's directory, when its links are
+made and so its `webgpu` and `console` flags can be read off them: a deferred
+call fills the `@EACP_WEB_PAGE_NAME@`, `@EACP_WEB_PAGE_DESCRIPTION@` (both
+HTML-escaped) and `@EACP_WEB_PAGE_CONFIG@` placeholders with
+`string(CONFIGURE ... @ONLY)`, which leaves JS's `${...}` alone, and writes
+the result with `file(GENERATE)` to `$<TARGET_FILE_DIR>`, so a multi-config
+generator gets one per configuration. The config is the JSON object `{name,
+page, script, description, webgpu, jspi, console, singleFile, companion,
+arguments}`,
+its strings escaping `<`, `>`, `&` and `$` as `\u` escapes so nothing filled
+in can close the `<script>` or read as a generator expression; `script` and
+`page` are generator expressions added after the escaping. The template is a
+`CMAKE_CONFIGURE_DEPENDS`, so editing it reconfigures. One self-contained file,
+CSS inline, no bundler and no package; light and dark follow
+`prefers-color-scheme`.
+
+The page shows the app's name, description and badges (WebGPU, JSPI,
+console, a companion), checks what the app needs before loading it — WebGPU
+(`navigator.gpu`) for a `webgpu` app, JSPI (`WebAssembly.Suspending`) for a
+`jspi` one — and says so instead of loading when the browser lacks it, as it
+does when opened from `file://` with its `.wasm` in a file of its own
+(`singleFile` false), which it could not fetch. It then
+sets `Module` (`arguments`; `canvas`, a canvas filling the page under the
+header; `print` and `printErr` into an output pane; `onExit` and `onAbort`
+into a status line) and loads `<app>.js`. The app's first window takes that
+canvas, as any page canvas (see "Windows, views and input"): the canvas is
+hidden until it is claimed, so a console app shows its output pane alone, and
+a window's app gets the canvas with the pane as a strip beneath it. The
+page's CSS sizes the canvas with `!important`, so the page, not
+`Window::setSize`, is the window's size, read back through the
+`ResizeObserver`. A second window appends its own canvas below. The window
+title is the page's `document.title`, which the runtime sets. Query
+parameters: `arg`, one argument each, replaces the default arguments when any
+is given; `gallery=1` shows "← Examples", a link to `../index.html`, which
+the gallery's list adds (a parameter rather than a probe for the list, so a
+page opened alone, from `file://` included, makes no request to find out);
+`force=1` runs an app with a companion server (`HelloNetwork`), which a
+static host cannot have, and which the page otherwise refuses with a "Run
+anyway" button; and `relay=1`, which `Launch.mjs` adds, posts every line and
+the exit code to `POST /events`, exactly as the launcher's own page does.
+
+Nothing else in the page or the runtime needs http. Opened from `file://`
+the page's origin is `null`, which changes two things only: Chrome counts
+`file://` as a secure context, so `navigator.gpu` and JSPI are there as over
+http, and a `fetch()` to another site is a cross-origin request from `Origin:
+null`, which the server's CORS must allow (`httpbingo.org`, which `Http` and
+`BasicHttp` use, echoes the origin, `null` included).
+
+Each app is a page of its own because nothing else would hold: the `.js` is
+not built `-sMODULARIZE`, so the runtime and every JS library keep their
+state on the one global `Module`, and `-sEXIT_RUNTIME=1` with `quit()` ends
+that runtime for good. A page is a fresh global and a restart is a reload.
+
+`eacp_web_executable` records every app it is given in the global property
+`EACP_WEB_GALLERY_APPS` (unless `NO_GALLERY`), and a call deferred to the end
+of the top-level configure (`cmake_language(DEFER)` in `Web.cmake`) writes
+the manifest and the list page and adds two targets, neither part of `all`:
+
+- `web-gallery` builds every listed app and lays out `<build>/web/` as a site
+  that opens from `file://` or any static server as it is: `index.html`,
+  `apps.json`, and `<app>/<app>.html` with its `.js` (and `.wasm`, when not
+  single-file) for each app. Each entry of `apps.json` is the page's config
+  object, `page` and `script` relative to the gallery and `companion` the
+  script's file name, empty for none. `index.html` is `Host/index.html` with
+  the same manifest written into its `@EACP_WEB_GALLERY_MANIFEST@` the way an
+  app page gets its config, so it fetches nothing; it lists the apps as cards
+  linking to `<page>?gallery=1`, and under `file://` with any app not
+  single-file it says to serve the folder instead. `apps.json` is kept for
+  tooling. The target first removes whatever in the folder it no longer
+  writes — an app no longer listed, the `.wasm`s after `EACP_WEB_SINGLE_FILE`
+  is turned on (`CMake/Web/PruneGallery.cmake`, against a file list written at
+  configure) — so the folder is always the current layout.
+- `web-gallery-run` builds that and opens `<build>/web/index.html` in the
+  default browser (`Launch.mjs open`) and returns: no server. With
+  `EACP_WEB_SINGLE_FILE` off the apps then cannot load, and the folder is for
+  a static server.
+
+`<app>-run` in `browser` mode serves the app's directory alone and sends `/`
+to `<app>.html?relay=1`, with an `arg` for each argument it was given (the
+companion's URL included) and `force=1` when it started a companion; so it
+needs no `web-gallery`, and the terminal still sees the output and exits
+with the app's code. `headless` mode, the ctest entries' path, keeps the bare
+page (`pageFor` in `Launch.mjs`), which sets no `Module.canvas`:
+`WebWindowHarness` checks the windows' own canvases, and its runs are
+unchanged.
 
 ## Run, quit, and the loop
 
@@ -218,7 +350,8 @@ unchanged on every other platform. An app does not by default: an app on the
 web is written against callbacks anyway, and without JSPI it runs on any engine
 with wasm exceptions, rather than only on one that has JSPI. An example
 written blocking for the other platforms opts in with
-`eacp_web_executable(<app> NESTED_PUMP)`; its launcher and ctest entries then
+`eacp_add_app(<app> ... NESTED_PUMP)` (`eacp_web_executable(<app>
+NESTED_PUMP)` for a plain executable); its launcher and ctest entries then
 run under the test node (`EACP_WEB_TEST_NODE`) rather than the emulator, since
 `Launch.mjs node` runs the app under its own node.
 
@@ -371,7 +504,7 @@ What is the web's own is in `-Web` files, with the DOM half in one JS library,
 
 - **A window is a `<canvas>`** (`Window/Window-Web.cpp`). The first window
   takes the page's own canvas when the page set `Module.canvas`, as
-  Emscripten's shells do; every other window, and the first when there is
+  Emscripten's shells and each app's `<app>.html` do; every other window, and the first when there is
   none, makes a canvas of its own, appended to the body, hidden until shown,
   and removed when the window is destroyed. A canvas gets an id when it has
   none (`eacp-canvas-<n>`), a `tabindex` so it takes keyboard focus, and
@@ -495,8 +628,12 @@ itself (`ShaderBuilder` picks `ShaderBackend::WebGPU` on the web).
   page shows it when the turn returns; continuous rendering is paced by
   `requestAnimationFrame`.
 - **Errors are printed.** A validation error the device reports, and a lost
-  device, are printed on stderr as `WebGPU: ...`, which a `WEBGPU` app's ctest
-  entries fail on.
+  device, are printed on stderr as `WebGPU: ...`, which the ctest entries of
+  an app linking `eacp-gpu` fail on.
+- **Hand-written shaders are WGSL.** `ShaderSource::native(ShaderDialects)`
+  takes a shader's MSL, HLSL, GLSL and WGSL and keeps the one the platform's
+  backend compiles, so an example such as `Triangle` carries all four and no
+  web branch.
 
 Headless Chrome on macOS exposes WebGPU (Metal) only with its GPU process:
 `Launch.mjs headless --webgpu` drops the `--disable-gpu` every other run gets
@@ -517,7 +654,7 @@ from `TMPDIR`, which a build under node inherits from macOS. The test suites,
 linked with `-sNODERAWFS=1`, see node's real file system and the host's
 environment instead.
 
-`Files::executablePath()` is the `.js` beside the `.wasm` (`Utils/Files-Web.cpp`):
+`Files::executablePath()` is the program's `.js` (`Utils/Files-Web.cpp`):
 node's absolute path for it, or in a page the path of its URL, the nearest a
 page comes to an executable's path. `resourcesDirectory()` is its directory.
 `MemoryMappedFile` is the POSIX one, and Emscripten maps by copying into
@@ -698,7 +835,7 @@ and pass on the `Aborted(uncaught exception: ...)` line within 20 s (see
 "Uncaught exceptions").
 
 The GPU runs in the browser alone. `Compute` and `AsyncCompute` are
-`WEBGPU` app entries: under node they say there is no device and exit 0, and
+WebGPU app entries (they link `eacp-gpu`): under node they say there is no device and exit 0, and
 as `<app>Headless` they run their kernels on the page's device and fail on any
 `WebGPU: ` line. `GPUTests` needs WebGPU throughout, so it is built as a page
 (the nested pump, no node file system) and registered by

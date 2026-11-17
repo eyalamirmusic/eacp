@@ -1,16 +1,9 @@
-add_executable(Console Main.cpp)
+eacp_add_app(Console Main.cpp
+        BUNDLE_ID com.eacp.consoleapp
+        DISPLAY_NAME "Console App"
+        DESCRIPTION "A Timer that logs four ticks and quits.")
 target_link_libraries(Console PRIVATE eacp-core)
 
-set(BUNDLE_ID "com.eacp.consoleapp")
-
 if (APPLE)
-    set_target_properties(Console PROPERTIES
-            MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_BUNDLE_NAME "Console App"
-            MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
-endif ()
-
-if (EMSCRIPTEN)
-    eacp_web_executable(Console)
+    set_target_properties(Console PROPERTIES MACOSX_BUNDLE TRUE)
 endif ()

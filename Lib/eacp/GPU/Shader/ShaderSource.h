@@ -33,6 +33,16 @@ struct ThreadGroupShape
     int z = 1;
 };
 
+// One hand-written shader in each dialect it was written in, a dialect it was
+// not written in left empty, for ShaderSource::native to pick from.
+struct ShaderDialects
+{
+    std::string msl;
+    std::string hlsl;
+    std::string glsl;
+    std::string wgsl;
+};
+
 // Native shader source plus the metadata a pipeline needs. The whole GPU layer
 // downstream of this type consumes only this struct, so the shader EDSL is "a
 // factory that returns a ShaderSource" with no call-site changes. What a
@@ -52,6 +62,10 @@ struct ShaderSource
     // One WGSL module holding every entry point, each named by the entries
     // below, its resources all in @group(0) (Codegen/ShaderBindings.h).
     static ShaderSource wgsl(std::string sourceToUse);
+
+    // The dialect the platform's backend compiles: MSL on Apple, HLSL on
+    // Windows, GLSL on Linux and Android, WGSL on the web.
+    static ShaderSource native(ShaderDialects dialects);
 
     ShaderSource& withVertex(std::string entry);
 
