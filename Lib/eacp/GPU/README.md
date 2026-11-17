@@ -1628,7 +1628,9 @@ than compiling it twice (`Stats::waits`). A library that failed is kept, with
 its `compilationInfo()`, so a warm-up reports the messages; the next `acquire`
 of it compiles it again, as `prepare` always did, so a failure is never served
 from the cache to a program and its messages are always fresh. A library
-loaded from a precompiled blob is cached like any other. `stats()` counts
+loaded from a precompiled blob is cached like any other. A waiter waits only
+for the one key it asked for: the lock is held to claim, find and publish an
+entry, never across a compile. `stats()` counts
 compiles, hits, waits and entries; `contains` and `isInFlight` answer for one
 source — which is what the tests read.
 
@@ -1639,8 +1641,12 @@ holds no library outside the cache's lock: it hands the one it built to the
 entry under the lock and reports a copy of what the library says. Libraries
 leave the cache only in `acquire` — a failed one or a stale one, moved out of
 its entry under the lock and released after it, on the owning thread — and
-with the cache itself, which dies with the `Device`. The worker builds no
-pipeline and records nothing on a command buffer.
+with the cache itself, which dies with the `Device`. The worker records nothing
+on a command buffer, and builds a pipeline only on Metal (`addWithPipeline`,
+below), whose device makes and releases them from any thread; on D3D12 and
+Vulkan a pipeline's construction reaches shared state of the backend's (root
+signatures, compatible render passes) and its destruction the owning thread's
+release list, so the worker builds none there.
 
 **Device restore.** Only D3D12 rebuilds a device after a loss. Its
 generation is `Device::backendGeneration()` (always 0 on Metal and Vulkan,
@@ -1676,6 +1682,18 @@ source already emitted, `add(set)` and `addRegisteredSets()` run
 `compile()` produces. A set is run on the worker, so the same set must not be
 run anywhere else meanwhile — `ShaderSetDefinition::run` swaps its visitor.
 `addRecipe` is the general form: a function handed a sink for named sources.
+
+`addWithPipeline<T>(descriptor, args...)` and `addNamedWithPipeline<T>(name,
+descriptor, args...)` take a `ShaderProgram` and the `RenderPipelineDescriptor`
+the app will `prepare` it with (its library and vertex layout ignored, as
+`prepare` ignores them). Where `buildsPipelines()` — on Metal, for a warm-up
+on `Device::shared()`, the device `prepare` uses — the worker keeps the program
+it recorded and, once the library is in, calls `prepare(descriptor)` on it
+there, so the GPU's own compile is cached by the time the main thread prepares
+the same program with the same descriptor; a different descriptor compiles
+again. `Result::pipelines` counts them, a pipeline that did not build is a
+failure, and the shader's timing includes it. Elsewhere such a shader is
+compiled exactly as `add` compiles it.
 `UI::addComponentHostShaders(warmUp)` (`UI/Host/ComponentHostShaders.h`, in
 `eacp-ui`, so `eacp-gpu` knows nothing of it) adds the shape, mesh, image,
 layer and glyph renderers' hooks; the clip, path and gradient programs have no
@@ -1706,23 +1724,29 @@ bar move or catching a shader in flight in a test.
 
 What it does not do:
 
-- **Pipelines are still built on the main thread**, in `prepare`, so the first
-  frame still pays for them; only the library compile moved. That is not cheap
-  for a large shader on Metal either: `newLibraryWithSource:` stops at AIR, and
-  the GPU's own compile runs when the pipeline state is made. The example's
-  scenes take about 0.35 s each as a library and another 0.18 s each as a
-  pipeline on an M4 Max, so its view still blocks about 2 s preparing twelve
-  of them, unless the system's cache already holds them. D3D12 and Vulkan
-  pipeline creation is the same hitch (Vulkan's goes through the persisted
-  `VkPipelineCache`).
+- **Pipelines are built on the main thread**, in `prepare`, except for shaders
+  added with `addWithPipeline` on Metal. That is not cheap for a large shader:
+  `newLibraryWithSource:` stops at AIR, and the GPU's own compile runs when the
+  pipeline state is made. The example's scenes take about 0.35 s each as a
+  library and another 0.18 s each as a pipeline on an M4 Max; added with `add`,
+  its view blocked the main thread 2.2 s (3.2 s in Debug) preparing twelve of
+  them, the window frozen on its last progress frame and deaf to resizing,
+  while with `addWithPipeline` it prepares them in about 60 ms. On D3D12 and
+  Vulkan the pipelines are still made on the main thread, the same hitch
+  (Vulkan's goes through the persisted `VkPipelineCache`). Compute pipelines
+  are not warmed anywhere.
+- **A program constructed on the main thread is recorded and emitted again**
+  there, to find its library: a few milliseconds for the example's scenes in
+  Release, about 80 ms each unoptimised, which is most of what its view still
+  takes in Debug.
 - **The progress screen's own shaders compile synchronously**, before it can
   show anything.
 - The worker compiles on `Device::shared()` from another thread, which the
   `Device` rules allow for compiling; it makes nothing else there.
 
 `Apps/GPU/ShaderWarmUp` is the example — a ComponentHost progress screen,
-then a grid of twelve raymarched scenes whose `prepare`s log "0 compiled, 12
-found in the cache". Each scene's distance function is written out at record
+then a grid of twelve raymarched scenes, added with their pipeline, whose
+`prepare`s log "0 compiled, 12 found in the cache". Each scene's distance function is written out at record
 time, one term per shape, and inlined at its eleven uses per pixel, so the
 compile is genuinely slow: about 0.35 s a scene on Metal and 0.45 s on glslang
 at the default 24 shapes, 4-6 s in all. FXC's time climbs far faster than
@@ -1736,10 +1760,21 @@ out, and a second launch then compiles in milliseconds on Metal. The log gives
 each scene's record, emit and compile times, the totals, the view's prepare
 time and, in snapshot mode, the frame cost. `--delay-ms` slows every shader
 further, and `ShaderWarmUp out.png` writes the scenes and, beside them, the
-progress screen a third of the way through, with no window. `Tests/GPU/ShaderWarmUpTests.cpp` covers progress, the timings, cache hits
+progress screen a third of the way through, with no window.
+`--measure-responsiveness` resizes the window 20 times a second and logs how
+late a 250 Hz timer ran on the main thread, how long each `setSize` and each
+progress frame took, while compiling and for 4.5 s after, through the swap to
+the scenes, then quits; the swap is where a pipeline left to the main thread
+shows, as one stall as long as the view's prepare. On an M4 Max in Release the
+worst lateness is about 20 ms while compiling, and after it about 60-80 ms at
+the swap with every pipeline warmed, where it was 2.5 s with none (3.4 s and,
+warmed, 1.1 s in Debug). A live resize, which AppKit tracks in a loop of its
+own, delays timers by up to about 150 ms whatever the worker is doing.
+`Tests/GPU/ShaderWarmUpTests.cpp` covers progress, the timings, cache hits
 after a warm-up and between two programs, a `prepare` waiting on the worker's
-entry, cancelling, destroying mid-run, a failure among good shaders, sets, and
-rendering on the main thread while the worker compiles.
+entry, cancelling, destroying mid-run, a failure among good shaders, sets,
+rendering on the main thread while the worker compiles, and pipelines built on
+the worker (on Metal only, and not for a device of its own).
 
 ## Compiling with DXC at run time
 

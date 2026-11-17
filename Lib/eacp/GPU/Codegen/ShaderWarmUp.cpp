@@ -25,12 +25,6 @@ namespace eacp::GPU
 {
 namespace
 {
-struct NamedSource
-{
-    std::string name;
-    ShaderSource source;
-};
-
 std::string
     describeGraph(const std::string& name, int index, const ShaderGraph& graph)
 {
@@ -86,6 +80,15 @@ ShaderWarmUp::Failure recordingFailure(int recipe, const std::exception_ptr& thr
     failure.compilation.add(
         CompilationMessageType::Error,
         Strings::concat("recording the shader threw: ", describeException(thrown)));
+    return failure;
+}
+
+ShaderWarmUp::Failure pipelineFailure(const std::string& name)
+{
+    auto failure = ShaderWarmUp::Failure {};
+    failure.name = name;
+    failure.compilation.add(CompilationMessageType::Error,
+                            "the library compiled but its pipeline did not build");
     return failure;
 }
 
@@ -201,7 +204,7 @@ struct ShaderWarmUp::Run
     {
         const auto started = std::chrono::steady_clock::now();
         auto result = ShaderWarmUp::Result {};
-        const auto sources = record(result);
+        auto sources = record(result);
         result.recording = millisecondsSince(started);
 
         job->total = sources.size();
@@ -220,14 +223,19 @@ struct ShaderWarmUp::Run
         job->finish(job, result);
     }
 
-    Vector<NamedSource> record(ShaderWarmUp::Result& result) const
+    Vector<Recorded> record(ShaderWarmUp::Result& result) const
     {
         job->state = State::recording;
-        auto sources = Vector<NamedSource> {};
+        auto sources = Vector<Recorded> {};
 
-        auto sink = ShaderWarmUp::SourceSink {
-            [&sources](const std::string& name, const ShaderSource& source)
-            { sources.add(NamedSource {name, source}); }};
+        auto sink = RecordedSink {
+            [this, &sources](const Recorded& recorded)
+            {
+                if (recorded.hasPipeline && !buildPipelines)
+                    sources.add(Recorded {recorded.name, recorded.source});
+                else
+                    sources.add(recorded);
+            }};
 
         for (auto index = 0; index < recipes.size(); ++index)
         {
@@ -248,13 +256,12 @@ struct ShaderWarmUp::Run
         return sources;
     }
 
-    void compile(const Vector<NamedSource>& sources,
-                 ShaderWarmUp::Result& result) const
+    void compile(Vector<Recorded>& sources, ShaderWarmUp::Result& result) const
     {
         auto& cache = ShaderLibraryCache::of(*device);
         auto hold = [this] { job->waitUnlessCancelled(simulatedCompileTime); };
 
-        for (const auto& shader: sources)
+        for (auto& shader: sources)
         {
             if (job->cancelRequested)
                 break;
@@ -263,16 +270,30 @@ struct ShaderWarmUp::Run
 
             const auto compileStarted = std::chrono::steady_clock::now();
             const auto warmed = cache.warm(*device, shader.source, hold);
+            count(shader, warmed, result);
+
+            if (warmed.valid && shader.hasPipeline)
+                buildPipeline(shader, result);
+
             result.timings.add(
                 Timing {shader.name, millisecondsSince(compileStarted)});
-            count(shader, warmed, result);
 
             ++job->completed;
             job->announceProgress(job);
         }
     }
 
-    static void count(const NamedSource& shader,
+    static void buildPipeline(Recorded& shader, ShaderWarmUp::Result& result)
+    {
+        if (shader.buildPipeline())
+            ++result.pipelines;
+        else
+            result.failures.add(pipelineFailure(shader.name));
+
+        shader.buildPipeline = [] { return true; };
+    }
+
+    static void count(const Recorded& shader,
                       const ShaderLibraryCache::Warmed& warmed,
                       ShaderWarmUp::Result& result)
     {
@@ -290,9 +311,10 @@ struct ShaderWarmUp::Run
     }
 
     std::shared_ptr<ShaderWarmUp::Job> job;
-    Vector<ShaderWarmUp::Recipe> recipes;
+    Vector<RecordedRecipe> recipes;
     Device* device = nullptr;
     Time::MS simulatedCompileTime {0};
+    bool buildPipelines = false;
 };
 
 ShaderWarmUp::ShaderWarmUp()
@@ -356,8 +378,28 @@ ShaderWarmUp& ShaderWarmUp::addGraphs(const std::string& name,
 
 ShaderWarmUp& ShaderWarmUp::addRecipe(const Recipe& recipe)
 {
+    auto recorded = [recipe](const RecordedSink& sink)
+    {
+        auto toRecorded =
+            SourceSink {[&sink](const std::string& name, const ShaderSource& source)
+                        { sink(Recorded {name, source}); }};
+
+        recipe(toRecorded);
+    };
+
+    return addRecorded(recorded);
+}
+
+ShaderWarmUp& ShaderWarmUp::addRecorded(const RecordedRecipe& recipe)
+{
     recipes.add(recipe);
     return *this;
+}
+
+bool ShaderWarmUp::buildsPipelines() const
+{
+    return detail::nativeShaderBackend() == ShaderBackend::Metal
+           && &target == &Device::shared();
 }
 
 Threads::Async<ShaderWarmUp::Result> ShaderWarmUp::start()
@@ -380,7 +422,8 @@ Threads::Async<ShaderWarmUp::Result> ShaderWarmUp::start()
     loadDxcBeforeTheWorker();
     ShaderLibraryCache::of(target).followBackendGeneration(target);
 
-    auto run = Run {job, recipes, &target, options.simulatedCompileTime};
+    auto run =
+        Run {job, recipes, &target, options.simulatedCompileTime, buildsPipelines()};
     worker.start(run);
 
     return job->promise.get();

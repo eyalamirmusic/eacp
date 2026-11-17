@@ -224,6 +224,71 @@ auto tPrepareHits = test("ShaderWarmUp/aPrepareAfterwardsFindsTheLibrary") = []
     check(delta.hits() == 1);
 };
 
+RenderPipelineDescriptor tintPipeline()
+{
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.sampleCount = 1;
+    return descriptor;
+}
+
+auto tBuildsPipelinesOnMetal =
+    test("ShaderWarmUp/buildsPipelinesOnTheWorkerOnlyOnMetal") = []
+{
+    auto warmUp = ShaderWarmUp {};
+    const auto isMetal = detail::nativeShaderBackend() == ShaderBackend::Metal;
+
+    check(warmUp.buildsPipelines() == isMetal);
+
+    auto device = Device {};
+    auto onItsOwnDevice = ShaderWarmUp {device};
+
+    check(!onItsOwnDevice.buildsPipelines());
+};
+
+auto tWithPipeline =
+    test("ShaderWarmUp/aShaderAddedWithItsPipelineIsPreparedFromTheCache") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto warmUp = ShaderWarmUp {};
+    warmUp.addWithPipeline<TintShader>(tintPipeline(), 0.951f)
+        .addNamedWithPipeline<TintShader>("second", tintPipeline(), 0.952f);
+    const auto result = finish(warmUp);
+
+    check(result.succeeded());
+    check(result.compiled == 2);
+    check(result.pipelines == (warmUp.buildsPipelines() ? 2 : 0));
+    check(result.timings.size() == 2);
+
+    const auto delta = CacheDelta {};
+    auto view = TintView {0.951f};
+    view.setBounds({0.f, 0.f, 16.f, 16.f});
+
+    check(view.shader.pipeline().isValid());
+    check(delta.compiles() == 0);
+    check(delta.hits() == 1);
+    check(view.renderToImage(1.f).isValid());
+};
+
+auto tWithPipelineOnItsOwnDevice =
+    test("ShaderWarmUp/onItsOwnDeviceAShaderWithAPipelineOnlyCompiles") = []
+{
+    auto device = Device {};
+
+    if (!device.isValid())
+        return;
+
+    auto warmUp = ShaderWarmUp {device};
+    warmUp.addWithPipeline<TintShader>(tintPipeline(), 0.961f);
+    const auto result = finish(warmUp);
+
+    check(result.succeeded());
+    check(result.compiled == 1);
+    check(result.pipelines == 0);
+    check(ShaderLibraryCache::of(device).contains(TintShader {0.961f}.source()));
+};
+
 auto tKernelOnItsOwnDevice =
     test("ShaderWarmUp/aKernelOnItsOwnDeviceFindsTheLibrary") = []
 {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Pipeline/RenderPipeline.h"
 #include "../Shader/CompilationInfo.h"
 #include "../Shader/ShaderSource.h"
 #include "Forward.h"
@@ -8,6 +9,7 @@
 #include <eacp/Core/Threads/Thread.h>
 
 #include <concepts>
+#include <memory>
 #include <typeinfo>
 
 namespace eacp::GPU
@@ -20,11 +22,20 @@ concept HasShaderSource = requires(const Shader& shader) {
     { shader.source() } -> std::convertible_to<const ShaderSource&>;
 };
 
+template <typename Shader>
+concept PreparesRenderPipeline =
+    HasShaderSource<Shader>
+    && requires(Shader& shader, const RenderPipelineDescriptor& descriptor) {
+           shader.prepare(descriptor);
+           { shader.pipeline().isValid() } -> std::convertible_to<bool>;
+       };
+
 // Compiles a set of shaders on one worker thread, ahead of the programs that
 // will draw with them: each library lands in the device's ShaderLibraryCache,
 // so a GPUView created once start() resolves prepares its programs with no
-// compile left to do (only their pipelines, which are still built on the main
-// thread). The main thread meanwhile keeps running and can draw progress().
+// compile left to do. Its pipelines are still built on the main thread, unless
+// added with addWithPipeline on Metal (see there). The main thread meanwhile
+// keeps running and can draw progress().
 //
 //   auto warmUp = GPU::ShaderWarmUp {};
 //   warmUp.add<SkyShader>().add<GainKernel>().add<SpriteShader>(nearest);
@@ -95,12 +106,16 @@ public:
         // Of the valid ones, how many came from a precompiled blob.
         int precompiled = 0;
 
+        // Pipelines built on the worker, for the shaders added with
+        // addWithPipeline; 0 where buildsPipelines() is false.
+        int pipelines = 0;
+
         // Each shader that did not compile, with what the compiler said, and
         // each recording that threw.
         Vector<Failure> failures;
 
         // How long each shader took to compile or to find in the cache, in the
-        // order compiled, simulatedCompileTime included.
+        // order compiled, simulatedCompileTime and its pipeline included.
         Vector<Timing> timings;
 
         bool cancelled = false;
@@ -156,6 +171,49 @@ public:
         return addRecipe(record);
     }
 
+    // The same for a ShaderProgram, and where buildsPipelines() its pipeline
+    // too: once the library is in, the worker calls prepare(pipeline) on the
+    // program it built, so the GPU's own compile - which Metal runs when a
+    // pipeline is made, not when a library is - is cached by the time the app
+    // prepares the program on the main thread with the same descriptor. The
+    // descriptor is the one the app will pass, its library and vertex layout
+    // ignored as prepare() ignores them; one that differs compiles again.
+    template <PreparesRenderPipeline Shader, typename... Args>
+    ShaderWarmUp& addWithPipeline(const RenderPipelineDescriptor& pipeline,
+                                  const Args&... args)
+    {
+        return addNamedWithPipeline<Shader>(
+            typeNameOf(typeid(Shader)), pipeline, args...);
+    }
+
+    template <PreparesRenderPipeline Shader, typename... Args>
+    ShaderWarmUp& addNamedWithPipeline(const std::string& name,
+                                       const RenderPipelineDescriptor& pipeline,
+                                       const Args&... args)
+    {
+        auto record = [name, pipeline, args...](const RecordedSink& sink)
+        {
+            auto shader = std::make_shared<Shader>(args...);
+
+            auto build = [shader, pipeline]
+            {
+                shader->prepare(pipeline);
+                return shader->pipeline().isValid();
+            };
+
+            sink(Recorded {name, shader->source(), build, true});
+        };
+
+        return addRecorded(record);
+    }
+
+    // Whether addWithPipeline builds pipelines on the worker: on Metal, whose
+    // device makes them from any thread, for a warm-up on Device::shared() -
+    // the device ShaderProgram::prepare uses. Elsewhere, and for another
+    // device, those shaders are compiled as add() compiles them, and their
+    // pipelines are left to the main thread.
+    bool buildsPipelines() const;
+
     // A source already emitted, by a program constructed on this thread.
     ShaderWarmUp& add(const std::string& name, const ShaderSource& source);
 
@@ -191,14 +249,26 @@ public:
     Device& device() const;
 
 private:
+    struct Recorded
+    {
+        std::string name;
+        ShaderSource source;
+        std::function<bool()> buildPipeline = [] { return true; };
+        bool hasPipeline = false;
+    };
+
+    using RecordedSink = std::function<void(const Recorded& recorded)>;
+    using RecordedRecipe = std::function<void(const RecordedSink& sink)>;
+
     static std::string typeNameOf(const std::type_info& type);
+    ShaderWarmUp& addRecorded(const RecordedRecipe& recipe);
 
     struct Job;
     struct Run;
 
     Device& target;
     Options options;
-    Vector<Recipe> recipes;
+    Vector<RecordedRecipe> recipes;
     std::shared_ptr<Job> job;
     Threads::Thread worker {Threads::ThreadOptions {.name = "EACP Shader WarmUp"}};
 };

@@ -12,7 +12,11 @@
 // GPU::ShaderWarmUp::progress() from a timer - while the warm-up compiles twelve
 // raymarched scenes into the device's ShaderLibraryCache. When it resolves, the
 // screen is swapped for a GPUView whose programs prepare against that cache, so
-// building them compiles nothing; only their pipelines are made then.
+// building them compiles nothing. The scenes are added with their pipeline, so
+// on Metal the GPU's own compile - which runs when a pipeline is made, about
+// half as long again as the library - is done on the worker too, and the swap
+// takes milliseconds rather than seconds of a frozen window. Elsewhere the
+// pipelines are still made on the main thread, in the swap.
 //
 // Each scene's distance function is unrolled at record time, one term per
 // shape, and evaluated eleven times per pixel (the march, four normal taps, a
@@ -27,7 +31,8 @@
 //
 // --delay-ms (or EACP_SHADER_WARMUP_DELAY_MS) holds every shader in flight that
 // much longer. `ShaderWarmUp out.png` warms up, draws one frame into a PNG and
-// exits, with no window.
+// exits, with no window. --measure-responsiveness resizes the window on a timer
+// and logs how late the main thread ran, during the warm-up and after it.
 
 using namespace eacp;
 
@@ -457,10 +462,20 @@ struct SceneShader final : GPU::ShaderProgram
     EACP_SHADER(area, time, aspect)
 };
 
+// What the view prepares every scene with, and so what the warm-up builds the
+// pipelines for: a pipeline made for anything else would compile again.
+GPU::RenderPipelineDescriptor scenePipeline()
+{
+    auto descriptor = GPU::RenderPipelineDescriptor {};
+    descriptor.sampleCount = 4;
+    return descriptor;
+}
+
 void addSceneShaders(GPU::ShaderWarmUp& warmUp, const Settings& settings)
 {
     for (auto scene = 0; scene < sceneCount; ++scene)
-        warmUp.addNamed<SceneShader>(nameFor(scene, settings), scene, settings);
+        warmUp.addNamedWithPipeline<SceneShader>(
+            nameFor(scene, settings), scenePipeline(), scene, settings);
 }
 
 std::string describe(const GPU::ShaderLibraryCache::Stats& before,
@@ -481,12 +496,14 @@ struct ScenesView final : GPU::GPUView
         auto& cache = GPU::ShaderLibraryCache::of(GPU::Device::shared());
         const auto before = cache.stats();
         const auto started = Clock::now();
+        const auto pipeline = scenePipeline();
+        setSampleCount(pipeline.sampleCount);
 
         for (auto scene = 0; scene < sceneCount; ++scene)
         {
             auto& shader = shaders.createNew(scene, settings);
             shader.setVertices(unitQuad);
-            shader.prepare(sampleCount());
+            shader.prepare(pipeline);
         }
 
         LOG("ShaderWarmUp: the view's programs prepared in ",
@@ -646,6 +663,39 @@ struct ProgressPanel final : UI::Component
     UI::Label detail;
 };
 
+struct Durations
+{
+    void add(double milliseconds) { samples.add(milliseconds); }
+
+    std::string describe() const
+    {
+        if (samples.size() == 0)
+            return "none";
+
+        auto sorted = samples;
+        sorted.sort();
+
+        auto at = [&sorted](double fraction)
+        { return sorted[(int) (fraction * (double) (sorted.size() - 1))]; };
+
+        return Strings::format("{} samples, median {:.1f} ms, p95 {:.1f} ms, "
+                               "max {:.1f} ms",
+                               sorted.size(),
+                               at(0.5),
+                               at(0.95),
+                               sorted[sorted.size() - 1]);
+    }
+
+    Vector<double> samples;
+};
+
+struct PhaseDurations
+{
+    Durations pingLateness;
+    Durations setSize;
+    Durations render;
+};
+
 struct ProgressHost final : UI::ComponentHost
 {
     explicit ProgressHost(const GPU::ShaderWarmUp& warmUpToUse)
@@ -658,9 +708,87 @@ struct ProgressHost final : UI::ComponentHost
 
     void refresh() { panel.show(warmUp.progress()); }
 
+    void render(GPU::Frame& frame) override
+    {
+        const auto started = Clock::now();
+        UI::ComponentHost::render(frame);
+        onRendered(millisecondsSince(started));
+    }
+
     const GPU::ShaderWarmUp& warmUp;
     ProgressPanel panel;
     Threads::Timer poll {[this] { refresh(); }, 30};
+    std::function<void(double)> onRendered = [](double) {};
+};
+
+// --measure-responsiveness: a 250 Hz timer measures how late the main thread
+// runs it and a 20 Hz one resizes the window, timing each setSize and each
+// frame the progress screen renders - while the warm-up compiles, then for a
+// few seconds after it, through the swap to the scenes, whose preparing is
+// where a pipeline left to the main thread shows up as one long stall.
+struct ResponsivenessProbe
+{
+    static constexpr auto pingHz = 250;
+    static constexpr auto resizeHz = 20;
+
+    ResponsivenessProbe(Graphics::Window& windowToUse,
+                        const GPU::ShaderWarmUp& warmUpToUse,
+                        ProgressHost& host)
+        : window(windowToUse)
+        , warmUp(warmUpToUse)
+    {
+        host.onRendered = [this](double milliseconds)
+        { phase().render.add(milliseconds); };
+    }
+
+    PhaseDurations& phase() { return warmUp.isRunning() ? compiling : afterwards; }
+
+    void ping()
+    {
+        const auto now = Clock::now();
+        const auto interval =
+            std::chrono::duration<double, std::milli>(now - lastPing).count();
+        lastPing = now;
+        phase().pingLateness.add(std::max(0.0, interval - 1000.0 / pingHz));
+    }
+
+    void resize()
+    {
+        const auto wide = (resizes++ % 2) == 0;
+        const auto size =
+            wide ? Graphics::Point {1100.f, 640.f} : Graphics::Point {900.f, 520.f};
+        const auto started = Clock::now();
+        window.setSize(size);
+        phase().setSize.add(millisecondsSince(started));
+    }
+
+    static void log(const std::string& name, const PhaseDurations& durations)
+    {
+        LOG("ShaderWarmUp: ",
+            name,
+            " ping lateness: ",
+            durations.pingLateness.describe());
+        LOG("ShaderWarmUp: ", name, " setSize: ", durations.setSize.describe());
+        LOG("ShaderWarmUp: ",
+            name,
+            " progress screen render: ",
+            durations.render.describe());
+    }
+
+    void report() const
+    {
+        log("while compiling,", compiling);
+        log("afterwards,", afterwards);
+    }
+
+    Graphics::Window& window;
+    const GPU::ShaderWarmUp& warmUp;
+    PhaseDurations compiling;
+    PhaseDurations afterwards;
+    Clock::time_point lastPing = Clock::now();
+    int resizes = 0;
+    Threads::Timer pinger {[this] { ping(); }, pingHz};
+    Threads::Timer resizer {[this] { resize(); }, resizeHz};
 };
 
 void logResult(const GPU::ShaderWarmUp::Result& result)
@@ -687,6 +815,8 @@ void logResult(const GPU::ShaderWarmUp::Result& result)
         " already cached, ",
         result.precompiled,
         " precompiled, ",
+        result.pipelines,
+        " pipelines built, ",
         result.failures.size(),
         " failed",
         result.cancelled ? " (cancelled)" : "");
@@ -715,26 +845,41 @@ Graphics::WindowOptions makeWindowOptions()
 
 struct DemoApp
 {
-    DemoApp(const Settings& settingsToUse, int delayMs)
+    DemoApp(const Settings& settingsToUse, int delayMs, bool measure)
         : settings(settingsToUse)
         , warmUp(makeWarmUpOptions(delayMs))
     {
         content.set(makeOwned<ProgressHost>(warmUp));
 
+        if (measure)
+            probe = makeOwned<ResponsivenessProbe>(
+                window, warmUp, static_cast<ProgressHost&>(*content));
+
         addSceneShaders(warmUp, settings);
         UI::addComponentHostShaders(warmUp);
 
-        auto showScenes = [this](const GPU::ShaderWarmUp::Result& result)
+        auto reportAndQuit = [this]
+        {
+            probe->report();
+            Apps::quit();
+        };
+
+        auto finished =
+            [this, reportAndQuit](const GPU::ShaderWarmUp::Result& result)
         {
             logResult(result);
             content.set(makeOwned<ScenesView>(settings));
+
+            if (probe != nullptr)
+                Threads::callAfter(Time::MS {4500}, reportAndQuit);
         };
 
-        warmUp.start().then(showScenes);
+        warmUp.start().then(finished);
     }
 
     Settings settings;
     GPU::ShaderWarmUp warmUp;
+    OwningPointer<ResponsivenessProbe> probe;
     Graphics::OptionalView<> content;
     Graphics::Window window {content, makeWindowOptions()};
 };
@@ -834,6 +979,7 @@ int main(int argc, char** argv)
     auto complexity = Strings::parseIntOr(
         getEnvValue("EACP_SHADER_WARMUP_COMPLEXITY"), defaultComplexity());
     auto reuseSystemCache = isSet("EACP_SHADER_WARMUP_REUSE_SYSTEM_CACHE");
+    auto measureResponsiveness = false;
 
     auto cli = Args::Parser {"ShaderWarmUp",
                              "Shaders compiled on a worker before the view exists."};
@@ -847,6 +993,10 @@ int main(int argc, char** argv)
              "system's compile cache");
     cli.option("--delay-ms", delayMs, "hold each shader in flight this much longer")
         .atLeast(0);
+    cli.flag("--measure-responsiveness",
+             measureResponsiveness,
+             "resize the window while it compiles, log how late the main "
+             "thread ran and how long each resize and frame took, and exit");
     cli.positional(snapshotPath,
                    "snapshot",
                    "warm up, render one frame to this PNG and exit, with no window");
@@ -869,5 +1019,5 @@ int main(int argc, char** argv)
     if (!snapshotPath.empty())
         return snapshot(snapshotPath, settings, delayMs);
 
-    return Apps::run<DemoApp>(settings, delayMs);
+    return Apps::run<DemoApp>(settings, delayMs, measureResponsiveness);
 }
