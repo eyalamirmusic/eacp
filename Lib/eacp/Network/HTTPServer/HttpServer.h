@@ -39,6 +39,11 @@ struct ServerOptions
     ServerThreadingMode threading = ServerThreadingMode::EventLoop;
     int threadPoolSize = 4;
     BindInterface bindTo = BindInterface::loopback;
+
+    // One IPv4 address to listen on, such as a tailnet address
+    // ("100.104.147.35"). When set it wins over bindTo, and an address that
+    // does not parse makes listen() return false.
+    std::optional<std::string> bindAddress;
 };
 
 struct Error : std::runtime_error
