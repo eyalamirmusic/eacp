@@ -17,6 +17,10 @@ target_sources(eacp-graphics PRIVATE
         Window/SizeConstraint.cpp
         Window/Window.cpp)
 
+if (NOT IOS)
+    target_sources(eacp-graphics PRIVATE View/NativeTextView-Default.cpp)
+endif ()
+
 # Portable C++ that nonetheless stands on the 2D drawing stack, which is the
 # tier EACP_HAS_CONTEXT names. Left out where there is none, not stubbed.
 if (EACP_HAS_CONTEXT)
@@ -70,6 +74,7 @@ if (APPLE)
     if (IOS)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-iOS.mm
+                View/NativeTextView-iOS.mm
                 Helpers/DisplayLink-iOS.mm
                 HotKey/GlobalHotKey-iOS.mm
                 Menu/Menu-iOS.mm

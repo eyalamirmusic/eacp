@@ -7,6 +7,7 @@
 #include "HotKey/GlobalHotKey.h"
 #include "Input/GameInput.h"
 #include "Tray/TrayIcon.h"
+#include "View/NativeTextView.h"
 #include "View/OptionalView.h"
 #include "View/ViewList.h"
 #include "Window/Display.h"
