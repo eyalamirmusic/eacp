@@ -4,13 +4,35 @@
 #import <UIKit/UIKit.h>
 
 @interface WindowViewController : UIViewController
+{
+@public
+    eacp::Graphics::StatusBar statusBar;
+}
 @end
 
 @implementation WindowViewController
 
 - (BOOL)prefersStatusBarHidden
 {
-    return YES;
+    return statusBar == eacp::Graphics::StatusBar::Hidden;
+}
+
+- (UIStatusBarStyle)preferredStatusBarStyle
+{
+    using eacp::Graphics::StatusBar;
+
+    switch (statusBar)
+    {
+        case StatusBar::LightText:
+            return UIStatusBarStyleLightContent;
+        case StatusBar::DarkText:
+            return UIStatusBarStyleDarkContent;
+        case StatusBar::Hidden:
+        case StatusBar::Automatic:
+            return UIStatusBarStyleDefault;
+    }
+
+    return UIStatusBarStyleDefault;
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations
@@ -54,7 +76,7 @@ SoftwareKeyboardChange softwareKeyboardChangeFrom(UIWindow* window,
 
 struct Window::Native
 {
-    Native(const WindowOptions&, WindowEvents& events)
+    Native(const WindowOptions& options, WindowEvents& events)
     {
         UIWindowScene* windowScene = nil;
         for (UIScene* scene in [UIApplication sharedApplication].connectedScenes)
@@ -76,6 +98,7 @@ struct Window::Native
         }
 
         viewController = [[WindowViewController alloc] init];
+        viewController.get()->statusBar = options.statusBar;
         window.get().rootViewController = viewController.get();
         window.get().backgroundColor = [UIColor blackColor];
 
