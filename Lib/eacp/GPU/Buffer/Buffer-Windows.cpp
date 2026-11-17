@@ -210,7 +210,11 @@ struct Buffer::Native
             return copied;
 
         if (copied)
+        {
+            // Explicit because GPU-based validation on Intel Iris Xe misses the decay.
+            transitionForUse(*commands, bufferData, D3D12_RESOURCE_STATE_COMMON);
             context.submit(commands);
+        }
         else
             context.discard(commands);
 

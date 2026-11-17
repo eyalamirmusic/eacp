@@ -252,6 +252,18 @@ if (WIN32)
     add_dependencies(GPUTests SharedDeviceUnloadFixture SharedDeviceUnloadHost)
 endif ()
 
+# Buffer state tracking under D3D12 GPU-based validation, which must be switched
+# on before the device is created - so a binary of its own, with its own main.
+if (WIN32)
+    nano_add_executable(GPUValidationTests
+            NO_MAIN
+            SOURCES
+                BufferStateValidationTests-Windows.cpp
+            TARGETS eacp-gpu)
+
+    target_link_libraries(GPUValidationTests PRIVATE d3d12 dxgi)
+endif ()
+
 # TextureSettleTests reads VulkanContext::submissionCount, so this one test
 # target sees the backend eacp-gpu otherwise keeps to itself.
 if (LINUX)

@@ -1,3 +1,5 @@
+#include "../GPU/GpuBasedValidation-Windows.h"
+
 #include <eacp/GPU/Windows/D3D12Context.h>
 #include <eacp/GPUWidgets/GPUWidgets.h>
 #include <eacp/GPUWidgets/Path/CoverageKernel.h>
@@ -43,102 +45,6 @@ namespace
 constexpr auto perGroup = ScanBlockKernel::perGroup;
 
 auto validationLayerEnabled = false;
-
-bool enableGpuBasedValidation()
-{
-    auto debug = winrt::com_ptr<ID3D12Debug>();
-
-    if (FAILED(D3D12GetDebugInterface(__uuidof(ID3D12Debug), debug.put_void())))
-        return false;
-
-    auto gpuBased = debug.try_as<ID3D12Debug1>();
-
-    if (!gpuBased)
-        return false;
-
-    debug->EnableDebugLayer();
-    gpuBased->SetEnableGPUBasedValidation(TRUE);
-    return true;
-}
-
-bool validationIsRequired()
-{
-    auto length = std::size_t {0};
-    char value[8] = {};
-
-    return getenv_s(&length, value, sizeof(value), "EACP_REQUIRE_GPU_VALIDATION")
-               == 0
-           && length > 1 && std::string(value) != "0";
-}
-
-ID3D12Device* nativeDevice()
-{
-    return GPU::getD3D12Context(GPU::Device::shared()).getDevice();
-}
-
-void waitForTheGpu()
-{
-    GPU::getD3D12Context(GPU::Device::shared()).waitIdle();
-}
-
-bool isSoftwareAdapter(ID3D12Device* device)
-{
-    auto factory = winrt::com_ptr<IDXGIFactory4>();
-
-    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void())))
-        return false;
-
-    auto adapter = winrt::com_ptr<IDXGIAdapter1>();
-
-    if (FAILED(factory->EnumAdapterByLuid(
-            device->GetAdapterLuid(), __uuidof(IDXGIAdapter1), adapter.put_void())))
-        return false;
-
-    auto description = DXGI_ADAPTER_DESC1 {};
-    adapter->GetDesc1(&description);
-    return (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
-}
-
-struct ValidationErrors
-{
-    int count = 0;
-    int outOfBounds = 0;
-    std::string first;
-};
-
-// Everything the queue holds at error severity or worse, which it then forgets,
-// so each call sees only what happened since the last.
-ValidationErrors takeErrors(ID3D12InfoQueue& queue)
-{
-    auto errors = ValidationErrors {};
-    auto stored = queue.GetNumStoredMessagesAllowedByRetrievalFilter();
-
-    for (auto index = UINT64 {0}; index < stored; ++index)
-    {
-        auto bytes = SIZE_T {0};
-
-        if (FAILED(queue.GetMessage(index, nullptr, &bytes)))
-            continue;
-
-        auto storage = Vector<std::byte> {};
-        storage.resize((int) bytes);
-        auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
-
-        if (FAILED(queue.GetMessage(index, message, &bytes))
-            || message->Severity > D3D12_MESSAGE_SEVERITY_ERROR)
-            continue;
-
-        if (errors.count++ == 0)
-            errors.first = message->pDescription;
-
-        if (message->ID
-            == D3D12_MESSAGE_ID_GPU_BASED_VALIDATION_ROOT_DESCRIPTOR_ACCESS_OUT_OF_BOUNDS)
-            ++errors.outOfBounds;
-    }
-
-    queue.ClearStoredMessages();
-    return errors;
-}
 
 // One thread reading 64 elements past a one-element buffer, bound the way the
 // scan's counts are: the overread validation has to report before a clean scan
@@ -186,17 +92,6 @@ bool validationReportsAnOverread(ID3D12InfoQueue& queue)
     waitForTheGpu();
 
     return takeErrors(queue).outOfBounds > 0;
-}
-
-bool skipBecause(const std::string& why)
-{
-    auto message = "GPU-based validation unavailable, skipping: " + why;
-    std::cout << message << '\n';
-
-    if (validationIsRequired())
-        check(false, message + " (EACP_REQUIRE_GPU_VALIDATION is set)");
-
-    return false;
 }
 
 // The info queue of a device whose validation is known to report a root
