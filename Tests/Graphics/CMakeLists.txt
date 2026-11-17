@@ -89,6 +89,7 @@ if (APPLE AND NOT IOS)
             EmbeddedViewTests-macOS.mm
             FileDragTests-macOS.mm
             FileDropTests-macOS.mm
+            GlobalMouseMonitorTests-macOS.mm
             KeyForwardingTests-macOS.mm
             MagnifyTests-macOS.mm
             MenuTests-macOS.mm
@@ -112,6 +113,7 @@ if (WIN32)
             KeyFocusTests-Windows.cpp
             KeyForwardingTests-Windows.cpp
             MouseDeltaTests-Windows.cpp
+            GlobalMouseMonitorTests-Windows.cpp
             MouseWheelTests-Windows.cpp
             NativeChildSurfaceTests-Windows.cpp
             WindowGeometryTests-Windows.cpp
