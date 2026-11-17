@@ -85,4 +85,11 @@ std::string Process::errorOutput() const
 {
     return impl->errorOutput();
 }
+
+// No child is ever launched here, so there is no environment to build.
+Vector<std::string> makeChildEnvironment(const Vector<EnvironmentVariable>&,
+                                         const Vector<std::string>&)
+{
+    return {};
+}
 } // namespace eacp::Processes

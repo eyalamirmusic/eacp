@@ -157,3 +157,14 @@ auto tWorkingDirectory = test("Process/run/workingDirectory") = []
 
     std::filesystem::remove_all(dir);
 };
+
+auto tRemovedEnvironmentWindows = test("Process/windows/removedEnvironment") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.commandLine = "cmd /c \"if defined TEMP (echo set) else (echo unset)\"";
+    options.removedEnvironment = {"temp"};
+
+    auto result = Proc::run(std::move(options));
+
+    check(linesOf(result.output) == eacp::Vector<std::string> {"unset"});
+};
