@@ -8,6 +8,7 @@
 
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Singleton.h>
 
 #include <unordered_map>
 
@@ -15,10 +16,10 @@ namespace eacp::Graphics
 {
 namespace
 {
+// Never destroyed, as the view registries in View-Linux.cpp are not.
 std::unordered_map<Window*, LinuxWindowNative*>& linuxWindowNatives()
 {
-    static auto natives = std::unordered_map<Window*, LinuxWindowNative*> {};
-    return natives;
+    return Singleton::getImmortal<std::unordered_map<Window*, LinuxWindowNative*>>();
 }
 
 std::unique_ptr<LinuxWindowNative> makeWindowNative(const WindowOptions& options,

@@ -7,6 +7,7 @@
 
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Singleton.h>
 
 #include <memory>
 #include <unordered_map>
@@ -30,16 +31,18 @@ struct LinuxViewRecord
 // Shared so a deferred repaint can hold a weak reference to it.
 using LinuxViewRecordPtr = std::shared_ptr<LinuxViewRecord>;
 
+// These registries are never destroyed, for the reason Singleton::getImmortal
+// gives: a view or window closed after main returns - from an exit handler, or
+// by a static built before them - deregisters from them after every
+// function-local static made since has been destroyed.
 std::unordered_map<View*, LinuxViewRecordPtr>& linuxViewRecords()
 {
-    static auto records = std::unordered_map<View*, LinuxViewRecordPtr> {};
-    return records;
+    return Singleton::getImmortal<std::unordered_map<View*, LinuxViewRecordPtr>>();
 }
 
 std::unordered_map<View*, LinuxWindowSurface*>& linuxContentViewWindows()
 {
-    static auto windows = std::unordered_map<View*, LinuxWindowSurface*> {};
-    return windows;
+    return Singleton::getImmortal<std::unordered_map<View*, LinuxWindowSurface*>>();
 }
 
 LinuxViewRecord* linuxFindViewRecord(View& view)
@@ -70,8 +73,7 @@ View& linuxRootOf(View& view)
 
 std::unordered_map<View*, LinuxNativeChild*>& linuxNativeChildren()
 {
-    static auto children = std::unordered_map<View*, LinuxNativeChild*> {};
-    return children;
+    return Singleton::getImmortal<std::unordered_map<View*, LinuxNativeChild*>>();
 }
 
 LinuxNativeChild* linuxFindNativeChild(View& view)
