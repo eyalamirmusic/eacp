@@ -1,5 +1,9 @@
 #include <eacp/WebView/WebView.h>
 
+#if BROWSER_HAS_KILL_CONTENT_PROCESS_MENU
+#include "KillContentProcess.h"
+#endif
+
 using namespace eacp;
 using namespace Graphics;
 
@@ -27,6 +31,9 @@ using namespace Graphics;
 //       screen (macOS 12.3+ and iOS 15.4+)
 //
 // Type a URL in the address bar and press return to navigate.
+//
+// Debug > Kill Content Process (macOS only) kills the page's content
+// process, as macOS does under memory pressure, and the page reloads.
 
 struct BrowserView final : View
 {
@@ -93,7 +100,35 @@ WindowOptions windowOptions()
     return options;
 }
 
+#if BROWSER_HAS_KILL_CONTENT_PROCESS_MENU
+MenuBar buildBrowserMenuBar(WebView& webView)
+{
+    auto debug = Menu {"Debug"};
+    debug.add(MenuItem::withAction("Kill Content Process",
+                                   [&webView] { killContentProcess(webView); }));
+
+    auto bar = MenuBar {};
+    bar.add(standardApplicationMenu("Browser"));
+    bar.add(std::move(debug));
+    return bar;
+}
+
+struct BrowserWithDebugMenu
+{
+    BrowserWithDebugMenu()
+    {
+        setApplicationMenuBar(buildBrowserMenuBar(shown.view.webView), shown.window);
+    }
+
+    ViewWindow<BrowserView> shown {windowOptions()};
+};
+#endif
+
 int main()
 {
+#if BROWSER_HAS_KILL_CONTENT_PROCESS_MENU
+    return Apps::run<BrowserWithDebugMenu>();
+#else
     return Graphics::runWindowedApp<BrowserView>(windowOptions());
+#endif
 }

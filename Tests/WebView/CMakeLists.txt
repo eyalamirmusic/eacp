@@ -78,6 +78,9 @@ if (TARGET eacp-webview-test-main)
     # instead of OS key injection (see the file headers).
     if (APPLE)
         list(APPEND webview_test_sources KeyForwardingTests.mm)
+
+        # WKWebView only: WebView2's ProcessFailed is not wired.
+        list(APPEND webview_test_sources ContentProcessTerminationTests.mm)
     endif ()
 
     if (WIN32)

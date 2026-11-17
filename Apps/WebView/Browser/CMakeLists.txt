@@ -20,3 +20,9 @@ res_embed_add(Browser
         FILES     AltTabIcon.png
         NAMESPACE Browser
         CATEGORY  Browser)
+
+if (APPLE AND NOT IOS)
+    target_sources(Browser PRIVATE KillContentProcess-macOS.mm)
+    target_link_libraries(Browser PRIVATE "-framework WebKit")
+    target_compile_definitions(Browser PRIVATE BROWSER_HAS_KILL_CONTENT_PROCESS_MENU=1)
+endif ()
