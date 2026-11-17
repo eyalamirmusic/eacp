@@ -25,6 +25,18 @@ enum class WindowFlags
     HUDWindow
 };
 
+// The iOS status bar (clock, battery) over the top of a window. Shown, it sits
+// inside the safe area's top inset. Automatic picks its text colour from the
+// system's light or dark appearance; LightText and DarkText fix it, for a
+// window whose own background decides what can be read.
+enum class StatusBar
+{
+    Hidden,
+    Automatic,
+    LightText,
+    DarkText
+};
+
 using ResizeCallback = std::function<void(int width, int height)>;
 using WillResizeCallback = std::function<void(int& width, int& height)>;
 
@@ -287,6 +299,10 @@ struct WindowOptions
     // visible shape. Windows 11 rounds via DWM at the system radius — the
     // value is ignored there; earlier Windows stays square.
     std::optional<float> cornerRadius;
+
+    // iOS only; see StatusBar. Hidden by default, as a game or a full-screen
+    // canvas wants.
+    StatusBar statusBar = StatusBar::Hidden;
 
     EA::Vector<WindowFlags> flags;
 };
