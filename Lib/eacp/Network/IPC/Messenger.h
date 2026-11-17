@@ -9,11 +9,11 @@ namespace eacp::IPC
 // app code: where a Channel is a byte stream and a manual reader thread,
 // a Messenger is whole messages and main-thread callbacks.
 //
-// It owns its reader thread, frames every message (length-prefixed, so
+// It owns its reader and writer threads, frames every message (length-prefixed, so
 // payloads may carry anything, newlines and NULs included) and delivers
 // each one on the main thread. send() is safe from any thread. The
-// destructor interrupts a blocked read and joins, so teardown needs no
-// protocol tricks - no heartbeats, no sentinel messages.
+// destructor interrupts a blocked read and stops every callback, so teardown
+// needs no protocol tricks - no heartbeats, no sentinel messages.
 //
 // A Messenger lives on the main thread: construct it there, assign the
 // callbacks right after construction (nothing is delivered before the
@@ -28,8 +28,12 @@ public:
     // onDisconnected fires instead when nobody did.
     explicit Messenger(std::string_view name, Time::MS timeout = Time::MS {5000});
 
-    // Interrupts the reader, joins it and closes the channel. Pending
-    // deliveries that have not run yet are dropped, never fired late.
+    // Stops every callback at once: pending deliveries that have not run yet
+    // are dropped, never fired late. With nothing left to send, interrupts
+    // both stream threads, joins them and closes the channel. With sends
+    // still queued, returns at once and a background thread gives them up
+    // to a second to go out before doing the same, so a peer that stopped
+    // reading never holds the caller.
     ~Messenger();
 
     Messenger(const Messenger&) = delete;
@@ -39,13 +43,18 @@ public:
 
     [[nodiscard]] bool isConnected() const;
 
+    // True while messages sent earlier are still queued or being written. A
+    // sender of live data, such as camera frames, skips a message while this
+    // is true instead of building a backlog the peer cannot catch up on.
+    [[nodiscard]] bool hasUnsentMessages() const;
+
     // Hands message to the peer, whole: it arrives as one onMessage there,
     // however large. Callable from any thread. A message sent while not
     // (or no longer) connected is quietly dropped - onDisconnected is the
-    // place to learn the conversation is over. Sending blocks only while
-    // the peer's buffers are full, so a peer that stops reading stalls
-    // its sender; a peer that dies unblocks it.
-    void send(const std::string& message);
+    // place to learn the conversation is over. Sending never waits on the
+    // peer: messages queue for a writer thread, and a peer that leaves
+    // more than 64 MB unread is disconnected.
+    void send(std::string message);
 
     // The dial landed (dialing Messengers only: a server-side session
     // arrives in onClient already connected, and this never fires there).
@@ -66,11 +75,7 @@ private:
 
     void begin();
     [[nodiscard]] bool finished() const;
-
-    void work();
-    bool dial();
-    void readUntilGone();
-    void notifyMain(Callback callback);
+    void abandonUnsentMessages();
 
     struct Impl;
     std::shared_ptr<Impl> impl;

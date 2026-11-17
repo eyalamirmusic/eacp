@@ -77,6 +77,15 @@ void Channel::close()
     impl->channel = detail::invalidChannel;
 }
 
+void Channel::closeWithoutWaitingForThePeer()
+{
+    if (!isOpen())
+        return;
+
+    detail::channelCloseWithoutWaiting(impl->channel);
+    impl->channel = detail::invalidChannel;
+}
+
 void Channel::interrupt()
 {
     if (isOpen())
