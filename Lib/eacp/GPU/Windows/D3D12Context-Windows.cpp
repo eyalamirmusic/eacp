@@ -1,6 +1,7 @@
 ﻿#include <eacp/Core/Utils/WinInclude.h>
 #include "../Common.h"
 
+#include "D3D12Adapter.h"
 #include "D3D12Context.h"
 #include "D3D12Types.h"
 
@@ -273,14 +274,10 @@ constexpr UINT qualcommVendorIds[] = {0x5143, 0x4D4F4351};
 
 UINT adapterVendorId(ID3D12Device* device)
 {
-    auto factory = winrt::com_ptr<IDXGIFactory4>();
-    auto adapter = winrt::com_ptr<IDXGIAdapter1>();
+    auto adapter = findAdapterOf(*device);
     auto description = DXGI_ADAPTER_DESC1 {};
 
-    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void()))
-        || FAILED(factory->EnumAdapterByLuid(
-            device->GetAdapterLuid(), __uuidof(IDXGIAdapter1), adapter.put_void()))
-        || FAILED(adapter->GetDesc1(&description)))
+    if (adapter == nullptr || FAILED(adapter->GetDesc1(&description)))
         return 0;
 
     return description.VendorId;
@@ -318,6 +315,27 @@ bool detectsSamplerTableBug(ID3D12Device* device)
            != std::end(qualcommVendorIds);
 }
 
+AdapterDescription
+    describeCreatedDeviceAdapter(const winrt::com_ptr<ID3D12Device>& device)
+{
+    if (device == nullptr)
+    {
+        auto noDevice = AdapterDescription {};
+        noDevice.name = "no D3D12 device";
+        return noDevice;
+    }
+
+    return describeDeviceAdapter(*device);
+}
+
+winrt::com_ptr<ID3D12Device> createDeviceOnDefaultAdapter()
+{
+    auto device = winrt::com_ptr<ID3D12Device>();
+    D3D12CreateDevice(
+        nullptr, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), device.put_void());
+    return device;
+}
+
 // Asks the hardware driver, on a device made for the purpose, whether it will
 // take the two recordings the flags in DriverQuirks describe.
 //
@@ -352,18 +370,20 @@ DriverQuirks probeDriverQuirks()
         return quirks;
     }
 
-    auto device = winrt::com_ptr<ID3D12Device>();
+    auto device = runDriverCheckStep("creating a device on the default adapter",
+                                     createDeviceOnDefaultAdapter);
 
-    if (FAILED(D3D12CreateDevice(nullptr,
-                                 D3D_FEATURE_LEVEL_11_0,
-                                 __uuidof(ID3D12Device),
-                                 device.put_void())))
+    if (device == nullptr)
         return quirks;
 
     quirks.samplerTablesIgnoreOffset = detectsSamplerTableBug(device.get());
-    quirks.noDepthResolve = !acceptsRecording(device.get(), recordDepthResolve);
-    quirks.noBoxedTextureCopy =
-        !acceptsRecording(device.get(), recordBoxedTextureCopy);
+    quirks.noDepthResolve = !runDriverCheckStep(
+        "recording a multisampled depth resolve",
+        [&] { return acceptsRecording(device.get(), recordDepthResolve); });
+    quirks.noBoxedTextureCopy = !runDriverCheckStep(
+        "recording a boxed texture copy",
+        [&] { return acceptsRecording(device.get(), recordBoxedTextureCopy); });
+    runDriverCheckStep("releasing its device", [&] { device = nullptr; });
 
     if (quirks.noDepthResolve)
         LOG("D3D12: this driver refuses a multisampled depth resolve; "
@@ -453,35 +473,6 @@ rootTable(const D3D12_DESCRIPTOR_RANGE* range,
     parameter.DescriptorTable.pDescriptorRanges = range;
     parameter.ShaderVisibility = visibility;
     return parameter;
-}
-
-// What the adapter this device came up on calls itself, for a log line or a
-// benchmark header that has to say which GPU produced a number. Found by LUID
-// rather than by re-running adapter selection, so it names the adapter
-// D3D12CreateDevice actually picked - including WARP, which is worth seeing
-// spelled out when a machine has silently fallen back to it.
-std::string describeAdapter(ID3D12Device* device)
-{
-    if (device == nullptr)
-        return "no device";
-
-    auto factory = winrt::com_ptr<IDXGIFactory4>();
-
-    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void())))
-        return "unknown adapter";
-
-    auto adapter = winrt::com_ptr<IDXGIAdapter1>();
-
-    if (FAILED(factory->EnumAdapterByLuid(
-            device->GetAdapterLuid(), __uuidof(IDXGIAdapter1), adapter.put_void())))
-        return "unknown adapter";
-
-    auto description = DXGI_ADAPTER_DESC1 {};
-
-    if (FAILED(adapter->GetDesc1(&description)))
-        return "unknown adapter";
-
-    return Strings::narrow(description.Description);
 }
 
 // What a per-bind sampler register holds when the driver cannot be given a
@@ -606,6 +597,8 @@ void D3D12Shared::createAll()
 
 void D3D12Shared::createDevice()
 {
+    logEveryAdapter();
+
     // Before the device, and not merely first: the probe's own device has to
     // be gone before this one is made. See probeDriverQuirks.
     quirks = probeDriverQuirks();
@@ -616,7 +609,8 @@ void D3D12Shared::createDevice()
         device = created;
     }
 
-    adapterName = describeAdapter(device.get());
+    adapter = describeCreatedDeviceAdapter(device);
+    LOG("D3D12: chosen adapter: ", describeAdapterForLog(adapter));
 }
 
 void D3D12Shared::createRootSignatures()
