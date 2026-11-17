@@ -1596,11 +1596,21 @@ winrt::com_ptr<ID3D12Resource>
     return resource;
 }
 
+bool D3D12Context::isMadeOnThisDevice(ID3D12DeviceChild& object) const
+{
+    auto owner = winrt::com_ptr<ID3D12Device>();
+    object.GetDevice(__uuidof(ID3D12Device), owner.put_void());
+
+    return owner.get() == getDevice();
+}
+
 void D3D12Context::recycleDefaultBuffer(winrt::com_ptr<ID3D12Resource> resource,
                                         std::size_t capacity,
                                         D3D12_RESOURCE_FLAGS flags)
 {
-    if (resource == nullptr)
+    // A buffer that outlived a device loss is the removed device's: filled again
+    // on the replacement, it removes the replacement too.
+    if (resource == nullptr || !isMadeOnThisDevice(*resource))
         return;
 
     auto entry = PooledBuffer {};

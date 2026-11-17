@@ -233,6 +233,12 @@ eacp_enable_glsl_compile_checks(GPUTests)
 
 if (WIN32)
     target_link_libraries(GPUTests PRIVATE eacp-gpu-dxc)
+
+    nano_add_executable(GPUDeviceLossTests
+            NO_MAIN
+            SOURCES
+                DeviceLoss-WindowsTests.cpp
+            TARGETS eacp-gpu)
 endif ()
 
 # The module has eacp linked in, as a plug-in has; the host links nothing of
