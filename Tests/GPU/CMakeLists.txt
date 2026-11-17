@@ -235,7 +235,8 @@ endif ()
 # deadlocked unload ends in a timeout rather than a hung suite.
 if (WIN32)
     eacp_add_plugin(SharedDeviceUnloadFixture SharedDeviceUnloadFixture-Windows.cpp)
-    target_link_libraries(SharedDeviceUnloadFixture PRIVATE eacp-gpu eacp-graphics)
+    target_link_libraries(SharedDeviceUnloadFixture
+            PRIVATE eacp-gpu eacp-gpuwidgets eacp-graphics)
 
     add_executable(SharedDeviceUnloadHost SharedDeviceUnloadHost-Windows.cpp)
     set_default_target_setting(SharedDeviceUnloadHost)

@@ -45,11 +45,17 @@ struct HostRun
     std::string output;
 };
 
-HostRun runHost(const std::string& mode, int cycles)
+// With paths, the module also rasterizes a path whenever it brought the
+// devices up.
+HostRun runHost(const std::string& mode, int cycles, bool paths)
 {
-    auto host = eacp::Processes::Process {
-        EACP_SHARED_DEVICE_UNLOAD_HOST,
-        {EACP_SHARED_DEVICE_UNLOAD_FIXTURE, mode, std::to_string(cycles)}};
+    auto arguments = eacp::Vector<std::string> {
+        EACP_SHARED_DEVICE_UNLOAD_FIXTURE, mode, std::to_string(cycles)};
+
+    if (paths)
+        arguments.add("paths");
+
+    auto host = eacp::Processes::Process {EACP_SHARED_DEVICE_UNLOAD_HOST, arguments};
 
     auto deadline = eacp::Time::Deadline {unloadBudget};
 
@@ -68,9 +74,9 @@ HostRun runHost(const std::string& mode, int cycles)
     return run;
 }
 
-void checkHostUnloads(const std::string& mode, int cycles)
+void checkHostUnloads(const std::string& mode, int cycles, bool paths = false)
 {
-    auto run = runHost(mode, cycles);
+    auto run = runHost(mode, cycles, paths);
 
     if (run.exitedInTime && run.exitCode == noDeviceExitCode)
         return;
@@ -98,4 +104,18 @@ auto tModuleReloads =
 auto tReleasedModuleReloads =
     test("SharedDeviceUnload/aModuleReleasingTheDevicesBuildsThemAgainAndUnloads") =
         [] { checkHostUnloads("release", 2); };
+
+// The compute kernels GPUWidgets shares between rasterizations hold pipelines
+// on the D3D12 device. Once the module exit has released the devices, they hold
+// its last references, so a kernel left to a static destructor releases the
+// device under the loader lock - the hang pluginval showed for a plug-in whose
+// editor draws vector paths. The release takes them too, and the next
+// rasterization builds them anew.
+auto tRasterizingModuleUnloads =
+    test("SharedDeviceUnload/aModuleRasterizingAPathUnloads") = []
+{ checkHostUnloads("exit", 2, true); };
+
+auto tRasterizingReleasedModuleReloads = test(
+    "SharedDeviceUnload/aModuleReleasingAfterRasterizingAPathBuildsAgainAndUnloads") =
+    [] { checkHostUnloads("release", 2, true); };
 } // namespace SharedDeviceUnloadTests

@@ -2,7 +2,12 @@
 
 #include "../Common.h"
 
+#include <eacp/Core/Utils/ReleasableShared.h>
+#include <eacp/Core/Utils/Singleton.h>
 #include <eacp/GPU/Codegen/Codegen.h>
+#include <eacp/Graphics/Graphics/SharedDevices.h>
+
+#include <optional>
 
 namespace eacp::GPUWidgets
 {
@@ -28,8 +33,22 @@ GPU::TextureFormat coverageFormat();
 //
 // Shared state is safe here because a dispatch sets every uniform it reads
 // immediately before issuing it, and command encoding is single-threaded. Built
-// on first use rather than at load, since it needs the Device - which also puts
-// its destruction before the Device's own, statics tearing down in reverse.
+// on first use rather than at load, since it needs the Device. A caller keeps
+// the reference only while it encodes, never across a release.
+//
+// On Windows the kernel is held as the shared Device is (ReleasableShared, in
+// storage that is never destroyed) and given back by
+// Graphics::releaseSharedDevices, to be built again on its next use. A static
+// destructor cannot be trusted with it there: a plug-in's module exit releases
+// the shared devices, which leaves the kernels' pipelines holding the last
+// references to the D3D12 device, and destroying them on the host's
+// FreeLibrary releases the device under the loader lock, where the driver
+// waits for worker threads that need that lock to exit, and the host hangs.
+// The listener is registered after the first build, so after the device's own
+// (prepare() brought the device up), and runs once the device's context has
+// waited for its queue to go idle. A module unloaded without that call leaks
+// the kernels instead. Elsewhere the static is torn down before the Device's
+// own, statics tearing down in reverse.
 template <typename Kernel>
 Kernel& sharedKernel()
 {
@@ -40,8 +59,25 @@ Kernel& sharedKernel()
         Kernel kernel;
     };
 
+#if defined(_WIN32)
+    using Holder = ReleasableShared<Prepared>;
+
+    return Singleton::getImmortal<Holder>()
+        .get(
+            [](std::optional<Prepared>& prepared)
+            {
+                prepared.emplace();
+
+                [[maybe_unused]] static const auto listening =
+                    (Graphics::addSharedDevicesReleaseListener(
+                         [] { Singleton::getImmortal<Holder>().release(); }),
+                     true);
+            })
+        .kernel;
+#else
     static auto prepared = Prepared {};
     return prepared.kernel;
+#endif
 }
 
 // A dispatch whose work belongs to many paths, and the search that says which.

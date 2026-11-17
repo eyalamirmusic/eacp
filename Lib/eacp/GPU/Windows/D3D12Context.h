@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Containers.h>
+#include <eacp/Core/Utils/ReleasableShared.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include <d3d12.h>
@@ -263,51 +264,6 @@ D3D12Shared& getD3D12Shared();
 // getD3D12Shared() registers. Main thread, with nothing left using either.
 void releaseSharedGPUDevice();
 void releaseD3D12Shared();
-
-// A process-wide object built on first use from any thread, which can be
-// released and built again, held in storage that is never destroyed.
-//
-// Never destroyed because eacp links statically into plug-in modules, whose
-// static destructors run on the host's FreeLibrary, under the loader lock.
-// Releasing a device there makes the driver wait for its worker threads to
-// exit, and they need that lock to exit, so the host hangs. A module unloaded
-// without Graphics::releaseSharedDevices leaks the object instead.
-template <typename T>
-class ReleasableShared
-{
-public:
-    // make(std::optional<T>&) emplaces the object, under the lock.
-    template <typename Make>
-    T& get(Make&& make)
-    {
-        if (auto* object = current.load(std::memory_order_acquire))
-            return *object;
-
-        auto lock = std::lock_guard(mutex);
-
-        if (!storage)
-        {
-            make(storage);
-            current.store(&*storage, std::memory_order_release);
-        }
-
-        return *storage;
-    }
-
-    T* find() const { return current.load(std::memory_order_acquire); }
-
-    void release()
-    {
-        auto lock = std::lock_guard(mutex);
-        current.store(nullptr, std::memory_order_release);
-        storage.reset();
-    }
-
-private:
-    std::mutex mutex;
-    std::optional<T> storage;
-    std::atomic<T*> current {nullptr};
-};
 
 class D3D12Context
 {
