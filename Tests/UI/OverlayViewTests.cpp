@@ -63,6 +63,15 @@ struct Tree
     Pressable target;
     Overlay overlay;
 };
+
+struct TouchCountingView final : eacp::Graphics::View
+{
+    TouchCountingView() { setHandlesTouchEvents(true); }
+
+    void touchBegan(const eacp::Graphics::TouchEvent&) override { ++touches; }
+
+    int touches = 0;
+};
 } // namespace
 
 auto tOverlayTakesPressesByDefault =
@@ -110,4 +119,43 @@ auto tIgnoringCoversSubviews =
 
     tree.overlay.removeSubview(inner);
 };
+
+auto tHiddenOverlayLetsPressesThrough =
+    test("OverlayView/aHiddenOverlayLetsThePressReachTheTree") = []
+{
+    auto tree = Tree {};
+    tree.overlay.setVisible(false);
+
+    check(tree.host.hitTest({150.f, 100.f}) == &tree.host);
+
+    tree.pressAt({150.f, 100.f});
+
+    check(tree.overlay.presses == 0);
+    check(tree.target.presses == 1);
+};
+
+auto tHiddenViewIsNoTouchTarget = test("OverlayView/aHiddenViewTakesNoTouch") = []
+{
+    const auto wholeRoot = eacp::Graphics::Rect {0.f, 0.f, 400.f, 300.f};
+    const auto touchPosition = Point {150.f, 100.f};
+
+    auto root = eacp::Graphics::View {};
+    auto beneath = TouchCountingView {};
+    auto hiddenAbove = TouchCountingView {};
+    root.setBounds(wholeRoot);
+    root.addSubview(beneath);
+    root.addSubview(hiddenAbove);
+    beneath.setBounds(wholeRoot);
+    hiddenAbove.setBounds(wholeRoot);
+    hiddenAbove.setVisible(false);
+
+    auto touch = eacp::Graphics::TouchEvent {};
+    touch.pos = touchPosition;
+    touch.phase = eacp::Graphics::TouchPhase::Began;
+    root.dispatchTouchEvent(touch);
+
+    check(beneath.touches == 1);
+    check(hiddenAbove.touches == 0);
+};
+
 } // namespace OverlayViewTests

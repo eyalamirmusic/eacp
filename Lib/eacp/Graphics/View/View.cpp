@@ -267,7 +267,10 @@ void View::scaleToFit(ChildViews views)
 
 View* View::hitTest(const Point& point)
 {
-    if (properties.ignoresMouseEvents || !getLocalBounds().contains(point))
+    if (!visible || properties.ignoresMouseEvents)
+        return nullptr;
+
+    if (!getLocalBounds().contains(point))
         return nullptr;
 
     for (auto child: std::ranges::reverse_view(subviews))
@@ -533,7 +536,7 @@ void View::handleMouseEvent(const MouseEvent& event)
 
 View* View::touchTarget(const Point& point)
 {
-    if (!getLocalBounds().contains(point))
+    if (!visible || !getLocalBounds().contains(point))
         return nullptr;
 
     for (auto child: std::ranges::reverse_view(subviews))
