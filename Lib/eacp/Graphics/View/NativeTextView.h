@@ -37,6 +37,12 @@ public:
 
     std::function<void()> onTextChanged = [] {};
 
+    // A hardware keyboard's key going down while the field is editing, before
+    // the field acts on it. Answer true to keep it from the field: what a
+    // composer does with the up arrow to recall an earlier message. iOS only.
+    std::function<bool(const KeyEvent& key)> onKeyDown = [](const KeyEvent&)
+    { return false; };
+
     void resized() override;
     void* nativeFocusTarget() override;
 

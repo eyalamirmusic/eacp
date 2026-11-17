@@ -1,10 +1,48 @@
 #import <UIKit/UIKit.h>
 
 #include "NativeTextView.h"
+#include "../Graphics/Keyboard-iOS.h"
 #include "../Primitives/GraphicUtils.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
+
+// Hands a hardware key to the owner first, and to the field only when the
+// owner does not keep it.
+@interface EACPNativeTextField : UITextView
+{
+@public
+    eacp::Graphics::NativeTextView* owner;
+}
+@end
+
+@implementation EACPNativeTextField
+
+- (BOOL)isKeptByOwner:(UIPress*)press
+{
+    using namespace eacp::Graphics;
+
+    if (press.key == nil || owner == nullptr)
+        return NO;
+
+    return owner->onKeyDown(iosKeyEventFromPress(press, KeyEventType::Down)) ? YES : NO;
+}
+
+- (void)pressesBegan:(NSSet<UIPress*>*)presses withEvent:(UIPressesEvent*)event
+{
+    auto* unkept = [NSMutableSet<UIPress*> set];
+
+    for (UIPress* press in presses)
+    {
+        if (![self isKeptByOwner:press])
+            [unkept addObject:press];
+    }
+
+    if (unkept.count > 0)
+        [super pressesBegan:unkept withEvent:event];
+}
+
+@end
 
 @interface EACPNativeTextViewDelegate : NSObject <UITextViewDelegate>
 {
@@ -36,7 +74,7 @@ namespace eacp::Graphics
 {
 struct NativeTextView::Native
 {
-    ObjC::Ptr<UITextView> textView {[[UITextView alloc] initWithFrame:CGRectZero]};
+    ObjC::Ptr<EACPNativeTextField> textView {[[EACPNativeTextField alloc] initWithFrame:CGRectZero]};
     ObjC::Ptr<EACPNativeTextViewDelegate> delegate {[[EACPNativeTextViewDelegate alloc] init]};
 };
 
@@ -44,6 +82,7 @@ NativeTextView::NativeTextView()
 {
     auto* textView = native->textView.get();
     native->delegate.get()->owner = this;
+    textView->owner = this;
     textView.delegate = native->delegate.get();
     textView.returnKeyType = UIReturnKeySend;
     textView.backgroundColor = UIColor.clearColor;
@@ -54,6 +93,7 @@ NativeTextView::NativeTextView()
 NativeTextView::~NativeTextView()
 {
     native->textView.get().delegate = nil;
+    native->textView.get()->owner = nullptr;
     [native->textView.get() removeFromSuperview];
 }
 
