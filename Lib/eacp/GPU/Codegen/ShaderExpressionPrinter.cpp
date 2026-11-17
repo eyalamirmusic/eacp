@@ -47,6 +47,27 @@ bool isShiftOperator(const std::string& op)
 {
     return op == "<<" || op == ">>";
 }
+
+bool isOneParenthesisedGroup(std::string_view expression)
+{
+    if (!expression.starts_with('(') || !expression.ends_with(')'))
+        return false;
+
+    auto depth = 0;
+
+    for (auto character: expression.substr(0, expression.size() - 1))
+    {
+        if (character == '(')
+            ++depth;
+        else if (character == ')')
+            --depth;
+
+        if (depth == 0)
+            return false;
+    }
+
+    return true;
+}
 } // namespace
 
 int ExprPrinter::findCarryingVarying(int slot) const
@@ -60,6 +81,16 @@ std::string ExprPrinter::printReference(int node) const
         return Strings::format("t{}", locals[node]);
 
     return print(node);
+}
+
+std::string ExprPrinter::printCondition(int node) const
+{
+    auto condition = printReference(node);
+
+    if (!isOneParenthesisedGroup(condition))
+        return condition;
+
+    return condition.substr(1, condition.size() - 2);
 }
 
 ValueType ExprPrinter::getBroadcastType(const Expr& call) const

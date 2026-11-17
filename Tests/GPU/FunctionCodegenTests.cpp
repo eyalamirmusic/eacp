@@ -104,7 +104,7 @@ struct Uniforms
 
 float fn_clampUnit(float v0)
 {
-    if ((v0 < 0.0))
+    if (v0 < 0.0)
     {
         return 0.0;
     }
@@ -142,7 +142,7 @@ RWStructuredBuffer<float> buffer1 : register(u1);
 
 float fn_clampUnit(float v0)
 {
-    if ((v0 < 0.0))
+    if (v0 < 0.0)
     {
         return 0.0;
     }
@@ -184,7 +184,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 float fn_clampUnit(float v0)
 {
-    if ((v0 < 0.0))
+    if (v0 < 0.0)
     {
         return 0.0;
     }
@@ -707,10 +707,10 @@ auto tReturns = test("FunctionCodegen/aValueReturnsFromAnyStatement") = []
     {
         checkAll(*source,
                  {"uint fn_firstSquareAbove(uint v0, uint v1)",
-                  "        if (((v2 * v2) > v1))\n        {\n            return v2;",
+                  "        if ((v2 * v2) > v1)\n        {\n            return v2;",
                   "        case 9u:\n            {\n                return 500u;",
                   "    return 999u;\n}",
-                  "while ((fn_twice("});
+                  "while (fn_twice("});
     }
 
     expectGlslCompiles(sources.glsl, true);

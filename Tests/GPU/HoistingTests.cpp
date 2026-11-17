@@ -406,7 +406,7 @@ auto tArgMaxLoadsTheElementOnce = test("Hoisting/aBranchKeepsTheLoadItWasGiven")
     {
         // The subscripts, not the GLSL declaration of the run itself.
         check(occurrences(source, "= buffer0[") == 2);
-        check(contains(source, "if ((t1 > v1))"));
+        check(contains(source, "if (t1 > v1)"));
         check(contains(source, "v1 = t1;"));
     }
 
@@ -548,7 +548,7 @@ auto tFixedBoundIsNamedOnce = test("Hoisting/aFixedBoundReachesTheHeader") = []
                               emitGlsl(builder.graph())})
     {
         check(contains(source, "uint t0 = (v0 + 8u);"));
-        check(contains(source, "while ((v1 < t0))"));
+        check(contains(source, "while (v1 < t0)"));
     }
 
     expectGlslCompiles(builder.graph());
@@ -565,8 +565,8 @@ auto tRaisedBoundIsRetested = test("Hoisting/aRaisedBoundIsRetested") = []
                               emitHlsl(builder.graph()),
                               emitGlsl(builder.graph())})
     {
-        check(contains(source, "while ((v1 < (v0 + 8u)))"));
-        check(!contains(source, "while ((v1 < t"));
+        check(contains(source, "while (v1 < (v0 + 8u))"));
+        check(!contains(source, "while (v1 < t"));
     }
 
     expectGlslCompiles(builder.graph());

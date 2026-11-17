@@ -315,7 +315,7 @@ std::string StageEmitter::emitLoop(const Statement& statement,
         return emitLoopWithContinuing(statement, indent);
 
     auto header = Strings::format(
-        "{}while ({})\n", indent, printer.printReference(statement.value));
+        "{}while ({})\n", indent, printer.printCondition(statement.value));
     return header + printLoopBlock(statement.body, indent);
 }
 
@@ -450,7 +450,7 @@ std::string StageEmitter::emitIf(const Statement& statement, StatementScope& sco
 {
     auto source = defineLocalsInScope({statement.value}, scope);
 
-    auto condition = printer.printReference(statement.value);
+    auto condition = printer.printCondition(statement.value);
     dropStaleLocals(statement, scope.open);
 
     source += Strings::format("{}if ({})\n", scope.indent, condition);
@@ -495,7 +495,7 @@ std::string StageEmitter::emitBreakIf(const Statement& statement,
     auto source = defineLocalsInScope({statement.value}, scope);
     source += Strings::format("{}if ({})\n{}{{\n",
                               scope.indent,
-                              printer.printReference(statement.value),
+                              printer.printCondition(statement.value),
                               scope.indent);
     source += printLoopJump(breakCode, scope.indent + std::string(nestedIndent));
     return source + scope.indent + "}\n";

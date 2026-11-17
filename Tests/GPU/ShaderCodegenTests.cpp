@@ -1169,7 +1169,7 @@ auto tCodegenBranches = test("GPU/codegenBranches") = []
     builder.fragment(float4(shade, shade, shade, 1.0f));
 
     auto metal = emitMetal(builder.graph());
-    check(contains(metal, "if (((input.v0).x < 0.0))"));
+    check(contains(metal, "if ((input.v0).x < 0.0)"));
     check(contains(metal, "\n    else\n"));
 
     // The else body declares a variable of its own, indented inside the block
@@ -1214,7 +1214,7 @@ auto tCodegenLoop = test("GPU/codegenLoop") = []
     builder.fragment(float4(travelled, travelled, travelled, 1.0f));
 
     auto metal = emitMetal(builder.graph());
-    check(contains(metal, "while ((v1 < 64.0))"));
+    check(contains(metal, "while (v1 < 64.0)"));
     check(contains(metal, "            break;"));
     check(contains(metal, "            continue;"));
 
@@ -1223,7 +1223,7 @@ auto tCodegenLoop = test("GPU/codegenLoop") = []
     check(metal.find("while (") < metal.find("v1 = (v1 + 1.0);"));
     check(!contains(metal, "bool t"));
 
-    check(contains(emitHlsl(builder.graph()), "while ((v1 < 64.0))"));
+    check(contains(emitHlsl(builder.graph()), "while (v1 < 64.0)"));
 
     expectGlslCompiles(builder.graph());
 };
@@ -1292,7 +1292,7 @@ auto tCodegenSharedAcrossStatements = test("GPU/codegenSharedAcrossStatements") 
 
     auto metal = emitMetal(builder.graph());
     check(countOccurrences(metal, "length(") == 1);
-    check(contains(metal, "if ((t0 < 0.001))"));
+    check(contains(metal, "if (t0 < 0.001)"));
     check(contains(metal, "v0 = (v0 + t0);"));
 
     expectGlslCompiles(builder.graph());
@@ -1882,9 +1882,9 @@ auto tCodegenComputeUIntLoop = test("GPU/codegenComputeUIntLoop") = []
         const auto& source = dialect.source;
 
         check(contains(source, "uint v1 = 0u;"));
-        check(contains(source, "while ((v1 < uniforms.u0))"));
+        check(contains(source, "while (v1 < uniforms.u0)"));
         check(contains(source, "v1 = (v1 + 1u);"));
-        check(contains(source, "if ((gid == 0u))"));
+        check(contains(source, "if (gid == 0u)"));
 
         // The condition reads the counter the body advances, so it must be
         // printed into the header rather than bound to a local before it.
@@ -2960,7 +2960,7 @@ auto tCodegenComputeSharedReduction = test("GPU/codegenComputeSharedReduction") 
     check(contains(metal, "threadgroup float s0[64];"));
     check(contains(metal, "threadgroup_barrier(mem_flags::mem_threadgroup);"));
     check(!contains(metal, "return;"));
-    check(contains(metal, "if ((gid < uniforms.count))"));
+    check(contains(metal, "if (gid < uniforms.count)"));
     check(contains(metal, "s0[lid] = v0;"));
     check(contains(metal, "s0[lid] = (s0[lid] + s0[(lid + 32u)]);"));
     check(contains(metal, "buffer1[tgid] = s0[0u];"));

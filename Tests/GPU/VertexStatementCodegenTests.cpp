@@ -103,7 +103,7 @@ fragment float4 fragmentMain(VertexOut input [[stage_in]],
     sampler sampler0 [[sampler(0)]])
 {
     float v0 = 0.0;
-    while ((v0 < 3.0))
+    while (v0 < 3.0)
     {
         v0 = (v0 + 1.0);
     }
@@ -155,7 +155,7 @@ VertexOut vertexMain(VertexIn input, uint vertexId : SV_VertexID, uint instanceI
 float4 fragmentMain(VertexOut input) : SV_Target
 {
     float v0 = 0.0;
-    while ((v0 < 3.0))
+    while (v0 < 3.0)
     {
         v0 = (v0 + 1.0);
     }
@@ -203,7 +203,7 @@ layout(location = 0) out vec4 fragColor;
 void main()
 {
     float v0 = 0.0;
-    while ((v0 < 3.0))
+    while (v0 < 3.0)
     {
         v0 = (v0 + 1.0);
     }
@@ -321,11 +321,11 @@ auto tVertexLoop =
              {"constant Uniforms& uniforms [[buffer(16)]]",
               "    float v0 = 0.0;\n"
               "    int v1 = 0;\n"
-              "    while ((v1 < uniforms.u0))\n"
+              "    while (v1 < uniforms.u0)\n"
               "    {\n"
               "        v0 = (v0 + uniforms.u1);\n"
               "        v1 = (v1 + 1);\n"
-              "        if ((v0 > 4.0))\n"
+              "        if (v0 > 4.0)\n"
               "        {\n"
               "            break;\n"
               "        }\n"
@@ -339,7 +339,7 @@ auto tVertexLoop =
     checkAll(hlsl.vertex,
              {"float v0 = 0.0;",
               "int v1 = 0;",
-              "while ((v1 < uniforms.u0))",
+              "while (v1 < uniforms.u0)",
               "break;",
               "output.position = float4(input.a0, v0, 1.0);"});
     check(!contains(hlsl.fragment, "v0"));
@@ -348,7 +348,7 @@ auto tVertexLoop =
     checkAll(glsl.vertex,
              {"float v0 = 0.0;",
               "int v1 = 0;",
-              "while ((v1 < uniforms.u0))",
+              "while (v1 < uniforms.u0)",
               "break;",
               "gl_Position = vec4(attr0, v0, 1.0);"});
     check(precedes(glsl.vertex, "while", "gl_Position"));

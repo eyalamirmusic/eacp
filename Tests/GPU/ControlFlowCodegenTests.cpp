@@ -348,10 +348,43 @@ auto tKernelReturn = test("ControlFlowCodegen/aKernelReturnsBehindItsGuard") = [
     for (const auto* source: {&sources.metal, &sources.hlsl, &sources.glsl})
         checkAll(*source,
                  {"    if (gid >= uniforms.count)\n        return;\n",
-                  "    if (((gid % 2u) == 0u))\n"
+                  "    if ((gid % 2u) == 0u)\n"
                   "    {\n"
                   "        return;\n"
                   "    }\n"});
+
+    expectGlslCompiles(sources.glsl, true);
+};
+
+auto tSingleParentheses =
+    test("ControlFlowCodegen/aConditionPrintsInsideOnePairOfParentheses") = []
+{
+    constexpr auto loopLimit = 8u;
+
+    auto builder = ShaderBuilder {};
+    auto output = builder.outputBuffer();
+    auto id = builder.threadId();
+    auto counter = builder.var(0u);
+
+    auto count = [&] { counter += 1u; };
+    auto stopAtTheId = [&] { builder.breakLoopIf(counter.get() == id); };
+
+    builder.ifThen(id == 0u, count);
+    builder.ifThen(id % 2u == id % 3u, count);
+    builder.ifThen(id == 1u && counter.get() == 0u, count);
+    builder.loop(counter.get() == 0u, count);
+    builder.loop(counter.get() < loopLimit, count, stopAtTheId);
+    builder.write(output, id, builder.constant(1.f));
+
+    auto sources = Sources {builder.graph()};
+
+    for (const auto* source: {&sources.metal, &sources.hlsl, &sources.glsl})
+        checkAll(*source,
+                 {"    if (gid == 0u)\n",
+                  "    if ((gid % 2u) == (gid % 3u))\n",
+                  "    if ((gid == 1u) && (v0 == 0u))\n",
+                  "    while (v0 == 0u)\n",
+                  "        if (v0 == gid)\n"});
 
     expectGlslCompiles(sources.glsl, true);
 };
@@ -398,7 +431,7 @@ auto tFragmentReturn =
 
     auto metal = Stages {sources.metal}.fragment;
     checkAll(metal,
-             {"    if (((input.v0).x > 0.0))\n"
+             {"    if ((input.v0).x > 0.0)\n"
               "    {\n"
               "        v0 = float4(1.0, 0.0, 0.0, 1.0);\n"
               "        return v0;\n"
@@ -585,7 +618,7 @@ auto tContinuing =
                   "        if (!firstPass0)\n"
                   "        {\n"
                   "            v0 = (v0 + 1u);\n"
-                  "            if ((v1 > gid))\n"
+                  "            if (v1 > gid)\n"
                   "            {\n"
                   "                break;\n"
                   "            }\n"
@@ -595,7 +628,7 @@ auto tContinuing =
                   "        {\n"
                   "            break;\n"
                   "        }\n"
-                  "        if (((v0 % 2u) == 0u))\n"
+                  "        if ((v0 % 2u) == 0u)\n"
                   "        {\n"
                   "            continue;\n"
                   "        }\n"

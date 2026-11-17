@@ -728,7 +728,7 @@ while (true)
     if (!firstPass0)
     {
         v0 = (v0 + 1u);       // the continuing block
-        if ((v1 > gid))       // breakLoopIf
+        if (v1 > gid)         // breakLoopIf
         {
             break;
         }

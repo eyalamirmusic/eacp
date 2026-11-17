@@ -7,6 +7,10 @@ namespace eacp::GPU::ShaderEmission
 struct ExprPrinter
 {
     std::string printReference(int node) const;
+
+    // printReference without the parentheses that enclose the whole text, for
+    // a statement that supplies its own: DXC and Metal warn on if ((a == b)).
+    std::string printCondition(int node) const;
     std::string print(int node) const;
     std::string printConverted(int node, ValueType type) const;
 

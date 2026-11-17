@@ -52,6 +52,40 @@ struct SquareKernel final : ComputeProgram
     EACP_SHADER(input, output)
 };
 
+// DXC warns on if ((a == b)), so each condition printed here is an equality.
+struct EqualityBranchesKernel final : ComputeProgram
+{
+    EqualityBranchesKernel() { compile(); }
+
+    void define() override
+    {
+        constexpr auto stopped = 1u;
+        constexpr auto loopLimit = 8u;
+
+        auto id = threadId();
+        auto count = var(0u);
+        auto stop = var(0u);
+
+        auto countUntilTheId = [&]
+        {
+            count += 1u;
+            ifThen(count.get() == id % loopLimit + 1u, [&] { stop = stopped; });
+        };
+        loop(stop.get() == 0u, countUntilTheId);
+
+        auto counted = var(0u);
+        auto increment = [&] { counted += 1u; };
+        auto stopAtTheCount = [&] { breakLoopIf(counted.get() == count.get()); };
+        loop(counted.get() < loopLimit, increment, stopAtTheCount);
+
+        write(output, id, counted.get());
+    }
+
+    Uniform<UIntOutputBuffer> output;
+
+    EACP_SHADER(output)
+};
+
 struct FlatShader final : ShaderProgram
 {
     FlatShader() { compile(); }
@@ -325,6 +359,26 @@ auto tBrokenShader = test("Dxc/aShaderDxcRejectsLeavesTheLibraryInvalid") = []
     check(!library.isValid());
     check(Dxc::status().compiledStages == before);
     check(Dxc::status().state == Dxc::State::loaded);
+};
+
+auto tEqualityBranches = test("Dxc/anEqualityConditionCompilesWithoutAWarning") = []
+{
+    if (!wantsTheRelease() || !Device::shared().isValid())
+        return;
+
+    auto restore = RestoreOptions {};
+
+    if (!enableTheRelease())
+        return;
+
+    const auto before = Dxc::status().compiledStages;
+    auto kernel = EqualityBranchesKernel {};
+    const auto library = Device::shared().makeShaderLibrary(kernel.source());
+    const auto& info = library.compilationInfo();
+
+    check(library.isValid(), info.describe());
+    check(Dxc::status().compiledStages == before + 1);
+    check(info.messages.empty(), info.describe());
 };
 
 // Options::arguments reach the compile: the same source builds until a define
