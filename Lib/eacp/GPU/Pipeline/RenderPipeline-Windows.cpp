@@ -4,6 +4,7 @@
 
 #include "../Device/Device.h"
 #include "../Shader/ShaderLibrary.h"
+#include "../Windows/D3D12PipelineCache.h"
 #include "../Windows/D3D12Types.h"
 
 #include <winrt/base.h>
@@ -499,10 +500,115 @@ D3D12_DEPTH_STENCIL_DESC makeDepthStencilDesc(const RenderPipelineDescriptor& fr
 
     return desc;
 }
+
+// A pipeline-state description and the input layout it points into, kept
+// together so the pointer cannot outlive what it points at.
+struct PipelineStateDescription
+{
+    PipelineStateDescription() = default;
+    PipelineStateDescription(const PipelineStateDescription&) = delete;
+    PipelineStateDescription& operator=(const PipelineStateDescription&) = delete;
+
+    Vector<D3D12_INPUT_ELEMENT_DESC> inputLayout;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
+};
+
+// Fills `into` with the state `descriptor` asks for against `rootSignature`.
+// False when there is nothing to build: no root signature, no library, a stage
+// that did not compile, or too many colour targets. Reads the library's
+// variant for the descriptor's constants, compiling it first if this is the
+// first ask; safe on a ShaderWarmUp's worker, the variants being locked.
+bool describePipelineState(const RenderPipelineDescriptor& descriptor,
+                           ID3D12RootSignature* rootSignature,
+                           PipelineStateDescription& into)
+{
+    if (rootSignature == nullptr || descriptor.library == nullptr)
+        return false;
+
+    auto* program = static_cast<D3D12ShaderProgram*>(
+        descriptor.library->nativeLibrary(descriptor.constants));
+
+    const auto hasFragment = descriptor.library->hasFragment();
+
+    if (program == nullptr || program->vertexBytecode == nullptr
+        || (hasFragment && program->pixelBytecode == nullptr))
+        return false;
+
+    if (descriptor.colorTargetCount() > maxColorAttachments)
+    {
+        LOG("D3D12: a pipeline writing ",
+            descriptor.colorTargetCount(),
+            " colour targets is refused; the most is ",
+            maxColorAttachments);
+        return false;
+    }
+
+    into.inputLayout = makeInputLayout(descriptor.vertexLayout);
+
+    auto& desc = into.desc;
+    desc = {};
+    desc.pRootSignature = rootSignature;
+    desc.VS.pShaderBytecode = program->vertexBytecode->GetBufferPointer();
+    desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
+    if (hasFragment)
+    {
+        desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
+        desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
+    }
+
+    desc.BlendState = makeBlendDesc(descriptor, hasFragment);
+    desc.SampleMask = UINT_MAX;
+    desc.RasterizerState = makeRasterizerDesc(descriptor);
+    desc.DepthStencilState = makeDepthStencilDesc(descriptor);
+    desc.InputLayout.pInputElementDescs = into.inputLayout.data();
+    desc.InputLayout.NumElements = static_cast<UINT>(into.inputLayout.size());
+    desc.PrimitiveTopologyType = toTopologyType(descriptor.topology);
+    desc.NumRenderTargets = static_cast<UINT>(descriptor.colorTargetCount());
+
+    for (auto index = 0; index < descriptor.colorTargetCount(); ++index)
+        desc.RTVFormats[index] = toDXGIFormat(descriptor.colorTarget(index).format);
+    desc.DSVFormat = descriptor.depth || descriptor.stencil
+                         ? depthAttachmentFormat(descriptor.stencil)
+                         : DXGI_FORMAT_UNKNOWN;
+    desc.SampleDesc.Count =
+        static_cast<UINT>(descriptor.sampleCount > 1 ? descriptor.sampleCount : 1);
+
+    return true;
+}
 } // namespace
+
+bool RenderPipelineCache::isSupported()
+{
+    return true;
+}
+
+void RenderPipelineCache::follow(Device& device)
+{
+    D3D12PipelineCache::of(device).follow(device);
+}
+
+bool RenderPipelineCache::warm(Device& device,
+                               const RenderPipelineDescriptor& descriptor)
+{
+    auto& cache = D3D12PipelineCache::of(device);
+    const auto against = cache.followed();
+    auto description = PipelineStateDescription {};
+
+    return describePipelineState(
+               descriptor, against.renderRootSignature.get(), description)
+           && cache.warm(against, description.desc);
+}
+
+RenderPipelineCache::Stats RenderPipelineCache::stats(Device& device)
+{
+    return D3D12PipelineCache::of(device).stats();
+}
 
 struct RenderPipeline::Native
 {
+    // The state comes from the device's D3D12PipelineCache, so an identical
+    // description - built by a ShaderWarmUp's worker, or by an earlier
+    // pipeline - is not built twice.
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
         : context(getD3D12Context(device))
         , topology(descriptor.topology)
@@ -515,60 +621,16 @@ struct RenderPipeline::Native
         pipeline.depth = descriptor.depth;
         pipeline.stencil = descriptor.stencil;
 
-        if (!context.isValid() || context.getRenderRootSignature() == nullptr
-            || descriptor.library == nullptr)
+        auto description = PipelineStateDescription {};
+
+        if (!context.isValid()
+            || !describePipelineState(
+                descriptor, context.getRenderRootSignature(), description))
             return;
 
-        auto* program = static_cast<D3D12ShaderProgram*>(
-            descriptor.library->nativeLibrary(descriptor.constants));
-
-        const auto hasFragment = descriptor.library->hasFragment();
-
-        if (program == nullptr || program->vertexBytecode == nullptr
-            || (hasFragment && program->pixelBytecode == nullptr))
-            return;
-
-        if (descriptor.colorTargetCount() > maxColorAttachments)
-        {
-            LOG("D3D12: a pipeline writing ",
-                descriptor.colorTargetCount(),
-                " colour targets is refused; the most is ",
-                maxColorAttachments);
-            return;
-        }
-
-        auto inputLayout = makeInputLayout(descriptor.vertexLayout);
-
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
-        desc.pRootSignature = context.getRenderRootSignature();
-        desc.VS.pShaderBytecode = program->vertexBytecode->GetBufferPointer();
-        desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
-        if (hasFragment)
-        {
-            desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
-            desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
-        }
-
-        desc.BlendState = makeBlendDesc(descriptor, hasFragment);
-        desc.SampleMask = UINT_MAX;
-        desc.RasterizerState = makeRasterizerDesc(descriptor);
-        desc.DepthStencilState = makeDepthStencilDesc(descriptor);
-        desc.InputLayout.pInputElementDescs = inputLayout.data();
-        desc.InputLayout.NumElements = static_cast<UINT>(inputLayout.size());
-        desc.PrimitiveTopologyType = toTopologyType(descriptor.topology);
-        desc.NumRenderTargets = static_cast<UINT>(descriptor.colorTargetCount());
-
-        for (auto index = 0; index < descriptor.colorTargetCount(); ++index)
-            desc.RTVFormats[index] =
-                toDXGIFormat(descriptor.colorTarget(index).format);
-        desc.DSVFormat = descriptor.depth || descriptor.stencil
-                             ? depthAttachmentFormat(descriptor.stencil)
-                             : DXGI_FORMAT_UNKNOWN;
-        desc.SampleDesc.Count = static_cast<UINT>(
-            descriptor.sampleCount > 1 ? descriptor.sampleCount : 1);
-
-        context.getDevice()->CreateGraphicsPipelineState(
-            &desc, __uuidof(ID3D12PipelineState), pipeline.state.put_void());
+        auto& cache = D3D12PipelineCache::of(device);
+        cache.follow(device);
+        pipeline.state = cache.acquire(description.desc);
     }
 
     // A command list holds a reference to every pipeline state it binds, so a

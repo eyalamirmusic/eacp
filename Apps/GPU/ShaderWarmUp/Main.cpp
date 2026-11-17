@@ -1,5 +1,6 @@
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/GPU/Dxc/DxcResource.h>
 #include <eacp/UI/UI.h>
 
 #include <chrono>
@@ -13,10 +14,11 @@
 // raymarched scenes into the device's ShaderLibraryCache. When it resolves, the
 // screen is swapped for a GPUView whose programs prepare against that cache, so
 // building them compiles nothing. The scenes are added with their pipeline, so
-// on Metal the GPU's own compile - which runs when a pipeline is made, about
-// half as long again as the library - is done on the worker too, and the swap
-// takes milliseconds rather than seconds of a frozen window. Elsewhere the
-// pipelines are still made on the main thread, in the swap.
+// on Metal and D3D12 the GPU's own compile - which runs when a pipeline is
+// made, not when a library is - is done on the worker too, and on Metal the
+// swap takes milliseconds rather than seconds of a frozen window. On Vulkan the
+// pipelines are still made on the main thread, in the swap. --dxc (or
+// EACP_D3D12_DXC=1) compiles through DXC rather than FXC on D3D12.
 //
 // Each scene's distance function is unrolled at record time, one term per
 // shape, and evaluated eleven times per pixel (the march, four normal taps, a
@@ -487,29 +489,61 @@ std::string describe(const GPU::ShaderLibraryCache::Stats& before,
                            " found in the cache");
 }
 
+std::string describe(const GPU::RenderPipelineCache::Stats& before,
+                     const GPU::RenderPipelineCache::Stats& after)
+{
+    if (!GPU::RenderPipelineCache::isSupported())
+        return {};
+
+    return Strings::concat("; pipeline states ",
+                           after.builds - before.builds,
+                           " built, ",
+                           after.hits - before.hits,
+                           " found in the cache");
+}
+
 // The twelve scenes in a grid, every program prepared against the cache the
 // warm-up filled.
 struct ScenesView final : GPU::GPUView
 {
     explicit ScenesView(const Settings& settings)
     {
-        auto& cache = GPU::ShaderLibraryCache::of(GPU::Device::shared());
+        auto& device = GPU::Device::shared();
+        auto& cache = GPU::ShaderLibraryCache::of(device);
         const auto before = cache.stats();
+        const auto statesBefore = GPU::RenderPipelineCache::stats(device);
         const auto started = Clock::now();
         const auto pipeline = scenePipeline();
         setSampleCount(pipeline.sampleCount);
 
         for (auto scene = 0; scene < sceneCount; ++scene)
-        {
-            auto& shader = shaders.createNew(scene, settings);
-            shader.setVertices(unitQuad);
-            shader.prepare(pipeline);
-        }
+            shaders.createNew(scene, settings).setVertices(unitQuad);
+
+        const auto created = millisecondsSince(started);
+        const auto acquireStarted = Clock::now();
+
+        for (auto index = 0; index < shaders.size(); ++index)
+            cache.acquire(device, shaders[index]->source());
+
+        const auto acquired = millisecondsSince(acquireStarted);
+        const auto prepareStarted = Clock::now();
+
+        for (auto index = 0; index < shaders.size(); ++index)
+            shaders[index]->prepare(pipeline);
+
+        const auto prepared = millisecondsSince(prepareStarted);
 
         LOG("ShaderWarmUp: the view's programs prepared in ",
-            (int) millisecondsSince(started),
-            " ms, ",
-            describe(before, cache.stats()));
+            Strings::format("{:.1f}", millisecondsSince(started)),
+            " ms (",
+            Strings::format("{:.1f}", created),
+            " ms creating them, ",
+            Strings::format("{:.1f}", acquired),
+            " ms finding their libraries, ",
+            Strings::format("{:.1f}", prepared),
+            " ms preparing their pipelines), ",
+            describe(before, cache.stats()),
+            describe(statesBefore, GPU::RenderPipelineCache::stats(device)));
 
         setContinuous(true);
     }
@@ -967,6 +1001,18 @@ bool isSet(const std::string& variable)
 {
     return Strings::parseIntOr(getEnvValue(variable), 0) != 0;
 }
+
+void enableDxc()
+{
+    GPU::Dxc::enableFromOnlineResource();
+    const auto status = GPU::Dxc::load();
+
+    LOG("ShaderWarmUp: DXC ",
+        GPU::Dxc::stateName(status.state),
+        " ",
+        status.version,
+        status.error);
+}
 } // namespace ShaderWarmUpDemo
 
 int main(int argc, char** argv)
@@ -980,6 +1026,7 @@ int main(int argc, char** argv)
         getEnvValue("EACP_SHADER_WARMUP_COMPLEXITY"), defaultComplexity());
     auto reuseSystemCache = isSet("EACP_SHADER_WARMUP_REUSE_SYSTEM_CACHE");
     auto measureResponsiveness = false;
+    auto useDxc = isSet("EACP_D3D12_DXC");
 
     auto cli = Args::Parser {"ShaderWarmUp",
                              "Shaders compiled on a worker before the view exists."};
@@ -993,6 +1040,10 @@ int main(int argc, char** argv)
              "system's compile cache");
     cli.option("--delay-ms", delayMs, "hold each shader in flight this much longer")
         .atLeast(0);
+    cli.flag("--dxc",
+             useDxc,
+             "compile through DXC rather than FXC on D3D12, fetching it on "
+             "first use");
     cli.flag("--measure-responsiveness",
              measureResponsiveness,
              "resize the window while it compiles, log how late the main "
@@ -1003,6 +1054,9 @@ int main(int argc, char** argv)
 
     if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
         return *code;
+
+    if (useDxc)
+        enableDxc();
 
     auto settings = Settings {};
     settings.complexity = complexity;

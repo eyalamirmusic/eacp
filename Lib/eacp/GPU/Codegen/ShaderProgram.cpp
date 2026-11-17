@@ -588,6 +588,21 @@ void ShaderProgram::prepare(RenderPipelineDescriptor descriptor,
     specialize(overrides);
 }
 
+std::optional<RenderPipelineDescriptor>
+    ShaderProgram::pipelineDescriptorFor(RenderPipelineDescriptor descriptor,
+                                         const ShaderLibrary& library) const
+{
+    const auto resolved = resolveOverrides(graph(), OverrideValues {});
+
+    if (!resolved.isValid())
+        return std::nullopt;
+
+    descriptor.library = &library;
+    descriptor.vertexLayout = generated.vertexLayout;
+    descriptor.constants = resolved.specialized;
+    return descriptor;
+}
+
 bool ShaderProgram::specialize(const OverrideValues& overrides)
 {
     if (!preparedDescriptor.has_value())

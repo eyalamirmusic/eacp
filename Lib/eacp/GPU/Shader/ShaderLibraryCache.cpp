@@ -293,6 +293,19 @@ void ShaderLibraryCache::followBackendGeneration(Device& device)
     state->forgetOlderGenerations(device.backendGeneration(), evicted);
 }
 
+ShaderLibraryCache::LibraryPointer
+    ShaderLibraryCache::find(const ShaderSource& source) const
+{
+    const auto key = cacheKeyFor(source);
+    auto lock = std::lock_guard {state->mutex};
+    auto entry = state->find(key);
+
+    if (entry == nullptr || !state->isUsable(*entry))
+        return nullptr;
+
+    return entry->library;
+}
+
 bool ShaderLibraryCache::contains(const ShaderSource& source) const
 {
     const auto key = cacheKeyFor(source);

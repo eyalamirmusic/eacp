@@ -85,6 +85,70 @@ struct TintView final : GPUView
     TintShader shader;
 };
 
+// A tint scaled by an override, so its library is the kind D3D12 compiles
+// again per set of constants; at the default the pipeline the worker builds is
+// still the one prepare() asks for.
+struct GainedTintShader final : ShaderProgram
+{
+    explicit GainedTintShader(float tintToUse)
+        : tint(tintToUse)
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto position = vertexInput(&WarmUpVertex::position);
+        auto gain = overrideConstant<Float>("gain", 0.5f);
+        setPosition(float4(position, 0.f, 1.f));
+        setFragment(float4(constant(tint) * gain, 0.5f, 0.25f, 1.f));
+    }
+
+    float tint;
+
+    EACP_SHADER()
+};
+
+struct GainedTintView final : GPUView
+{
+    explicit GainedTintView(float tint)
+        : shader(tint)
+    {
+        setSampleCount(1);
+        shader.setVertices(warmUpTriangle);
+        shader.prepare(sampleCount());
+    }
+
+    void render(Frame& frame) override
+    {
+        auto pass = frame.beginPass({Graphics::Color::black()});
+        pass.draw(shader);
+    }
+
+    GainedTintShader shader;
+};
+
+struct StateDelta
+{
+    explicit StateDelta(Device& deviceToUse = Device::shared())
+        : device(deviceToUse)
+        , before(RenderPipelineCache::stats(deviceToUse))
+    {
+    }
+
+    int builds() const
+    {
+        return RenderPipelineCache::stats(device).builds - before.builds;
+    }
+    int hits() const
+    {
+        return RenderPipelineCache::stats(device).hits - before.hits;
+    }
+
+    Device& device;
+    RenderPipelineCache::Stats before;
+};
+
 struct CacheDelta
 {
     explicit CacheDelta(Device& deviceToUse = Device::shared())
@@ -232,12 +296,15 @@ RenderPipelineDescriptor tintPipeline()
 }
 
 auto tBuildsPipelinesOnMetal =
-    test("ShaderWarmUp/buildsPipelinesOnTheWorkerOnlyOnMetal") = []
+    test("ShaderWarmUp/buildsPipelinesOnTheWorkerOnMetalAndD3D12") = []
 {
     auto warmUp = ShaderWarmUp {};
-    const auto isMetal = detail::nativeShaderBackend() == ShaderBackend::Metal;
+    const auto backend = detail::nativeShaderBackend();
+    const auto onMetalOrD3D12 =
+        backend == ShaderBackend::Metal || backend == ShaderBackend::DirectX;
 
-    check(warmUp.buildsPipelines() == isMetal);
+    check(warmUp.buildsPipelines() == onMetalOrD3D12);
+    check(RenderPipelineCache::isSupported() == (backend == ShaderBackend::DirectX));
 
     auto device = Device {};
     auto onItsOwnDevice = ShaderWarmUp {device};
@@ -262,12 +329,72 @@ auto tWithPipeline =
     check(result.timings.size() == 2);
 
     const auto delta = CacheDelta {};
+    const auto states = StateDelta {};
     auto view = TintView {0.951f};
     view.setBounds({0.f, 0.f, 16.f, 16.f});
 
     check(view.shader.pipeline().isValid());
     check(delta.compiles() == 0);
     check(delta.hits() == 1);
+    check(states.builds() == 0);
+    check(states.hits() == (RenderPipelineCache::isSupported() ? 1 : 0));
+    check(view.renderToImage(1.f).isValid());
+};
+
+auto tStateFromTheWorker =
+    test("ShaderWarmUp/aPrepareTakesThePipelineStateTheWorkerBuilt") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto warmUp = ShaderWarmUp {};
+    warmUp.addWithPipeline<TintShader>(tintPipeline(), 0.971f);
+    const auto before = RenderPipelineCache::stats(Device::shared());
+    const auto result = finish(warmUp);
+    const auto afterWarmUp = RenderPipelineCache::stats(Device::shared());
+
+    check(result.succeeded());
+    check(result.pipelines == (warmUp.buildsPipelines() ? 1 : 0));
+
+    if (RenderPipelineCache::isSupported())
+        check(afterWarmUp.builds - before.builds == 1);
+
+    const auto states = StateDelta {};
+    auto first = TintShader {0.971f};
+    first.setVertices(warmUpTriangle);
+    first.prepare(tintPipeline());
+
+    auto second = TintShader {0.971f};
+    second.setVertices(warmUpTriangle);
+    second.prepare(tintPipeline());
+
+    check(first.pipeline().isValid());
+    check(second.pipeline().isValid());
+    check(states.builds() == 0);
+    check(states.hits() == (RenderPipelineCache::isSupported() ? 2 : 0));
+};
+
+auto tVariantFromTheWorker =
+    test("ShaderWarmUp/aShaderWithOverridesTakesTheWorkersStateAtTheirDefaults") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto warmUp = ShaderWarmUp {};
+    warmUp.addWithPipeline<GainedTintShader>(tintPipeline(), 0.981f);
+    const auto result = finish(warmUp);
+
+    check(result.succeeded(),
+          result.failures.empty() ? "" : result.failures[0].name);
+    check(result.pipelines == (warmUp.buildsPipelines() ? 1 : 0));
+
+    const auto states = StateDelta {};
+    auto view = GainedTintView {0.981f};
+    view.setBounds({0.f, 0.f, 16.f, 16.f});
+
+    check(view.shader.pipeline().isValid());
+    check(states.builds() == 0);
+    check(states.hits() == (RenderPipelineCache::isSupported() ? 1 : 0));
     check(view.renderToImage(1.f).isValid());
 };
 

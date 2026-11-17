@@ -299,6 +299,15 @@ public:
     void prepare(RenderPipelineDescriptor descriptor,
                  const OverrideValues& overrides);
 
+    // The descriptor prepare(descriptor) builds its pipeline from once the
+    // device's cache has handed it `library`, with the overrides at their
+    // defaults; empty where it would refuse them. Touches no device: it is
+    // what a ShaderWarmUp's worker builds a D3D12 pipeline state from, ahead
+    // of the prepare on the main thread that then finds it.
+    std::optional<RenderPipelineDescriptor>
+        pipelineDescriptorFor(RenderPipelineDescriptor descriptor,
+                              const ShaderLibrary& library) const;
+
     // Makes the shader specialised with these values the one draw(program)
     // uses, on the library and the descriptor the last prepare() was given:
     // the pipeline already built for the same values since then, or one built

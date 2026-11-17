@@ -90,6 +90,13 @@ public:
     // every acquire() does it first.
     void followBackendGeneration(Device& device);
 
+    // The usable library for `source` - finished, valid, and of the generation
+    // followed last - or null. The caller shares it and may be the one to
+    // release it, so off the owning thread only where that is free-threaded:
+    // D3D12, whose libraries are bytecode blobs, where a ShaderWarmUp's worker
+    // builds pipelines from it; never Vulkan.
+    LibraryPointer find(const ShaderSource& source) const;
+
     // Whether a finished library for `source` is held, failed or not.
     bool contains(const ShaderSource& source) const;
 

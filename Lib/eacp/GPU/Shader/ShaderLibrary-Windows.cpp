@@ -182,9 +182,14 @@ Vector<PrecompiledStage> precompiledStages(const ShaderSource& source,
 
 struct ShaderLibrary::Native
 {
-    Native(Device& device, const ShaderSource& source, CompilationInfo& messages)
+    // The device is taken through its locked reference rather than from
+    // `device`, whose queue and device pointer the main thread replaces
+    // unlocked when it recovers from device loss: a ShaderWarmUp builds
+    // libraries on its worker.
+    Native(Device&, const ShaderSource& source, CompilationInfo& messages)
+        : d3dDevice(getD3D12Shared().deviceReference())
     {
-        if (!device.isValid())
+        if (d3dDevice == nullptr)
         {
             messages.add(CompilationMessageType::Error,
                          "there is no D3D12 device to compile the library on");
@@ -201,8 +206,6 @@ struct ShaderLibrary::Native
             return;
         }
 
-        d3dDevice = static_cast<ID3D12Device*>(device.nativeDevice());
-
         if (source.hasPipelineConstants)
             specializable = source;
 
@@ -216,7 +219,7 @@ struct ShaderLibrary::Native
                                       const Vector<ShaderDefine>& defines,
                                       CompilationInfo& messages) const
     {
-        const auto dxc = Dxc::Detail::compilerFor(d3dDevice);
+        const auto dxc = Dxc::Detail::compilerFor(d3dDevice.get());
         auto compiled = D3D12ShaderProgram {};
 
         if (source.isCompute())
@@ -308,10 +311,10 @@ struct ShaderLibrary::Native
         return false;
     }
 
+    winrt::com_ptr<ID3D12Device> d3dDevice;
     D3D12ShaderProgram program;
     bool precompiled = false;
 
-    ID3D12Device* d3dDevice = nullptr;
     std::optional<ShaderSource> specializable;
     mutable std::mutex variantsLock;
     mutable OwnedVector<D3D12ProgramVariant> variants;

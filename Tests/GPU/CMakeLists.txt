@@ -207,6 +207,10 @@ if (WIN32)
     list(APPEND gpu_test_sources DxcTests-Windows.cpp)
 endif ()
 
+if (WIN32)
+    list(APPEND gpu_test_sources RenderPipelineCacheTests-Windows.cpp)
+endif ()
+
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
 # that draw it, so it cannot be checked without one of them. SpriteBatchTests

@@ -10,11 +10,13 @@
 
 #include <concepts>
 #include <memory>
+#include <optional>
 #include <typeinfo>
 
 namespace eacp::GPU
 {
 class Device;
+class ShaderLibrary;
 struct ShaderSetDefinition;
 
 template <typename Shader>
@@ -25,17 +27,22 @@ concept HasShaderSource = requires(const Shader& shader) {
 template <typename Shader>
 concept PreparesRenderPipeline =
     HasShaderSource<Shader>
-    && requires(Shader& shader, const RenderPipelineDescriptor& descriptor) {
+    && requires(Shader& shader,
+                const RenderPipelineDescriptor& descriptor,
+                const ShaderLibrary& library) {
            shader.prepare(descriptor);
            { shader.pipeline().isValid() } -> std::convertible_to<bool>;
+           {
+               shader.pipelineDescriptorFor(descriptor, library)
+           } -> std::convertible_to<std::optional<RenderPipelineDescriptor>>;
        };
 
 // Compiles a set of shaders on one worker thread, ahead of the programs that
 // will draw with them: each library lands in the device's ShaderLibraryCache,
 // so a GPUView created once start() resolves prepares its programs with no
 // compile left to do. Its pipelines are still built on the main thread, unless
-// added with addWithPipeline on Metal (see there). The main thread meanwhile
-// keeps running and can draw progress().
+// added with addWithPipeline on Metal or D3D12 (see there). The main thread
+// meanwhile keeps running and can draw progress().
 //
 //   auto warmUp = GPU::ShaderWarmUp {};
 //   warmUp.add<SkyShader>().add<GainKernel>().add<SpriteShader>(nearest);
@@ -172,12 +179,20 @@ public:
     }
 
     // The same for a ShaderProgram, and where buildsPipelines() its pipeline
-    // too: once the library is in, the worker calls prepare(pipeline) on the
-    // program it built, so the GPU's own compile - which Metal runs when a
-    // pipeline is made, not when a library is - is cached by the time the app
-    // prepares the program on the main thread with the same descriptor. The
-    // descriptor is the one the app will pass, its library and vertex layout
-    // ignored as prepare() ignores them; one that differs compiles again.
+    // too, so the GPU's own compile is done by the time the app prepares the
+    // program on the main thread with the same descriptor. On Metal, which runs
+    // that compile when a pipeline is made rather than when a library is, the
+    // worker calls prepare(pipeline) on the program it built, and Metal serves
+    // the main thread's identical request from its own cache. On D3D12, where
+    // FXC or DXC have already compiled the bytecode but the driver compiles it
+    // again into each pipeline state and keeps none of them, the worker builds
+    // the state from pipelineDescriptorFor(pipeline) into the device's
+    // RenderPipelineCache, and the main thread's prepare takes it from there.
+    // Either way it is the pipeline for the overrides at their defaults, which
+    // is what prepare(pipeline) builds; a specialize() to other values builds
+    // its own later. The descriptor is the one the app will pass, its library
+    // and vertex layout ignored as prepare() ignores them; one that differs
+    // compiles again.
     template <PreparesRenderPipeline Shader, typename... Args>
     ShaderWarmUp& addWithPipeline(const RenderPipelineDescriptor& pipeline,
                                   const Args&... args)
@@ -195,23 +210,31 @@ public:
         {
             auto shader = std::make_shared<Shader>(args...);
 
-            auto build = [shader, pipeline]
+            auto prepare = [shader, pipeline]
             {
                 shader->prepare(pipeline);
                 return shader->pipeline().isValid();
             };
 
-            sink(Recorded {name, shader->source(), build, true});
+            auto describe = [shader, pipeline](const ShaderLibrary& library)
+            {
+                return std::optional<RenderPipelineDescriptor> {
+                    shader->pipelineDescriptorFor(pipeline, library)};
+            };
+
+            sink(Recorded {name, shader->source(), prepare, describe, true});
         };
 
         return addRecorded(record);
     }
 
-    // Whether addWithPipeline builds pipelines on the worker: on Metal, whose
-    // device makes them from any thread, for a warm-up on Device::shared() -
-    // the device ShaderProgram::prepare uses. Elsewhere, and for another
-    // device, those shaders are compiled as add() compiles them, and their
-    // pipelines are left to the main thread.
+    // Whether addWithPipeline builds pipelines on the worker: on Metal and on
+    // D3D12, for a warm-up on Device::shared() - the device
+    // ShaderProgram::prepare uses. On Vulkan, whose pipelines reach state the
+    // backend shares (compatible render passes) and are destroyed through a
+    // release list only the owning thread may touch, and for another device,
+    // those shaders are compiled as add() compiles them, and their pipelines
+    // are left to the main thread.
     bool buildsPipelines() const;
 
     // A source already emitted, by a program constructed on this thread.
@@ -249,11 +272,19 @@ public:
     Device& device() const;
 
 private:
+    using PipelineDescription =
+        std::function<std::optional<RenderPipelineDescriptor>(
+            const ShaderLibrary& library)>;
+
+    // A shader added with its pipeline carries both ways of building it: the
+    // whole prepare() Metal runs, and the descriptor D3D12 builds a state from.
     struct Recorded
     {
         std::string name;
         ShaderSource source;
-        std::function<bool()> buildPipeline = [] { return true; };
+        std::function<bool()> preparePipeline = [] { return true; };
+        PipelineDescription describePipeline = [](const ShaderLibrary&)
+        { return std::optional<RenderPipelineDescriptor> {}; };
         bool hasPipeline = false;
     };
 

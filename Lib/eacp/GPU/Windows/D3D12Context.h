@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -226,6 +227,13 @@ public:
     // asks it for anything. See D3D12Context::renewIfDeviceRecreated.
     std::uint64_t getGeneration() const { return generation; }
 
+    // The device and the render root signature, each with a reference of its
+    // own, read under the lock recreateAfterDeviceLoss replaces them under: for
+    // a thread other than the one driving recovery, such as a ShaderWarmUp's
+    // worker, which the raw getters above would race.
+    winrt::com_ptr<ID3D12Device> deviceReference() const;
+    winrt::com_ptr<ID3D12RootSignature> renderRootSignatureReference() const;
+
     // Drops the device and both root signatures and builds them again after
     // device removal. Resources created on the old device (app buffers,
     // textures, pipelines) stay dead; their owners rebuild via
@@ -250,6 +258,7 @@ private:
     winrt::com_ptr<ID3D12PipelineState> mipShaders[3];
 
     std::uint64_t generation = 1;
+    mutable std::mutex referenceLock;
 };
 
 D3D12Shared& getD3D12Shared();

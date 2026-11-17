@@ -1,6 +1,7 @@
 #include "ShaderWarmUp.h"
 
 #include "../Device/Device.h"
+#include "../Pipeline/RenderPipelineCache.h"
 #include "../Shader/Dxc.h"
 #include "../Shader/ShaderLibraryCache.h"
 #include "ShaderBuilder.h"
@@ -273,7 +274,7 @@ struct ShaderWarmUp::Run
             count(shader, warmed, result);
 
             if (warmed.valid && shader.hasPipeline)
-                buildPipeline(shader, result);
+                buildPipeline(shader, cache, result);
 
             result.timings.add(
                 Timing {shader.name, millisecondsSince(compileStarted)});
@@ -283,14 +284,37 @@ struct ShaderWarmUp::Run
         }
     }
 
-    static void buildPipeline(Recorded& shader, ShaderWarmUp::Result& result)
+    void buildPipeline(Recorded& shader,
+                       const ShaderLibraryCache& cache,
+                       ShaderWarmUp::Result& result) const
     {
-        if (shader.buildPipeline())
+        if (pipelineBuilds(shader, cache))
             ++result.pipelines;
         else
             result.failures.add(pipelineFailure(shader.name));
 
-        shader.buildPipeline = [] { return true; };
+        shader.preparePipeline = [] { return true; };
+        shader.describePipeline = [](const ShaderLibrary&)
+        { return std::optional<RenderPipelineDescriptor> {}; };
+    }
+
+    // Metal prepares the whole program and finds the pipeline in its own
+    // cache afterwards; D3D12 builds the state into the RenderPipelineCache
+    // from the library the warm-up just cached.
+    bool pipelineBuilds(const Recorded& shader,
+                        const ShaderLibraryCache& cache) const
+    {
+        if (!RenderPipelineCache::isSupported())
+            return shader.preparePipeline();
+
+        const auto library = cache.find(shader.source);
+
+        if (library == nullptr)
+            return false;
+
+        const auto descriptor = shader.describePipeline(*library);
+        return descriptor.has_value()
+               && RenderPipelineCache::warm(*device, *descriptor);
     }
 
     static void count(const Recorded& shader,
@@ -398,7 +422,9 @@ ShaderWarmUp& ShaderWarmUp::addRecorded(const RecordedRecipe& recipe)
 
 bool ShaderWarmUp::buildsPipelines() const
 {
-    return detail::nativeShaderBackend() == ShaderBackend::Metal
+    const auto backend = detail::nativeShaderBackend();
+
+    return (backend == ShaderBackend::Metal || backend == ShaderBackend::DirectX)
            && &target == &Device::shared();
 }
 
@@ -421,6 +447,7 @@ Threads::Async<ShaderWarmUp::Result> ShaderWarmUp::start()
 
     loadDxcBeforeTheWorker();
     ShaderLibraryCache::of(target).followBackendGeneration(target);
+    RenderPipelineCache::follow(target);
 
     auto run =
         Run {job, recipes, &target, options.simulatedCompileTime, buildsPipelines()};
