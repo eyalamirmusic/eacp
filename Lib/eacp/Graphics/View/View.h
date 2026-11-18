@@ -169,7 +169,7 @@ struct ViewProperties
     bool grabsFocusOnMouseDown = false;
 
     // Whether focusing this view should bring up an on-screen keyboard, where
-    // the platform has one (Android). Focusing a view without it puts that
+    // the platform has one (Android, iOS). Focusing a view without it puts that
     // keyboard away, so a tap on a button does not raise it.
     bool wantsTextInput = false;
 
