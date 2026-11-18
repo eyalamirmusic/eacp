@@ -90,6 +90,9 @@ class WebView;
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
 
+// Where loadHTMLString:baseURL: puts a page given no base URL.
+NSString* const inlineDocumentURL = @"about:blank";
+
 namespace
 {
 // Runtime classes (see RuntimeClass.h) get no automatic C++ ivar
@@ -355,6 +358,17 @@ struct WebView::Native
         webView.get().frame = toCGRect(bounds);
     }
 
+    // A reload of a page loadHTML loaded with no base URL brings back nothing.
+    void reloadAfterContentProcessExit()
+    {
+        auto* url = webView.get().URL.absoluteString;
+
+        if (inlineHtml && [url isEqualToString:inlineDocumentURL])
+            [webView.get() loadHTMLString:Strings::toNSString(*inlineHtml) baseURL:nil];
+        else
+            [webView.get() reload];
+    }
+
     ObjC::Ptr<WKWebView> webView;
     ObjC::Ptr<NSObject> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
@@ -365,6 +379,7 @@ struct WebView::Native
 #if !TARGET_OS_IPHONE
     EmbedderKeyForwarder keyForwarder {owner};
 #endif
+    std::optional<std::string> inlineHtml;
     double zoomLevel = 1.0;
     bool observingTitle = false;
     bool loadDeclinedPopupsInline = true;
@@ -448,6 +463,13 @@ void webViewDelegateDidFailNavigation(
             if (auto native = weak.lock())
                 native->owner.onNavigationFailed(errorStr);
         });
+}
+
+// Reload here, not later: a deferred reload is lost in WebKit's post-crash reset.
+void webViewDelegateWebContentProcessDidTerminate(id self, SEL, WKWebView*)
+{
+    if (auto native = getWebViewDelegateState(self)->nativeWeak.lock())
+        native->reloadAfterContentProcessExit();
 }
 
 void webViewDelegateObserveValue(id self,
@@ -875,6 +897,8 @@ Class getWebViewDelegateClass()
             webViewDelegateDidFailProvisionalNavigation);
         builder->addMethod(@selector(webView:didFailNavigation:withError:),
                            webViewDelegateDidFailNavigation);
+        builder->addMethod(@selector(webViewWebContentProcessDidTerminate:),
+                           webViewDelegateWebContentProcessDidTerminate);
         builder->addMethod(
             @selector(observeValueForKeyPath:ofObject:change:context:),
             webViewDelegateObserveValue);
@@ -1202,6 +1226,7 @@ WebView::~WebView()
 
 void WebView::loadURL(const std::string& url)
 {
+    impl->inlineHtml.reset();
     auto* nsUrl = [NSURL URLWithString:Strings::toNSString(url)];
     auto* request = [NSURLRequest requestWithURL:nsUrl];
     [impl->webView.get() loadRequest:request];
@@ -1215,10 +1240,12 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
     {
         nsBaseURL =
             [NSURL URLWithString:[NSString stringWithUTF8String:baseURL.c_str()]];
+        impl->inlineHtml.reset();
     }
     else
     {
         impl->originPolicy.trustInlineDocument();
+        impl->inlineHtml = html;
     }
     [impl->webView.get() loadHTMLString:nsHtml baseURL:nsBaseURL];
 }

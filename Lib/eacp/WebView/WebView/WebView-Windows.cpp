@@ -5,6 +5,7 @@
 #include "MessageOrigin.h"
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
+#include "WebViewPlatform-Windows.h"
 #include "FileDrag-Windows.h"
 #include <eacp/Graphics/View/FileDragOut-Windows.h>
 #include <eacp/Graphics/DComp-Windows.h>
@@ -266,6 +267,8 @@ struct WebView::Native
                 webView->remove_WebResourceRequested(webResourceToken);
             if (permissionRequestedToken.value)
                 webView->remove_PermissionRequested(permissionRequestedToken);
+            if (processFailedToken.value)
+                webView->remove_ProcessFailed(processFailedToken);
             if (newWindowRequestedToken.value)
                 webView->remove_NewWindowRequested(newWindowRequestedToken);
             if (windowCloseRequestedToken.value)
@@ -1177,6 +1180,31 @@ struct WebView::Native
                 })
                 .Get(),
             &windowCloseRequestedToken);
+
+        reloadWhenRendererExits();
+    }
+
+    // WebView2 replaces a page whose renderer died with its error page and
+    // leaves recovery to the app; reloading starts a new renderer.
+    void reloadWhenRendererExits()
+    {
+        webView->add_ProcessFailed(
+            Microsoft::WRL::Callback<ICoreWebView2ProcessFailedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2ProcessFailedEventArgs* args) -> HRESULT
+                {
+                    auto kind =
+                        COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED;
+                    args->get_ProcessFailedKind(&kind);
+
+                    if (kind
+                        == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED)
+                        webView->Reload();
+
+                    return S_OK;
+                })
+                .Get(),
+            &processFailedToken);
     }
 
     // Adopts WebView2's window.open into an app-owned WebView so window.opener /
@@ -1665,6 +1693,7 @@ struct WebView::Native
     EventRegistrationToken webMessageToken {};
     EventRegistrationToken webResourceToken {};
     EventRegistrationToken permissionRequestedToken {};
+    EventRegistrationToken processFailedToken {};
     EventRegistrationToken newWindowRequestedToken {};
     EventRegistrationToken windowCloseRequestedToken {};
     EventRegistrationToken gotFocusToken {};
@@ -1674,6 +1703,22 @@ struct WebView::Native
     // GotFocus/LostFocus. See WebView::focused.
     bool hasFocus = false;
 };
+
+struct WebViewNativeAccess
+{
+    static ComPtr<ICoreWebView2> coreWebView2Of(WebView& view)
+    {
+        return view.impl->webView;
+    }
+};
+
+namespace detail
+{
+ComPtr<ICoreWebView2> coreWebView2Of(WebView& view)
+{
+    return WebViewNativeAccess::coreWebView2Of(view);
+}
+} // namespace detail
 
 void WebView::initNative(Options options)
 {
