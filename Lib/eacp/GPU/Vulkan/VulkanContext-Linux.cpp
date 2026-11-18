@@ -1,5 +1,6 @@
 #include "../Common.h"
 
+#include "VulkanAdapter.h"
 #include "VulkanContext.h"
 #include "VulkanSurface.h"
 #include "VulkanTypes.h"
@@ -505,12 +506,6 @@ bool aliasExtensionEntryPoints()
            && vkQueueSubmit2 != nullptr && vkWaitSemaphores != nullptr
            && vkGetSemaphoreCounterValue != nullptr
            && vkCreateRenderPass2 != nullptr;
-}
-
-std::string apiVersionText(std::uint32_t version)
-{
-    return std::to_string(VK_API_VERSION_MAJOR(version)) + "."
-           + std::to_string(VK_API_VERSION_MINOR(version));
 }
 
 int findQueueFamily(VkPhysicalDevice candidate)
@@ -1027,6 +1022,7 @@ bool VulkanShared::selectPhysicalDevice()
     {
         VkPhysicalDeviceProperties candidateProperties = {};
         vkGetPhysicalDeviceProperties(candidate, &candidateProperties);
+        logFoundDevice(candidate, candidateProperties);
 
         if (candidateProperties.apiVersion < VK_API_VERSION_1_1)
         {
@@ -1082,7 +1078,7 @@ bool VulkanShared::selectPhysicalDevice()
 
     physicalDevice = best;
     queueFamily = static_cast<std::uint32_t>(findQueueFamily(physicalDevice));
-    adapterName = properties.deviceName;
+    adapter = describeVulkanDevice(physicalDevice, properties);
 
     vkGetPhysicalDeviceFeatures(physicalDevice, &features);
 
@@ -1104,11 +1100,9 @@ bool VulkanShared::selectPhysicalDevice()
     else
         spirvTarget = Spirv::Target::vulkan11Spirv13;
 
-    LOG("Vulkan: ",
-        adapterName,
-        " (API ",
-        apiVersionText(properties.apiVersion),
-        coreFloor ? ", core 1.3" : ", 1.3 features through extensions",
+    LOG("Vulkan: chosen device: ",
+        describeAdapterForLog(adapter),
+        coreFloor ? " (core 1.3" : " (1.3 features through extensions",
         renderPassPath ? ", render passes)" : ", dynamic rendering)");
 
     return true;
@@ -1240,7 +1234,7 @@ bool VulkanShared::createDevice()
 
     if (!coreFloor && !aliasExtensionEntryPoints())
     {
-        LOG("Vulkan: ", adapterName, " did not load its extension entry points");
+        LOG("Vulkan: ", adapter.name, " did not load its extension entry points");
         vkDestroyDevice(device, nullptr);
         device = VK_NULL_HANDLE;
         return false;

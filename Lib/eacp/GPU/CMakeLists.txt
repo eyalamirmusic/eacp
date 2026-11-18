@@ -154,6 +154,7 @@ elseif (WIN32)
             Texture/Texture-Windows.cpp
             Timing/GpuTimestamps-Windows.cpp
             View/GPUView-Windows.cpp
+            Windows/D3D12Adapter-Windows.cpp
             Windows/D3D12Context-Windows.cpp
             Windows/D3D12PipelineCache-Windows.cpp
             Windows/D3D12Types-Windows.cpp)
@@ -195,6 +196,7 @@ else ()
             Texture/Texture-Linux.cpp
             Timing/GpuTimestamps-Linux.cpp
             View/GPUView-Linux.cpp
+            Vulkan/VulkanAdapter-Linux.cpp
             Vulkan/VulkanContext-Linux.cpp
             Vulkan/VulkanRenderPass-Linux.cpp
             Vulkan/VulkanTypes-Linux.cpp)
