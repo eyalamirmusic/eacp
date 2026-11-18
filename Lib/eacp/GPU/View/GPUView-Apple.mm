@@ -51,6 +51,32 @@ struct RenderingLatch
 
     bool& latch;
 };
+
+using OwnedTexture = ObjC::Ptr<NSObject<MTLTexture>>;
+
+// A private render target for an off-screen frame, owned by the caller: a
+// new... texture comes back at +1, which the Ptr adopts.
+OwnedTexture makeRenderTarget(id<MTLDevice> device,
+                              MTLPixelFormat format,
+                              NSUInteger width,
+                              NSUInteger height,
+                              NSUInteger samples)
+{
+    auto descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
+                                                                         width:width
+                                                                        height:height
+                                                                     mipmapped:NO];
+    descriptor.usage = MTLTextureUsageRenderTarget;
+    descriptor.storageMode = MTLStorageModePrivate;
+
+    if (samples > 1)
+    {
+        descriptor.textureType = MTLTextureType2DMultisample;
+        descriptor.sampleCount = samples;
+    }
+
+    return OwnedTexture {[device newTextureWithDescriptor:descriptor]};
+}
 } // namespace
 
 struct GPUView::Native
@@ -484,37 +510,29 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     {
         auto makeTarget = [&](MTLPixelFormat format, bool multisample)
         {
-            auto descriptor = [MTLTextureDescriptor
-                texture2DDescriptorWithPixelFormat:format
-                                             width:pixelWidth
-                                            height:pixelHeight
-                                         mipmapped:NO];
-            descriptor.usage = MTLTextureUsageRenderTarget;
-            descriptor.storageMode = MTLStorageModePrivate;
-
-            if (multisample)
-            {
-                descriptor.textureType = MTLTextureType2DMultisample;
-                descriptor.sampleCount = samples;
-            }
-
-            return [device newTextureWithDescriptor:descriptor];
+            return makeRenderTarget(device,
+                                    format,
+                                    pixelWidth,
+                                    pixelHeight,
+                                    multisample ? samples : 1);
         };
 
         // The resolve/store target is single-sampled; content renders into the
         // MSAA texture and resolves into it, mirroring the on-screen path.
-        auto colorTexture = makeTarget(MTLPixelFormatBGRA8Unorm, false);
-        auto msaaTexture =
-            samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true) : nil;
-        auto depthTexture = impl->depthEnabled
+        auto ownedColor = makeTarget(MTLPixelFormatBGRA8Unorm, false);
+        auto ownedMultisample = samples > 1
+                                    ? makeTarget(MTLPixelFormatBGRA8Unorm, true)
+                                    : OwnedTexture {};
+        auto ownedDepth = impl->depthEnabled
                               ? makeTarget(impl->depthAttachmentFormat(),
                                            samples > 1)
-                              : nil;
+                              : OwnedTexture {};
+        auto colorTexture = (id<MTLTexture>) ownedColor.get();
 
         {
             auto target = OffscreenTarget {(__bridge void*) colorTexture,
-                                           (__bridge void*) msaaTexture,
-                                           (__bridge void*) depthTexture};
+                                           (__bridge void*) ownedMultisample.get(),
+                                           (__bridge void*) ownedDepth.get()};
             auto frame = Frame(Device::shared(), target, scale);
 
             // Rendered as a view of this scale: a snapshot at 1x on a 2x
@@ -529,8 +547,10 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         // Copy the private colour texture into a shared buffer so the CPU can
         // read it (robust across unified and discrete GPUs).
         auto rowBytes = (NSUInteger) pixelWidth * 4;
-        auto readback = [device newBufferWithLength:rowBytes * pixelHeight
-                                            options:MTLResourceStorageModeShared];
+        auto ownedReadback = ObjC::Ptr<NSObject<MTLBuffer>> {
+            [device newBufferWithLength:rowBytes * pixelHeight
+                                options:MTLResourceStorageModeShared]};
+        auto readback = (id<MTLBuffer>) ownedReadback.get();
 
         auto queue = (__bridge id<MTLCommandQueue>) Device::shared().nativeQueue();
         auto commandBuffer = [queue commandBuffer];
@@ -618,41 +638,31 @@ bool GPUView::renderNativeContentToTarget(void* nativeTarget, float)
         colorDescriptor.usage = MTLTextureUsageRenderTarget;
         colorDescriptor.storageMode = MTLStorageModeShared;
 
-        auto colorTexture = [device newTextureWithDescriptor:colorDescriptor
-                                                   iosurface:surface
-                                                       plane:0];
-        if (colorTexture == nil)
+        auto colorTexture = OwnedTexture {[device newTextureWithDescriptor:colorDescriptor
+                                                                 iosurface:surface
+                                                                     plane:0]};
+        if (! colorTexture)
             return false;
 
         auto makeTarget = [&](MTLPixelFormat format, bool multisample)
         {
-            auto descriptor = [MTLTextureDescriptor
-                texture2DDescriptorWithPixelFormat:format
-                                             width:pixelWidth
-                                            height:pixelHeight
-                                         mipmapped:NO];
-            descriptor.usage = MTLTextureUsageRenderTarget;
-            descriptor.storageMode = MTLStorageModePrivate;
-
-            if (multisample)
-            {
-                descriptor.textureType = MTLTextureType2DMultisample;
-                descriptor.sampleCount = samples;
-            }
-
-            return [device newTextureWithDescriptor:descriptor];
+            return makeRenderTarget(device,
+                                    format,
+                                    pixelWidth,
+                                    pixelHeight,
+                                    multisample ? samples : 1);
         };
 
-        auto msaaTexture =
-            samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true) : nil;
+        auto msaaTexture = samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true)
+                                       : OwnedTexture {};
         auto depthTexture = impl->depthEnabled
                               ? makeTarget(impl->depthAttachmentFormat(),
                                            samples > 1)
-                              : nil;
+                              : OwnedTexture {};
 
-        auto target = OffscreenTarget {(__bridge void*) colorTexture,
-                                       (__bridge void*) msaaTexture,
-                                       (__bridge void*) depthTexture};
+        auto target = OffscreenTarget {(__bridge void*) colorTexture.get(),
+                                       (__bridge void*) msaaTexture.get(),
+                                       (__bridge void*) depthTexture.get()};
 
         // Measured against the view rather than taken from the caller: the
         // recorder sizes its buffers from a probe and rounds them to even, so
