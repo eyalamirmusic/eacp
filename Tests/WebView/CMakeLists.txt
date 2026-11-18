@@ -57,6 +57,9 @@ endif ()
 #   UserAgentTests          Options::userAgent read back from the page, and
 #                           Options::loadDeclinedPopupsInline deciding whether a
 #                           declined window.open replaces the host document
+#   ContentProcessTerminationTests
+#                           the page coming back after its content process is
+#                           killed, through KillContentProcess-<platform>
 if (TARGET eacp-webview-test-main)
     list(APPEND webview_test_sources
             CommandDispatchTests.cpp
@@ -77,7 +80,10 @@ if (TARGET eacp-webview-test-main)
     # in the verdict message and drives the path with DOM-dispatched events
     # instead of OS key injection (see the file headers).
     if (APPLE)
-        list(APPEND webview_test_sources KeyForwardingTests.mm)
+        list(APPEND webview_test_sources
+                ContentProcessTerminationTests.cpp
+                KeyForwardingTests.mm
+                KillContentProcess-Apple.mm)
     endif ()
 
     if (WIN32)
