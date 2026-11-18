@@ -1,6 +1,11 @@
 #include <eacp/GPU/Dxc/DxcResource.h>
 #include <eacp/GPU/GPU.h>
+#include <eacp/Text/TextRenderer.h>
+#include <eacp/UI/Render/CoverageAtlas.h>
+#include <eacp/UI/Render/GradientRamps.h>
+#include <eacp/UI/Render/ShapeBatch.h>
 #include <algorithm>
+#include <optional>
 
 #include "TeapotData.h"
 
@@ -195,6 +200,112 @@ void reportShaderCompiler()
 }
 } // namespace
 
+namespace
+{
+constexpr auto hudMargin = 16.f;
+constexpr auto hudPanelPadding = 12.f;
+constexpr auto hudPanelCornerRadius = 10.f;
+constexpr auto hudRingRadiusOfHeight = 0.3f;
+constexpr auto hudRingThickness = 3.f;
+constexpr auto hudTextPointSize = 15.f;
+constexpr auto hudLineCount = 2.f;
+
+const auto hudPanelColor = Graphics::Color {0.f, 0.f, 0.f, 0.55f};
+const auto hudRingColor = Graphics::Color {0.4f, 0.8f, 1.f, 0.9f};
+const auto hudTitleColor = Graphics::Color::white();
+const auto hudLineColor = Graphics::Color {0.75f, 0.78f, 0.85f};
+
+// The square a circle of radius hudRingRadiusOfHeight * height, centred in the
+// view, is drawn in as a fully rounded rect.
+Graphics::Rect getRingBounds(Graphics::Point viewSize)
+{
+    const auto radius = viewSize.y * hudRingRadiusOfHeight;
+    const auto diameter = radius * 2.f;
+    return {
+        viewSize.x * 0.5f - radius, viewSize.y * 0.5f - radius, diameter, diameter};
+}
+} // namespace
+
+// A game's HUD over the teapot - a ring across it and a panel of text - drawn at
+// the end of the scene's own pass, which has a depth buffer.
+// setPassHasDepthAttachment tells the text and shape pipelines so; without it
+// Metal's validation layer (MTL_DEBUG_LAYER=1) aborts on the first frame.
+class TeapotHud
+{
+public:
+    explicit TeapotHud(const GPUView& view)
+        : sampleCount(view.sampleCount())
+    {
+        text.setSampleCount(sampleCount);
+        text.setPassHasDepthAttachment(true);
+    }
+
+    void draw(Frame& frame, RenderPass& pass)
+    {
+        const auto size = frame.logicalSize();
+        const auto scale = frame.backingScale();
+
+        if (size.x <= 0.f || size.y <= 0.f)
+            return;
+
+        if (!shapes)
+        {
+            shapes.emplace(atlas, ramps, size, scale, sampleCount);
+            shapes->setPassHasDepthAttachment(true);
+        }
+
+        shapes->setLogicalSize(size);
+        shapes->setPixelScale(scale);
+        shapes->begin(pass);
+
+        text.setViewport(size, scale);
+        text.begin();
+
+        drawRing(size);
+        drawPanel(size);
+
+        shapes->end();
+        text.flush(pass);
+    }
+
+private:
+    void drawRing(Graphics::Point size)
+    {
+        const auto ring = getRingBounds(size);
+        shapes->drawRect(ring, hudRingColor, hudRingThickness, ring.w * 0.5f);
+    }
+
+    void drawPanel(Graphics::Point size)
+    {
+        const auto title = std::string_view {"Teapot"};
+        const auto explanation =
+            std::string_view {"Text and shapes drawn in the teapot's depth pass"};
+
+        const auto lineHeight = text.lineHeight();
+        const auto widestLine =
+            std::max(text.measure(title), text.measure(explanation));
+        const auto panelWidth = widestLine + hudPanelPadding * 2.f;
+        const auto panelHeight = lineHeight * hudLineCount + hudPanelPadding * 2.f;
+        const auto panel = Graphics::Rect {
+            hudMargin, size.y - hudMargin - panelHeight, panelWidth, panelHeight};
+
+        shapes->fillRect(panel, hudPanelColor, hudPanelCornerRadius);
+
+        const auto left = panel.x + hudPanelPadding;
+        auto baseline = panel.y + hudPanelPadding + text.ascent();
+
+        text.draw(title, {left, baseline}, hudTitleColor);
+        baseline += lineHeight;
+        text.draw(explanation, {left, baseline}, hudLineColor);
+    }
+
+    int sampleCount = 1;
+    UI::CoverageAtlas atlas;
+    UI::GradientRamps ramps;
+    std::optional<UI::ShapeBatch> shapes;
+    Text::TextRenderer text {hudTextPointSize};
+};
+
 struct TeapotView final : GPUView
 {
     TeapotView()
@@ -225,12 +336,14 @@ struct TeapotView final : GPUView
 
         auto pass = frame.beginPass({Graphics::Color {0.09f, 0.10f, 0.13f}});
         pass.draw(shader);
+        hud.draw(frame, pass);
     }
 
     static constexpr float radiansPerSecond = 0.6f;
 
     TeapotMesh mesh;
     TeapotShader shader;
+    TeapotHud hud {*this};
     float spin = 0.0f;
 };
 
