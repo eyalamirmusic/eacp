@@ -80,6 +80,7 @@ function(eacp_web_link_options out_var)
     cmake_parse_arguments(WEB "NODE_FILESYSTEM" "" "" ${ARGN})
 
     set(options -sALLOW_MEMORY_GROWTH=1 -sEXIT_RUNTIME=1 -sSTACK_SIZE=1MB
+            -sEXPORTED_RUNTIME_METHODS=getExceptionMessage
             "SHELL:--post-js \"${EACP_WEB_UNCAUGHT_EXCEPTION}\"")
 
     if (WEB_NODE_FILESYSTEM)

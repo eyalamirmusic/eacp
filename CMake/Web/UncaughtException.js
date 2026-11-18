@@ -7,6 +7,11 @@
 // becomes an unhandled rejection, nothing reports an exit, and the program
 // neither ends nor says why. Aborting with the exception's message instead
 // ends it everywhere: the message is printed and Module.onAbort is called.
+//
+// getExceptionMessage is in the output only when something asks for it:
+// eacp_web_link_options exports it (EXPORTED_RUNTIME_METHODS), since a
+// --post-js cannot declare library dependencies, and an optimised build
+// without ASSERTIONS or EXCEPTION_STACK_TRACES otherwise leaves it out.
 {
     const eacpQuit = quit_;
 
