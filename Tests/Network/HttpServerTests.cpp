@@ -100,6 +100,47 @@ auto tListenSucceeds = test("HttpServer/listenReturnsTrueOnFreshPort") = []
     port = server.boundPort();
 };
 
+auto tListenOnNamedAddress =
+    test("HttpServer/listenOnANamedAddressAnswersThere") = []
+{
+    constexpr auto loopbackAddress = "127.0.0.1";
+    constexpr auto answer = "here";
+
+    auto options = ServerOptions();
+    options.bindAddress = loopbackAddress;
+
+    auto server = Server(options);
+    auto ex = ServerExchange();
+
+    auto ok = server.listen(0,
+                            [&](const Request&)
+                            {
+                                ex.handlerCalled = true;
+                                auto res = Response();
+                                res.content = answer;
+                                return res;
+                            });
+    check(ok);
+
+    auto url = std::string("http://") + loopbackAddress + ":"
+               + std::to_string(server.boundPort()) + "/";
+    performServerExchange(server, Request(url), ex);
+
+    check(ex.completed);
+    check(ex.handlerCalled);
+    check(ex.clientResponse.content == answer);
+};
+
+auto tListenOnUnparsableAddress =
+    test("HttpServer/listenFailsOnAnAddressThatDoesNotParse") = []
+{
+    auto options = ServerOptions();
+    options.bindAddress = "not-an-address";
+
+    auto server = Server(options);
+    check(!server.listen(0, [](const Request&) { return Response(); }));
+};
+
 auto tListenTwiceFails = test("HttpServer/listenTwiceOnSameInstanceFails") = []
 {
     auto server = Server();

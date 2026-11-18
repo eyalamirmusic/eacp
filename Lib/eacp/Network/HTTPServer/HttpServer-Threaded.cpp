@@ -31,6 +31,19 @@ TCP::Timeouts httpServerTimeouts()
     return {httpServerSlice, httpServerSlice};
 }
 
+TCP::Listener bindListener(int port, const ServerOptions& options)
+{
+    auto listenPort = (std::uint16_t) port;
+
+    if (options.bindAddress)
+    {
+        return TCP::Listener::bind(
+            listenPort, httpServerTimeouts(), *options.bindAddress);
+    }
+
+    return TCP::Listener::bind(listenPort, httpServerTimeouts(), options.bindTo);
+}
+
 } // namespace
 
 struct Server::Impl
@@ -113,8 +126,7 @@ bool Server::Impl::start(int port, RequestHandler h, StreamingRouteFinder finder
 
     try
     {
-        listener = TCP::Listener::bind(
-            (std::uint16_t) port, httpServerTimeouts(), options.bindTo);
+        listener = bindListener(port, options);
     }
     catch (const TCP::Error&)
     {
@@ -190,7 +202,8 @@ void Server::Impl::dispatchRequest(TCP::Connection connection, Request request)
     {
         try
         {
-            sendResponse(res, [&peer](std::string_view bytes) { peer->send(bytes); });
+            sendResponse(res,
+                         [&peer](std::string_view bytes) { peer->send(bytes); });
         }
         catch (const TCP::Error&)
         {
@@ -289,7 +302,8 @@ void Server::Impl::serveStreamingConnection(
     try
     {
         sendResponse(response,
-                     [&connection](std::string_view bytes) { connection.send(bytes); });
+                     [&connection](std::string_view bytes)
+                     { connection.send(bytes); });
     }
     catch (const TCP::Error&)
     {

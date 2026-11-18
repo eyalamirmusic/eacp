@@ -26,8 +26,27 @@ Listener& Listener::operator=(Listener&&) noexcept = default;
 
 Listener Listener::bind(std::uint16_t port, Timeouts timeouts, BindInterface bindTo)
 {
+    return listenOn(port, timeouts, detail::getInterfaceAddress(bindTo));
+}
+
+Listener Listener::bind(std::uint16_t port,
+                        Timeouts timeouts,
+                        const std::string& ipv4Address)
+{
+    auto address = detail::parseIPv4Address(ipv4Address);
+
+    if (!address)
+        throw Error("not an IPv4 address: " + ipv4Address);
+
+    return listenOn(port, timeouts, *address);
+}
+
+Listener Listener::listenOn(std::uint16_t port,
+                            Timeouts timeouts,
+                            std::uint32_t addressInNetworkOrder)
+{
     auto boundPort = port;
-    auto socket = detail::socketListen(port, boundPort, bindTo);
+    auto socket = detail::socketListen(port, boundPort, addressInNetworkOrder);
 
     auto listener = Listener {};
     listener.impl.create();
