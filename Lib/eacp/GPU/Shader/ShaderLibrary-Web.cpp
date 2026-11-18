@@ -1,5 +1,7 @@
 #include "ShaderLibrary.h"
 
+#include "PrecompiledShaders.h"
+
 #include "../Device/Device.h"
 #include "../WebGPU/WebGPUContext.h"
 
@@ -94,6 +96,19 @@ bool declaresEntry(std::string_view wgsl, const std::string& entry)
 
     return false;
 }
+
+// WebGPU takes no binary, so nothing a build embeds can stand in for the WGSL
+// and every library is a miss: compiled from source as usual, and refused
+// under EACP_REQUIRE_PRECOMPILED_SHADERS as a miss is on every other backend.
+bool mayCompileSource(const ShaderSource& source, CompilationInfo& compilation)
+{
+    if (!Precompiled::isRequired())
+        return true;
+
+    return Precompiled::fallBackAfterMiss(
+        Precompiled::resourceName(Precompiled::keyFor(source), ".wgsl"),
+        compilation);
+}
 } // namespace
 
 struct ShaderLibrary::Native
@@ -111,6 +126,9 @@ struct ShaderLibrary::Native
                             "WebGPU takes WGSL; this source is another dialect");
             return;
         }
+
+        if (!mayCompileSource(source, compilation))
+            return;
 
         auto wgsl = wgpu::ShaderSourceWGSL {};
         wgsl.code = wgpu::StringView {source.source.data(), source.source.size()};

@@ -135,6 +135,9 @@ auto tTwoDevicesRunIndependently = test("GPU/twoDevicesRunIndependently") = []
 auto tSharedDeviceStaysWithTheMainThread =
     test("GPU/sharedDeviceStaysWithTheMainThread") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     if (!Device::shared().isValid())
         return;
 
@@ -156,6 +159,9 @@ auto tSharedDeviceStaysWithTheMainThread =
 // pools, its buffers - was made on that thread and dies there.
 auto tDeviceRunsOnAWorkerThread = test("GPU/deviceRunsOnAWorkerThread") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     if (!Device::shared().isValid())
         return;
 
@@ -188,6 +194,9 @@ auto tDeviceRunsOnAWorkerThread = test("GPU/deviceRunsOnAWorkerThread") = []
 // window to land in.
 auto tWorkerDevicesRunConcurrently = test("GPU/workerDevicesRunConcurrently") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     if (!Device::shared().isValid())
         return;
 

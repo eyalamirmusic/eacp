@@ -12,7 +12,8 @@
 // whole target, or its left half (16 x 32 = 512 pixels). A count is exact where
 // Device::supportsOcclusionSampleCounts() says so, and only non-zero elsewhere.
 //
-// Self-skips without a device.
+// Self-skips without a device, and where Device::supportsOcclusionQueries()
+// says no (the web, whose occlusion query sets are not wired up yet).
 
 using namespace nano;
 using namespace eacp;
@@ -75,6 +76,11 @@ struct DepthQuad final : ShaderProgram
 
     EACP_SHADER(depth)
 };
+
+bool canQuery()
+{
+    return Device::shared().isValid() && Device::shared().supportsOcclusionQueries();
+}
 
 bool exactCounts()
 {
@@ -149,7 +155,16 @@ auto tOcclusionDeviceAnswers = test("Occlusion/theDeviceAnswers") = []
     if (!device.isValid())
         return;
 
-    check(device.supportsOcclusionQueries());
+    // Every native backend has them; the web's are not wired up yet, and there
+    // a set is never valid.
+    if constexpr (!Platform::isWeb())
+        check(device.supportsOcclusionQueries());
+
+    if (!device.supportsOcclusionQueries())
+    {
+        check(!OcclusionQueries(device, 8).isValid());
+        return;
+    }
 
     auto none = OcclusionQueries {device, 0};
     check(!none.isValid());
@@ -174,7 +189,7 @@ auto tOcclusionDeviceAnswers = test("Occlusion/theDeviceAnswers") = []
 
 auto tOcclusionVisibleCounts = test("Occlusion/aVisibleDrawCountsItsSamples") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     auto queries = OcclusionQueries {Device::shared(), 4};
@@ -197,7 +212,7 @@ auto tOcclusionVisibleCounts = test("Occlusion/aVisibleDrawCountsItsSamples") = 
 // And in the same pass a second query around the front probe, which does.
 auto tOcclusionHiddenCountsZero = test("Occlusion/anOccludedDrawCountsZero") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     auto queries = OcclusionQueries {Device::shared(), 4};
@@ -231,7 +246,7 @@ auto tOcclusionHiddenCountsZero = test("Occlusion/anOccludedDrawCountsZero") = [
 
 auto tOcclusionAnySamples = test("Occlusion/anySamplesSaysWhetherAnyPassed") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     auto queries = OcclusionQueries {Device::shared(), 2};
@@ -259,7 +274,7 @@ auto tOcclusionAnySamples = test("Occlusion/anySamplesSaysWhetherAnyPassed") = [
 // Samples, not pixels: four of them a pixel at 4x.
 auto tOcclusionMultisampled = test("Occlusion/aMultisampledTargetCountsSamples") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     auto queries = OcclusionQueries {Device::shared(), 1};
@@ -281,7 +296,7 @@ auto tOcclusionMultisampled = test("Occlusion/aMultisampledTargetCountsSamples")
 // still there after frame two, which never named it.
 auto tOcclusionAcrossFrames = test("Occlusion/resultsSurviveTheNextFrame") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     auto queries = OcclusionQueries {Device::shared(), 3};
@@ -335,7 +350,7 @@ auto tOcclusionAcrossFrames = test("Occlusion/resultsSurviveTheNextFrame") = []
 // its own index and the second leaves the first's alone.
 auto tOcclusionTwoPasses = test("Occlusion/twoPassesOfOneFrameShareASet") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     struct TwoPassView final : GPUView
@@ -402,7 +417,7 @@ auto tOcclusionTwoPasses = test("Occlusion/twoPassesOfOneFrameShareASet") = []
 // A pass into a texture target counts like the drawable's.
 auto tOcclusionTextureTarget = test("Occlusion/aTextureTargetPassCounts") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     auto textureDescriptor = TextureDescriptor {};
@@ -468,7 +483,7 @@ auto tOcclusionTextureTarget = test("Occlusion/aTextureTargetPassCounts") = []
 // pass that named no set. A query left open is closed by the pass's end.
 auto tOcclusionRefusals = test("Occlusion/refusedQueriesCountNothing") = []
 {
-    if (!Device::shared().isValid())
+    if (!canQuery())
         return;
 
     auto queries = OcclusionQueries {Device::shared(), 3};

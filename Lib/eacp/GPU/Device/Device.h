@@ -134,6 +134,12 @@ public:
     // registers hold one fixed static sampler and a Sampler bind is dropped.
     bool supportsPerBindSamplers() const;
 
+    // Whether SamplerAddressMode::ClampToBorder reads the descriptor's
+    // borderColor outside the texture. True on Metal, D3D12 and Vulkan; false
+    // on the web, where WebGPU has no border address mode and a ClampToBorder
+    // sampler clamps to the edge instead. An invalid Device answers false.
+    bool supportsClampToBorder() const;
+
     ShaderLibrary makeShaderLibrary(const ShaderSource& source);
 
     RenderPipeline makeRenderPipeline(const RenderPipelineDescriptor& descriptor);
@@ -162,6 +168,13 @@ public:
     // GPUView::setSampleCount.
     //
     bool supportsSampleCount(int count) const;
+
+    // Whether a multisampled render target may also have
+    // TextureDescriptor::sampleableDepth, its depth plane readable by a later
+    // pass. True on Metal, D3D12 and Vulkan; false
+    // on the web, where WebGPU resolves no depth, so such a target is invalid
+    // there. An invalid Device answers false.
+    bool supportsMultisampledSampleableDepth() const;
 
     // Whether the block-compressed formats - BC1, BC2, BC3 and BC7 - can be
     // created on this device. Every Mac answers yes, and every Direct3D device

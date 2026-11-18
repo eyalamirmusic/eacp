@@ -133,6 +133,9 @@ auto tPerDeviceIsFreshForADeviceAtTheSameAddress =
 auto tPerDeviceIsMadeOnceAcrossThreads =
     test("GPU/perDeviceIsMadeOnceAcrossThreads") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     constexpr auto threadCount = 8;
 
     auto device = Device();

@@ -401,8 +401,17 @@ struct RenderPipeline::Native
 
         auto* contextPointer = &context;
 
-        state.build = [this, contextPointer](wgpu::TextureFormat depthFormat)
-        { return build(*contextPointer, depthFormat); };
+        state.build = [this, contextPointer](wgpu::TextureFormat depthFormat,
+                                             const WebGPUBindingLayout& layout)
+        { return build(*contextPointer, depthFormat, layout); };
+
+        state.makeLayout = [this, contextPointer](const Vector<int>& unfilterable)
+        {
+            return contextPointer->makeBindingLayout(
+                withUnfilterableTextures(
+                    program.bindings, unfilterable, program.source),
+                false);
+        };
 
         const auto declaredDepth =
             descriptor.stencil ? wgpu::TextureFormat::Depth24PlusStencil8
@@ -424,7 +433,8 @@ struct RenderPipeline::Native
     }
 
     wgpu::RenderPipeline build(WebGPUContext& context,
-                               wgpu::TextureFormat depthFormat)
+                               wgpu::TextureFormat depthFormat,
+                               const WebGPUBindingLayout& layout)
     {
         auto parts = PipelineParts {};
         describeVertexBuffers(descriptor.vertexLayout, parts);
@@ -433,7 +443,7 @@ struct RenderPipeline::Native
         const auto constants = WebGPUConstantEntries {descriptor.constants};
 
         auto pipeline = wgpu::RenderPipelineDescriptor {};
-        pipeline.layout = state.layout.pipeline;
+        pipeline.layout = layout.pipeline;
 
         pipeline.vertex.module = program.module;
         pipeline.vertex.entryPoint =

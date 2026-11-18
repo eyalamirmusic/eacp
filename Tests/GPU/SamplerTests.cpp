@@ -375,7 +375,7 @@ auto tMirrorPerBind = test("Sampler/mirrorReflectsEveryOtherTile") = []
 
 auto tBorderPerBind = test("Sampler/clampToBorderReadsTheBorderColour") = []
 {
-    if (!canDrawPerBind())
+    if (!canDrawPerBind() || !Device::shared().supportsClampToBorder())
         return;
 
     auto descriptor = nearestWith(SamplerAddressMode::ClampToBorder);

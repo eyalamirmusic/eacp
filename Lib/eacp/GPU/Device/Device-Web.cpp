@@ -296,6 +296,19 @@ bool Device::supportsPerBindSamplers() const
     return isValid();
 }
 
+// WebGPU's address modes are clamp-to-edge, repeat and mirror-repeat.
+bool Device::supportsClampToBorder() const
+{
+    return false;
+}
+
+// WebGPU resolves colour only, so a multisampled depth plane has no
+// single-sampled twin to read.
+bool Device::supportsMultisampledSampleableDepth() const
+{
+    return false;
+}
+
 void Device::trackSubmittedWork(void*) {}
 
 void Device::waitForSubmittedWork()

@@ -64,12 +64,13 @@ struct RenderPass::Native
     void bindTexture(const wgpu::TextureView& view,
                      int slot,
                      const wgpu::Sampler& sampler,
-                     bool filtering)
+                     bool filtering,
+                     bool filterable = true)
     {
         if (!isTextureSlot(slot) || view == nullptr)
             return;
 
-        bindings.bindView(webgpuTextureBinding(slot), view);
+        bindings.bindView(webgpuTextureBinding(slot), view, filterable);
         bindings.bindSampler(webgpuSamplerBinding(slot), sampler, filtering);
     }
 
@@ -81,7 +82,11 @@ struct RenderPass::Native
         auto* data = static_cast<WebGPUTextureData*>(texture.nativeTexture());
 
         if (data != nullptr && data->isValid())
-            bindTexture(webgpuSampledView(*data), slot, sampler, filtering);
+            bindTexture(webgpuSampledView(*data),
+                        slot,
+                        sampler,
+                        filtering,
+                        context()->isFilterable(data->format));
     }
 
     void bindDepthTexture(const Texture& renderTarget,
@@ -146,6 +151,29 @@ struct RenderPass::Native
                                 uniforms.size);
     }
 
+    // The pipeline's variant whose layout declares unfilterable-float each
+    // float texture binding that holds a texture WebGPU will not filter, set
+    // on the pass when it differs from the one set.
+    bool selectVariantForBoundTextures()
+    {
+        const auto unfilterable =
+            bindings.unfilterableBindings(pipeline->layout.bindings);
+        const auto* layout = &pipeline->layoutFor(unfilterable);
+
+        if (layout == activeLayout)
+            return true;
+
+        auto native = pipeline->pipelineFor(encoder->depthFormat, unfilterable);
+
+        if (native == nullptr)
+            return false;
+
+        activeLayout = layout;
+        group = nullptr;
+        encoder->pass.SetPipeline(native);
+        return true;
+    }
+
     bool prepareDraw()
     {
         if (!canRecord())
@@ -153,9 +181,12 @@ struct RenderPass::Native
 
         if (bindings.isDirty() || group == nullptr)
         {
-            group = bindings.makeGroup(*context(), pipeline->layout);
+            if (!selectVariantForBoundTextures())
+                return false;
 
-            if (group == nullptr && pipeline->layout.group != nullptr)
+            group = bindings.makeGroup(*context(), *activeLayout);
+
+            if (group == nullptr && activeLayout->group != nullptr)
                 return false;
 
             if (group != nullptr)
@@ -203,6 +234,7 @@ struct RenderPass::Native
     int targetWidth = 0;
     int targetHeight = 0;
     WebGPURenderPipeline* pipeline = nullptr;
+    const WebGPUBindingLayout* activeLayout = nullptr;
     WebGPUBindingTable bindings;
     wgpu::BindGroup group;
 };
@@ -311,6 +343,7 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
         return;
 
     impl->pipeline = state;
+    impl->activeLayout = &state->layout;
     impl->group = nullptr;
     impl->encoder->pass.SetPipeline(native);
 }

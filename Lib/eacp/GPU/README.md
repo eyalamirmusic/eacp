@@ -5120,6 +5120,14 @@ text on every platform (`WgslCodegenTests.cpp`).
   bound to takes an empty resource of its kind. A sampler a depth or integer
   texture is sampled through is made non-filtering, and one a comparison samples
   through a comparison sampler.
+- **Unfilterable float textures.** A `texture_2d<f32>` is laid out as a
+  filterable float binding, but WebGPU only binds the 16-bit unorm formats
+  (`texture-formats-tier1`, which makes them filterable nowhere) and, without
+  `float32-filterable`, the 32-bit float ones as unfilterable-float. A draw or
+  dispatch that binds one switches to a variant of the pipeline whose layout
+  declares that binding unfilterable-float and its sampler non-filtering, made
+  once per set of such bindings; a filtering sampler bound there gives way to a
+  nearest one, as beside a depth or integer texture.
 - **Storage texture formats.** WGSL fixes a storage texture's format in its
   declaration, so a kernel bound to a texture of another format is rebuilt
   with that format substituted, once per set of formats.
@@ -5129,6 +5137,16 @@ text on every platform (`WgslCodegenTests.cpp`).
   nothing, so the pipeline still names the pass's colour formats.
 - **1D dispatches fold into rows** past 65535 groups (WebGPU's per-dimension
   cap); the emitted kernel reads its index linearly across them.
+- **Indirect arguments a dispatch also writes.** A dispatch's indirect buffer
+  is in its usage scope beside its bindings, and WebGPU refuses a buffer that
+  is both indirect and read-write storage there. When `dispatchIndirect` reads
+  from a buffer the kernel binds read-write (an `AtomicBuffer` holding the
+  count it guards against), the compute pass ends, the arguments are copied to
+  a scratch buffer, and a new pass dispatches from that; the queue's order
+  makes the copy see every earlier dispatch's writes.
+- **No precompiled shaders.** WebGPU takes no binary, so every library is a
+  miss: compiled from its WGSL, and invalid under
+  `EACP_REQUIRE_PRECOMPILED_SHADERS=1`, as a miss is on the other backends.
 - **A `GPUView` is the canvas.** `GPUView-Web.cpp` configures a WebGPU canvas
   context on the selector the window hands over (`Docs/Web.md`, "The surface a
   presenter gets") in `bgra8unorm`, renders each frame into its current
@@ -5140,7 +5158,10 @@ What it does not do yet: occlusion queries and GPU timestamps
 (`supportsOcclusionQueries`, `supportsPassTimings` false), mip generation on
 the GPU (`supportsMipGeneration` false; a `mipmapped` texture's chain is the
 CPU's), layered rendering, indirect draws with a count, multisampled
-sampleable depth (WebGPU resolves no depth), storage binds off the 256-byte
-offset grid (`storageBufferOffsetAlignment`), and worker-thread `Device`s (the
-web has no threads). `GPUTests` runs in headless Chrome (`Docs/Web.md`,
+sampleable depth (WebGPU resolves no depth; `supportsMultisampledSampleableDepth`
+false), border colours (WebGPU has no clamp-to-border address mode, so such a
+sampler clamps to the edge; `supportsClampToBorder` false), storage binds off
+the 256-byte offset grid (`storageBufferOffsetAlignment`), and worker-thread
+`Device`s (the web has no threads). Occlusion queries are WebGPU's own and
+only not wired up yet; the rest are WebGPU's limits. `GPUTests` runs in headless Chrome (`Docs/Web.md`,
 "Testing").

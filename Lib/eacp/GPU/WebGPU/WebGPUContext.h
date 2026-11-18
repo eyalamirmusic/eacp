@@ -60,6 +60,15 @@ struct WebGPUBinding
 
 Vector<WebGPUBinding> scanWgslBindings(std::string_view source);
 
+// The bindings with each listed texture binding declared unfilterable-float,
+// and every sampler that samples one of them made non-filtering. A WGSL
+// texture_2d<f32> says nothing of filtering, but a bind group's layout must, and
+// some float formats only bind as unfilterable (the 16-bit unorm formats
+// always, the 32-bit floats without float32-filterable).
+Vector<WebGPUBinding> withUnfilterableTextures(Vector<WebGPUBinding> bindings,
+                                               const Vector<int>& unfilterable,
+                                               std::string_view source);
+
 // A compiled module and what it declares, which is what every pipeline built
 // from the library reads.
 struct WebGPUShaderProgram
@@ -96,28 +105,64 @@ struct WebGPUBindingLayout
     Vector<WebGPUBinding> bindings;
 };
 
-// A compute pipeline, and the same kernel rebuilt for storage textures bound
-// in other formats than the ones its WGSL declares.
+// What a pass bound that a compute kernel's WGSL could not know: the formats
+// of its storage textures, and which float texture bindings hold a texture
+// that may not be filtered.
+struct WebGPUComputeVariantKey
+{
+    Vector<WebGPUStorageFormat> storageFormats;
+    Vector<int> unfilterable;
+
+    bool operator==(const WebGPUComputeVariantKey&) const = default;
+};
+
+// A compute pipeline, and the same kernel rebuilt for what a pass bound where
+// that differs from what its WGSL declares.
 struct WebGPUComputePipeline
 {
     wgpu::ComputePipeline pipeline;
     WebGPUBindingLayout layout;
 
-    std::function<const WebGPUComputePipeline*(const Vector<WebGPUStorageFormat>&)>
-        variantFor = [](const Vector<WebGPUStorageFormat>&)
+    std::function<const WebGPUComputePipeline*(const WebGPUComputeVariantKey&)>
+        variantFor = [](const WebGPUComputeVariantKey&)
     { return static_cast<const WebGPUComputePipeline*>(nullptr); };
 };
 
 // A render pipeline is built once per depth format a pass attaches, which
-// WebGPU fixes in the pipeline where Metal and Vulkan take it from the pass.
+// WebGPU fixes in the pipeline where Metal and Vulkan take it from the pass,
+// and once per set of texture bindings a draw binds an unfilterable float
+// texture to, each of those with its own layout.
 struct WebGPURenderPipeline
 {
-    wgpu::RenderPipeline pipelineFor(wgpu::TextureFormat depthFormat);
+    struct Variant
+    {
+        wgpu::TextureFormat depthFormat = wgpu::TextureFormat::Undefined;
+        Vector<int> unfilterable;
+        wgpu::RenderPipeline pipeline;
+    };
+
+    struct LayoutVariant
+    {
+        Vector<int> unfilterable;
+        OwningPointer<WebGPUBindingLayout> layout;
+    };
+
+    wgpu::RenderPipeline pipelineFor(wgpu::TextureFormat depthFormat,
+                                     const Vector<int>& unfilterable = {});
+
+    // The layout of the declared bindings with those listed unfilterable:
+    // `layout` itself for none, made once per set otherwise.
+    const WebGPUBindingLayout& layoutFor(const Vector<int>& unfilterable);
 
     WebGPUBindingLayout layout;
-    std::function<wgpu::RenderPipeline(wgpu::TextureFormat)> build =
-        [](wgpu::TextureFormat) { return wgpu::RenderPipeline {}; };
-    Vector<std::pair<wgpu::TextureFormat, wgpu::RenderPipeline>> variants;
+    std::function<wgpu::RenderPipeline(wgpu::TextureFormat,
+                                       const WebGPUBindingLayout&)>
+        build = [](wgpu::TextureFormat, const WebGPUBindingLayout&)
+    { return wgpu::RenderPipeline {}; };
+    std::function<WebGPUBindingLayout(const Vector<int>&)> makeLayout =
+        [](const Vector<int>&) { return WebGPUBindingLayout {}; };
+    Vector<Variant> variants;
+    Vector<LayoutVariant> layouts;
     bool valid = false;
 };
 
@@ -233,10 +278,19 @@ public:
                     const wgpu::Buffer& buffer,
                     std::uint64_t offset,
                     std::uint64_t size);
-    void bindView(int binding, const wgpu::TextureView& view);
+    void
+        bindView(int binding, const wgpu::TextureView& view, bool filterable = true);
     void bindSampler(int binding, const wgpu::Sampler& sampler, bool filtering);
 
     bool isDirty() const { return dirty; }
+
+    // The declared float texture bindings this table holds an unfilterable
+    // texture at, which a pipeline variant has to declare unfilterable-float.
+    Vector<int> unfilterableBindings(const Vector<WebGPUBinding>& declared) const;
+
+    // Whether the layout binds `buffer` writable (read_write storage) anywhere.
+    bool bindsWritable(const WebGPUBindingLayout& layout,
+                       const wgpu::Buffer& buffer) const;
 
     wgpu::BindGroup makeGroup(WebGPUContext& context,
                               const WebGPUBindingLayout& layout);
@@ -251,6 +305,7 @@ private:
         wgpu::TextureView view;
         wgpu::Sampler sampler;
         bool filtering = false;
+        bool filterable = true;
     };
 
     Resource& resourceAt(int binding);
@@ -273,6 +328,18 @@ public:
     const std::string& getAdapterName() const { return adapterName; }
 
     bool hasFeature(wgpu::FeatureName feature) const;
+
+    // Whether a texture of this format may be sampled through a filtering
+    // sampler: not a 16-bit unorm one, which WebGPU (texture-formats-tier1)
+    // only binds as unfilterable-float, nor a 32-bit float one without
+    // float32-filterable.
+    bool isFilterable(wgpu::TextureFormat format) const;
+
+    // A small buffer an indirect dispatch reads its arguments from when the
+    // buffer they live in is also bound writable to the same dispatch, which
+    // WebGPU's usage-scope rule forbids. The queue runs in order, so one is
+    // enough: each copy lands after the dispatch that read the one before.
+    const wgpu::Buffer& getIndirectScratch();
 
     // Whether a storage bind may start here: on the device's offset grid,
     // Device::storageBufferOffsetAlignment. A bind off it binds nothing.
@@ -314,6 +381,7 @@ private:
 
     std::array<wgpu::Sampler, samplingConfigurations> samplers;
     wgpu::Buffer emptyBuffer;
+    wgpu::Buffer indirectScratch;
     Vector<std::pair<std::string, wgpu::TextureView>> emptyViews;
     wgpu::Sampler emptyFiltering;
     wgpu::Sampler emptyComparison;

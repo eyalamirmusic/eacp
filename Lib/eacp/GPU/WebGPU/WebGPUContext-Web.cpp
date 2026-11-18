@@ -530,6 +530,21 @@ Vector<WebGPUBinding> scanWgslBindings(std::string_view source)
     return bindings;
 }
 
+Vector<WebGPUBinding> withUnfilterableTextures(Vector<WebGPUBinding> bindings,
+                                               const Vector<int>& unfilterable,
+                                               std::string_view source)
+{
+    for (auto& binding: bindings)
+        if (binding.kind == WebGPUBindingKind::Texture
+            && binding.sampleType == wgpu::TextureSampleType::Float
+            && std::find(unfilterable.begin(), unfilterable.end(), binding.binding)
+                   != unfilterable.end())
+            binding.sampleType = wgpu::TextureSampleType::UnfilterableFloat;
+
+    pairSamplersWithTextures(bindings, source);
+    return bindings;
+}
+
 WebGPUBindingTable::Resource& WebGPUBindingTable::resourceAt(int binding)
 {
     dirty = true;
@@ -564,9 +579,50 @@ void WebGPUBindingTable::bindBuffer(int binding,
     resource.size = size;
 }
 
-void WebGPUBindingTable::bindView(int binding, const wgpu::TextureView& view)
+void WebGPUBindingTable::bindView(int binding,
+                                  const wgpu::TextureView& view,
+                                  bool filterable)
 {
-    resourceAt(binding).view = view;
+    auto& resource = resourceAt(binding);
+    resource.view = view;
+    resource.filterable = filterable;
+}
+
+Vector<int> WebGPUBindingTable::unfilterableBindings(
+    const Vector<WebGPUBinding>& declared) const
+{
+    auto found = Vector<int> {};
+
+    for (const auto& binding: declared)
+    {
+        if (binding.kind != WebGPUBindingKind::Texture
+            || binding.sampleType != wgpu::TextureSampleType::Float)
+            continue;
+
+        const auto* bound = findResource(binding.binding);
+
+        if (bound != nullptr && bound->view != nullptr && !bound->filterable)
+            found.add(binding.binding);
+    }
+
+    return found;
+}
+
+bool WebGPUBindingTable::bindsWritable(const WebGPUBindingLayout& layout,
+                                       const wgpu::Buffer& buffer) const
+{
+    for (const auto& binding: layout.bindings)
+    {
+        if (binding.kind != WebGPUBindingKind::StorageBuffer)
+            continue;
+
+        const auto* bound = findResource(binding.binding);
+
+        if (bound != nullptr && bound->buffer.Get() == buffer.Get())
+            return true;
+    }
+
+    return false;
 }
 
 void WebGPUBindingTable::bindSampler(int binding,
@@ -724,15 +780,32 @@ std::size_t toHostSize(std::uint64_t bytes)
 }
 
 wgpu::RenderPipeline
-    WebGPURenderPipeline::pipelineFor(wgpu::TextureFormat depthFormat)
+    WebGPURenderPipeline::pipelineFor(wgpu::TextureFormat depthFormat,
+                                      const Vector<int>& unfilterable)
 {
-    for (const auto& [format, pipeline]: variants)
-        if (format == depthFormat)
-            return pipeline;
+    for (const auto& variant: variants)
+        if (variant.depthFormat == depthFormat
+            && variant.unfilterable == unfilterable)
+            return variant.pipeline;
 
-    auto pipeline = build(depthFormat);
-    variants.create(depthFormat, pipeline);
+    auto pipeline = build(depthFormat, layoutFor(unfilterable));
+    variants.create(Variant {depthFormat, unfilterable, pipeline});
     return pipeline;
+}
+
+const WebGPUBindingLayout&
+    WebGPURenderPipeline::layoutFor(const Vector<int>& unfilterable)
+{
+    if (unfilterable.empty())
+        return layout;
+
+    for (const auto& variant: layouts)
+        if (variant.unfilterable == unfilterable)
+            return *variant.layout;
+
+    auto& added = layouts.create(LayoutVariant {unfilterable, {}});
+    added.layout.create(makeLayout(unfilterable));
+    return *added.layout;
 }
 
 WebGPUContext::WebGPUContext()
@@ -761,6 +834,39 @@ bool WebGPUContext::isValid() const
 bool WebGPUContext::hasFeature(wgpu::FeatureName feature) const
 {
     return device != nullptr && device.HasFeature(feature);
+}
+
+bool WebGPUContext::isFilterable(wgpu::TextureFormat format) const
+{
+    switch (format)
+    {
+        case wgpu::TextureFormat::R16Unorm:
+        case wgpu::TextureFormat::RG16Unorm:
+        case wgpu::TextureFormat::RGBA16Unorm:
+        case wgpu::TextureFormat::R16Snorm:
+        case wgpu::TextureFormat::RG16Snorm:
+        case wgpu::TextureFormat::RGBA16Snorm:
+            return false;
+        case wgpu::TextureFormat::R32Float:
+        case wgpu::TextureFormat::RG32Float:
+        case wgpu::TextureFormat::RGBA32Float:
+            return hasFeature(wgpu::FeatureName::Float32Filterable);
+        default:
+            return true;
+    }
+}
+
+const wgpu::Buffer& WebGPUContext::getIndirectScratch()
+{
+    if (indirectScratch == nullptr && isValid())
+    {
+        auto descriptor = wgpu::BufferDescriptor {};
+        descriptor.size = alignTo(sizeof(std::uint32_t) * 3, 4);
+        descriptor.usage = wgpu::BufferUsage::Indirect | wgpu::BufferUsage::CopyDst;
+        indirectScratch = device.CreateBuffer(&descriptor);
+    }
+
+    return indirectScratch;
 }
 
 bool WebGPUContext::isStorageOffset(std::uint64_t offset) const

@@ -73,12 +73,13 @@ struct ComputePass::Native
     void bindSampled(const wgpu::TextureView& view,
                      int slot,
                      const wgpu::Sampler& sampler,
-                     bool filtering)
+                     bool filtering,
+                     bool filterable = true)
     {
         if (!isSlot(slot, maxTextureSlots) || view == nullptr)
             return;
 
-        bindings.bindView(webgpuTextureBinding(slot), view);
+        bindings.bindView(webgpuTextureBinding(slot), view, filterable);
         bindings.bindSampler(webgpuSamplerBinding(slot), sampler, filtering);
     }
 
@@ -108,10 +109,21 @@ struct ComputePass::Native
     }
 
     // The bound pipeline, or its variant for the storage formats bound where
-    // they differ from the ones its WGSL declares.
+    // they differ from the ones its WGSL declares, and for the float textures
+    // bound that WebGPU will not filter.
     const WebGPUComputePipeline* pipelineForBoundFormats() const
     {
-        auto wanted = Vector<WebGPUStorageFormat> {};
+        auto key = WebGPUComputeVariantKey {};
+        key.unfilterable = bindings.unfilterableBindings(pipeline->layout.bindings);
+
+        if (differingStorageFormats(key.storageFormats) || !key.unfilterable.empty())
+            return pipeline->variantFor(key);
+
+        return pipeline;
+    }
+
+    bool differingStorageFormats(Vector<WebGPUStorageFormat>& wanted) const
+    {
         auto differs = false;
 
         for (const auto& binding: pipeline->layout.bindings)
@@ -128,7 +140,36 @@ struct ComputePass::Native
             differs = differs || bound != binding.storageFormat;
         }
 
-        return differs ? pipeline->variantFor(wanted) : pipeline;
+        if (!differs)
+            wanted.clear();
+
+        return differs;
+    }
+
+    // WebGPU puts a dispatch's indirect buffer in the dispatch's usage scope
+    // beside its bindings, and one buffer may not be both indirect and writable
+    // storage in a scope. Where the arguments live in a buffer the dispatch
+    // also binds read_write, the pass ends, the arguments are copied into the
+    // context's scratch buffer, and a new pass begins for the dispatch to read
+    // them from there; the copy lands after every dispatch recorded before it,
+    // so it reads what they wrote. The pipeline and bind group are set again
+    // by the next prepareDispatch.
+    wgpu::Buffer splitAroundArgumentCopy(const wgpu::Buffer& arguments,
+                                         std::uint64_t offset)
+    {
+        const auto& scratch = context().getIndirectScratch();
+
+        if (scratch == nullptr || encoder->recording == nullptr)
+            return {};
+
+        encoder->pass.End();
+        encoder->recording->encoder.CopyBufferToBuffer(
+            arguments, offset, scratch, 0, sizeof(DispatchArguments));
+        encoder->pass = encoder->recording->encoder.BeginComputePass();
+
+        active = nullptr;
+        group = nullptr;
+        return scratch;
     }
 
     bool prepareDispatch()
@@ -236,7 +277,8 @@ void ComputePass::setInputTexture(const Texture& texture,
     impl->bindSampled(webgpuSampledView(*data),
                       slot,
                       impl->context().getSampler(sampling),
-                      isFiltering(sampling));
+                      isFiltering(sampling),
+                      impl->context().isFilterable(data->format));
 }
 
 void ComputePass::setInputTexture(const Texture& texture,
@@ -245,12 +287,15 @@ void ComputePass::setInputTexture(const Texture& texture,
 {
     auto* data = textureDataOf(texture);
 
-    if (data == nullptr || !sampler.isValid())
+    if (data == nullptr || !sampler.isValid() || impl->contextPointer == nullptr)
         return;
 
     auto native = wgpu::Sampler {static_cast<WGPUSampler>(sampler.nativeSampler())};
-    impl->bindSampled(
-        webgpuSampledView(*data), slot, native, isFiltering(sampler.descriptor()));
+    impl->bindSampled(webgpuSampledView(*data),
+                      slot,
+                      native,
+                      isFiltering(sampler.descriptor()),
+                      impl->context().isFilterable(data->format));
 }
 
 void ComputePass::setSampler(const Sampler& sampler, int slot)
@@ -282,7 +327,8 @@ void ComputePass::setInputTextureLevel(const Texture& texture,
     impl->bindSampled(webgpuSampledView(*data, level),
                       slot,
                       impl->context().getSampler(sampling),
-                      isFiltering(sampling));
+                      isFiltering(sampling),
+                      impl->context().isFilterable(data->format));
 }
 
 void ComputePass::setOutputTextureLevel(const Texture& texture, int slot, int level)
@@ -312,7 +358,8 @@ void ComputePass::setInputTextureAsArray(const Texture& texture,
     impl->bindSampled(webgpuSampledView(*data, level, true),
                       slot,
                       impl->context().getSampler(sampling),
-                      isFiltering(sampling));
+                      isFiltering(sampling),
+                      impl->context().isFilterable(data->format));
 }
 
 // A cube's storage view is a 2D array of its slices already.
@@ -451,8 +498,19 @@ void ComputePass::encodeDispatchIndirect(const Buffer& arguments,
     if (data == nullptr || data->buffer == nullptr || !impl->prepareDispatch())
         return;
 
-    impl->encoder->pass.DispatchWorkgroupsIndirect(
-        data->buffer, static_cast<std::uint64_t>(offsetInBytes));
+    auto source = data->buffer;
+    auto offset = static_cast<std::uint64_t>(offsetInBytes);
+
+    if (impl->bindings.bindsWritable(impl->active->layout, source))
+    {
+        source = impl->splitAroundArgumentCopy(source, offset);
+        offset = 0;
+
+        if (source == nullptr || !impl->prepareDispatch())
+            return;
+    }
+
+    impl->encoder->pass.DispatchWorkgroupsIndirect(source, offset);
 }
 
 // Each dispatch is its own usage scope, so WebGPU already orders a dispatch

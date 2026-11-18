@@ -12,10 +12,11 @@ namespace eacp::GPU
 {
 struct ComputePipeline::Native
 {
-    // The kernel rebuilt for one set of bound storage formats.
+    // The kernel rebuilt for one set of bound storage formats and unfilterable
+    // textures.
     struct Variant
     {
-        Vector<WebGPUStorageFormat> formats;
+        WebGPUComputeVariantKey key;
         OwningPointer<WebGPUComputePipeline> pipeline;
     };
 
@@ -35,8 +36,8 @@ struct ComputePipeline::Native
         program = *compiled;
         build(state, program.module, program.bindings);
 
-        state.variantFor = [this](const Vector<WebGPUStorageFormat>& formats)
-        { return variantFor(formats); };
+        state.variantFor = [this](const WebGPUComputeVariantKey& key)
+        { return variantFor(key); };
     }
 
     bool build(WebGPUComputePipeline& target,
@@ -73,20 +74,25 @@ struct ComputePipeline::Native
         return true;
     }
 
-    // The kernel recompiled with the storage formats bound, once per set.
-    const WebGPUComputePipeline*
-        variantFor(const Vector<WebGPUStorageFormat>& formats)
+    // The kernel recompiled with the storage formats bound, and laid out with
+    // the unfilterable textures bound, once per set.
+    const WebGPUComputePipeline* variantFor(const WebGPUComputeVariantKey& key)
     {
         for (const auto& variant: variants)
-            if (variant.formats == formats)
+            if (variant.key == key)
                 return variant.pipeline.get();
 
-        auto* variant = variants.create(Variant {formats, {}}).pipeline.create();
-        const auto source = withStorageFormats(program.source, formats);
+        auto* variant = variants.create(Variant {key, {}}).pipeline.create();
+        const auto rewritten = !key.storageFormats.empty();
+        const auto source =
+            rewritten ? withStorageFormats(program.source, key.storageFormats)
+                      : program.source;
+        const auto module =
+            rewritten ? makeWgslModule(context.getDevice(), source) : program.module;
+        const auto bindings = withUnfilterableTextures(
+            scanWgslBindings(source), key.unfilterable, source);
 
-        if (!build(*variant,
-                   makeWgslModule(context.getDevice(), source),
-                   scanWgslBindings(source)))
+        if (!build(*variant, module, bindings))
             variant->pipeline = nullptr;
 
         return variant;

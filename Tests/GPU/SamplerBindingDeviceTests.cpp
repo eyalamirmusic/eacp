@@ -588,8 +588,12 @@ auto tAddress =
     check(matches(pixelAt(repeated, right), greenTexel));
     check(matches(pixelAt(mirrored, left), greenTexel));
     check(matches(pixelAt(mirrored, right), redTexel));
-    check(matches(pixelAt(bordered, left), whiteTexel));
-    check(matches(pixelAt(bordered, right), whiteTexel));
+
+    if (Device::shared().supportsClampToBorder())
+    {
+        check(matches(pixelAt(bordered, left), whiteTexel));
+        check(matches(pixelAt(bordered, right), whiteTexel));
+    }
 };
 
 auto tTwoWays = test("SamplerBindingDevice/twoSamplersReadOneTextureInOneDraw") = []
