@@ -28,6 +28,15 @@ enum class WindowFlags
 using ResizeCallback = std::function<void(int width, int height)>;
 using WillResizeCallback = std::function<void(int& width, int& height)>;
 
+// Where an on-screen keyboard is going, as UIKit announces it: how much of the
+// window's bottom it will cover, in points (0 once it is down), and how long
+// the system takes to animate it there.
+struct SoftwareKeyboardChange
+{
+    float coveredHeight = 0.f;
+    double animationSeconds = 0.0;
+};
+
 // Observable window events. Assign a handler to react; all fire on the main
 // thread.
 struct WindowEvents
@@ -57,6 +66,13 @@ struct WindowEvents
     // size, nothing needs a position before the window exists: a handler set
     // after construction has still missed nothing.
     std::function<void(Point position)> onMoved = [](auto&&) {};
+
+    // iOS: fires as the on-screen keyboard starts to come up, change height (a
+    // different keyboard, the suggestion bar) or go down, with where it will
+    // end. Laying the content out again over animationSeconds keeps it moving
+    // with the keyboard. Never fires on other platforms.
+    std::function<void(const SoftwareKeyboardChange&)> onSoftwareKeyboardChanged =
+        [](auto&&) {};
 
     // The raw key, mouse and focus stream, for input layers beside the view
     // tree (see WindowInput.h). Framework-owned: the platform reports into it
