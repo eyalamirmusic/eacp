@@ -1,0 +1,1 @@
+# ThreadSanitizer suppressions: races inside uninstrumented system libraries.
