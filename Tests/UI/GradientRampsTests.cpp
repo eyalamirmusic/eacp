@@ -123,13 +123,15 @@ auto tCeiling = test("GradientRamps/pastTheCeilingAGradientIsRefusedAndCounted")
 
     auto ramps = GradientRamps {};
 
+    check(ramps.getMaxRows() == GradientRamps::Options {}.maxRows);
+
     // One distinct stop list per row, so the last one asked for has nowhere to
-    // go. The green channel is what makes them differ, and 256 shades of it are
-    // 256 different ramps.
-    for (auto i = 0; i < GradientRamps::maxRows; ++i)
+    // go. The green channel is what makes them differ, and each of the default
+    // 256 shades of it is a different ramp.
+    for (auto i = 0; i < ramps.getMaxRows(); ++i)
         check(ramps.rowFor(twoStop(red, {0.f, (float) i / 512.f, 0.f, 1.f})) >= 0.f);
 
-    check(ramps.getRowCount() == GradientRamps::maxRows);
+    check(ramps.getRowCount() == ramps.getMaxRows());
     check(ramps.getDroppedCount() == 0);
 
     check(ramps.rowFor(twoStop(blue, green)) < 0.f, "and the next one has no room");
@@ -138,6 +140,43 @@ auto tCeiling = test("GradientRamps/pastTheCeilingAGradientIsRefusedAndCounted")
     // A gradient already baked is still found, which is what stops a full
     // texture from taking the whole document down with it.
     check(ramps.rowFor(twoStop(red, {0.f, 0.f, 0.f, 1.f})) >= 0.f);
+};
+
+// A smaller texture is a lower ceiling, and every row's v is its centre in a
+// texture of that many rows rather than of the default.
+auto tCustomCeiling = test("GradientRamps/theCeilingIsWhatTheOptionsSay") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto ramps = GradientRamps {{.maxRows = 4}};
+
+    check(ramps.getMaxRows() == 4);
+
+    for (auto i = 0; i < 4; ++i)
+    {
+        auto v = ramps.rowFor(twoStop(red, {0.f, (float) i / 4.f, 0.f, 1.f}));
+        check(v == ((float) i + 0.5f) / 4.f, "row " + std::to_string(i));
+    }
+
+    check(ramps.getRowCount() == 4);
+    check(ramps.getDroppedCount() == 0);
+
+    check(ramps.rowFor(twoStop(blue, green)) < 0.f, "and the fifth has no room");
+    check(ramps.getDroppedCount() == 1);
+    check(ramps.getRowCount() == 4);
+};
+
+auto tCeilingIsAtLeastOne = test("GradientRamps/aCeilingBelowOneIsOne") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto ramps = GradientRamps {{.maxRows = 0}};
+
+    check(ramps.getMaxRows() == 1);
+    check(ramps.rowFor(twoStop(red, blue)) == 0.5f);
+    check(ramps.rowFor(twoStop(red, green)) < 0.f);
 };
 
 // Committing twice with nothing in between must not re-upload, and committing

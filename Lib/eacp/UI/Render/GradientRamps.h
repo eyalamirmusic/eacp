@@ -42,7 +42,18 @@ public:
     // shape per frame is the intended use.
     float rowFor(const Gradient& gradient);
 
+    struct Options
+    {
+        // How many distinct gradients the texture holds, at least one. Fixed
+        // rather than grown, because growing means a new texture, and a draw
+        // already recorded this frame would be holding the old one.
+        int maxRows = 256;
+    };
+
+    // Two constructors rather than a defaulted argument: a nested struct's
+    // member initializers cannot be used as a default argument inside the class.
     GradientRamps();
+    explicit GradientRamps(Options options);
 
     // Uploads the rows baked since the last call. Called before the draw that
     // samples them; cheap and a no-op once an interface's gradients are known,
@@ -52,11 +63,12 @@ public:
     // Always a real texture, including for an interface that never draws a
     // gradient. A sampler is not something a pipeline can leave empty and every
     // shape's fragment reads this one, so the alternative is a stand-in texture
-    // and a branch to choose it -- against a quarter of a megabyte that is fixed
-    // whatever the interface does.
+    // and a branch to choose it -- against a quarter of a megabyte at the default
+    // row count, fixed whatever the interface does.
     const GPU::Texture& getTexture() const;
 
     int getRowCount() const;
+    int getMaxRows() const;
 
     // Gradients there was no row for. Each one draws as its flat colour, which
     // is a picture missing its shading rather than missing a shape -- but it is
@@ -67,11 +79,6 @@ public:
     // full window has more steps than an 8-bit channel can show, and a document
     // of many-stop gradients still resolves every stop it has.
     static constexpr int rampWidth = 256;
-
-    // How many gradients an interface may have at once. Fixed rather than grown,
-    // because growing means a new texture, and a draw already recorded this
-    // frame would be holding the old one.
-    static constexpr int maxRows = 256;
 
 private:
     struct Row
@@ -84,7 +91,9 @@ private:
     };
 
     void bake(const Row& source, int row);
-    static float vForRow(int row);
+    float vForRow(int row) const;
+
+    const int maxRows;
 
     std::optional<GPU::Texture> texture;
 

@@ -103,6 +103,12 @@ Vector<GradientStop> sortedAndClamped(const Vector<GradientStop>& stops)
 } // namespace
 
 GradientRamps::GradientRamps()
+    : GradientRamps(Options {})
+{
+}
+
+GradientRamps::GradientRamps(Options options)
+    : maxRows(std::max(options.maxRows, 1))
 {
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = rampWidth;
@@ -161,7 +167,7 @@ void GradientRamps::bake(const Row& source, int row)
     }
 }
 
-float GradientRamps::vForRow(int row)
+float GradientRamps::vForRow(int row) const
 {
     return ((float) row + 0.5f) / (float) maxRows;
 }
@@ -188,6 +194,11 @@ const GPU::Texture& GradientRamps::getTexture() const
 int GradientRamps::getRowCount() const
 {
     return rows.size();
+}
+
+int GradientRamps::getMaxRows() const
+{
+    return maxRows;
 }
 
 int GradientRamps::getDroppedCount() const
