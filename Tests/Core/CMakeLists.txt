@@ -39,6 +39,7 @@ set(core_test_sources
         MachineUsageTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
+        NotificationsTests.cpp
         PlatformTests.cpp
         PluginObjectTests.cpp
         ProcessDescendantsTests.cpp
@@ -92,6 +93,17 @@ endif ()
 
 if (APPLE AND NOT IOS)
     list(APPEND core_test_sources AppTerminationTests.cpp)
+endif ()
+
+# The conversions from the system's notification types, shared by every Apple
+# platform.
+if (APPLE)
+    list(APPEND core_test_sources NotificationsTests-Apple.mm)
+endif ()
+
+# Everywhere but iOS, notifications are unavailable and answer at once.
+if (NOT IOS)
+    list(APPEND core_test_sources NotificationsTests-Default.cpp)
 endif ()
 
 # Threads::addLoopSource, FdWatcher and the hosted pump live in
