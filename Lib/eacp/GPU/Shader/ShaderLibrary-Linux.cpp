@@ -270,6 +270,7 @@ struct ShaderLibrary::Native
         // The module rather than the graph: the layout has to describe the
         // SPIR-V the driver is given.
         program.textures.merge(spirvTextureBindings(words, textureBindingBase));
+        getVulkanShared().fillPlaceholders(program.textures);
         return true;
     }
 
