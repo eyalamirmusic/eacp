@@ -4,6 +4,7 @@
 
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Core/Utils/Containers.h>
+#include <eacp/Core/Utils/Format.h>
 #include <eacp/Graphics/Image/Image.h>
 
 #include <cassert>
@@ -288,5 +289,38 @@ void Device::leaveFrame(const FrameNesting& nesting)
 
     timer.resume(nesting.timerSlot);
     nesting.outer->resumeRecording();
+}
+
+AdapterDescription Device::describeAdapter() const
+{
+    if (!isValid())
+    {
+        auto unavailable = AdapterDescription {};
+        unavailable.name = name();
+        return unavailable;
+    }
+
+    return describeValidAdapter();
+}
+
+std::string describeAdapterForLog(const AdapterDescription& adapter)
+{
+    constexpr auto bytesPerMegabyte = std::uint64_t {1024 * 1024};
+
+    auto parts = Vector<std::string> {
+        adapter.name,
+        Strings::format("vendor 0x{:04x}", adapter.vendorId),
+        Strings::format("device 0x{:04x}", adapter.deviceId),
+        Strings::format("{} MB dedicated",
+                        adapter.dedicatedMemoryBytes / bytesPerMegabyte)};
+
+    if (!adapter.driverVersion.empty())
+        parts.add("driver " + adapter.driverVersion);
+
+    if (!adapter.apiLevel.empty())
+        parts.add(adapter.apiLevel);
+
+    parts.add(adapter.isSoftware ? "software renderer" : "hardware");
+    return Strings::join(parts, ", ");
 }
 } // namespace eacp::GPU
