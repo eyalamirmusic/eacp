@@ -335,7 +335,7 @@ auto tGreeting = test("WebSocket/deliversAMessageSentRightAfterTheHandshake") = 
     check(webSocketPumpUntil([&] { return record.messages.size() == 1; }));
     check(!record.messages.empty() && record.messages[0].data == options.greeting);
     check(record.opens == 1);
-    check(record.order[0] == "open");
+    check(!record.order.empty() && record.order[0] == "open");
 };
 
 auto tFragmentedMessage = test("WebSocket/reassemblesAFragmentedServerMessage") = []
@@ -543,9 +543,8 @@ auto tConnectionRefused = test("WebSocket/aRefusedConnectionErrorsThenCloses") =
     check(record.opens == 0);
     check(!record.error.empty());
     check(record.close.code == 1006);
-    check(record.order.size() == 2);
-    check(record.order[0] == "error");
-    check(record.order[1] == "close");
+    check(record.order.size() == 2 && record.order[0] == "error"
+          && record.order[1] == "close");
 };
 
 auto tRejectedHandshake = test("WebSocket/aRejectedHandshakeErrorsThenCloses") = []
