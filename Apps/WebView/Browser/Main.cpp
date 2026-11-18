@@ -1,3 +1,5 @@
+#include "KillContentProcess.h"
+
 #include <eacp/WebView/WebView.h>
 
 using namespace eacp;
@@ -15,6 +17,9 @@ using namespace Graphics;
 //       URL overlay — the same behaviour as WKWebView
 //
 // Type a URL in the address bar and press return to navigate.
+//
+// Debug > Kill Content Process kills the process that runs the page, as the
+// system does under memory pressure, and the page reloads.
 
 struct BrowserView final : View
 {
@@ -76,7 +81,29 @@ WindowOptions windowOptions()
     return options;
 }
 
+MenuBar buildBrowserMenuBar(WebView& webView)
+{
+    auto debug = Menu {"Debug"};
+    debug.add(MenuItem::withAction("Kill Content Process",
+                                   [&webView] { killContentProcess(webView); }));
+
+    auto bar = MenuBar {};
+    bar.add(standardApplicationMenu("Browser"));
+    bar.add(std::move(debug));
+    return bar;
+}
+
+struct BrowserWithDebugMenu
+{
+    BrowserWithDebugMenu()
+    {
+        setApplicationMenuBar(buildBrowserMenuBar(shown.view.webView), shown.window);
+    }
+
+    ViewWindow<BrowserView> shown {windowOptions()};
+};
+
 int main()
 {
-    return Graphics::runWindowedApp<BrowserView>(windowOptions());
+    return Apps::run<BrowserWithDebugMenu>();
 }

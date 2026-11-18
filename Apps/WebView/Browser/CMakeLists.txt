@@ -20,3 +20,14 @@ res_embed_add(Browser
         FILES     AltTabIcon.png
         NAMESPACE Browser
         CATEGORY  Browser)
+
+# Debug > Kill Content Process, one implementation per platform. iOS builds the
+# Apple one but shows no menu bar, so nothing calls it there.
+if (APPLE)
+    target_sources(Browser PRIVATE KillContentProcess-Apple.mm)
+    target_link_libraries(Browser PRIVATE "-framework WebKit")
+elseif (WIN32)
+    find_package(WebView2 REQUIRED)
+    target_sources(Browser PRIVATE KillContentProcess-Windows.cpp)
+    target_link_libraries(Browser PRIVATE WebView2::WebView2)
+endif ()
