@@ -21,6 +21,27 @@
 
 namespace eacp::GPU
 {
+constexpr UINT intelVendorId = 0x8086;
+constexpr UINT intelDeviceFamilyMask = 0xFF00;
+
+// Dawn's "Gen 7" Intel device families (src/dawn/gpu_info.json), which it
+// refuses Direct3D 12 on for the same driver fault.
+constexpr UINT intelGen7DeviceFamilies[] = {
+    0x0100, 0x0400, 0x0A00, 0x0C00, 0x0D00, 0x0F00};
+
+bool isIntelAdapterWhoseDirect3D12LosesItsDevice(UINT vendorId, UINT deviceId)
+{
+    if (vendorId != intelVendorId)
+        return false;
+
+    const auto family = deviceId & intelDeviceFamilyMask;
+
+    return std::find(std::begin(intelGen7DeviceFamilies),
+                     std::end(intelGen7DeviceFamilies),
+                     family)
+           != std::end(intelGen7DeviceFamilies);
+}
+
 namespace
 {
 // How many textures can exist at once. It is a descriptor each, held for the
@@ -69,6 +90,51 @@ bool environmentFlag(const char* name)
 bool forcesWarp()
 {
     return environmentFlag("EACP_D3D12_WARP");
+}
+
+// The adapter D3D12CreateDevice(nullptr, ...) picks is the first one DXGI
+// enumerates, so it can be identified without creating a device on it.
+std::optional<DXGI_ADAPTER_DESC1> describeDefaultAdapter()
+{
+    auto factory = winrt::com_ptr<IDXGIFactory4>();
+
+    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void())))
+        return std::nullopt;
+
+    auto adapter = winrt::com_ptr<IDXGIAdapter1>();
+
+    if (FAILED(factory->EnumAdapters1(0, adapter.put())))
+        return std::nullopt;
+
+    auto description = DXGI_ADAPTER_DESC1 {};
+
+    if (FAILED(adapter->GetDesc1(&description)))
+        return std::nullopt;
+
+    return description;
+}
+
+bool isDefaultAdapterIntelWhoseDirect3D12LosesItsDevice()
+{
+    const auto description = describeDefaultAdapter();
+
+    return description.has_value()
+           && isIntelAdapterWhoseDirect3D12LosesItsDevice(description->VendorId,
+                                                          description->DeviceId);
+}
+
+bool usesSoftwareRenderer()
+{
+    if (forcesWarp())
+        return true;
+
+    if (!isDefaultAdapterIntelWhoseDirect3D12LosesItsDevice())
+        return false;
+
+    LOG("D3D12: this Intel graphics generation loses its Direct3D 12 device "
+        "shortly after start (Intel support article 000057520), so the "
+        "software renderer is used instead");
+    return true;
 }
 
 winrt::com_ptr<ID3D12Resource> makeProbeResource(ID3D12Device* device,
@@ -334,7 +400,7 @@ bool detectsSamplerTableBug(ID3D12Device* device)
 // EACP_D3D12_QUIRKS=1 sets every flag without asking, so the routes around
 // them can be exercised on a driver that does not need them - WARP in CI,
 // for one.
-DriverQuirks probeDriverQuirks()
+DriverQuirks probeDriverQuirks(bool onSoftwareRenderer)
 {
     auto quirks = DriverQuirks {};
 
@@ -346,7 +412,7 @@ DriverQuirks probeDriverQuirks()
         return quirks;
     }
 
-    if (forcesWarp())
+    if (onSoftwareRenderer)
     {
         quirks.samplerTablesIgnoreOffset = detectsSamplerTableBug(nullptr);
         return quirks;
@@ -380,7 +446,7 @@ DriverQuirks probeDriverQuirks()
     return quirks;
 }
 
-winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
+winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice(bool onSoftwareRenderer)
 {
     auto device = winrt::com_ptr<ID3D12Device>();
 
@@ -392,7 +458,7 @@ winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
         debug->EnableDebugLayer();
 #endif
 
-    if (!forcesWarp()
+    if (!onSoftwareRenderer
         && SUCCEEDED(D3D12CreateDevice(nullptr,
                                        D3D_FEATURE_LEVEL_11_0,
                                        __uuidof(ID3D12Device),
@@ -608,8 +674,9 @@ void D3D12Shared::createDevice()
 {
     // Before the device, and not merely first: the probe's own device has to
     // be gone before this one is made. See probeDriverQuirks.
-    quirks = probeDriverQuirks();
-    auto created = createHardwareOrWarpDevice();
+    const auto onSoftwareRenderer = usesSoftwareRenderer();
+    quirks = probeDriverQuirks(onSoftwareRenderer);
+    auto created = createHardwareOrWarpDevice(onSoftwareRenderer);
 
     {
         auto lock = std::lock_guard {referenceLock};

@@ -214,7 +214,8 @@ if (WIN32)
 endif ()
 
 if (WIN32)
-    list(APPEND gpu_test_sources RenderPipelineCacheTests-Windows.cpp)
+    list(APPEND gpu_test_sources RenderPipelineCacheTests-Windows.cpp
+                                 IntelDirect3D12AdapterTests-Windows.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through

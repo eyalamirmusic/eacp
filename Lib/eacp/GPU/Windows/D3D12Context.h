@@ -159,6 +159,10 @@ struct DriverQuirks
     bool samplerTablesIgnoreOffset = false;
 };
 
+// Intel's driver for these chips, Haswell's HD Graphics 4600 among them, creates
+// a Direct3D 12 device and then loses it seconds later (Intel article 000057520).
+bool isIntelAdapterWhoseDirect3D12LosesItsDevice(UINT vendorId, UINT deviceId);
+
 // The process-wide half. Created on first use by getD3D12Shared().
 class D3D12Shared
 {
