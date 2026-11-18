@@ -242,16 +242,18 @@ MTLTextureType toMetalTextureType(TextureType kind)
     return MTLTextureType2D;
 }
 
-MTLTextureDescriptor* describeShape(const TextureShape& shape, MTLPixelFormat format)
+ObjC::Ptr<MTLTextureDescriptor> describeShape(const TextureShape& shape,
+                                              MTLPixelFormat format)
 {
-    auto descriptor = [MTLTextureDescriptor new];
-    descriptor.textureType = toMetalTextureType(shape.kind);
-    descriptor.pixelFormat = format;
-    descriptor.width = (NSUInteger) shape.width;
-    descriptor.height = (NSUInteger) shape.height;
-    descriptor.depth = (NSUInteger) shape.depth;
-    descriptor.arrayLength = (NSUInteger) shape.layers;
-    descriptor.mipmapLevelCount = (NSUInteger) shape.levels;
+    auto descriptor = ObjC::makePtr<MTLTextureDescriptor>();
+    auto* metal = descriptor.get();
+    metal.textureType = toMetalTextureType(shape.kind);
+    metal.pixelFormat = format;
+    metal.width = (NSUInteger) shape.width;
+    metal.height = (NSUInteger) shape.height;
+    metal.depth = (NSUInteger) shape.depth;
+    metal.arrayLength = (NSUInteger) shape.layers;
+    metal.mipmapLevelCount = (NSUInteger) shape.levels;
     return descriptor;
 }
 
@@ -344,8 +346,8 @@ struct Texture::Native
         deviceChain = shape.buildsChain() && descriptor.mipmapsOnDevice
                       && canGenerateMipsOnDevice(format);
 
-        auto textureDescriptor =
-            describeShape(shape, toMetalFormat(descriptor.format));
+        auto ownedDescriptor = describeShape(shape, toMetalFormat(descriptor.format));
+        auto* textureDescriptor = ownedDescriptor.get();
         textureDescriptor.usage = MTLTextureUsageShaderRead;
 
         // A render target is written by the GPU and read by it, so it goes in
@@ -434,7 +436,8 @@ struct Texture::Native
 
         // The colour target's own shape, levels and slices, so a pass into any
         // level or layer of it finds a depth plane of the same size there.
-        auto depthDescriptor = describeShape(shape, format);
+        auto ownedDescriptor = describeShape(shape, format);
+        auto* depthDescriptor = ownedDescriptor.get();
 
         depthDescriptor.usage = MTLTextureUsageRenderTarget;
 
@@ -631,9 +634,10 @@ struct Texture::Native
         const auto rows = levelRows(format, upload.height);
         const auto imageBytes = (NSUInteger) rowBytes * (NSUInteger) rows;
 
-        auto staging = [metalDevice
+        auto ownedStaging = ObjC::Ptr<NSObject<MTLBuffer>> {[metalDevice
             newBufferWithLength:imageBytes * (NSUInteger) upload.depth
-                        options:MTLResourceStorageModeShared];
+                        options:MTLResourceStorageModeShared]};
+        auto staging = (id<MTLBuffer>) ownedStaging.get();
 
         if (staging == nil)
             return;
@@ -749,9 +753,10 @@ struct Texture::Native
                 (NSUInteger) levelBytesPerRow(format, plan->width);
             const auto imageBytes = rowBytes * (NSUInteger) plan->height;
 
-            auto staging =
+            auto ownedStaging = ObjC::Ptr<NSObject<MTLBuffer>> {
                 [metalDevice newBufferWithLength:imageBytes * (NSUInteger) plan->depth
-                                         options:MTLResourceStorageModeShared];
+                                         options:MTLResourceStorageModeShared]};
+            auto staging = (id<MTLBuffer>) ownedStaging.get();
 
             if (staging == nil)
                 return;
