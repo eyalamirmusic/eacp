@@ -1,0 +1,12 @@
+name = "eacp"
+summary = "Cross-platform C++20 framework: application lifecycle, threads, processes, files, networking, graphics, GPU, UI, WebView and ML."
+repository = "eyalamirmusic/eacp"
+module_roots = ["Lib/eacp"]
+skip_directories = [
+    "Android", "ObjC", "Windows", "Vulkan", "Dxc", "Spirv",
+    "detail", "Detail", "Test", "Tests", "Testing", "cmake", "ThirdParty", "node_modules", "web",
+]
+platform_file_suffixes = [
+    "-Android", "-Linux", "-Windows", "-macOS", "-iOS", "-Posix", "-Default", "-Apple", "-Wayland", "-X11",
+]
+internal_header_suffixes = ["Internal", "Platform"]
