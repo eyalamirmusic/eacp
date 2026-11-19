@@ -3,32 +3,12 @@
 
 #include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <sstream>
 
 using namespace nano;
 namespace Proc = eacp::Processes;
-
-namespace
-{
-std::string tempPath(const std::string& name)
-{
-    return (std::filesystem::temp_directory_path() / name).string();
-}
-
-std::string contentsOf(const std::string& file)
-{
-    auto stream = std::ifstream {file, std::ios::binary};
-    auto buffer = std::ostringstream {};
-    buffer << stream.rdbuf();
-    return buffer.str();
-}
-
-bool contains(const std::string& text, const std::string& needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-} // namespace
+using StdioCapture::contains;
+using StdioCapture::contentsOf;
+using StdioCapture::tempPath;
 
 // With captureOutput off, the child's stdout must land in whatever the
 // parent's stdout points at — here, a file the test redirected it to. The

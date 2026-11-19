@@ -270,3 +270,17 @@ auto tBlankCommandLineDoesNotLaunch =
 
     check(!result.launched);
 };
+
+// HOME and PATH are set in any environment the tests run in; the test reads
+// them rather than set variables of its own.
+auto tRemovedEnvironment = test("Process/run/removedEnvironment") = []
+{
+    auto options = Proc::ProcessOptions {};
+    options.executable = "/bin/sh";
+    options.arguments = {"-c", "printf '%s|%s' \"${HOME-unset}\" \"${PATH:+kept}\""};
+    options.removedEnvironment = {"HOME"};
+
+    auto result = Proc::run(std::move(options));
+
+    check(result.output == "unset|kept");
+};
