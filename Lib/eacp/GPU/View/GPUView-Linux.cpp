@@ -1036,6 +1036,8 @@ bool GPUView::isTransparent() const
     return impl->transparent;
 }
 
+void GPUView::visibilityChanged(bool) {}
+
 // No drawable to resize here: the swapchain is rebuilt from the surface's own
 // configure, so all this owes either event is the scale notification.
 void GPUView::resizeStarted()
