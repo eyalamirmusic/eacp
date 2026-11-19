@@ -26,6 +26,7 @@ target_sources(eacp-core PRIVATE
         App/Args.cpp
         Geometry/Geometry.cpp
         Maths/Mat4.cpp
+        Notifications/Notifications.cpp
         Platform/AppInfo.cpp
         Platform/Platform.cpp
         Plugins/DynamicLibrary.cpp
@@ -65,6 +66,7 @@ target_sources(eacp-core PRIVATE
 if (APPLE)
     target_sources(eacp-core PRIVATE
             App/CommandLine-Default.cpp
+            Notifications/Notifications-Apple.mm
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
             Platform/ScopedAutoReleasePool-Apple.mm
@@ -82,7 +84,8 @@ if (APPLE)
             Utils/Logging-Posix.cpp
             Utils/MemoryMappedFile-Posix.cpp)
     target_link_libraries(eacp-core PRIVATE
-            "-framework Foundation")
+            "-framework Foundation"
+            "-framework UserNotifications")
     if (IOS)
         target_sources(eacp-core PRIVATE
                 App/Alert-iOS.mm
@@ -90,6 +93,7 @@ if (APPLE)
                 App/Clipboard-iOS.mm
                 App/FilePickerAsync-Default.cpp
                 App/LoginItem-iOS.cpp
+                Notifications/Notifications-iOS.mm
                 Process/Process-iOS.cpp
                 Threads/EventLoop-iOS.mm
                 Utils/FilesOpen-Default.cpp)
@@ -100,6 +104,7 @@ if (APPLE)
                 App/App-macOS.mm
                 App/Clipboard-macOS.mm
                 App/LoginItem-macOS.mm
+                Notifications/Notifications-Default.cpp
                 Process/Process-Posix.cpp
                 Process/SpawnDirectory-Posix.cpp
                 Threads/EventLoop-macOS.mm
@@ -177,6 +182,10 @@ elseif (UNIX AND NOT APPLE)
                 Utils/FilesOpen-Linux.cpp
                 Utils/Logging-Posix.cpp)
     endif ()
+endif ()
+
+if (NOT APPLE)
+    target_sources(eacp-core PRIVATE Notifications/Notifications-Default.cpp)
 endif ()
 
 set_default_target_setting(eacp-core)

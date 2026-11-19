@@ -6,6 +6,7 @@
 #include "App/LoginItem.h"
 #include "Geometry/Geometry.h"
 #include "Maths/Maths.h"
+#include "Notifications/Notifications.h"
 #include "Plugins/DynamicLibrary.h"
 #include "Plugins/HotReloadLoop.h"
 #include "Plugins/ModuleInfo.h"
