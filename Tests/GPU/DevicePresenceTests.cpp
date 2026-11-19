@@ -21,3 +21,23 @@ auto tDeviceIsPresentWhenRequired = test("GPU/aDeviceIsPresentWhenRequired") = [
           "EACP_REQUIRE_GPU=1 but no GPU device came up - the suite would "
           "otherwise have skipped every test in it and reported a pass");
 };
+
+auto tDescribeAdapterNamesTheDevice =
+    test("GPU/describeAdapterNamesTheDeviceAndItsDriver") = []
+{
+    auto& device = Device::shared();
+    const auto adapter = device.describeAdapter();
+
+    LOG("GPU adapter: ", describeAdapterForLog(adapter));
+
+    check(adapter.name == device.name());
+
+    if (!device.isValid())
+        return;
+
+    check(!adapter.driverVersion.empty());
+    check(!adapter.apiLevel.empty());
+
+    if (!Platform::isApple())
+        check(adapter.vendorId != 0);
+};
