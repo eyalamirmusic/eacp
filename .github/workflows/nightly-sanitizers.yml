@@ -1,0 +1,99 @@
+name: Nightly Sanitizers
+
+# Every test target built and run under AddressSanitizer, ThreadSanitizer and
+# UndefinedBehaviorSanitizer, once a night, for main and for develop. A
+# branch/sanitizer pair whose head commit already passed is skipped, so a quiet
+# night costs one short job per pair.
+on:
+  schedule:
+    # 10:00 UTC is 3am Pacific Daylight Time (4am while Standard Time is in
+    # force); GitHub cron has no time zones.
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+jobs:
+  sanitize:
+    name: ${{ matrix.branch }} ${{ matrix.sanitizer }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [main, develop]
+        sanitizer: [address, thread, undefined]
+    env:
+      CCACHE_DEPEND: '1'
+      EACP_HEADLESS: '1'
+      EACP_REQUIRE_FONTS: '1'
+      EACP_VK_SOFTWARE: '1'
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.branch }}
+
+      # The script and suppressions come from the commit this workflow runs
+      # from, so main is tested with the same tooling as develop before the
+      # tooling itself reaches main.
+      - uses: actions/checkout@v6
+        with:
+          path: ci-tools
+          sparse-checkout: Scripts
+
+      - name: Find the head commit
+        id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # A marker cache saved only when this sanitizer passed on this commit.
+      # Finding it means nothing changed since the last green run, so the job
+      # stops here. A failing commit is tested again every night until fixed.
+      - name: Check whether this commit already passed
+        id: passed
+        uses: actions/cache/restore@v4
+        with:
+          path: .sanitizer-passed
+          key: sanitizer-passed-${{ matrix.sanitizer }}-${{ steps.head.outputs.sha }}
+          lookup-only: true
+
+      - name: Set up the compiler cache
+        if: steps.passed.outputs.cache-hit != 'true'
+        uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: linux-sanitizer-${{ matrix.sanitizer }}
+          max-size: 1G
+          evict-old-files: job
+
+      # The packages the Linux lanes in build.yml install, plus lavapipe for
+      # the GPU suites.
+      - name: Install Linux dependencies
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev clang \
+            libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev \
+            libdecor-0-dev pkg-config \
+            libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev \
+            libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev \
+            libxcb-icccm4-dev libxcb-xinput-dev libxcb-xtest0-dev \
+            libfreetype-dev libharfbuzz-dev libfontconfig-dev \
+            fonts-dejavu-core fonts-dejavu-extra fonts-noto-color-emoji \
+            fonts-droid-fallback \
+            mesa-vulkan-drivers libvulkan1
+
+      - name: Build and test
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: >
+          ci-tools/Scripts/sanitizer-tests ${{ matrix.sanitizer }} build
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Record that this commit passed
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: mkdir -p .sanitizer-passed && echo "${{ steps.head.outputs.sha }}" > .sanitizer-passed/sha
+
+      - name: Save the pass marker
+        if: steps.passed.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .sanitizer-passed
+          key: sanitizer-passed-${{ matrix.sanitizer }}-${{ steps.head.outputs.sha }}
