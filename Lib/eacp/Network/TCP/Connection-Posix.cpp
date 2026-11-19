@@ -193,8 +193,26 @@ int socketReceive(NativeSocket socket, char* buffer, int length)
     return (int) received;
 }
 
+IPv4Address getInterfaceAddress(BindInterface bindTo)
+{
+    if (bindTo == BindInterface::any)
+        return htonl(INADDR_ANY);
+
+    return htonl(INADDR_LOOPBACK);
+}
+
+std::optional<IPv4Address> parseIPv4Address(const std::string& text)
+{
+    auto parsed = in_addr {};
+
+    if (::inet_pton(AF_INET, text.c_str(), &parsed) != 1)
+        return std::nullopt;
+
+    return parsed.s_addr;
+}
+
 NativeSocket
-    socketListen(std::uint16_t port, std::uint16_t& boundPort, BindInterface bindTo)
+    socketListen(std::uint16_t port, std::uint16_t& boundPort, IPv4Address address)
 {
     auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
@@ -205,8 +223,7 @@ NativeSocket
 
     auto addr = sockaddr_in {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr =
-        htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
+    addr.sin_addr.s_addr = address;
     addr.sin_port = htons(port);
 
     if (::bind(fd, (sockaddr*) &addr, sizeof(addr)) < 0)

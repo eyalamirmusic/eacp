@@ -1,5 +1,6 @@
 #include "HttpServer.h"
 #include "../Common-Posix.h"
+#include "../TCP/ConnectionInternal.h"
 #include "HttpServerDispatcher.h"
 
 #include "../HTTP/HttpProtocol.h"
@@ -101,9 +102,12 @@ void readPeerEndpoint(int fd, std::string& addr, int& port)
     port = (int) ntohs(peer.sin_port);
 }
 
-in_addr_t bindAddress(BindInterface bindTo)
+std::optional<in_addr_t> getListenAddress(const ServerOptions& options)
 {
-    return htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
+    if (options.bindAddress)
+        return TCP::detail::parseIPv4Address(*options.bindAddress);
+
+    return TCP::detail::getInterfaceAddress(options.bindTo);
 }
 
 } // namespace
@@ -200,6 +204,11 @@ bool Server::Impl::start(int port, RequestHandler h, StreamingRouteFinder finder
     if (listenSocket)
         return false;
 
+    auto listenAddress = getListenAddress(options);
+
+    if (!listenAddress)
+        return false;
+
     ignoreSigPipe();
 
     handler = std::move(h);
@@ -220,7 +229,7 @@ bool Server::Impl::start(int port, RequestHandler h, StreamingRouteFinder finder
     auto addr = sockaddr_in{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons((uint16_t) port);
-    addr.sin_addr.s_addr = bindAddress(options.bindTo);
+    addr.sin_addr.s_addr = *listenAddress;
 
     auto data = CFDataCreate(kCFAllocatorDefault,
                              (const UInt8*) &addr, sizeof(addr));
