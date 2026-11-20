@@ -1,4 +1,5 @@
 #include <eacp/Core/App/Args.h>
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/UI/UI.h>
 
 #include <cmath>
@@ -35,6 +36,9 @@ using namespace eacp;
 namespace
 {
 constexpr auto padding = 12.f;
+constexpr auto editorKeysGap = 4.f;
+constexpr auto editorKeysLineHeight = 20.f;
+constexpr auto editorCaptionWidth = 70.f;
 constexpr auto generatedRowCount = 10000;
 
 std::string percentText(float value)
@@ -218,12 +222,31 @@ struct LabelledControl final : UI::Component
     UI::Label readout;
 };
 
+// The line, word and undo keys the name field takes on this platform.
+std::string getEditorMoveKeysText()
+{
+    if constexpr (Platform::isApple())
+        return "Cmd/Option + Left, Right, Delete: by line, by word";
+
+    return "Ctrl + Left, Right, Backspace: by word";
+}
+
+std::string getEditorUndoKeysText()
+{
+    if constexpr (Platform::isApple())
+        return "Cmd+Z, Shift+Cmd+Z: undo, redo until Return";
+
+    return "Ctrl+Z, Ctrl+Y: undo, redo until Return";
+}
+
 struct ControlsPage final : UI::Component
 {
     ControlsPage()
     {
         presetCaption.setThemeColour(UI::ThemeKeys::dimText);
         editorCaption.setThemeColour(UI::ThemeKeys::dimText);
+        editorMoveKeys.setThemeColour(UI::ThemeKeys::dimText);
+        editorUndoKeys.setThemeColour(UI::ThemeKeys::dimText);
         programCaption.setThemeColour(UI::ThemeKeys::dimText);
 
         preset.addItems({"Init", "Warm", "Bright", "Hollow", "Bell"});
@@ -253,6 +276,8 @@ struct ControlsPage final : UI::Component
         editor.setPlaceholder("patch name");
         editor.onReturnKey = [this](const std::string& text)
         { log.add("name", "return \"" + text + "\""); };
+        editor.onTextChange = [this](const std::string& text)
+        { log.add("name", "text \"" + text + "\""); };
 
         level.shapeControl = [](const UI::Rect& area)
         { return centredStrip(area, 22.f); };
@@ -265,7 +290,12 @@ struct ControlsPage final : UI::Component
 
         addChildren({log, presetCaption, preset, gain, tone, mix});
         addChildren({level, leftFader, rightFader, trigger, latch, bypass, link});
-        addChildren({editorCaption, editor, programCaption, program});
+        addChildren({editorCaption,
+                     editor,
+                     editorMoveKeys,
+                     editorUndoKeys,
+                     programCaption,
+                     program});
     }
 
     void resized() override
@@ -308,8 +338,16 @@ struct ControlsPage final : UI::Component
         area.removeFromTop(12.f);
 
         auto field = area.removeFromTop(28.f);
-        editorCaption.setBounds(field.removeFromLeft(70.f));
+        editorCaption.setBounds(field.removeFromLeft(editorCaptionWidth));
         editor.setBounds(field.removeFromLeft(260.f));
+
+        area.removeFromTop(editorKeysGap);
+        for (auto* keys: {&editorMoveKeys, &editorUndoKeys})
+        {
+            auto line = area.removeFromTop(editorKeysLineHeight);
+            line.removeFromLeft(editorCaptionWidth);
+            keys->setBounds(line);
+        }
 
         // Hard against the bottom edge, which is the whole point of it: there
         // is no room under the box, so the list opens over it instead.
@@ -341,6 +379,8 @@ struct ControlsPage final : UI::Component
 
     UI::Label editorCaption {"Name"};
     UI::TextEditor editor;
+    UI::Label editorMoveKeys {getEditorMoveKeysText()};
+    UI::Label editorUndoKeys {getEditorUndoKeysText()};
 
     UI::Label programCaption {"40 items at the bottom edge: opens upward, scrolls"};
     UI::ComboBox program {"choose"};
