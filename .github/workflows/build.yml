@@ -42,7 +42,8 @@ jobs:
             os: windows-latest
             cache-key: windows-clang-x64
             msvc-arch: x64
-            cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
+            clang-cl: x64
+            cmake-flags: ''
           # The WebView example apps run their npm installs inside configure,
           # and those are several times slower on the ARM runners, so the two
           # ARM64 lanes leave the module out; the x64 lanes above cover it.
@@ -55,7 +56,8 @@ jobs:
             os: windows-11-arm
             cache-key: windows-clang-arm64
             msvc-arch: arm64
-            cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DEACP_BUILD_WEBVIEW=OFF'
+            clang-cl: ARM64
+            cmake-flags: '-DEACP_BUILD_WEBVIEW=OFF'
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -171,6 +173,22 @@ jobs:
         uses: egor-tensin/vs-shell@54e4148eac794e4580591c2e0b7750f14b7891fc # v2
         with:
           arch: ${{ matrix.msvc-arch }}
+
+      # The clang-cl that ships inside Visual Studio, not whichever one is first
+      # on PATH. The image's standalone LLVM moves on its own schedule, and an
+      # MSVC STL newer than it refuses to compile (STL1000: "expected Clang 22
+      # or newer"), which is how the x64 image's LLVM 20 broke when MSVC 14.52
+      # arrived. Visual Studio's own is the one its STL was released against.
+      # CMake takes CC and CXX as the compilers on a first configure; see
+      # "Continuous integration" in Docs/Build.md.
+      - name: Use Visual Studio's clang-cl
+        if: matrix.clang-cl
+        run: |
+          $clang = "$env:VCINSTALLDIR\Tools\Llvm\${{ matrix.clang-cl }}\bin\clang-cl.exe"
+          if (-not (Test-Path $clang)) { throw "No clang-cl at $clang" }
+          & $clang --version
+          "CC=$clang" >> $env:GITHUB_ENV
+          "CXX=$clang" >> $env:GITHUB_ENV
 
       # ccache is the launcher for every language the lane compiles, which on
       # macOS includes Objective-C++. Windows embeds debug info in each object

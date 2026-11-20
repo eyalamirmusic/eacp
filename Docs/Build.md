@@ -490,7 +490,11 @@ the network backend included, then configures once
 more with no NDK named, which exercises the newest-installed path. The two
 Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
 run their npm installs inside configure, several times slower on the ARM
-runners, and the x64 lanes cover the WebView2 backend. The Windows lanes
+runners, and the x64 lanes cover the WebView2 backend. The clang-cl lanes
+compile with the clang-cl inside Visual Studio (`VC\Tools\Llvm`, handed to
+CMake as `CC` and `CXX`), not the image's standalone LLVM on `PATH`: an MSVC
+STL newer than that LLVM refuses to compile (STL1000), and Visual Studio's own
+is the one its STL was released against. The Windows lanes
 build the two hot-reload examples in dev mode, as every RelWithDebInfo Ninja
 build with `cl` or clang-cl does, and run `HotReloadEndToEnd`, which rebuilds
 and reloads a module of its own through `eacp_add_hot_reload`; a CI build in
