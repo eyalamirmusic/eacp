@@ -22,6 +22,12 @@ public:
                          Timeouts timeouts = {},
                          BindInterface bindTo = BindInterface::loopback);
 
+    // Binds and listens on port at one IPv4 address of this machine, such as
+    // a tailnet address ("100.104.147.35"), or throws TCP::Error, also when
+    // ipv4Address does not parse.
+    static Listener
+        bind(std::uint16_t port, Timeouts timeouts, const std::string& ipv4Address);
+
     ~Listener();
 
     Listener(Listener&&) noexcept;
@@ -47,6 +53,10 @@ public:
 
 private:
     Listener();
+
+    static Listener listenOn(std::uint16_t port,
+                             Timeouts timeouts,
+                             std::uint32_t addressInNetworkOrder);
 
     struct Impl;
     OwningPointer<Impl> impl;
