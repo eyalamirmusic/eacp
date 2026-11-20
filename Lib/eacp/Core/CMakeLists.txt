@@ -27,6 +27,7 @@ target_sources(eacp-core PRIVATE
         Geometry/Geometry.cpp
         Maths/Mat4.cpp
         Platform/AppInfo.cpp
+        Platform/MachineUsage.cpp
         Platform/Platform.cpp
         Plugins/DynamicLibrary.cpp
         Plugins/HotReloadLoop.cpp
@@ -67,6 +68,8 @@ if (APPLE)
             App/CommandLine-Default.cpp
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
+            Platform/MachineUsage-Apple.cpp
+            Platform/MachineUsage-Posix.cpp
             Platform/ScopedAutoReleasePool-Apple.mm
             Plugins/DynamicLibrary-Apple.cpp
             Plugins/DynamicLibrary-Posix.cpp
@@ -118,6 +121,7 @@ elseif (WIN32)
             App/CommandLine-Windows.cpp
             App/FilePickerAsync-Default.cpp
             App/LoginItem-Windows.cpp
+            Platform/MachineUsage-Windows.cpp
             Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Windows.cpp
             Plugins/ModuleInfo-Windows.cpp
@@ -139,6 +143,8 @@ elseif (UNIX AND NOT APPLE)
             App/CommandLine-Default.cpp
             App/FilePickerAsync-Default.cpp
             App/LoginItem-Linux.cpp
+            Platform/MachineUsage-Linux.cpp
+            Platform/MachineUsage-Posix.cpp
             Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Linux.cpp
             Plugins/DynamicLibrary-Posix.cpp
