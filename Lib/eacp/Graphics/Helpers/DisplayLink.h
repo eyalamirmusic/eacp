@@ -20,7 +20,9 @@ struct FrameTime
 
 // Fires a callback on the main thread once per display refresh, synchronized
 // with the platform compositor's vsync (CVDisplayLink / CADisplayLink on
-// Apple platforms, the DWM compositor clock on Windows).
+// Apple platforms, the DWM compositor clock on Windows). On macOS a link made
+// under EACP_HEADLESS, or while no display is active, ticks from a 60 Hz timer
+// instead, since a CVDisplayLink over no display never fires.
 //
 // Keep the callback light (advance state, invalidate); a handler that takes
 // as long as a refresh interval keeps the event queue permanently non-empty,

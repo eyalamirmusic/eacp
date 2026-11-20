@@ -62,21 +62,41 @@ std::chrono::milliseconds pumpFor(Time::MS duration)
     return longest;
 }
 
-bool pumpUntil(Time::MS limit, const std::function<bool()>& done)
+struct PumpResult
+{
+    bool done = false;
+    std::chrono::milliseconds longestSlice {0};
+};
+
+PumpResult pumpUntilMeasuring(Time::MS limit, const std::function<bool()>& done)
 {
     constexpr auto slice = Time::MS {8};
 
+    auto result = PumpResult {};
     auto deadline = Time::Deadline {limit};
 
     while (!deadline.expired())
     {
         if (done())
-            return true;
+        {
+            result.done = true;
+            return result;
+        }
 
+        const auto before = std::chrono::steady_clock::now();
         Threads::runEventLoopFor(slice);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - before);
+        result.longestSlice = std::max(result.longestSlice, elapsed);
     }
 
-    return done();
+    result.done = done();
+    return result;
+}
+
+bool pumpUntil(Time::MS limit, const std::function<bool()>& done)
+{
+    return pumpUntilMeasuring(limit, done).done;
 }
 
 constexpr auto presentTimeout = Time::MS {3000};
@@ -121,6 +141,48 @@ bool startsRendering(CountingView& view)
     return false;
 }
 
+// Fifteen frames in three seconds cannot be reached if nextDrawable is timing
+// out (one second each once the three drawables are spent), and the stall
+// bound catches a single timeout on its own.
+void checkRendersContinuously(CountingView& view)
+{
+    constexpr auto framesToSee = 15;
+    constexpr auto limit = Time::MS {3000};
+
+    const auto result = pumpUntilMeasuring(limit,
+                                           [&]
+                                           {
+                                               return view.renders >= framesToSee
+                                                      && view.updates >= framesToSee;
+                                           });
+
+    if (!result.done)
+        LOGF("HiddenWindow: {} renders and {} updates in {} ms",
+             view.renders,
+             view.updates,
+             limit.count);
+
+    check(result.done, "a continuous view that was never on screen did not render");
+    check(result.longestSlice < longestAcceptableStall,
+          "rendering a view that was never on screen stalled the main thread");
+}
+
+NSView* nativeViewOf(GPUView& view)
+{
+    return (__bridge NSView*) view.getHandle();
+}
+
+NSWindow* makeWindowNeverOrderedIn()
+{
+    auto* window = [[NSWindow alloc]
+        initWithContentRect:NSMakeRect(0, 0, windowWidth, windowHeight)
+                  styleMask:NSWindowStyleMaskTitled
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    window.releasedWhenClosed = NO;
+    return window;
+}
+
 void checkStaysStoppedAndResponsive(CountingView& view)
 {
     pumpFor(settleTime);
@@ -160,6 +222,57 @@ auto tMinimisedStops = test("HiddenWindow/minimisedWindowStopsAndResumes") = []
     const auto rendersBefore = view.renders;
     check(pumpUntil(presentTimeout, [&] { return view.renders > rendersBefore; }),
           "rendering did not resume after the window was restored");
+};
+
+// The cases below run headless too: a window that never reached the screen has
+// no occlusion change to come, so it must render exactly as a visible one.
+auto tNeverOrderedIn =
+    test("HiddenWindow/aWindowNeverOrderedInRendersContinuously") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto view = CountingView {};
+    auto* window = makeWindowNeverOrderedIn();
+    [window.contentView addSubview:nativeViewOf(view)];
+    view.setBounds({0.f, 0.f, (float) windowWidth, (float) windowHeight});
+    view.setContinuous(true);
+
+    checkRendersContinuously(view);
+
+    view.setContinuous(false);
+    [nativeViewOf(view) removeFromSuperview];
+    [window release];
+};
+
+auto tEacpWindow = test("HiddenWindow/aShownEacpWindowRendersContinuously") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto view = CountingView {};
+    auto window = Graphics::Window {makeTestWindowOptions()};
+    window.setContentView(view);
+    window.setVisible(true);
+    view.setContinuous(true);
+
+    checkRendersContinuously(view);
+};
+
+auto tNoWindow = test("HiddenWindow/aViewWithNoWindowRendersContinuously") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto view = CountingView {};
+    view.setBounds({0.f, 0.f, (float) windowWidth, (float) windowHeight});
+
+    // Nothing lays out a view in no window, so it is sized by hand, as the
+    // MultiView cases size theirs.
+    view.resizeStarted();
+    view.setContinuous(true);
+
+    checkRendersContinuously(view);
 };
 
 auto tOrderedOutStops = test("HiddenWindow/orderedOutWindowStopsAndResumes") = []

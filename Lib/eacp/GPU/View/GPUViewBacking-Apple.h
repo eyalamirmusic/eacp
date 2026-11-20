@@ -4,23 +4,12 @@
 // per-platform piece. The CAMetalLayer drawable size is logical points times the
 // backing scale, which macOS and iOS read from different places.
 
-#include <eacp/Core/Utils/Common.h>
+#include "ContinuousRenderSwitch.h"
 
 namespace eacp::GPU
 {
 class GPUView;
 
-enum class ViewVisibility
-{
-    Visible,
-    WindowNotVisible,
-    NotInVisibleWindow
-};
-
-// Visible: drawn on screen. WindowNotVisible: the view's window is minimised,
-// ordered out, covered or on a sleeping display, and says so when that ends.
-// NotInVisibleWindow: no window, or the view is hidden, so no notification
-// will announce the view coming back.
 ViewVisibility platformViewVisibility(GPUView& view);
 
 bool platformIsInLiveResize(GPUView& view);

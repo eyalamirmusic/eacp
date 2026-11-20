@@ -96,3 +96,57 @@ auto tStopWhilePaused =
     check(counts.starts == 1);
     check(counts.stops == 1);
 };
+
+auto tNeverShownRenders =
+    test("ContinuousRenderSwitch/aWindowNeverOnScreenRenders") = []
+{ check(decideViewVisibility({.hasWindow = true}) == ViewVisibility::Visible); };
+
+auto tOnScreenRenders = test("ContinuousRenderSwitch/aWindowOnScreenRenders") = []
+{
+    const auto facts = ViewVisibilityFacts {
+        .hasWindow = true, .windowOnScreen = true, .windowHasBeenOnScreen = true};
+
+    check(decideViewVisibility(facts) == ViewVisibility::Visible);
+};
+
+auto tShownThenHiddenPauses =
+    test("ContinuousRenderSwitch/aWindowHiddenAfterBeingOnScreenPauses") = []
+{
+    const auto facts =
+        ViewVisibilityFacts {.hasWindow = true, .windowHasBeenOnScreen = true};
+
+    check(decideViewVisibility(facts) == ViewVisibility::WindowNotVisible);
+};
+
+auto tMinimisedPauses = test("ContinuousRenderSwitch/aMinimisedWindowPauses") = []
+{
+    const auto facts =
+        ViewVisibilityFacts {.hasWindow = true, .windowMinimised = true};
+
+    check(decideViewVisibility(facts) == ViewVisibility::WindowNotVisible);
+};
+
+auto tHeadlessNeverPauses =
+    test("ContinuousRenderSwitch/aHeadlessWindowNeverPauses") = []
+{
+    const auto facts = ViewVisibilityFacts {.headless = true,
+                                            .hasWindow = true,
+                                            .windowMinimised = true,
+                                            .windowHasBeenOnScreen = true};
+
+    check(decideViewVisibility(facts) == ViewVisibility::Visible);
+};
+
+auto tNoWindowRenders = test("ContinuousRenderSwitch/aViewWithNoWindowRenders") = []
+{ check(decideViewVisibility({}) == ViewVisibility::Visible); };
+
+auto tHiddenViewSkips =
+    test("ContinuousRenderSwitch/aHiddenViewSkipsWithoutPausing") = []
+{
+    const auto facts = ViewVisibilityFacts {.headless = true,
+                                            .hasWindow = true,
+                                            .viewHidden = true,
+                                            .windowOnScreen = true};
+
+    check(decideViewVisibility(facts) == ViewVisibility::ViewHidden);
+};
