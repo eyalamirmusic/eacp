@@ -1,5 +1,8 @@
 #include "EventLoop.h"
 #include "../App/App.h"
+#include "../Notifications/Notifications-Apple.h"
+#include "../Notifications/NotificationsInternal.h"
+#include "../ObjC/Strings.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
@@ -48,6 +51,8 @@ void runPendingLaunch()
 - (BOOL)application:(UIApplication*)application
     didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
+    eacp::Notifications::Detail::installNotificationCenterDelegate();
+
     auto* center = [NSNotificationCenter defaultCenter];
     [center addObserverForName:UIApplicationDidEnterBackgroundNotification
                         object:nil
@@ -62,6 +67,20 @@ void runPendingLaunch()
                       eacp::Apps::Detail::setSuspended(false);
                     }];
     return YES;
+}
+
+- (void)application:(UIApplication*)application
+    didRegisterForRemoteNotificationsWithDeviceToken:(NSData*)deviceToken
+{
+    eacp::Notifications::Detail::receiveDeviceToken(
+        eacp::Notifications::Detail::toDeviceTokenHex(deviceToken));
+}
+
+- (void)application:(UIApplication*)application
+    didFailToRegisterForRemoteNotificationsWithError:(NSError*)error
+{
+    eacp::Notifications::Detail::receiveRegistrationFailure(
+        eacp::Strings::toStdString(error));
 }
 
 // Fallback for bundles that declare no UIScene manifest (apps with a custom
