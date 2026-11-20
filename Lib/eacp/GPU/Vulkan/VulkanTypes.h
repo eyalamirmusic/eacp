@@ -6,7 +6,9 @@
 #include "../Frame/ComputePass.h"
 #include "../Pipeline/RenderPipeline.h"
 
+#include <array>
 #include <memory>
+#include <string>
 
 // The concrete types the public GPU classes' opaque native handles point to.
 
@@ -384,13 +386,45 @@ struct VulkanTextureBindings
 
     VkDescriptorType typeAt(int slot) const { return types[slot]; }
 
-    void add(int slot, VkDescriptorType type);
+    const VulkanImageShape& shapeAt(int slot) const { return shapes[slot]; }
+
+    // What a write to the slot names when nothing was bound there; filled by
+    // VulkanPlaceholders::fill once the module's slots are known.
+    const VkDescriptorImageInfo& placeholderAt(int slot) const
+    {
+        return placeholders[slot];
+    }
+
+    // False for a slot the module does not declare, and where the device could
+    // not make the slot's shape: no write may then name the slot.
+    bool hasPlaceholder(int slot) const;
+
+    void add(int slot, VkDescriptorType type, const VulkanImageShape& shape = {});
 
     void merge(const VulkanTextureBindings& other);
 
     std::uint32_t declared = 0;
     VkDescriptorType types[maxTextureSlots] = {};
+    // std::array rather than a C array: GCC 13.3 will not copy-list-assign a
+    // class holding a C array of a type with member initializers.
+    std::array<VulkanImageShape, maxTextureSlots> shapes {};
+    std::array<VkDescriptorImageInfo, maxTextureSlots> placeholders {};
 };
+
+// VK_FORMAT_B8G8R8A8_UNORM rather than 44, for log lines; the number where
+// the format is past the core range the name table covers.
+std::string getVulkanFormatName(VkFormat format);
+std::string getVulkanViewTypeName(VkImageViewType viewType);
+std::string getVulkanSampleCountName(VkSampleCountFlagBits samples);
+
+// One descriptor at `binding` of `set`; the caller points it at its info.
+VkWriteDescriptorSet
+    makeDescriptorWrite(VkDescriptorSet set, int binding, VkDescriptorType type);
+
+// The uniform block's buffer at offset zero - the dynamic offset carries its
+// place - or the placeholder block when nothing was set.
+VkDescriptorBufferInfo getUniformBufferInfo(const ConstantRange& uniforms,
+                                            const VulkanPlaceholders& placeholders);
 
 // `firstBinding` is where the texture range starts: vulkanTextureBinding(0) for
 // a render shader, vulkanComputeTextureBinding(0) for a kernel.
@@ -433,6 +467,10 @@ struct VulkanRenderPipeline
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
 
     Vector<std::uint32_t> strides;
+
+    // The texture slots the two stages declare, for the placeholders a draw
+    // writes into the ones nothing was bound to.
+    VulkanTextureBindings textures;
 
     // Also inside the VkPipeline, and not dynamic state here.
     VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;

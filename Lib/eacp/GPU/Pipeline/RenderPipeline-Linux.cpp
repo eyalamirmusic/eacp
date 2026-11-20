@@ -5,6 +5,8 @@
 #include "../Vulkan/VulkanTypes.h"
 #include "VulkanSpecialization-Linux.h"
 
+#include <Miro/Reflection/ReflectEnum.h>
+
 namespace eacp::GPU
 {
 namespace
@@ -333,6 +335,18 @@ VkColorComponentFlags toVkWriteMask(const ColorWriteMask& mask)
     return value;
 }
 
+// Not every format blends: 32-bit float targets need not, and on Mali do not.
+bool isBlendable(VkFormat format)
+{
+    VkFormatProperties properties = {};
+    vkGetPhysicalDeviceFormatProperties(
+        getVulkanShared().getPhysicalDevice(), format, &properties);
+
+    return (properties.optimalTilingFeatures
+            & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT)
+           != 0;
+}
+
 VkPipelineColorBlendAttachmentState makeBlendAttachment(const ColorTargetState& from)
 {
     VkPipelineColorBlendAttachmentState attachment = {};
@@ -374,6 +388,40 @@ bool blendsAlike(const std::array<VkPipelineColorBlendAttachmentState,
     for (auto index = 1; index < count; ++index)
         if (!sameBlend(attachments[index], attachments[0]))
             return false;
+
+    return true;
+}
+
+// Logs and answers false where this device cannot blend the targets as asked:
+// targets blending differently without independentBlend, or a blending target
+// whose format the device cannot blend.
+bool canBlendTargets(const std::array<VkPipelineColorBlendAttachmentState,
+                                      maxColorAttachments>& attachments,
+                     const std::array<VkFormat, maxColorAttachments>& formats,
+                     const RenderPipelineDescriptor& descriptor,
+                     int count)
+{
+    if (!blendsAlike(attachments, count)
+        && !getVulkanShared().getFeatures().independentBlend)
+    {
+        LOG("Vulkan: this device has no independentBlend, so a pipeline "
+            "whose colour targets blend differently is refused");
+        return false;
+    }
+
+    for (auto index = 0; index < count; ++index)
+    {
+        if (attachments[index].blendEnable == VK_TRUE
+            && !isBlendable(formats[index]))
+        {
+            LOG("Vulkan: no render pipeline blending into ",
+                Miro::enumToString(descriptor.colorTarget(index).format),
+                " - ",
+                getVulkanShared().getAdapterName(),
+                " cannot blend it");
+            return false;
+        }
+    }
 
     return true;
 }
@@ -485,6 +533,7 @@ struct RenderPipeline::Native
                 && program->fragment == VK_NULL_HANDLE))
             return;
 
+        state.textures = program->textures;
         build(*program, layouts, descriptor);
     }
 
@@ -558,11 +607,9 @@ struct RenderPipeline::Native
             attachments[index] = makeBlendAttachment(
                 writtenColorTarget(descriptor, index, hasFragment));
 
-        if (!blendsAlike(attachments, state.colorCount)
-            && !getVulkanShared().getFeatures().independentBlend)
+        if (!canBlendTargets(
+                attachments, state.colorFormats, descriptor, state.colorCount))
         {
-            LOG("Vulkan: this device has no independentBlend, so a pipeline "
-                "whose colour targets blend differently is refused");
             return;
         }
 
