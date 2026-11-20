@@ -184,6 +184,8 @@ struct GPUView::Native
         return Graphics::linuxDefaultBackingScale;
     }
 
+    float effectiveScale() const { return surfaceScale() * appliedRenderScale; }
+
     // A scale change tells itself apart from a resize by the surface's own
     // scale. Nothing is recorded before a surface carries a real one, so the
     // first that arrives is the initial scale rather than a change.
@@ -192,7 +194,7 @@ struct GPUView::Native
         if (!record.handle.isValid())
             return;
 
-        const auto scale = surfaceScale();
+        const auto scale = effectiveScale();
         const auto changed = backingScale > 0.f && scale != backingScale;
         backingScale = scale;
 
@@ -402,6 +404,12 @@ struct GPUView::Native
                           ? windowExtent(transform)
                           : capabilities.currentExtent;
 
+        return clampExtent(extent, capabilities);
+    }
+
+    static VkExtent2D clampExtent(VkExtent2D extent,
+                                  const VkSurfaceCapabilitiesKHR& capabilities)
+    {
         extent.width = std::clamp(extent.width,
                                   capabilities.minImageExtent.width,
                                   capabilities.maxImageExtent.width);
@@ -410,6 +418,44 @@ struct GPUView::Native
                                    capabilities.maxImageExtent.height);
 
         return extent;
+    }
+
+    static std::uint32_t scaledSide(std::uint32_t side, float scale)
+    {
+        const auto scaled = std::lround(static_cast<float>(side) * scale);
+
+        return static_cast<std::uint32_t>(std::max(scaled, 1L));
+    }
+
+    // Whether there is a smaller extent to ask for: a scale below one, on a
+    // surface the window system stretches, of a drawable that has a size.
+    bool canRenderBelowFullSize(VkExtent2D full) const
+    {
+        const auto isEmpty = full.width == 0 || full.height == 0;
+
+        return !isEmpty && record.stretchesBuffer && requestedRenderScale < 1.f;
+    }
+
+    // A surface that will not take the smaller extent (Android before 10 pins
+    // min and max to the window's size) keeps the full one.
+    VkExtent2D applyRenderScale(VkExtent2D full,
+                                const VkSurfaceCapabilitiesKHR& capabilities)
+    {
+        appliedRenderScale = 1.f;
+
+        if (!canRenderBelowFullSize(full))
+            return full;
+
+        const auto scaled =
+            VkExtent2D {scaledSide(full.width, requestedRenderScale),
+                        scaledSide(full.height, requestedRenderScale)};
+        const auto clamped = clampExtent(scaled, capabilities);
+
+        if (clamped.width != scaled.width || clamped.height != scaled.height)
+            return full;
+
+        appliedRenderScale = requestedRenderScale;
+        return scaled;
     }
 
     bool createSwapchain()
@@ -429,7 +475,9 @@ struct GPUView::Native
             return false;
 
         const auto transform = chooseTransform(capabilities);
-        const auto extent = chooseExtent(capabilities, transform);
+        const auto previousScale = appliedRenderScale;
+        const auto extent =
+            applyRenderScale(chooseExtent(capabilities, transform), capabilities);
 
         if (extent.width == 0 || extent.height == 0)
             return false;
@@ -492,14 +540,46 @@ struct GPUView::Native
         suboptimalIsExpected = transform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
                                && isQuarterTurn(capabilities.supportedTransforms);
 
-        logFirstSwapchain(info);
+        return completeSwapchain(info, previousScale);
+    }
 
-        return createImages() && createCompanions() && createSemaphores();
+    // The swapchain's images and their companions, and the logs and the scale
+    // notification a new render scale brings.
+    bool completeSwapchain(const VkSwapchainCreateInfoKHR& info, float previousScale)
+    {
+        logFirstSwapchain(info, appliedRenderScale);
+        logRenderScaleChange(info, previousScale);
+
+        const auto isReady =
+            createImages() && createCompanions() && createSemaphores();
+
+        if (isReady)
+            notifyScaleChange();
+
+        return isReady;
+    }
+
+    // A rebuilt swapchain whose render scale moved, so a log says what the
+    // window system took.
+    void logRenderScaleChange(const VkSwapchainCreateInfoKHR& info,
+                              float previousScale) const
+    {
+        const auto isFirstSwapchain = info.oldSwapchain == VK_NULL_HANDLE;
+
+        if (isFirstSwapchain || previousScale == appliedRenderScale)
+            return;
+
+        LOG("Vulkan: swapchain ",
+            info.imageExtent.width,
+            "x",
+            info.imageExtent.height,
+            " at render scale ",
+            appliedRenderScale);
     }
 
     // Once per process: the line that says presentation came up on a device,
     // without one per resize.
-    static void logFirstSwapchain(const VkSwapchainCreateInfoKHR& info)
+    static void logFirstSwapchain(const VkSwapchainCreateInfoKHR& info, float scale)
     {
         static auto logged = false;
 
@@ -517,7 +597,9 @@ struct GPUView::Native
             info.minImageCount,
             " images, format ",
             getVulkanFormatName(info.imageFormat),
-            isMailbox ? ", mailbox" : ", FIFO");
+            isMailbox ? ", mailbox" : ", FIFO",
+            ", render scale ",
+            scale);
     }
 
     bool createImages()
@@ -831,7 +913,7 @@ struct GPUView::Native
         record.requestFrameCallback();
 
         {
-            auto frame = Frame(gpu, &drawable, nullptr, nullptr, surfaceScale());
+            auto frame = Frame(gpu, &drawable, nullptr, nullptr, effectiveScale());
             draw(frame);
         }
 
@@ -902,6 +984,11 @@ struct GPUView::Native
     bool stencilEnabled = false;
     bool continuous = false;
     bool transparent = false;
+    float requestedRenderScale = 1.f;
+
+    // What the swapchain was built at: the requested scale, or 1 where the
+    // surface could not take it.
+    float appliedRenderScale = 1.f;
 
     VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
@@ -1077,10 +1164,30 @@ void GPUView::resizeFinished() {}
 
 float GPUView::backingScale() const
 {
-    if (renderScale > 0.f)
-        return renderScale;
+    if (snapshotScale > 0.f)
+        return snapshotScale;
 
-    return impl->surfaceScale();
+    return impl->effectiveScale();
+}
+
+void GPUView::setRenderScale(float scale)
+{
+    const auto clamped = clampRenderScale(scale);
+
+    if (clamped == impl->requestedRenderScale)
+        return;
+
+    impl->requestedRenderScale = clamped;
+
+    if (impl->swapchain != VK_NULL_HANDLE)
+        impl->swapchainStale = true;
+
+    repaint();
+}
+
+float GPUView::renderScale() const
+{
+    return impl->requestedRenderScale;
 }
 
 void GPUView::paint(Graphics::Context&)
@@ -1137,9 +1244,9 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
         auto frame = Frame(device, target, scale);
 
-        renderScale = scale;
+        snapshotScale = scale;
         render(frame);
-        renderScale = 0.f;
+        snapshotScale = 0.f;
     }
     // The Frame destructor submitted and waited, so the texture can be read.
 
