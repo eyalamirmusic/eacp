@@ -72,21 +72,34 @@ int RpcServer::connectedClients() const
 
 void RpcServer::serve(Messenger& client)
 {
-    clients.add(&client);
+    auto sessionId = SessionId {++nextSessionId};
+    clients.add({client, sessionId});
     onClientConnected();
 
-    client.onDisconnected = [this, leaving = &client]
+    client.onDisconnected = [this, sessionId]
     {
-        clients.eraseIf([leaving](Messenger* candidate)
-                        { return candidate == leaving; });
+        clients.eraseIf([sessionId](const Session& candidate)
+                        { return candidate.id == sessionId; });
         onClientDisconnected();
     };
 
-    client.onMessage = [this, from = &client](const std::string& body)
-    { handle(*from, body); };
+    client.onMessage = [this, sessionId](const std::string& body)
+    { handle(sessionId, body); };
 }
 
-void RpcServer::handle(Messenger& client, const std::string& body)
+std::optional<std::reference_wrapper<Messenger>>
+    RpcServer::findSession(SessionId sessionId)
+{
+    for (auto& session: clients)
+    {
+        if (session.id == sessionId)
+            return session.messenger;
+    }
+
+    return std::nullopt;
+}
+
+void RpcServer::handle(SessionId sessionId, const std::string& body)
 {
     auto value = Miro::Json::Value {};
 
@@ -110,14 +123,15 @@ void RpcServer::handle(Messenger& client, const std::string& body)
 
     auto work = Rpc::runCommand(commandExecution, std::move(invoke));
 
-    // The reply lands back on the main thread, where the client may
-    // already have hung up - a departed session is simply not written to.
+    // The reply lands back on the main thread, where the client may already
+    // have hung up. Sessions are found by an id never reused, not by address:
+    // a newer session can be allocated where a departed one lived.
     Rpc::resolveWith(std::move(work),
-                     [this, id = envelope->id, target = &client](
+                     [this, id = envelope->id, sessionId](
                          const Miro::Json::Value& result, const std::string* error)
                      {
-                         if (clients.contains(target))
-                             target->send(printReply(id, result, error));
+                         if (auto session = findSession(sessionId))
+                             session->get().send(printReply(id, result, error));
                      });
 }
 
@@ -129,8 +143,8 @@ void RpcServer::broadcast()
 
     auto text = Miro::Json::print(body);
 
-    for (auto* client: clients)
-        client->send(text);
+    for (auto& session: clients)
+        session.messenger.get().send(text);
 }
 
 OwningPointer<RpcServer> createRPCServer(std::string_view name,
