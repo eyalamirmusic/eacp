@@ -156,6 +156,45 @@ auto tEphemeralPort = test("Tcp/bindZeroAssignsAnEphemeralPort") = []
     check(listener.port() != 0);
 };
 
+auto tBindNamedAddress = test("Tcp/bindToANamedAddressListensThere") = []
+{
+    constexpr auto loopbackAddress = "127.0.0.1";
+    auto listener = Listener::bind(0, testTimeouts(), loopbackAddress);
+
+    auto received = std::string {};
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            received = peer.receiveLine();
+        });
+
+    auto client =
+        Connection::connect({loopbackAddress, listener.port()}, testTimeouts());
+    client.send("hello\n");
+
+    server.join();
+
+    check(received == "hello");
+};
+
+auto tBindUnparsableAddress = test("Tcp/bindThrowsOnAnAddressThatDoesNotParse") = []
+{
+    constexpr auto unparsableAddress = "not-an-address";
+
+    auto threw = false;
+    try
+    {
+        Listener::bind(0, testTimeouts(), unparsableAddress);
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    check(threw);
+};
+
 auto tPeerCloseThrows = test("Tcp/receiveThrowsWhenPeerClosesBeforeDelimiter") = []
 {
     auto listener = Listener::bind(0, testTimeouts());
