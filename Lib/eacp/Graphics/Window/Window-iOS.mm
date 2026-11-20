@@ -6,7 +6,7 @@
 @interface WindowViewController : UIViewController
 {
 @public
-    eacp::Graphics::StatusBar statusBar;
+    eacp::Graphics::SystemStatusBar statusBar;
 }
 @end
 
@@ -14,21 +14,21 @@
 
 - (BOOL)prefersStatusBarHidden
 {
-    return statusBar == eacp::Graphics::StatusBar::Hidden;
+    return statusBar == eacp::Graphics::SystemStatusBar::Hidden;
 }
 
 - (UIStatusBarStyle)preferredStatusBarStyle
 {
-    using eacp::Graphics::StatusBar;
+    using eacp::Graphics::SystemStatusBar;
 
     switch (statusBar)
     {
-        case StatusBar::LightText:
+        case SystemStatusBar::LightText:
             return UIStatusBarStyleLightContent;
-        case StatusBar::DarkText:
+        case SystemStatusBar::DarkText:
             return UIStatusBarStyleDarkContent;
-        case StatusBar::Hidden:
-        case StatusBar::Automatic:
+        case SystemStatusBar::Hidden:
+        case SystemStatusBar::Automatic:
             return UIStatusBarStyleDefault;
     }
 

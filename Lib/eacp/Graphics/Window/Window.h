@@ -29,7 +29,7 @@ enum class WindowFlags
 // inside the safe area's top inset. Automatic picks its text colour from the
 // system's light or dark appearance; LightText and DarkText fix it, for a
 // window whose own background decides what can be read.
-enum class StatusBar
+enum class SystemStatusBar
 {
     Hidden,
     Automatic,
@@ -300,9 +300,9 @@ struct WindowOptions
     // value is ignored there; earlier Windows stays square.
     std::optional<float> cornerRadius;
 
-    // iOS only; see StatusBar. Hidden by default, as a game or a full-screen
-    // canvas wants.
-    StatusBar statusBar = StatusBar::Hidden;
+    // iOS only; see SystemStatusBar. Hidden by default, as a game or a
+    // full-screen canvas wants.
+    SystemStatusBar statusBar = SystemStatusBar::Hidden;
 
     EA::Vector<WindowFlags> flags;
 };
