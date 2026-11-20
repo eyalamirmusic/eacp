@@ -156,6 +156,58 @@ auto tThenInvokesErrorCallback = test("Async/then/invokesErrorCallback") = []
     check(received == "bad");
 };
 
+auto tRejectWithExceptionKeepsItsType =
+    test("Async/waitFor/rejectWithExceptionKeepsItsType") = []
+{
+    auto promise = AsyncPromise<int>();
+    auto async = promise.get();
+
+    callAsync(
+        [promise]
+        { promise.reject(std::make_exception_ptr(std::out_of_range("past end"))); });
+
+    auto message = std::string();
+    try
+    {
+        async.waitFor(eacp::Time::MS {1000});
+    }
+    catch (const std::out_of_range& e)
+    {
+        message = e.what();
+    }
+    check(message == "past end");
+};
+
+auto tThenReceivesRejectedExceptionMessage =
+    test("Async/then/receivesRejectedExceptionMessage") = []
+{
+    auto promise = AsyncPromise<int>();
+    promise.reject(std::make_exception_ptr(std::out_of_range("past end")));
+
+    auto received = std::string();
+    promise.get().then([](int) {}, [&](const std::string& e) { received = e; });
+
+    check(received == "past end");
+};
+
+auto tRejectWithNullThrowsAsyncError =
+    test("Async/waitFor/rejectWithNullExceptionThrowsAsyncError") = []
+{
+    auto promise = AsyncPromise<int>();
+    promise.reject(std::exception_ptr {});
+
+    auto threw = false;
+    try
+    {
+        promise.get().waitFor(eacp::Time::MS {1000});
+    }
+    catch (const AsyncError&)
+    {
+        threw = true;
+    }
+    check(threw);
+};
+
 auto tWorkerThreadResolvesViaCallAsync =
     test("Async/waitFor/workerThreadResolves") = []
 {
