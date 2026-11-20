@@ -23,10 +23,8 @@ ViewVisibility platformViewVisibility(GPUView& view)
 {
     auto* nativeView = (__bridge UIView*) view.getHandle();
 
-    if (nativeView.window == nil || nativeView.hidden)
-        return ViewVisibility::NotInVisibleWindow;
-
-    return ViewVisibility::Visible;
+    return decideViewVisibility({.hasWindow = nativeView.window != nil,
+                                 .viewHidden = nativeView.hidden == YES});
 }
 
 bool platformIsInLiveResize(GPUView&)

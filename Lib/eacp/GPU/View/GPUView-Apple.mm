@@ -237,7 +237,7 @@ struct GPUView::Native
             return;
         }
 
-        if (visibility == ViewVisibility::NotInVisibleWindow)
+        if (visibility == ViewVisibility::ViewHidden)
             return;
 
         view.update(time);

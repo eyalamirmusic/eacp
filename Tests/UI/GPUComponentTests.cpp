@@ -1,5 +1,9 @@
 #include <eacp/UI/UI.h>
 
+#include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Time.h>
+#include <eacp/Graphics/Window/Window.h>
+
 #include <NanoTest/NanoTest.h>
 
 #include <cmath>
@@ -1219,6 +1223,46 @@ auto tDeletedWhileContinuous =
     auto image = fixture.host.renderToImage(1.f);
 
     check(isEmpty(image, 10, 10));
+};
+
+// Under EACP_HEADLESS the window is never ordered in, and a window that never
+// reached the screen renders exactly as a visible one: this is the case a
+// headless app renders and reads back through.
+auto tContinuousHostInAWindow =
+    test("GPUComponent/aContinuousHostInAWindowRendersIt") = []
+{
+    if (!Platform::isMac() || !hasDevice())
+        return;
+
+    constexpr auto framesToSee = 15;
+    constexpr auto limit = Time::MS {3000};
+
+    auto root = Component {};
+    auto host = ComponentHost {};
+    auto gpu = ClearComponent {};
+
+    root.addAndMakeVisible(gpu);
+    gpu.setBounds({0.f, 0.f, 20.f, 20.f});
+    gpu.setContinuous(true);
+    host.setRootComponent(root);
+    host.setContinuous(true);
+
+    auto options = eacp::Graphics::WindowOptions {};
+    options.width = 100;
+    options.height = 100;
+
+    auto window = eacp::Graphics::Window {options};
+    window.setContentView(host);
+    window.setVisible(true);
+
+    auto deadline = Time::Deadline {limit};
+    auto enoughFrames = [&]
+    { return gpu.renders >= framesToSee && gpu.updates >= framesToSee; };
+
+    while (!enoughFrames() && !deadline.expired())
+        Threads::runEventLoopFor(Time::MS {8});
+
+    check(enoughFrames(), "the hosted component did not keep rendering");
 };
 
 auto tRenderNow = test("GPUComponent/renderNowRendersOrLeavesItToTheNextFrame") = []

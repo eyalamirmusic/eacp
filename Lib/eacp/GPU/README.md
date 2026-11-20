@@ -5002,6 +5002,32 @@ is the workaround, and the recommended form anyway; it is not a Vulkan concern,
 where each of those steps is a layout transition whose stage masks chain.
 `Copy/copiesBetweenPassesAreInOrderAtEverySize` is the test.
 
+## Continuous rendering on Apple
+
+A continuous `GPUView` on macOS stops its display link while its window, having
+been on screen, is minimised, ordered out, fully covered or on a sleeping
+display, and starts it again on the `NSWindowDidChangeOcclusionStateNotification`
+that ends it: the compositor schedules no work for such a window, so a frame
+drawn for it only waits in the queue. "Having been on screen" is the whole
+rule. A window that has never reported `NSWindowOcclusionStateVisible` — every
+window under `EACP_HEADLESS=1`, which is never ordered in, a window an app has
+not shown yet, and windows in a session with no window server — renders exactly
+as a visible one, update, render and present, because that is how frames are
+rendered and read back there, and no occlusion change will ever come to resume
+it. The display link itself needs a display to follow, and a `CVDisplayLink`
+over none never fires, so a `DisplayLink` made under `EACP_HEADLESS` or while
+no display is active ticks from a 60 Hz timer instead. A view in no window
+renders as well (a `CAMetalLayer` hands out drawables
+off screen), and a hidden view, in a window or not, keeps its link and skips
+each tick. `decideViewVisibility` (`View/ContinuousRenderSwitch.h`) is the
+rule, and on iOS only the hidden-view half of it applies. The other half of
+keeping a hidden window off the main thread is in the present itself: a
+display-link frame presents asynchronously through its command buffer, a frame
+that presents inside the `CATransaction` waits at most 100 ms for its buffer to
+be scheduled, and `nextDrawable` gives up after one second. The
+`HiddenWindow/` cases in `GPUTests` cover both sides, and the never-shown ones
+run headless.
+
 ## Windows
 
 The D3D12 backend is less exercised than the Metal one. Notes worth having:

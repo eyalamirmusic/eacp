@@ -1,7 +1,10 @@
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
 
 #include "GPUView.h"
 #include "GPUViewBacking-Apple.h"
+
+#include <eacp/Core/App/AppEnvironment.h>
 
 // macOS-specific GPUView piece. The CAMetalLayer setup and rendering live in the
 // shared GPUView-Apple.mm; only the backing-scale lookup differs from iOS.
@@ -16,18 +19,42 @@ double platformBackingScale(GPUView& view)
                                     : NSScreen.mainScreen.backingScaleFactor;
 }
 
+namespace
+{
+char hasBeenOnScreenKey;
+
+bool isOnScreen(NSWindow* window)
+{
+    return (window.occlusionState & NSWindowOcclusionStateVisible) != 0;
+}
+
+void noteIfOnScreen(NSWindow* window)
+{
+    if (window != nil && isOnScreen(window))
+        objc_setAssociatedObject(
+            window, &hasBeenOnScreenKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+bool hasBeenOnScreen(NSWindow* window)
+{
+    return objc_getAssociatedObject(window, &hasBeenOnScreenKey) != nil;
+}
+} // namespace
+
 ViewVisibility platformViewVisibility(GPUView& view)
 {
     auto* nativeView = (__bridge NSView*) view.getHandle();
     auto* window = nativeView.window;
 
-    if (window == nil || nativeView.isHiddenOrHasHiddenAncestor)
-        return ViewVisibility::NotInVisibleWindow;
+    noteIfOnScreen(window);
 
-    if ((window.occlusionState & NSWindowOcclusionStateVisible) == 0)
-        return ViewVisibility::WindowNotVisible;
-
-    return ViewVisibility::Visible;
+    return decideViewVisibility(
+        {.headless = Apps::getAppEnvironment().headless,
+         .hasWindow = window != nil,
+         .viewHidden = nativeView.isHiddenOrHasHiddenAncestor == YES,
+         .windowOnScreen = window != nil && isOnScreen(window),
+         .windowMinimised = window.isMiniaturized == YES,
+         .windowHasBeenOnScreen = window != nil && hasBeenOnScreen(window)});
 }
 
 bool platformIsInLiveResize(GPUView& view)
@@ -43,7 +70,8 @@ void* platformObserveWindowVisibility(const Callback& changed)
         addObserverForName:NSWindowDidChangeOcclusionStateNotification
                     object:nil
                      queue:NSOperationQueue.mainQueue
-                usingBlock:^(NSNotification*) {
+                usingBlock:^(NSNotification* notification) {
+                  noteIfOnScreen((NSWindow*) notification.object);
                   handler();
                 }];
 
