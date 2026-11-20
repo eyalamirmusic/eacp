@@ -1483,6 +1483,21 @@ void WebView::mouseMoved(const MouseEvent&) {}
 void WebView::mouseExited(const MouseEvent&) {}
 void WebView::mouseWheel(const MouseEvent&) {}
 
+// The same holds for file drags: the WKWebView is their destination, and this
+// view never asks for them (setAcceptsFileDrops).
+bool WebView::fileDragEnter(const Vector<std::string>&, Point)
+{
+    return false;
+}
+
+bool WebView::fileDragMove(const Vector<std::string>&, Point)
+{
+    return false;
+}
+
+void WebView::fileDragExit() {}
+void WebView::filesDropped(const Vector<std::string>&, Point) {}
+
 // The WKWebView is an ordinary subview, so it follows the window's placement
 // and visibility on its own.
 void WebView::hostWindowMoved() {}

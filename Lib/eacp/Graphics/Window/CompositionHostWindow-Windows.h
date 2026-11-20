@@ -35,6 +35,21 @@ bool isHostWindowTransparent(HWND hwnd);
 // rendering-device replacement invalidates every backing surface.
 void repaintViewTree(View* view);
 
+// The OLE side of a file drag, which a View's file-drag calls do not carry: the
+// source's data object, the key state and the effects the source allows.
+struct OleFileDrag
+{
+    IDataObject* data = nullptr;
+    DWORD keyState = 0;
+    DWORD allowedEffects = DROPEFFECT_NONE;
+};
+
+// The OLE drag `hwnd`'s host is routing, for the length of the fileDragEnter,
+// fileDragMove or filesDropped call it is making; empty outside one. A view
+// that hands the drag on to an OLE target of its own reads it here, which is
+// how the WebView gives WebView2 the drag whole.
+OleFileDrag currentOleFileDrag(HWND hwnd);
+
 // The composition-hosted HWND machinery shared by the two Windows surfaces: the
 // top-level Window and the child EmbeddedView. It owns the DesktopWindowTarget,
 // the root visual, the content view, DPI, keyboard state, and the WndProc
@@ -90,10 +105,17 @@ struct CompositionHostWindow
 
     // OS file drags over the HWND, in screen pixels, handed to the deepest
     // view under the pointer that accepts file drops. Called by the IDropTarget
-    // the host registers for its HWND.
-    bool fileDragOver(const Vector<std::string>& files, POINT screenPixels);
+    // the host registers for its HWND, with the OLE drag behind each call.
+    bool fileDragOver(const Vector<std::string>& files,
+                      POINT screenPixels,
+                      const OleFileDrag& drag);
     void fileDragLeave();
-    bool fileDrop(const Vector<std::string>& files, POINT screenPixels);
+    bool fileDrop(const Vector<std::string>& files,
+                  POINT screenPixels,
+                  const OleFileDrag& drag);
+
+    // See currentOleFileDrag.
+    const OleFileDrag& getRoutedOleFileDrag() const { return routedOleFileDrag; }
 
     // Handles the messages shared by both surfaces (paint, size, mouse buttons,
     // move/drag with capture, wheel, mouse-leave, keyboard). Returns nullopt for
@@ -148,6 +170,7 @@ private:
 
     IDropTarget* fileDropTarget = nullptr;
     View* fileDragView = nullptr;
+    OleFileDrag routedOleFileDrag;
 
     void fillWindowBackground(HDC dc) const;
     void resizeContentViewToClient();

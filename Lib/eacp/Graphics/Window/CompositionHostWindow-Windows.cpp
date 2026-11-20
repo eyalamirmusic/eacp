@@ -267,20 +267,21 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data,
-                                        DWORD,
+                                        DWORD keyState,
                                         POINTL point,
                                         DWORD* effect) override
     {
         files = draggedFilePaths(data);
-        *effect = dropEffectFor(host != nullptr && !files.empty()
-                                && host->fileDragOver(files, toPoint(point)));
+        dragData = data;
+        *effect = answerDragOver(keyState, point, *effect);
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL point, DWORD* effect) override
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD keyState,
+                                       POINTL point,
+                                       DWORD* effect) override
     {
-        *effect = dropEffectFor(host != nullptr && !files.empty()
-                                && host->fileDragOver(files, toPoint(point)));
+        *effect = answerDragOver(keyState, point, *effect);
         return S_OK;
     }
 
@@ -290,26 +291,57 @@ public:
             host->fileDragLeave();
 
         files.clear();
+        dragData.Reset();
         return S_OK;
     }
 
     HRESULT STDMETHODCALLTYPE Drop(IDataObject* data,
-                                   DWORD,
+                                   DWORD keyState,
                                    POINTL point,
                                    DWORD* effect) override
     {
         auto dropped = draggedFilePaths(data);
+        auto drag = OleFileDrag {data, keyState, *effect};
         files.clear();
+        dragData.Reset();
 
         *effect = dropEffectFor(host != nullptr && !dropped.empty()
-                                && host->fileDrop(dropped, toPoint(point)));
+                                && host->fileDrop(dropped, toPoint(point), drag));
         return S_OK;
     }
 
 private:
+    DWORD answerDragOver(DWORD keyState, POINTL point, DWORD allowedEffects)
+    {
+        auto drag = OleFileDrag {dragData.Get(), keyState, allowedEffects};
+
+        return dropEffectFor(host != nullptr && !files.empty()
+                             && host->fileDragOver(files, toPoint(point), drag));
+    }
+
     CompositionHostWindow* host = nullptr;
     Vector<std::string> files;
+    ComPtr<IDataObject> dragData;
     std::atomic<ULONG> refCount {1};
+};
+
+// Holds a host's routed OLE drag for the length of one routed call.
+class RoutedOleFileDrag
+{
+public:
+    RoutedOleFileDrag(OleFileDrag& slotToUse, const OleFileDrag& drag)
+        : slot(slotToUse)
+    {
+        slot = drag;
+    }
+
+    ~RoutedOleFileDrag() { slot = {}; }
+
+    RoutedOleFileDrag(const RoutedOleFileDrag&) = delete;
+    RoutedOleFileDrag& operator=(const RoutedOleFileDrag&) = delete;
+
+private:
+    OleFileDrag& slot;
 };
 
 bool isInViewTree(const View* root, const View* view)
@@ -457,6 +489,18 @@ bool isHostWindowTransparent(HWND hwnd)
             return host->transparentBackground;
 
     return false;
+}
+
+OleFileDrag currentOleFileDrag(HWND hwnd)
+{
+    if (hwnd == nullptr)
+        return {};
+
+    for (auto* host: compositionHosts())
+        if (host->hwnd == hwnd)
+            return host->getRoutedOleFileDrag();
+
+    return {};
 }
 
 // Called by the rendering-device recovery in D2DFactory-Windows.cpp. Unlike
@@ -828,8 +872,10 @@ View* CompositionHostWindow::fileDropViewAt(Point position) const
 }
 
 bool CompositionHostWindow::fileDragOver(const Vector<std::string>& files,
-                                         POINT screenPixels)
+                                         POINT screenPixels,
+                                         const OleFileDrag& drag)
 {
+    auto routing = RoutedOleFileDrag {routedOleFileDrag, drag};
     auto position = fromScreenPixels(screenPixels);
     auto* view = fileDropViewAt(position);
 
@@ -855,8 +901,10 @@ void CompositionHostWindow::fileDragLeave()
 }
 
 bool CompositionHostWindow::fileDrop(const Vector<std::string>& files,
-                                     POINT screenPixels)
+                                     POINT screenPixels,
+                                     const OleFileDrag& drag)
 {
+    auto routing = RoutedOleFileDrag {routedOleFileDrag, drag};
     auto position = fromScreenPixels(screenPixels);
     auto* view = fileDropViewAt(position);
 

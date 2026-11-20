@@ -1,9 +1,10 @@
 #pragma once
 
 // Internal to the Windows WebView backend (WebView-Windows.cpp): the drop
-// source + target for a native file drag-out. A header rather than part of the
-// translation unit only so the logic is unit-testable without a live
-// SHDoDragDrop loop — see Tests/WebView/FileDragTests-Windows.cpp.
+// source for a native file drag-out, and the arithmetic of handing file drags
+// on to WebView2. A header rather than part of the translation unit only so the
+// logic is unit-testable without a live SHDoDragDrop loop — see
+// Tests/WebView/FileDragTests-Windows.cpp.
 
 #include "WebView.h"
 
@@ -56,36 +57,17 @@ private:
     std::atomic<ULONG> refCount {1};
 };
 
-// A minimal drop target registered on our own window for the length of a
-// drag-out. Its only job is the cursor: without a target the shell paints the
-// ⊘ "no drop" badge over our window even where the page will accept the drop,
-// because the effect defaults to NONE. Reporting COPY gives the copy cursor
-// instead. The drop itself is deliberately a no-op — the app files the drop by
-// watching the cursor (onFileDragEnded, like the macOS path), not through OLE —
-// so Drop touches neither the data object nor the page; it only echoes the
-// effect to avoid a last-instant cursor flicker.
-class FileDragTarget final : public IDropTarget
-{
-public:
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override;
-    ULONG STDMETHODCALLTYPE AddRef() override;
-    ULONG STDMETHODCALLTYPE Release() override;
+// A position local to the WebView, in points, as the physical pixels WebView2's
+// input calls take: SendMouseInput and the composition controller's drag and
+// drop, whose bounds are set in physical pixels (see updateBounds).
+POINT toWebViewPixels(Point localPosition, float dpiScale);
 
-    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data,
-                                        DWORD keyState,
-                                        POINTL point,
-                                        DWORD* effect) override;
-    HRESULT STDMETHODCALLTYPE DragOver(DWORD keyState,
-                                       POINTL point,
-                                       DWORD* effect) override;
-    HRESULT STDMETHODCALLTYPE DragLeave() override;
-    HRESULT STDMETHODCALLTYPE Drop(IDataObject* data,
-                                   DWORD keyState,
-                                   POINTL point,
-                                   DWORD* effect) override;
-
-private:
-    std::atomic<ULONG> refCount {1};
-};
+// Whether the WebView takes a file drag the host window routes to it, which is
+// what decides the copy or the ⊘ cursor. The page says so through the effect
+// WebView2 answers with. During the view's own drag-out it is taken anywhere
+// over the view: the page follows that drag through onFileDragMoved/Ended and
+// files it where it is released, not only where an HTML5 drop would land, and
+// on macOS AppKit shows no refusal over our own window either.
+bool webViewTakesFileDrag(DWORD pageEffect, bool ownDragOutInProgress);
 
 } // namespace eacp::Graphics
