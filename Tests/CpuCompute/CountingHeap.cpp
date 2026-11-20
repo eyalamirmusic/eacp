@@ -15,6 +15,10 @@ std::atomic<int> allocationsCounted {0};
 std::atomic<int> releasesCounted {0};
 } // namespace ExecutorTests
 
+// ThreadSanitizer's runtime defines the global operator new and delete itself,
+// so a second definition fails the link; under it nothing is counted.
+#if !defined(EACP_THREAD_SANITIZER)
+
 namespace
 {
 void noteAllocation()
@@ -182,3 +186,4 @@ void operator delete[](void* pointer,
 {
     releaseAligned(pointer);
 }
+#endif
