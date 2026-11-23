@@ -1,8 +1,9 @@
 // The Windows file drag-out runs inside SHDoDragDrop's blocking modal loop, so
 // the streaming callbacks (onFileDragMoved / onFileDragEnded) hang off the
-// FileDragSource / FileDragTarget COM objects that loop talks to. These tests
-// drive those objects directly — the cursor reader is injected, so no live
-// drag, cursor, or window is needed.
+// FileDragSource COM object that loop talks to, and the cursor over our own
+// window comes from what the WebView answers the host window's drop target.
+// These tests drive that logic directly — the cursor reader is injected, so no
+// live drag, cursor, or window is needed.
 
 #include <eacp/WebView/WebView/FileDrag-Windows.h>
 #include <NanoTest/NanoTest.h>
@@ -106,26 +107,34 @@ auto tSourceUsesDefaultCursors = test("FileDrag/sourceUsesDefaultCursors") = []
     check(source.GiveFeedback(DROPEFFECT_COPY) == DRAGDROP_S_USEDEFAULTCURSORS);
 };
 
-auto tTargetReportsCopy = test("FileDrag/targetReportsCopyForCursorFeedback") = []
+auto tWebViewPixelsScaleByDpi = test("FileDrag/webViewPixelsScaleByDpi") = []
 {
-    // Without a registered target the shell paints the ⊘ "no drop" badge over
-    // our own window; the target's one job is to report COPY everywhere so the
-    // cursor matches what the page will actually do with the drop.
-    auto target = FileDragTarget {};
+    // 150% DPI: a point at (10, 21) in the view is physical (15, 32) after
+    // rounding — the space WebView2's SendMouseInput and DragOver take.
+    auto pixels = toWebViewPixels({10.f, 21.f}, 1.5f);
 
-    auto effect = DWORD {DROPEFFECT_NONE};
-    check(target.DragEnter(nullptr, 0, {}, &effect) == S_OK);
-    check(effect == DROPEFFECT_COPY);
+    check(pixels.x == 15);
+    check(pixels.y == 32);
+};
 
-    effect = DROPEFFECT_NONE;
-    check(target.DragOver(0, {}, &effect) == S_OK);
-    check(effect == DROPEFFECT_COPY);
+auto tPageVerdictDecidesExternalDrags =
+    test("FileDrag/pageEffectDecidesAnExternalDrag") = []
+{
+    // A drag from Explorer shows what the page says: copy over a drop zone,
+    // ⊘ where the page set dropEffect = 'none'.
+    check(webViewTakesFileDrag(DROPEFFECT_COPY, false));
+    check(webViewTakesFileDrag(DROPEFFECT_MOVE, false));
+    check(!webViewTakesFileDrag(DROPEFFECT_NONE, false));
+};
 
-    effect = DROPEFFECT_NONE;
-    check(target.Drop(nullptr, 0, {}, &effect) == S_OK);
-    check(effect == DROPEFFECT_COPY);
-
-    check(target.DragLeave() == S_OK);
+auto tOwnDragOutIsTakenEverywhere =
+    test("FileDrag/ownDragOutIsTakenAnywhereOverTheView") = []
+{
+    // Our own drag-out is followed by the page through the narration events
+    // and filed where it is released, so it never shows ⊘ over our window —
+    // matching macOS — even where the page refuses an HTML5 drop.
+    check(webViewTakesFileDrag(DROPEFFECT_NONE, true));
+    check(webViewTakesFileDrag(DROPEFFECT_COPY, true));
 };
 
 auto tComContract = test("FileDrag/comIdentityAndRefCount") = []

@@ -1,5 +1,6 @@
 #include "FileDrag-Windows.h"
 
+#include <cmath>
 #include <utility>
 
 namespace eacp::Graphics
@@ -77,64 +78,22 @@ HRESULT STDMETHODCALLTYPE FileDragSource::QueryContinueDrag(BOOL escapePressed,
 
 HRESULT STDMETHODCALLTYPE FileDragSource::GiveFeedback(DWORD)
 {
-    // The drop target (see FileDragTarget) reports the effect, so the shell
-    // picks the right cursor from it. Over our own window that is a copy
-    // cursor; over Explorer / another app, whatever they return.
+    // The drop target reports the effect, so the shell picks the right cursor
+    // from it. Over our own window that is the host window's target, which
+    // asks the WebView (see webViewTakesFileDrag); over Explorer / another
+    // app, whatever they return.
     return DRAGDROP_S_USEDEFAULTCURSORS;
 }
 
-HRESULT STDMETHODCALLTYPE FileDragTarget::QueryInterface(REFIID riid, void** object)
+POINT toWebViewPixels(Point localPosition, float dpiScale)
 {
-    if (riid == IID_IUnknown || riid == IID_IDropTarget)
-    {
-        *object = static_cast<IDropTarget*>(this);
-        AddRef();
-        return S_OK;
-    }
-    *object = nullptr;
-    return E_NOINTERFACE;
+    return {static_cast<LONG>(std::lround(localPosition.x * dpiScale)),
+            static_cast<LONG>(std::lround(localPosition.y * dpiScale))};
 }
 
-ULONG STDMETHODCALLTYPE FileDragTarget::AddRef()
+bool webViewTakesFileDrag(DWORD pageEffect, bool ownDragOutInProgress)
 {
-    return ++refCount;
-}
-
-ULONG STDMETHODCALLTYPE FileDragTarget::Release()
-{
-    auto remaining = --refCount;
-    if (remaining == 0)
-        delete this;
-    return remaining;
-}
-
-HRESULT STDMETHODCALLTYPE FileDragTarget::DragEnter(IDataObject*,
-                                                    DWORD,
-                                                    POINTL,
-                                                    DWORD* effect)
-{
-    *effect = DROPEFFECT_COPY;
-    return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE FileDragTarget::DragOver(DWORD, POINTL, DWORD* effect)
-{
-    *effect = DROPEFFECT_COPY;
-    return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE FileDragTarget::DragLeave()
-{
-    return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE FileDragTarget::Drop(IDataObject*,
-                                               DWORD,
-                                               POINTL,
-                                               DWORD* effect)
-{
-    *effect = DROPEFFECT_COPY;
-    return S_OK;
+    return pageEffect != DROPEFFECT_NONE || ownDragOutInProgress;
 }
 
 } // namespace eacp::Graphics
