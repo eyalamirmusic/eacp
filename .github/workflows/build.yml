@@ -271,11 +271,13 @@ jobs:
   # this lane runs in a Debian sid container, where libwpewebkit-2.0-dev is,
   # and is a job of its own rather than a matrix entry because the matrix lanes
   # install onto the runner itself. The package list is Dockerfile.webview's,
-  # less the debugger and the display servers: the backend is headless for
-  # now, so the whole suite runs once, headless, and no Weston or Xvfb step
-  # follows. EACP_REQUIRE_WEBVIEW fails the configure if WPE went missing,
-  # rather than letting the module quietly drop out. WebKit's bubblewrap
-  # sandbox cannot start in an unprivileged container, so it is turned off.
+  # less the debugger. The whole suite runs headless first, then again under
+  # Weston and the window suites under Xvfb, as the Linux Clang Vulkan lane
+  # does, so the page presenting through its WebViewSurface (the
+  # WebViewPresent group) runs on both window systems on lavapipe.
+  # EACP_REQUIRE_WEBVIEW fails the configure if WPE went missing, rather than
+  # letting the module quietly drop out. WebKit's bubblewrap sandbox cannot
+  # start in an unprivileged container, so it is turned off.
   build-linux-webview:
     name: Linux WebView
     runs-on: ubuntu-latest
@@ -285,6 +287,8 @@ jobs:
       CCACHE_DEPEND: '1'
       EACP_HEADLESS: '1'
       EACP_REQUIRE_FONTS: '1'
+      EACP_REQUIRE_GPU: '1'
+      EACP_VK_SOFTWARE: '1'
       WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: '1'
 
     steps:
@@ -307,7 +311,7 @@ jobs:
             libfreetype-dev libharfbuzz-dev libfontconfig-dev fontconfig \
             fonts-dejavu-core fonts-dejavu-extra fonts-noto-color-emoji \
             fonts-droid-fallback \
-            libvulkan1 mesa-vulkan-drivers \
+            libvulkan1 mesa-vulkan-drivers vulkan-tools weston xvfb \
             libwpewebkit-2.0-dev
 
       - uses: actions/checkout@v6
@@ -325,9 +329,10 @@ jobs:
           install: detect
           save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
 
-      - name: Show WPE WebKit and the fonts
+      - name: Show WPE WebKit, the Vulkan device and the fonts
         run: |
           pkg-config --modversion wpe-webkit-2.0 wpe-platform-2.0
+          vulkaninfo --summary
           fc-match monospace
           fc-match sans-serif
           fc-list : family | sort -u
@@ -346,6 +351,25 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure -j 4
+
+      # The Linux Clang Vulkan lane's two display steps, with the same
+      # filters: everything but the X11 suites under Weston, then the suites
+      # that open windows, WebViewPresent among them, under Xvfb.
+      - name: Test under Weston
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+        run: >
+          Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
+          -E '^(X11|EmbeddedView|NativeChildSurface)(/|$)'
+
+      - name: Test under Xvfb
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+        run: >
+          Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
+          -R '^(X11|EmbeddedView|NativeChildSurface|Present|WebViewPresent)(/|$)'
 
   build-ios:
     name: iOS Simulator

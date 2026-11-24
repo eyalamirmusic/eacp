@@ -457,7 +457,7 @@ and their tests build with it:
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
-| `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows; or `EACP_HAS_GPU` and `EACP_BUILD_WEBVIEW` on desktop Linux where WPE WebKit 2.0 is found | the native `WebView` (WKWebView / WebView2 / WPE WebKit, headless for now on Linux) |
+| `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows; or `EACP_HAS_GPU` and `EACP_BUILD_WEBVIEW` on desktop Linux where WPE WebKit 2.0 is found | the native `WebView` (WKWebView / WebView2 / WPE WebKit, on Linux presented through a `GPUView` child, with no input yet) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
@@ -567,15 +567,17 @@ docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISP
 
 The WebView's Linux backend has a lane of its own, "Linux WebView", because
 the runners' Ubuntu packages no WPE WebKit 2.0: it runs in a `debian:sid`
-container, installs `Dockerfile.webview`'s packages (less the debugger and
-the display servers), builds the whole tree with GCC under the same CI
-configuration plus `-DEACP_REQUIRE_WEBVIEW=ON`, so a WPE that went missing
-fails the configure rather than dropping the module, and runs the full suite
-once with `EACP_HEADLESS=1`, `EACP_REQUIRE_FONTS=1` and
-`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` — bubblewrap cannot start in an
-unprivileged container. The backend is headless for now, so no Weston or Xvfb
-step follows. It compiles through ccache like the matrix, under a key of its
-own. `Dockerfile.webview`'s `ci-build` reproduces it locally (see
+container, installs `Dockerfile.webview`'s packages (less the debugger),
+builds the whole tree with GCC under the same CI configuration plus
+`-DEACP_REQUIRE_WEBVIEW=ON`, so a WPE that went missing fails the configure
+rather than dropping the module, and runs the full suite once with
+`EACP_HEADLESS=1`, `EACP_REQUIRE_FONTS=1`, `EACP_REQUIRE_GPU=1`,
+`EACP_VK_SOFTWARE=1` and `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` —
+bubblewrap cannot start in an unprivileged container. Then it runs the Linux
+Clang Vulkan lane's Weston and Xvfb steps with the same filters plus
+`WebViewPresent` in the Xvfb one, so the page reaching the swapchain is
+checked on both window systems. It compiles through ccache like the matrix,
+under a key of its own. `Dockerfile.webview`'s `ci-build` reproduces it locally (see
 [Linux.md](Linux.md), "WebView").
 
 A ctest entry is a group, not a case: `Tests/CMakeLists.txt` sets

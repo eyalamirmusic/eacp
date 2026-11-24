@@ -14,6 +14,14 @@
 #   podman run --rm -v "$PWD":/workspace -e EACP_HEADLESS=1 \
 #       -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 eacp-wpe-dev \
 #       ci-build -DEACP_UNITY_BUILD=OFF -DEACP_REQUIRE_WEBVIEW=ON
+#
+# Then the page on screen, on lavapipe, as the CI lane's display steps run it
+# (with-xvfb and the X11 filter for the other window system):
+#   podman run --rm -v "$PWD":/workspace -e EACP_VK_SOFTWARE=1 \
+#       -e EACP_REQUIRE_GPU=1 -e EACP_REQUIRE_DISPLAY=1 \
+#       -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 eacp-wpe-dev \
+#       with-weston ctest --test-dir build-ci-wpe --output-on-failure \
+#       -E '^(X11|EmbeddedView|NativeChildSurface)(/|$)'
 
 FROM debian:sid
 

@@ -49,8 +49,9 @@ set of modules and a new port reaches them one at a time. The next three hang of
 `EACP_HAS_DRAW`: `CONTEXT` is Apple/Windows-only, `CAPTURE`
 is Apple, Windows and Android, and `WEBVIEW` is Apple and Windows plus desktop
 Linux wherever pkg-config finds WPE WebKit 2.0 (`CMake/FindWPE.cmake`, soft;
-`-DEACP_REQUIRE_WEBVIEW=ON` makes a missing one fatal; the Linux backend is
-headless for now, `Docs/Linux.md`, "WebView"), so on Apple and Windows the first six are
+`-DEACP_REQUIRE_WEBVIEW=ON` makes a missing one fatal; the Linux backend
+presents through a `GPUView` child and takes no input yet, `Docs/Linux.md`,
+"WebView"), so on Apple and Windows the first six are
 simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
 `Network` is gated by none of them: it builds everywhere — the HTTP client is
@@ -84,7 +85,8 @@ stock font packages so the text suites resolve rather than skip, and only the
 third has a driver, a compositor and an X server to run the GPU and window
 tests on, plus a fourth, "Linux WebView", in a Debian sid container with WPE
 WebKit, which configures with `-DEACP_REQUIRE_WEBVIEW=ON` and runs the whole
-suite headless with WebKit's sandbox off), and builds iOS for the simulator and HelloGPU and HelloNetwork
+suite headless with WebKit's sandbox off, then the Vulkan lane's Weston and
+Xvfb steps on lavapipe, `WebViewPresent` among them), and builds iOS for the simulator and HelloGPU and HelloNetwork
 for Android (arm64-v8a, an NDK installed with `sdkmanager`). The Windows ARM64
 lanes configure with `-DEACP_BUILD_WEBVIEW=OFF`, because the WebView example
 apps' npm installs run inside configure and are several times slower on the
