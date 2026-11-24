@@ -82,6 +82,11 @@ int WpeFrame::height() const
     return frameHeight;
 }
 
+const std::uint8_t* WpeFrame::data() const
+{
+    return pixels.data();
+}
+
 Image WpeFrame::toImage() const
 {
     if (isEmpty())

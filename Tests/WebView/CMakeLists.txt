@@ -58,8 +58,8 @@ endif ()
 #                           Options::loadDeclinedPopupsInline deciding whether a
 #                           declined window.open replaces the host document
 #
-# The Linux backend (WPE WebKit) is headless and serves no custom schemes yet,
-# so it leaves out the suites that need them — MessageOriginTests and
+# The Linux backend (WPE WebKit) serves no custom schemes yet, so it leaves
+# out the suites that need them — MessageOriginTests and
 # StreamingPumpTests — and adds WpeFrameTests-Linux.cpp, its frame conversion
 # and the GLib pump. UserAgentTests' popup cases and RenderToImageAsyncTests'
 # painted-view case guard themselves.
@@ -110,6 +110,27 @@ if (TARGET eacp-webview-test-main)
         target_link_libraries(WebViewTests PRIVATE eacp-wpe)
     endif ()
     nano_discover_tests(WebViewTests)
+
+    # The page on screen (WebViewSurface-Linux.cpp): its own binary because
+    # eacp-webview-test-main forces headless, which on Linux is no window
+    # system at all. Its cases open windows, so the group takes the lock the
+    # Present and X11 groups take.
+    if (LINUX AND NOT CMAKE_CROSSCOMPILING)
+        nano_add_executable(WebViewPresentTests
+                NO_MAIN
+                SOURCES WebViewPresentTests-Linux.cpp
+                TARGETS eacp-webview eacp-gpu)
+
+        set(webview_present_lock_file
+                "${CMAKE_CURRENT_BINARY_DIR}/WebViewPresentSerialisation.cmake")
+
+        file(WRITE "${webview_present_lock_file}"
+                "set_tests_properties(WebViewPresent PROPERTIES\n"
+                "        RESOURCE_LOCK eacp-linux-display)\n")
+
+        set_property(DIRECTORY APPEND PROPERTY
+                TEST_INCLUDE_FILES "${webview_present_lock_file}")
+    endif ()
 else ()
     nano_add_executable(WebViewTests
             SOURCES ${webview_test_sources}

@@ -42,6 +42,13 @@ public:
 
     void setFrameSink(WpeFrameSink sink);
 
+    // While presenting, a frame is reported rendered by bufferPresented()
+    // rather than by the headless frame clock, which then only stands in for
+    // a present that does not come. The sink may change this for the frame
+    // it is being handed.
+    void setPresenting(bool presenting);
+    void bufferPresented();
+
     // In points, with the device pixels per point. A zero size is ignored:
     // WebKit renders nothing into it.
     void resize(float widthPoints, float heightPoints, float scale);

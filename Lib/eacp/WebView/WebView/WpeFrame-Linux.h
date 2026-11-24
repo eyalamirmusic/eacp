@@ -25,6 +25,9 @@ public:
     int width() const;
     int height() const;
 
+    // Tightly packed rows, width * 4 bytes each.
+    const std::uint8_t* data() const;
+
     Image toImage() const;
 
 private:

@@ -3,6 +3,7 @@
 #include "GLibPump-Linux.h"
 #include "MessageOrigin.h"
 #include "WebViewDetail.h"
+#include "WebViewSurface-Linux.h"
 #include "WpeFrame-Linux.h"
 #include "WpePlatform-Linux.h"
 
@@ -143,6 +144,12 @@ struct WebView::Native
         applySettings(options);
         connectSignals();
 
+        surfaceView = std::make_unique<detail::WebViewSurface>(lastFrame);
+        surfaceView->setTransparent(options.transparentBackground);
+        surfaceView->onPresented = [this] { host->bufferPresented(); };
+        surfaceView->onBackingScaleChanged = [this](float) { pushGeometry(); };
+        owner.addSubview(*surfaceView);
+
         host = std::make_unique<detail::WpeViewHost>(
             webkit_web_view_get_wpe_view(webView.get()));
         host->setFrameSink([this](const detail::WpeFrameBytes& frame)
@@ -151,6 +158,13 @@ struct WebView::Native
 
     ~Native()
     {
+        if (surfaceView != nullptr)
+        {
+            surfaceView->onPresented = [] {};
+            owner.removeSubview(*surfaceView);
+            surfaceView.reset();
+        }
+
         host.reset();
 
         if (contentManager != nullptr)
@@ -327,9 +341,18 @@ struct WebView::Native
         messageSignals.erase(found);
     }
 
+    // On screen, WebKit's next frame waits for this one's present; anywhere
+    // else (headless, hidden, not yet mapped) the frame clock paces it.
     void frameRendered(const detail::WpeFrameBytes& frame)
     {
         lastFrame.store(frame.bgra, frame.width, frame.height, frame.stride);
+
+        auto presenting = surfaceView->canPresent();
+        host->setPresenting(presenting);
+
+        if (presenting)
+            surfaceView->frameArrived();
+
         deliverSnapshots();
     }
 
@@ -389,6 +412,7 @@ struct WebView::Native
     GObjectPtr<WebKitWebView> webView;
     std::unique_ptr<detail::WpeViewHost> host;
     detail::WpeFrame lastFrame;
+    std::unique_ptr<detail::WebViewSurface> surfaceView;
     std::vector<SnapshotCallback> waitingSnapshots;
     std::unordered_map<std::string, MessageFunc> messageHandlers;
     std::unordered_map<std::string, gulong> messageSignals;
@@ -609,6 +633,10 @@ void WebView::installKeyEventSupport() {}
 void WebView::resized()
 {
     View::resized();
+
+    if (impl->surfaceView != nullptr)
+        impl->surfaceView->setBounds(getLocalBounds());
+
     impl->pushGeometry();
 }
 

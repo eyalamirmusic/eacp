@@ -43,7 +43,13 @@ struct EacpWpeViewState
     WPEBuffer* committedBuffer = nullptr;
     GSource* frameSource = nullptr;
     gint64 lastFrameTime = 0;
+    bool presenting = false;
 };
+
+// How long a presented view's buffer may wait for its present before it is
+// reported rendered anyway: a swapchain that never came up, or a surface the
+// compositor stopped answering, must not stall WebKit for good.
+constexpr auto presentFallback = gint64 {G_USEC_PER_SEC / 4};
 
 struct EacpWpeView
 {
@@ -94,6 +100,9 @@ gboolean presentPendingBuffer(gpointer userData)
 
     if (state == nullptr)
         return G_SOURCE_REMOVE;
+
+    if (state->pendingBuffer == nullptr)
+        return G_SOURCE_CONTINUE;
 
     if (state->committedBuffer != nullptr)
         wpe_view_buffer_released(view, state->committedBuffer);
@@ -168,8 +177,10 @@ gboolean viewRenderBuffer(
     if (state == nullptr)
         return FALSE;
 
-    deliverFrame(*state, buffer);
+    // Pending before the sink sees it, so a sink that presents at once can
+    // report it rendered from inside the call.
     replaceBuffer(state->pendingBuffer, buffer);
+    deliverFrame(*state, buffer);
 
     auto now = g_get_monotonic_time();
 
@@ -178,6 +189,12 @@ gboolean viewRenderBuffer(
 
     auto next = state->lastFrameTime + G_USEC_PER_SEC / 60;
     state->lastFrameTime = now;
+
+    if (state->pendingBuffer == nullptr)
+        return TRUE;
+
+    if (state->presenting)
+        next = now + presentFallback;
 
     g_source_set_ready_time(state->frameSource, next <= now ? 0 : next);
     return TRUE;
@@ -400,6 +417,30 @@ void WpeViewHost::setFrameSink(WpeFrameSink sink)
 {
     if (auto* state = viewStateOf(view))
         state->sink = std::move(sink);
+}
+
+void WpeViewHost::setPresenting(bool presenting)
+{
+    auto* state = viewStateOf(view);
+
+    if (state == nullptr || state->presenting == presenting)
+        return;
+
+    state->presenting = presenting;
+
+    if (!presenting && state->pendingBuffer != nullptr)
+        g_source_set_ready_time(state->frameSource, 0);
+}
+
+void WpeViewHost::bufferPresented()
+{
+    auto* state = viewStateOf(view);
+
+    if (state == nullptr || state->pendingBuffer == nullptr)
+        return;
+
+    g_source_set_ready_time(state->frameSource, -1);
+    presentPendingBuffer(view);
 }
 
 void WpeViewHost::resize(float widthPoints, float heightPoints, float scale)

@@ -117,8 +117,12 @@ elseif (LINUX)
             WebView/WpeFrame-Linux.cpp
             WebView/WpePlatform-Linux.cpp)
 
-    target_sources(eacp-webview PRIVATE ${eacp_webview_gobject_sources})
-    target_link_libraries(eacp-webview PRIVATE eacp-wpe)
+    # The page reaches the screen through a GPUView child (WebViewSurface),
+    # so the Vulkan swapchain stays the GPU module's alone.
+    target_sources(eacp-webview PRIVATE
+            ${eacp_webview_gobject_sources}
+            WebView/WebViewSurface-Linux.cpp)
+    target_link_libraries(eacp-webview PRIVATE eacp-wpe eacp-gpu)
 
     # GLib's and WebKit's headers define macros and G_DEFINE_TYPE statics that
     # would leak into whatever shares a unity batch with them.
