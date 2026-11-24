@@ -341,6 +341,12 @@ bool mentionsATimeout(const std::string& message)
     return eacp::Strings::toLower(message).find("timed out") != std::string::npos;
 }
 
+GreetResponse slowGreet(const GreetRequest& req)
+{
+    eacp::Time::sleep(eacp::Time::MS {300});
+    return rpcGreet(req);
+}
+
 Rpc::ClientOptions timeoutOf(eacp::Time::MS limit)
 {
     auto options = Rpc::ClientOptions();
@@ -407,13 +413,7 @@ auto tRpcClientGenerousTimeoutCompletes =
     auto bridge = Miro::Bridge {};
     auto rpc = Rpc::Server {httpServer, bridge};
 
-    auto slowGreet = [](const GreetRequest& req)
-    {
-        eacp::Time::sleep(eacp::Time::MS {300});
-        return rpcGreet(req);
-    };
-
-    bridge.on<GreetRequest, GreetResponse>("greet", slowGreet);
+    bridge.on<GreetRequest, GreetResponse>("greet", &slowGreet);
     check(httpServer.listen(0));
 
     auto port = httpServer.boundPort();
