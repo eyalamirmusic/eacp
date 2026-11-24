@@ -26,6 +26,7 @@ RUN apt-get update \
         clang \
         cmake \
         curl \
+        fontconfig \
         fonts-dejavu-core \
         fonts-dejavu-extra \
         fonts-droid-fallback \
