@@ -60,6 +60,11 @@ constexpr auto untouchedCentre = "0,0,0,0";
 // expects frames waits for the signal instead.
 constexpr auto frozenSettleTime = eacp::Time::MS {100};
 
+// Three chained frames ride a hidden page's timers, which WebKit throttles to
+// about 1 Hz and App Nap coalesces further on a loaded runner, so they can take
+// well over the ten seconds a round trip through a live page is given.
+constexpr auto throttledAnimationTimeout = eacp::Time::MS {30000};
+
 struct AnimationFixture
 {
     WebView webView;
@@ -89,7 +94,7 @@ struct AnimationFixture
     void waitForPaint()
     {
         check(Threads::runEventLoopUntil([this] { return painted; },
-                                         webViewResultTimeout));
+                                         throttledAnimationTimeout));
     }
 
     static WebView::Options makeOptions(bool driveOffscreen)

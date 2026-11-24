@@ -102,7 +102,17 @@ bool pumpUntil(Time::MS limit, const std::function<bool()>& done)
 constexpr auto presentTimeout = Time::MS {3000};
 constexpr auto settleTime = Time::MS {200};
 constexpr auto hiddenObservation = Time::MS {500};
-constexpr auto longestAcceptableStall = std::chrono::milliseconds {250};
+
+// The window server reports a window off screen only once it has acted on
+// orderOut or finished the minimise animation: about 300 ms and 550 ms on an
+// idle Mac, and seconds on a loaded CI runner.
+constexpr auto windowServerTimeout = Time::MS {10000};
+
+// The stall these cases exist to catch is nextDrawable giving up, which takes a
+// full second. Half of that still catches it, and leaves room for the
+// scheduling hiccups of a runner with more test processes than cores.
+constexpr auto nextDrawableTimeout = std::chrono::milliseconds {1000};
+constexpr auto longestAcceptableStall = nextDrawableTimeout / 2;
 constexpr auto windowWidth = 320;
 constexpr auto windowHeight = 240;
 
@@ -141,13 +151,23 @@ bool startsRendering(CountingView& view)
     return false;
 }
 
+bool hasLeftScreen(NSWindow* window)
+{
+    return pumpUntil(windowServerTimeout, [&] { return !isWindowOnScreen(window); });
+}
+
 // Fifteen frames in three seconds cannot be reached if nextDrawable is timing
 // out (one second each once the three drawables are spent), and the stall
-// bound catches a single timeout on its own.
+// bound catches a single timeout on its own. Measuring starts after the first
+// frame, so the window server's work of bringing a new window up is not
+// counted as a stall of the view.
 void checkRendersContinuously(CountingView& view)
 {
     constexpr auto framesToSee = 15;
     constexpr auto limit = Time::MS {3000};
+
+    check(pumpUntil(presentTimeout, [&] { return view.renders > 0; }),
+          "a continuous view that was never on screen did not render a frame");
 
     const auto result = pumpUntilMeasuring(limit,
                                            [&]
@@ -214,7 +234,14 @@ auto tMinimisedStops = test("HiddenWindow/minimisedWindowStopsAndResumes") = []
 
     auto* nativeWindow = view.getNativeWindow();
     [nativeWindow miniaturize:nil];
-    check(pumpUntil(presentTimeout, [&] { return !isWindowOnScreen(nativeWindow); }));
+
+    if (!hasLeftScreen(nativeWindow))
+    {
+        LOGF("HiddenWindow: still on screen after miniaturize, miniaturized {}",
+             nativeWindow.isMiniaturized == YES);
+        check(false, "the minimised window never left the screen");
+        return;
+    }
 
     checkStaysStoppedAndResponsive(view);
 
@@ -291,6 +318,12 @@ auto tOrderedOutStops = test("HiddenWindow/orderedOutWindowStopsAndResumes") = [
 
     auto* nativeWindow = view.getNativeWindow();
     [nativeWindow orderOut:nil];
+
+    if (!hasLeftScreen(nativeWindow))
+    {
+        check(false, "the ordered-out window never left the screen");
+        return;
+    }
 
     checkStaysStoppedAndResponsive(view);
 
