@@ -118,6 +118,10 @@ auto tUserAgentOverrideReachesThePage =
     check(fix.reportedUserAgent == customUserAgent);
 };
 
+// The Linux backend does not report window.open requests yet, so the popup
+// cases wait for it.
+#if !defined(__linux__)
+
 // The behaviour every embedder has had: nowhere else to put the navigation,
 // so it lands here and the document is replaced.
 auto tDeclinedPopupLoadsInlineByDefault =
@@ -155,3 +159,5 @@ auto tDeclinedPopupCanLeaveTheHostAlone =
                                       Time::MS {100}));
     check(fix.readMarker() == "alive");
 };
+
+#endif

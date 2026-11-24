@@ -251,6 +251,58 @@ report green by skipping everything.
 The HTTP client is libcurl on Linux, so a build needs its development headers
 too (`libcurl4-openssl-dev` on Debian/Ubuntu).
 
+The `WebView` module needs WPE WebKit 2.0 (`libwpewebkit-2.0-dev` on Debian,
+which Ubuntu does not ship); without it the module is left out, or the
+configure fails under `-DEACP_REQUIRE_WEBVIEW=ON`. See "WebView" below.
+
+## WebView
+
+`WebView` on Linux is WPE WebKit through its 2.0 Platform API
+(`Lib/eacp/WebView/WebView/*-Linux.cpp`, linking `eacp-wpe` PRIVATE, so no eacp
+header sees a GLib or WebKit one). `WpePlatform-Linux.cpp` subclasses
+`WPEDisplay`, `WPEView` and `WPEToplevel` in-process — no window-system
+connection — so every frame WebKit renders arrives as a shared-memory buffer
+(B, G, R, A, premultiplied) that `WpeFrame-Linux.cpp` keeps as the view's last
+frame, paced the way WPE's own headless view paces them. `GLibPump-Linux.cpp`
+runs GLib's default main context from eacp's loop as one loop source — an epoll
+set of GLib's poll fds plus a timerfd armed to its next timeout — so WebKit runs
+under `run()`, `runFor()` and `pumpEventLoop()` alike.
+
+On screen, the page is a `GPUView` child filling the WebView
+(`WebViewSurface-Linux.cpp`): it presents through the GPU module's own
+swapchain on the view's Wayland subsurface or X11 child window, so there is no
+second swapchain owner, and draws the last frame as one textured quad with
+blending off (premultiplied, matching the `PRE_MULTIPLIED` composite alpha a
+transparent `GPUView` asks for; where the surface offers only opaque, the
+page's alpha is dropped). The whole frame is uploaded each time; damage
+regions are not used. While the view has a surface, WebKit's next frame waits
+for this one's present: a new frame starts the child's continuous loop, paced
+by the compositor's frame callbacks or the X11 pacer, the present reports the
+buffer rendered to WPE on the next loop turn, and two ticks with nothing new
+stop the loop, so a static page asks for no frames. A buffer is copied out
+the moment it arrives, so it is never released under an upload. With no
+surface — headless, hidden, not yet mapped — the frame clock above paces it as
+before, and it also stands in, after a quarter of a second, for a present that
+never comes. The WebView's bounds and its window's scale (and changes to it)
+reach `wpe_view_resized` and the toplevel's scale; showing and hiding map and
+unmap the WPE view.
+
+Navigation, script evaluation, message handlers with the `trustedOrigins`
+check, user scripts, zoom, the user agent, the transparent background,
+ephemeral sessions and `takeSnapshot` (from the last frame) work. Input is not
+wired yet: the child sets `ignoresMouseEvents` and never takes focus, so
+pointer events already route to the WebView itself (its `mouseDown` and
+friends are empty) and keys reach it once it is focused; feeding them to
+`wpe_view_event` is what remains. Custom schemes, streaming schemes, popups,
+downloads, file drags, key forwarding and the window-drag and window-control
+actions are not wired either. `Tests/WebView/WebViewPresentTests-Linux.cpp`
+(group `WebViewPresent`, its own non-headless binary under the
+`eacp-linux-display` lock) reads the swapchain image back to check the page's
+colour, a transparent page's premultiplied alpha, a resize, a hide and show,
+and that a static page goes idle while an animated one keeps presenting.
+WebKit's bubblewrap sandbox cannot start in an unprivileged container; set
+`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` there.
+
 ## Building without it
 
 `-DEACP_BUILD_GRAPHICS=OFF` builds the portable half on Linux as on any other

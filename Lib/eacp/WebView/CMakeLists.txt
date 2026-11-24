@@ -110,6 +110,24 @@ elseif (WIN32)
     target_link_libraries(eacp-webview PRIVATE
             WebView2::WebView2
             shlwapi)
+elseif (LINUX)
+    set(eacp_webview_gobject_sources
+            WebView/GLibPump-Linux.cpp
+            WebView/WebView-Linux.cpp
+            WebView/WpeFrame-Linux.cpp
+            WebView/WpePlatform-Linux.cpp)
+
+    # The page reaches the screen through a GPUView child (WebViewSurface),
+    # so the Vulkan swapchain stays the GPU module's alone.
+    target_sources(eacp-webview PRIVATE
+            ${eacp_webview_gobject_sources}
+            WebView/WebViewSurface-Linux.cpp)
+    target_link_libraries(eacp-webview PRIVATE eacp-wpe eacp-gpu)
+
+    # GLib's and WebKit's headers define macros and G_DEFINE_TYPE statics that
+    # would leak into whatever shares a unity batch with them.
+    set_source_files_properties(${eacp_webview_gobject_sources}
+            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 endif ()
 
 set_default_target_setting(eacp-webview)
@@ -135,6 +153,6 @@ if (NOT CMAKE_CROSSCOMPILING)
 endif ()
 
 # In-process test driver — links the app's MyApp into a NanoTest
-# binary and drives the WebView directly. Self-gates to Apple-not-iOS
-# + Windows; iOS / Linux are no-ops.
+# binary and drives the WebView directly. Self-gates to Apple-not-iOS,
+# Windows and Linux; iOS is a no-op.
 add_subdirectory(Test)

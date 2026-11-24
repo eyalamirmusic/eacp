@@ -67,7 +67,9 @@ auto tAsyncSnapshotCapturesWebContent =
 };
 
 // A subtree with no web content still resolves (immediately) through the async
-// path, matching the synchronous renderToImage.
+// path, matching the synchronous renderToImage. It paints through a Context,
+// so only where there is one.
+#if EACP_HAS_CONTEXT
 auto tAsyncResolvesWithoutWebContent =
     test("RenderToImageAsync/resolvesWithoutWebContent") = []
 {
@@ -88,3 +90,4 @@ auto tAsyncResolvesWithoutWebContent =
     check(image.isValid());
     check(image.width() == 20);
 };
+#endif
