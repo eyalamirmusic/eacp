@@ -512,7 +512,9 @@ void WebView::installWindowControlSupport()
         throw std::runtime_error(
             "eacp-webview: embedded window-controls.js resource not found");
 
-    auto platform = std::string {Platform::isWindows() ? "windows" : "mac"};
+    auto platform = std::string {Platform::isWindows() ? "windows"
+                                 : Platform::isLinux() ? "linux"
+                                                       : "mac"};
     addUserScript("window.__eacpPlatform = '" + platform + "';\n" + shim.toString(),
                   true);
     addScriptMessageHandler("__eacpWindowControl",

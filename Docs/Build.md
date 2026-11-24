@@ -92,7 +92,21 @@ its README.
   switch that leaves the Linux backend out; there is no Linux-specific one.
 
 - `EACP_BUILD_WEBVIEW` (default `ON`) — builds the native `WebView` module
-  where the platform has one.
+  where the platform has one. On Linux that is WPE WebKit 2.0, found by
+  pkg-config (`CMake/FindWPE.cmake`, `wpe-webkit-2.0` 2.50 or later and
+  `wpe-platform-2.0`; `libwpewebkit-2.0-dev` on Debian): where it is missing the
+  module is left out with a `STATUS` line rather than failing the configure.
+
+- `EACP_REQUIRE_WEBVIEW` (default `OFF`) — makes a missing web runtime fatal
+  instead, for a build that must have the WebView. Only Linux can miss one.
+  `Dockerfile.webview` is a Debian image with WPE WebKit installed, the place to
+  build and test the Linux backend (Ubuntu ships no WPE WebKit 2.0).
+
+- The Vite example apps under `Apps/WebView` (`WebViewEmbed`,
+  `WebViewReactAnim`, `WebViewTodo`, `WebViewSubApi`, `WebViewSubApiReact`,
+  `WebViewToggle`) build their pages with node, and are added only where
+  `node` is on the `PATH`; without it configure skips them with a `STATUS`
+  line.
 
 - `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's
   exact configuration locally. It forces `EACP_UNITY_BUILD`,
@@ -428,7 +442,8 @@ The three drawing ones are on together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, capture excepted, which Android
-has too, and `EACP_HAS_COREML` hangs off
+has too, and the WebView, which desktop Linux has wherever WPE WebKit is
+installed, and `EACP_HAS_COREML` hangs off
 `EACP_HAS_GPU` and is Apple-only. `Network` needs none of them: it is
 unconditional, over NSURLSession and Network.framework on Apple, WinHTTP on
 Windows, libcurl on Linux and Java's `HttpURLConnection` and sockets through
@@ -442,7 +457,7 @@ and their tests build with it:
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
-| `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
+| `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows; or `EACP_HAS_GPU` and `EACP_BUILD_WEBVIEW` on desktop Linux where WPE WebKit 2.0 is found | the native `WebView` (WKWebView / WebView2 / WPE WebKit, headless for now on Linux) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
@@ -482,7 +497,8 @@ without it stops at configure time and says so.
 (universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,
 and a Clang lane that runs the graphics backend on lavapipe under a headless
 Weston and then under an Xvfb — all three build it, one has a device, a
-compositor and an X server to run it on), and builds iOS for the simulator
+compositor and an X server to run it on — plus a fourth Linux lane for the
+WebView, below), and builds iOS for the simulator
 and Android: an Ubuntu lane installs a pinned NDK with `sdkmanager`, configures
 against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` and
 `HelloNetwork` for `arm64-v8a`, which is every module an Android app links,
@@ -520,7 +536,7 @@ any file in it changed. It runs in depend mode (`CCACHE_DEPEND`), hashing the
 include files the compiler's own dependency output names rather than running
 the preprocessor a second time, so a miss costs the compile and nothing more.
 Each lane's cache is capped at 1 GB and trimmed after
-the build to what that build touched, so the eight stay inside the repository's
+the build to what that build touched, so the nine stay inside the repository's
 10 GB. Two configure flags go with it: the Windows lanes pass
 `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` (`/Z7`), because the default
 `/Zi` writes one PDB per target that every translation unit appends to, which
@@ -548,6 +564,19 @@ docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISP
     with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
     -R '^(X11|EmbeddedView|NativeChildSurface|Present)(/|$)'
 ```
+
+The WebView's Linux backend has a lane of its own, "Linux WebView", because
+the runners' Ubuntu packages no WPE WebKit 2.0: it runs in a `debian:sid`
+container, installs `Dockerfile.webview`'s packages (less the debugger and
+the display servers), builds the whole tree with GCC under the same CI
+configuration plus `-DEACP_REQUIRE_WEBVIEW=ON`, so a WPE that went missing
+fails the configure rather than dropping the module, and runs the full suite
+once with `EACP_HEADLESS=1`, `EACP_REQUIRE_FONTS=1` and
+`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` — bubblewrap cannot start in an
+unprivileged container. The backend is headless for now, so no Weston or Xvfb
+step follows. It compiles through ccache like the matrix, under a key of its
+own. `Dockerfile.webview`'s `ci-build` reproduces it locally (see
+[Linux.md](Linux.md), "WebView").
 
 A ctest entry is a group, not a case: `Tests/CMakeLists.txt` sets
 `NANO_TEST_GROUP_BY PREFIX`, so every case named `X11/...` runs in the one

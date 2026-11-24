@@ -74,7 +74,8 @@ endif ()
 #   EACP_HAS_TEXT    a glyph rasterizer: Text, UI, the portable half of SVG.
 #   EACP_HAS_CONTEXT the platform's own 2D tier: Context, Font, the codecs.
 #   EACP_HAS_CAPTURE Camera, CameraView; Video, VideoView but not on iOS or Android.
-#   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
+#   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2, and on Linux
+#                    WPE WebKit where pkg-config finds it).
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
 set(EACP_HAS_DRAW OFF)
 
@@ -108,8 +109,25 @@ endif ()
 
 set(EACP_HAS_WEBVIEW OFF)
 
+option(EACP_REQUIRE_WEBVIEW
+        "Fail the configure when the platform's web runtime is not found" OFF)
+
 if (EACP_HAS_DRAW AND EACP_BUILD_WEBVIEW AND (APPLE OR WIN32))
     set(EACP_HAS_WEBVIEW ON)
+elseif (EACP_HAS_GPU AND EACP_BUILD_WEBVIEW AND LINUX AND NOT ANDROID)
+    include(FindWPE)
+
+    if (EACP_WPE_FOUND)
+        set(EACP_HAS_WEBVIEW ON)
+    elseif (EACP_REQUIRE_WEBVIEW)
+        message(FATAL_ERROR
+                "EACP_REQUIRE_WEBVIEW is on and WPE WebKit 2.0 was not found. "
+                "On Debian: sudo apt-get install libwpewebkit-2.0-dev")
+    else ()
+        message(STATUS
+                "WebView: WPE WebKit 2.0 not found, so the WebView module is "
+                "off. On Debian: sudo apt-get install libwpewebkit-2.0-dev")
+    endif ()
 endif ()
 
 set(EACP_HAS_COREML OFF)

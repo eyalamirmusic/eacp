@@ -9,8 +9,11 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Singleton.h>
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 namespace eacp::Graphics
 {
@@ -510,6 +513,102 @@ Point linuxViewOriginInWindow(const View& view)
     return origin;
 }
 
+namespace
+{
+struct LinuxAsyncTarget
+{
+    View* view = nullptr;
+    Point offset;
+    float opacity = 1.f;
+};
+
+void collectLinuxAsyncContent(View& view,
+                              Point offset,
+                              float opacity,
+                              std::vector<LinuxAsyncTarget>& out)
+{
+    if (!view.isVisible())
+        return;
+
+    auto effectiveOpacity = opacity * view.getOpacity();
+
+    if (view.hasAsyncContent())
+        out.push_back({&view, offset, effectiveOpacity});
+
+    for (auto* child: view.getSubviews())
+    {
+        auto bounds = child->getBounds();
+        collectLinuxAsyncContent(*child,
+                                 {offset.x + bounds.x, offset.y + bounds.y},
+                                 effectiveOpacity,
+                                 out);
+    }
+}
+
+// Source-over, `source` stretched across `dest` (in the target's pixels) by
+// nearest sampling.
+void blendLinuxImage(ImageData& target,
+                     int targetWidth,
+                     int targetHeight,
+                     const Image& source,
+                     Rect dest,
+                     float opacity)
+{
+    if (!source.isValid() || dest.w <= 0.f || dest.h <= 0.f)
+        return;
+
+    auto left = std::max(0, (int) std::floor(dest.x));
+    auto top = std::max(0, (int) std::floor(dest.y));
+    auto right = std::min(targetWidth, (int) std::ceil(dest.x + dest.w));
+    auto bottom = std::min(targetHeight, (int) std::ceil(dest.y + dest.h));
+    const auto& pixels = source.pixels();
+
+    for (auto y = top; y < bottom; ++y)
+    {
+        auto sy = std::clamp((int) ((y + 0.5f - dest.y) * source.height() / dest.h),
+                             0,
+                             source.height() - 1);
+
+        for (auto x = left; x < right; ++x)
+        {
+            auto sx =
+                std::clamp((int) ((x + 0.5f - dest.x) * source.width() / dest.w),
+                           0,
+                           source.width() - 1);
+
+            const auto* from =
+                pixels.data() + ((std::size_t) sy * source.width() + sx) * 4;
+            auto* to = target.data() + ((std::size_t) y * targetWidth + x) * 4;
+
+            auto alpha = from[3] / 255.f * opacity;
+            auto below = to[3] / 255.f;
+            auto outAlpha = alpha + below * (1.f - alpha);
+
+            for (auto channel = 0; channel < 3; ++channel)
+            {
+                auto mixed = outAlpha > 0.f ? (from[channel] * alpha
+                                               + to[channel] * below * (1.f - alpha))
+                                                  / outAlpha
+                                            : 0.f;
+                to[channel] =
+                    (std::uint8_t) std::lround(std::clamp(mixed, 0.f, 255.f));
+            }
+
+            to[3] = (std::uint8_t) std::lround(outAlpha * 255.f);
+        }
+    }
+}
+
+struct LinuxAsyncComposite
+{
+    ImageData pixels;
+    int width = 0;
+    int height = 0;
+    int remaining = 0;
+    Threads::AsyncPromise<Image> promise;
+};
+} // namespace
+
 // No compositing pass: a plain View snapshots as an invalid Image.
 Image View::renderToImage(float scale)
 {
@@ -518,13 +617,61 @@ Image View::renderToImage(float scale)
     return renderNativeContent(resolvedScale);
 }
 
+// The synchronous image, with every embedded web view's snapshot laid over it
+// at its place in the subtree.
 Threads::Async<Image> View::renderToImageAsync(float scale)
 {
-    auto promise = Threads::AsyncPromise<Image> {};
-    auto result = promise.get();
+    auto resolvedScale = scale > 0.0f ? scale : linuxDefaultBackingScale;
+    auto state = std::make_shared<LinuxAsyncComposite>();
+    auto result = state->promise.get();
 
-    // The async form exists for embedded web content, which Linux has none of.
-    promise.resolve(renderToImage(scale));
+    auto targets = std::vector<LinuxAsyncTarget> {};
+    collectLinuxAsyncContent(*this, {0.f, 0.f}, 1.f, targets);
+
+    auto base = renderToImage(resolvedScale);
+
+    if (targets.empty())
+    {
+        state->promise.resolve(base);
+        return result;
+    }
+
+    auto bounds = getLocalBounds();
+    state->width = std::max(1, (int) std::lround(bounds.w * resolvedScale));
+    state->height = std::max(1, (int) std::lround(bounds.h * resolvedScale));
+
+    if (base.isValid() && base.width() == state->width
+        && base.height() == state->height)
+        state->pixels = base.pixels();
+    else
+        state->pixels.resize(state->width * state->height * 4);
+
+    state->remaining = (int) targets.size();
+
+    for (auto& target: targets)
+    {
+        auto viewBounds = target.view->getBounds();
+        auto dest = Rect {target.offset.x * resolvedScale,
+                          target.offset.y * resolvedScale,
+                          viewBounds.w * resolvedScale,
+                          viewBounds.h * resolvedScale};
+
+        target.view->captureAsyncContent(
+            resolvedScale,
+            [state, dest, opacity = target.opacity](Image image)
+            {
+                blendLinuxImage(state->pixels,
+                                state->width,
+                                state->height,
+                                image,
+                                dest,
+                                opacity);
+
+                if (--state->remaining == 0)
+                    state->promise.resolve(Image {
+                        state->width, state->height, std::move(state->pixels)});
+            });
+    }
 
     return result;
 }

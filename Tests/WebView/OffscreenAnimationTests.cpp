@@ -126,6 +126,8 @@ auto tDrivesAnimationOffscreen = test("OffscreenAnimation/paintsWhenEnabled") = 
 //   - WebView2 is composition-hosted and always reports itself visible (so that
 //     renderToImageAsync can snapshot it at all), so its rAF keeps firing and
 //     paints the canvas green even off-screen — the flag is redundant there.
+//   - WPE WebKit on Linux renders into a view eacp keeps visible and mapped
+//     with a frame clock of its own, so it behaves as WebView2 does.
 // Either way the default is not "paints regardless": on macOS it establishes
 // that paintsWhenEnabled's green comes from the flag, and on Windows it pins the
 // native-rAF behaviour the flag harmlessly mirrors.
@@ -134,7 +136,7 @@ auto tAnimationDefaultMatchesPlatform =
 {
     auto fix = AnimationFixture {/*driveOffscreen*/ false};
 
-    if (Platform::isWindows())
+    if (Platform::isWindows() || Platform::isLinux())
     {
         fix.waitForPaint();
         check(fix.centre() == paintedCentre); // native rAF paints it

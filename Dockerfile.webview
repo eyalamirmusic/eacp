@@ -1,0 +1,83 @@
+# The Linux build environment with WPE WebKit, for the WebView module's Linux
+# backend. Debian rather than the main Dockerfile's Ubuntu 24.04, because
+# Ubuntu ships no WPE WebKit 2.0 (the WPE Platform API the backend is written
+# against): Debian sid carries libwpewebkit-2.0-dev with wpe-webkit-2.0 and
+# wpe-platform-2.0. Otherwise the package list is the main Dockerfile's, so the
+# whole tree builds here and the full ctest runs in it. Debian's own CMake is
+# new enough, so nothing comes from Kitware.
+#
+# Build the image:
+#   podman build -t eacp-wpe-dev -f Dockerfile.webview .
+#
+# Build and test headless (WebKit's bubblewrap sandbox cannot start inside an
+# unprivileged container, so it is turned off there):
+#   podman run --rm -v "$PWD":/workspace -e EACP_HEADLESS=1 \
+#       -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 eacp-wpe-dev \
+#       ci-build -DEACP_UNITY_BUILD=OFF -DEACP_REQUIRE_WEBVIEW=ON
+
+FROM debian:sid
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        clang \
+        cmake \
+        curl \
+        fonts-dejavu-core \
+        fonts-dejavu-extra \
+        fonts-droid-fallback \
+        fonts-noto-color-emoji \
+        g++ \
+        gcc \
+        gdb \
+        git \
+        libcurl4-openssl-dev \
+        libdecor-0-dev \
+        libfontconfig-dev \
+        libfreetype-dev \
+        libharfbuzz-dev \
+        libvulkan1 \
+        libwayland-bin \
+        libwayland-dev \
+        libwpewebkit-2.0-dev \
+        libxcb-cursor-dev \
+        libxcb-icccm4-dev \
+        libxcb-randr0-dev \
+        libxcb-xfixes0-dev \
+        libxcb-xinput-dev \
+        libxcb-xkb-dev \
+        libxcb-xtest0-dev \
+        libxcb1-dev \
+        libxkbcommon-dev \
+        libxkbcommon-x11-dev \
+        mesa-vulkan-drivers \
+        ninja-build \
+        pkg-config \
+        rsync \
+        vulkan-tools \
+        wayland-protocols \
+        weston \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+RUN printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'cd /workspace' \
+    'cmake -G Ninja -B build-ci-wpe -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_SCAN_FOR_MODULES=OFF -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ "$@"' \
+    'cmake --build build-ci-wpe' \
+    'ctest --test-dir build-ci-wpe --output-on-failure' \
+    > /usr/local/bin/ci-build \
+    && chmod +x /usr/local/bin/ci-build
+
+COPY Scripts/with-weston /usr/local/bin/with-weston
+COPY Scripts/with-xvfb /usr/local/bin/with-xvfb
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

@@ -30,7 +30,7 @@ endif ()
 # The rest drive a real WebView, so the whole module needs the NSApplication /
 # runloop bootstrap from eacp-webview-test-main rather than nano_add_executable's
 # bare main(). That target only exists on the platforms where the in-process
-# WebView test harness is built (Apple-not-iOS, Windows); elsewhere the module
+# WebView test harness is built (Apple-not-iOS, Windows, Linux); elsewhere the module
 # is just the pure-logic suites above.
 #
 #   StreamingPumpTests      the live streaming pump
@@ -57,19 +57,36 @@ endif ()
 #   UserAgentTests          Options::userAgent read back from the page, and
 #                           Options::loadDeclinedPopupsInline deciding whether a
 #                           declined window.open replaces the host document
+#
+# The Linux backend (WPE WebKit) is headless and serves no custom schemes yet,
+# so it leaves out the suites that need them — MessageOriginTests and
+# StreamingPumpTests — and adds WpeFrameTests-Linux.cpp, its frame conversion
+# and the GLib pump. UserAgentTests' popup cases and RenderToImageAsyncTests'
+# painted-view case guard themselves.
 if (TARGET eacp-webview-test-main)
     list(APPEND webview_test_sources
             CommandDispatchTests.cpp
-            MessageOriginTests.cpp
             OffscreenAnimationTests.cpp
             RenderToImageAsyncTests.cpp
             SnapshotDeadlineTests.cpp
-            StreamingPumpTests.cpp
             UserAgentTests.cpp
             WebViewAffordanceTests.cpp
             WebViewCallTests.cpp
             WindowControlTests.cpp
             WindowDragTests.cpp)
+
+    if (LINUX)
+        list(APPEND webview_test_sources WpeFrameTests-Linux.cpp)
+
+        # It includes glib.h, whose macros would leak into the rest of a
+        # unity batch, as the backend's own GObject sources are kept out.
+        set_source_files_properties(WpeFrameTests-Linux.cpp
+                PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+    else ()
+        list(APPEND webview_test_sources
+                MessageOriginTests.cpp
+                StreamingPumpTests.cpp)
+    endif ()
 
     # Unhandled-key forwarding (key-events.js + the native verdict queue).
     # Synthesizing the key NSEvents is AppKit-specific; the WebView2 backend
@@ -88,6 +105,10 @@ if (TARGET eacp-webview-test-main)
     target_link_libraries(WebViewTests PRIVATE
             eacp-webview
             eacp-webview-test-main)
+
+    if (LINUX)
+        target_link_libraries(WebViewTests PRIVATE eacp-wpe)
+    endif ()
     nano_discover_tests(WebViewTests)
 else ()
     nano_add_executable(WebViewTests

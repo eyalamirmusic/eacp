@@ -90,7 +90,10 @@ auto tPlatformAttribute = test("WindowControl/platformAttributeMirrorsNative") =
         fix.webView
             .callJS("document.documentElement.getAttribute('data-eacp-platform')")
             .waitFor(webViewResultTimeout);
-    check(attribute == (Platform::isWindows() ? "windows" : "mac"));
+    check(attribute
+          == (Platform::isWindows() ? "windows"
+              : Platform::isLinux() ? "linux"
+                                    : "mac"));
 };
 
 auto tMaximizedAttribute = test("WindowControl/maximizedAttributeTracksNative") = []

@@ -6,7 +6,7 @@
 // custom properties read back through getComputedStyle on both engines.
 //
 // The shim also mirrors native facts onto <html>, so the rest is pure CSS:
-//   data-eacp-platform="mac" | "windows"  — which chrome to render
+//   data-eacp-platform="mac" | "windows" | "linux"  — which chrome to render
 //   data-eacp-maximized                   — swap the maximize/restore glyph
 //
 // The maximized attribute is updated when a marked button toggles it; a

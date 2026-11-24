@@ -46,8 +46,11 @@ the Core ML runner, `MLTests` and `Apps/ML`). The first three are
 `APPLE OR WIN32 OR LINUX OR ANDROID` — everywhere graphics builds at all — and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
 set of modules and a new port reaches them one at a time. The next three hang off
-`EACP_HAS_DRAW`: `CONTEXT` and `WEBVIEW` are Apple/Windows-only and `CAPTURE`
-is Apple, Windows and Android, so on Apple and Windows the first six are
+`EACP_HAS_DRAW`: `CONTEXT` is Apple/Windows-only, `CAPTURE`
+is Apple, Windows and Android, and `WEBVIEW` is Apple and Windows plus desktop
+Linux wherever pkg-config finds WPE WebKit 2.0 (`CMake/FindWPE.cmake`, soft;
+`-DEACP_REQUIRE_WEBVIEW=ON` makes a missing one fatal; the Linux backend is
+headless for now, `Docs/Linux.md`, "WebView"), so on Apple and Windows the first six are
 simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
 `Network` is gated by none of them: it builds everywhere — the HTTP client is
@@ -79,7 +82,9 @@ ones again inside an Xvfb, so windows and swapchains are real on both window
 systems; all three Linux lanes build the whole graphics stack and install the
 stock font packages so the text suites resolve rather than skip, and only the
 third has a driver, a compositor and an X server to run the GPU and window
-tests on), and builds iOS for the simulator and HelloGPU and HelloNetwork
+tests on, plus a fourth, "Linux WebView", in a Debian sid container with WPE
+WebKit, which configures with `-DEACP_REQUIRE_WEBVIEW=ON` and runs the whole
+suite headless with WebKit's sandbox off), and builds iOS for the simulator and HelloGPU and HelloNetwork
 for Android (arm64-v8a, an NDK installed with `sdkmanager`). The Windows ARM64
 lanes configure with `-DEACP_BUILD_WEBVIEW=OFF`, because the WebView example
 apps' npm installs run inside configure and are several times slower on the
@@ -106,7 +111,12 @@ optional — three pkg-config groups: the Wayland client library,
 `xcb-icccm` and `xcb-xinput` for the X11 backend
 (`CMake/FindX11Backend.cmake`, one `eacp-x11`
 target; no Xlib symbol anywhere), and FreeType, HarfBuzz and fontconfig for the
-glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
+glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target).
+One optional group beside them: WPE WebKit 2.0 (`wpe-webkit-2.0` 2.50+ and
+`wpe-platform-2.0`, `libwpewebkit-2.0-dev` on Debian; `CMake/FindWPE.cmake`,
+one `eacp-wpe` target that `eacp-webview` links PRIVATE) for the `WebView`,
+left out with a `STATUS` line where it is missing; `Dockerfile.webview` is a
+Debian image that has it, since Ubuntu does not ship it. Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
@@ -1507,7 +1517,8 @@ Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
 Linux: pthreads, libcurl, wayland-client, wayland-cursor, xkbcommon, libdecor,
 xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor,
 xcb-icccm and xcb-xinput, FreeType, HarfBuzz and fontconfig, plus the Vulkan
-loader, opened with `dlopen` rather than linked.
+loader, opened with `dlopen` rather than linked, and WPE WebKit 2.0 for the
+`WebView` where it is installed.
 Android: android, log, jnigraphics, the Vulkan loader the same way, and
 `java.net`/`javax.net.ssl` through JNI for the network; no libcurl.
 

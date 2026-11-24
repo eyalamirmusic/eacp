@@ -251,6 +251,32 @@ report green by skipping everything.
 The HTTP client is libcurl on Linux, so a build needs its development headers
 too (`libcurl4-openssl-dev` on Debian/Ubuntu).
 
+The `WebView` module needs WPE WebKit 2.0 (`libwpewebkit-2.0-dev` on Debian,
+which Ubuntu does not ship); without it the module is left out, or the
+configure fails under `-DEACP_REQUIRE_WEBVIEW=ON`. See "WebView" below.
+
+## WebView
+
+`WebView` on Linux is WPE WebKit through its 2.0 Platform API
+(`Lib/eacp/WebView/WebView/*-Linux.cpp`, linking `eacp-wpe` PRIVATE, so no eacp
+header sees a GLib or WebKit one). `WpePlatform-Linux.cpp` subclasses
+`WPEDisplay`, `WPEView` and `WPEToplevel` in-process — no window-system
+connection — so every frame WebKit renders arrives as a shared-memory buffer
+(B, G, R, A, premultiplied) that `WpeFrame-Linux.cpp` keeps as the view's last
+frame, paced the way WPE's own headless view paces them. `GLibPump-Linux.cpp`
+runs GLib's default main context from eacp's loop as one loop source — an epoll
+set of GLib's poll fds plus a timerfd armed to its next timeout — so WebKit runs
+under `run()`, `runFor()` and `pumpEventLoop()` alike.
+
+This is stage 1, and it is headless: navigation, script evaluation, message
+handlers with the `trustedOrigins` check, user scripts, zoom, the user agent,
+the transparent background, ephemeral sessions and `takeSnapshot` (from the
+last frame) work, but nothing is presented in the window yet, and input, custom
+schemes, streaming schemes, popups, downloads, file drags, key forwarding and
+the window-drag and window-control actions are not wired. WebKit's bubblewrap
+sandbox cannot start in an unprivileged container; set
+`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` there.
+
 ## Building without it
 
 `-DEACP_BUILD_GRAPHICS=OFF` builds the portable half on Linux as on any other

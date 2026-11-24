@@ -3,10 +3,10 @@
 # WebView, pumping runEventLoopFor() between operations so
 # evaluateJavaScript/takeSnapshot callbacks fire.
 #
-# Builds on Apple-not-iOS and Windows — the platforms where the
-# WebView itself runs as a desktop windowed app. On iOS / Linux we
-# don't ship this lib.
-if (NOT ((APPLE AND NOT IOS) OR WIN32))
+# Builds on Apple-not-iOS, Windows and Linux — the platforms where the
+# WebView itself runs as a desktop windowed app. On iOS we don't ship
+# this lib.
+if (NOT ((APPLE AND NOT IOS) OR WIN32 OR LINUX))
     return ()
 endif ()
 
