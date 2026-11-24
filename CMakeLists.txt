@@ -153,6 +153,7 @@ endif ()
 include(TargetSetup)
 include(EacpSchema)
 include(EacpPlugin)
+include(EacpExportList)
 include(EacpPch)
 include(PrecompiledShaders)
 

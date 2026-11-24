@@ -37,6 +37,11 @@ bool Device::isValid() const
     return impl->context.isValid();
 }
 
+std::uint64_t Device::backendGeneration() const
+{
+    return 0;
+}
+
 std::string Device::name() const
 {
     if (!isValid())

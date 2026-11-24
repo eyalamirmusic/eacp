@@ -4,6 +4,7 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Graphics/View/View-Linux.h>
+#include <eacp/Graphics/Window/NativeChildSurface.h>
 
 #include <wayland-client.h>
 
@@ -536,6 +537,32 @@ auto tMovingTheViewResizesItsSurface =
     check(presenter.resized == resizesAfterMove);
 };
 
+// Nothing X11 can be parented into a Wayland surface, so the surface offers no
+// handle rather than one that would not work, and stays safe to lay out.
+auto tNativeChildSurfaceHasNoHandle =
+    test("Wayland/aNativeChildSurfaceHasNoHandle") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto host = CompositorWindow {640, 400};
+    auto surface = NativeChildSurface {};
+
+    surface.setBounds({20.f, 30.f, 200.f, 100.f});
+    host.content.addSubview(surface);
+
+    check(surface.getNativeParentHandle() == nullptr);
+
+    surface.setBounds({40.f, 50.f, 300.f, 150.f});
+    surface.setVisible(false);
+    surface.setVisible(true);
+    surface.refreshPlacement();
+
+    check(surface.getNativeParentHandle() == nullptr);
+
+    host.content.removeSubview(surface);
+};
+
 auto tHidingTheViewTakesItsSurfaceAway =
     test("Wayland/hidingTheViewTakesItsSurfaceAway") = []
 {
@@ -818,6 +845,147 @@ auto tClipboardFilesAreNotText = test("Wayland/clipboardFilesOfferNoText") = []
     check(Clipboard::copyFiles({"/tmp/eacp clipboard.txt"}));
     check(!Clipboard::hasText());
     check(Clipboard::getText().empty());
+};
+
+namespace
+{
+// A protocol error costs the process its only connection, after which a new
+// window is built with no surface.
+bool waylandConnectionAlive()
+{
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+
+    auto probe = Window {options};
+
+    return probe.getHandle() != nullptr;
+}
+} // namespace
+
+// What a title bar's close does: the window is hidden from inside one of
+// libdecor's own callbacks, here the configure a maximise brings, through the
+// app's resize handler.
+auto tAWindowHiddenFromAConfigureShowsAgain =
+    test("Wayland/aWindowHiddenFromAConfigureShowsAgain") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto hideOnResize = false;
+    Window* target = nullptr;
+
+    auto options = WindowOptions {};
+    options.width = 400;
+    options.height = 300;
+    options.title = "eacp Wayland tests";
+    options.isPrimary = false;
+    options.onResize = [&](int, int)
+    {
+        if (!hideOnResize)
+            return;
+
+        hideOnResize = false;
+        target->setVisible(false);
+    };
+
+    auto content = View {};
+    auto window = Window {options};
+    target = &window;
+
+    window.setContentView(content);
+    Threads::runEventLoopUntil([&] { return window.isVisible(); },
+                               waylandTestTimeout);
+
+    hideOnResize = true;
+    window.toggleMaximize();
+
+    Threads::runEventLoopUntil([&] { return !hideOnResize; }, waylandTestTimeout);
+    Threads::runEventLoopFor(Time::MS {200});
+
+    check(!hideOnResize, "the maximise never reached the window");
+    check(!window.isVisible(), "the window hidden from a configure still shows");
+
+    window.setVisible(true);
+    Threads::runEventLoopUntil([&] { return window.isVisible(); },
+                               waylandTestTimeout);
+    Threads::runEventLoopFor(Time::MS {100});
+
+    check(window.isVisible(), "the window did not come back");
+    check(waylandConnectionAlive(), "the compositor dropped the connection");
+};
+
+namespace
+{
+WindowOptions constrainedWindowOptions()
+{
+    auto options = WindowOptions {};
+    options.width = 640;
+    options.height = 480;
+    options.title = "eacp Wayland tests";
+    options.isPrimary = false;
+
+    return options;
+}
+
+void maximiseAndSettle(Window& window)
+{
+    window.toggleMaximize();
+    Threads::runEventLoopFor(Time::MS {300});
+}
+} // namespace
+
+// A maximised window must be exactly the size it is given, which a locked
+// one cannot be: the window does not ask.
+auto tAnAspectLockedWindowDoesNotMaximise =
+    test("Wayland/anAspectLockedWindowDoesNotMaximise") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto options = constrainedWindowOptions();
+    options.aspectRatio = Point {4.f, 3.f};
+
+    auto content = View {};
+    auto window = Window {content, options};
+
+    Threads::runEventLoopUntil([&] { return window.isVisible(); },
+                               waylandTestTimeout);
+
+    maximiseAndSettle(window);
+
+    check(window.isVisible());
+    check(waylandConnectionAlive(), "the compositor dropped the connection");
+    check(window.getSize().x == 640.f && window.getSize().y == 480.f);
+};
+
+// The same lock written as a rule of the app's own is only known by asking
+// it: the maximise is asked for, and turned down when the size comes.
+auto tAConstrainedWindowTurnsAMaximiseDown =
+    test("Wayland/aConstrainedWindowTurnsAMaximiseDown") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto options = constrainedWindowOptions();
+    options.sizeConstraint = AspectRatioLock {{4.f, 3.f}};
+
+    auto content = View {};
+    auto window = Window {content, options};
+
+    Threads::runEventLoopUntil([&] { return window.isVisible(); },
+                               waylandTestTimeout);
+
+    maximiseAndSettle(window);
+
+    check(window.isVisible());
+    check(waylandConnectionAlive(), "the compositor dropped the connection");
+    check(window.getSize().x == 640.f && window.getSize().y == 480.f);
+
+    // Still a window that maximises nothing and keeps its rule afterwards.
+    window.setSize({800.f, 800.f});
+    Threads::runEventLoopFor(Time::MS {100});
+
+    check(window.getSize().x * 3.f == window.getSize().y * 4.f);
 };
 
 // Last in the file on purpose: the connection it kills is the process's only

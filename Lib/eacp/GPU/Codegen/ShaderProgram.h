@@ -293,9 +293,20 @@ public:
     // both stages alike; the ones left out take their defaults. Values the
     // shader refuses leave a pipeline that is not valid, and log why. The
     // descriptor's own constants are replaced by these. Every prepare()
-    // compiles the library afresh and forgets the pipelines built before it.
+    // forgets the pipelines built before it; the library comes from the
+    // device's ShaderLibraryCache, compiled there once per source and found by
+    // every later prepare of the same shader, a ShaderWarmUp's included.
     void prepare(RenderPipelineDescriptor descriptor,
                  const OverrideValues& overrides);
+
+    // The descriptor prepare(descriptor) builds its pipeline from once the
+    // device's cache has handed it `library`, with the overrides at their
+    // defaults; empty where it would refuse them. Touches no device: it is
+    // what a ShaderWarmUp's worker builds a D3D12 pipeline state from, ahead
+    // of the prepare on the main thread that then finds it.
+    std::optional<RenderPipelineDescriptor>
+        pipelineDescriptorFor(RenderPipelineDescriptor descriptor,
+                              const ShaderLibrary& library) const;
 
     // Makes the shader specialised with these values the one draw(program)
     // uses, on the library and the descriptor the last prepare() was given:
@@ -716,7 +727,7 @@ private:
 
     std::optional<Buffer> vertexBufferData;
     std::optional<Buffer> indexBufferData;
-    std::optional<ShaderLibrary> shaderLibrary;
+    std::shared_ptr<const ShaderLibrary> shaderLibrary;
     std::optional<RenderPipelineDescriptor> preparedDescriptor;
     OwnedVector<Specialization> specializations;
     std::optional<ShaderLibrary> refusedLibrary;

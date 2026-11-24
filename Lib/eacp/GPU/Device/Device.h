@@ -155,6 +155,12 @@ public:
 
     bool isValid() const;
 
+    // How many times the backend device under this Device was rebuilt after a
+    // loss: bumped on D3D12 when a removed device is recreated, always 0 on
+    // Metal and Vulkan, which never rebuild. Owning thread only - the rebuild
+    // happens there.
+    std::uint64_t backendGeneration() const;
+
     // What the GPU this Device runs on calls itself — the MTLDevice's name on
     // Metal, the DXGI adapter description on D3D12. For a log line or a
     // benchmark header, which has to say which hardware produced a number, and

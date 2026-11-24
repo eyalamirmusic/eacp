@@ -4,6 +4,7 @@
 #include "../Utils/Logging.h"
 
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <mutex>
@@ -51,6 +52,11 @@ Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& override
     return entries;
 }
 
+bool startsInGroupOfItsOwn(const ProcessOptions& options)
+{
+    return (options.newProcessGroup || options.killDescendants) && !options.detached;
+}
+
 // Null-terminated char* view over `strings` for the argv/envp the spawn syscall
 // requires. The backing strings must outlive the returned pointers.
 Vector<char*> toCArray(Vector<std::string>& strings)
@@ -69,7 +75,8 @@ struct Process::Native
 {
     explicit Native(ProcessOptions options)
         : detached(options.detached)
-        , leadsItsOwnGroup(options.newProcessGroup && !options.detached)
+        , leadsItsOwnGroup(startsInGroupOfItsOwn(options))
+        , killsDescendants(options.killDescendants && !options.detached)
         , onOutput(std::move(options.onOutput))
     {
         ignoreSigPipeOnce();
@@ -87,12 +94,20 @@ struct Process::Native
         if (detached)
             return;
 
-        if (isRunning())
-            ::kill(pid, SIGKILL);
+        if (isStillOwedAnEnd())
+            kill();
 
         closeInput();
         joinReaders();
         reap(true);
+    }
+
+    // A child waited for is done with. One that was not is ended, and with
+    // killsDescendants so is what it started, even if the child itself has
+    // exited: they may still hold the captured output open.
+    bool isStillOwedAnEnd() const
+    {
+        return killsDescendants ? !waitedFor : isRunning();
     }
 
     bool launched() const { return pid > 0 || execFailed; }
@@ -110,20 +125,13 @@ struct Process::Native
     {
         joinReaders();
         reap(true);
+        waitedFor = true;
         return exitCode();
     }
 
-    void terminate()
-    {
-        if (pid > 0)
-            ::kill(pid, SIGTERM);
-    }
+    void terminate() { end(SIGTERM); }
 
-    void kill()
-    {
-        if (pid > 0)
-            ::kill(pid, SIGKILL);
-    }
+    void kill() { end(SIGKILL); }
 
     // Sent under the lock reaping takes, so the child cannot be reaped, and its
     // pid reused, between the check and the signal.
@@ -131,10 +139,30 @@ struct Process::Native
     {
         auto lock = std::lock_guard {reapMutex};
 
-        if (pid <= 0 || reapIfExited(WNOHANG))
+        if (pid <= 0 || hasExited())
             return false;
 
         return ::kill(leadsItsOwnGroup ? -pid : pid, SIGTERM) == 0;
+    }
+
+    // The group is signalled under the lock reaping takes, so its leader cannot
+    // be reaped, and the group id reused, in between. A leader that has exited
+    // but is not yet reaped still holds the id, so whatever it left running in
+    // the group is reached.
+    void end(int signal)
+    {
+        if (!killsDescendants)
+        {
+            if (pid > 0)
+                ::kill(pid, signal);
+
+            return;
+        }
+
+        auto lock = std::lock_guard {reapMutex};
+
+        if (pid > 0 && !reaped)
+            ::kill(-pid, signal);
     }
 
     bool writeToInput(const std::string& data)
@@ -304,10 +332,10 @@ private:
             spawnFlags |= POSIX_SPAWN_SETSID;
 #endif
 
-        // newProcessGroup is ignored for a detached child: where setsid is
-        // available it already leads a group, and a session leader cannot
-        // change its group.
-        if (options.newProcessGroup && !options.detached)
+        // newProcessGroup and killDescendants are ignored for a detached
+        // child: where setsid is available it already leads a group, and a
+        // session leader cannot change its group.
+        if (startsInGroupOfItsOwn(options))
         {
             spawnFlags |= POSIX_SPAWN_SETPGROUP;
             posix_spawnattr_setpgroup(&attr, 0);
@@ -425,43 +453,67 @@ private:
     }
 
     // The blocking wait leaves the child unreaped (WNOWAIT) and holds no lock,
-    // so isRunning() and requestStop() on other threads still answer while one
-    // thread waits; the status is then collected once, under the lock. A child
-    // already reaped is never waited on: its pid may now be another child's
-    // (short of another thread reaping it in the instant between the check and
-    // the wait).
-    // waitid's outcome is only a hint: should it fail or return early, the
-    // old blocking waitpid under the lock finishes the job.
+    // so isRunning(), requestStop() and kill() on other threads still answer
+    // while one thread waits; the status is then collected once, under the
+    // lock, without blocking. A child already reaped is never waited on: its
+    // pid may now be another child's. waitid's outcome is only a hint: should
+    // it fail, the status is polled instead, still never blocking under the
+    // lock.
     bool reap(bool blocking) const
     {
-        if (blocking && !hasBeenReaped())
-            waitUntilExited();
-
-        auto lock = std::lock_guard {reapMutex};
+        if (pid <= 0)
+            return false;
 
         if (!blocking)
+        {
+            auto lock = std::lock_guard {reapMutex};
+            return hasExited();
+        }
+
+        for (;;)
+        {
+            {
+                auto lock = std::lock_guard {reapMutex};
+
+                if (reapIfExited(WNOHANG))
+                    return true;
+            }
+
+            if (!waitUntilExited())
+                std::this_thread::sleep_for(std::chrono::milliseconds {10});
+        }
+    }
+
+    bool waitUntilExited() const
+    {
+        auto info = siginfo_t {};
+        auto result = waitid(P_PID, (id_t) pid, &info, WEXITED | WNOWAIT);
+
+        while (result != 0 && errno == EINTR)
+            result = waitid(P_PID, (id_t) pid, &info, WEXITED | WNOWAIT);
+
+        return result == 0;
+    }
+
+    // Needs reapMutex held. A child whose descendants are to be ended is not
+    // reaped here, only observed: until wait() or the destructor has done with
+    // its group, the unreaped leader keeps the group's id from being reused.
+    bool hasExited() const
+    {
+        if (!killsDescendants || reaped)
             return reapIfExited(WNOHANG);
 
-        return reapIfExited(WNOHANG) || reapIfExited(0);
-    }
-
-    bool hasBeenReaped() const
-    {
-        auto lock = std::lock_guard {reapMutex};
-        return reaped;
-    }
-
-    void waitUntilExited() const
-    {
-        if (pid <= 0)
-            return;
-
         auto info = siginfo_t {};
+        auto options = WEXITED | WNOHANG | WNOWAIT;
+        auto result = waitid(P_PID, (id_t) pid, &info, options);
 
-        while (waitid(P_PID, (id_t) pid, &info, WEXITED | WNOWAIT) != 0
-               && errno == EINTR)
-        {
-        }
+        while (result != 0 && errno == EINTR)
+            result = waitid(P_PID, (id_t) pid, &info, options);
+
+        if (result != 0)
+            return reapIfExited(WNOHANG);
+
+        return info.si_pid != 0;
     }
 
     // Needs reapMutex held.
@@ -512,6 +564,7 @@ private:
     bool execFailed = false; // posix_spawn couldn't exec → report 127
     const bool detached;
     const bool leadsItsOwnGroup;
+    const bool killsDescendants;
     const std::function<void(std::string_view)> onOutput;
     int inputFd = -1;
 
@@ -525,6 +578,7 @@ private:
     mutable std::mutex reapMutex;
     mutable bool reaped = false;
     mutable int exitStatus = 0;
+    bool waitedFor = false;
 };
 
 Process::Process(ProcessOptions options)

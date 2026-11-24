@@ -27,8 +27,7 @@ struct WaylandWindowNative final
 
     ~WaylandWindowNative() override
     {
-        if (contentView != nullptr)
-            linuxUnbindWindowFromContentView(*contentView);
+        linuxUnbindWindow(*this);
 
         destroyFrame();
 
@@ -96,6 +95,16 @@ struct WaylandWindowNative final
         if (decorations == nullptr)
             return;
 
+        // A new xdg_surface must be made on a surface with no buffer, and the
+        // surface is reused from the last time the window was shown, so
+        // anything that reached it since the unmap is taken off first.
+        if (buffer.get() != nullptr)
+        {
+            wl_surface_attach(getSurface(), nullptr, 0, 0);
+            wl_surface_commit(getSurface());
+            buffer.destroy();
+        }
+
         frame = libdecor_decorate(decorations, getSurface(), &frameListener(), this);
 
         if (frame == nullptr)
@@ -104,9 +113,9 @@ struct WaylandWindowNative final
         libdecor_frame_set_title(frame, state.title.c_str());
         libdecor_frame_set_app_id(frame, linuxDefaultAppId);
 
-        if (state.minWidth > 0 || state.minHeight > 0)
+        if (state.minWidth > 0 || state.minHeight > 0 || contentTop > 0.f)
             libdecor_frame_set_min_content_size(
-                frame, std::max(state.minWidth, 1), std::max(state.minHeight, 1));
+                frame, state.minimumSurfaceWidth(), state.minimumSurfaceHeight());
 
         // Pinned as well as unset: a compositor may configure a size no client
         // asked for.
@@ -178,7 +187,22 @@ struct WaylandWindowNative final
              & (LIBDECOR_WINDOW_STATE_MAXIMIZED | LIBDECOR_WINDOW_STATE_FULLSCREEN))
             != 0;
 
+        const auto proposed = std::pair {width, height};
         state.applyConstraints(width, height, bounded);
+
+        // A maximised window must take exactly the size it is given, which a
+        // constrained one cannot, and a configure cannot be refused: it is
+        // left unanswered and the window asks to be a window again, whose
+        // configure is the one it commits to.
+        auto maximised = (windowState & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0;
+
+        if (maximised && std::pair {width, height} != proposed)
+        {
+            libdecor_frame_unset_maximized(frame);
+            return;
+        }
+
+        auto* configuring = frame;
 
         auto* newState = libdecor_state_new(width, height);
         libdecor_frame_commit(frame, newState, configuration);
@@ -193,6 +217,11 @@ struct WaylandWindowNative final
 
         state.resizeTo({(float) width, (float) height});
 
+        // The activation and resize handlers above are the app's, and one that
+        // hid the window has unmapped it: nothing may reach the surface now.
+        if (frame != configuring)
+            return;
+
         if (libdecor_frame_is_floating(frame))
             floatingSize = contentSize;
 
@@ -206,6 +235,22 @@ struct WaylandWindowNative final
 
         if (contentView != nullptr)
             linuxWindowSurfaceStateChanged(*contentView);
+    }
+
+    // libdecor asks for a commit whenever it redraws the decorations, and the
+    // cairo plugin does so as early as the title is set, before the first
+    // configure. A buffer attached then is a protocol error that costs the
+    // connection, so until the window is mapped the commit carries none.
+    void decorationsChanged()
+    {
+        if (mapped)
+        {
+            present();
+            return;
+        }
+
+        if (auto* surface = getSurface())
+            wl_surface_commit(surface);
     }
 
     void present()
@@ -310,8 +355,10 @@ struct WaylandWindowNative final
 
     // A maximised or full screen window's size is the compositor's, so there
     // is nothing to ask for. A frame is committed outside a configure when
-    // there is one; with no frame yet the size is simply taken, and
-    // createFrame maps it.
+    // the window is mapped; before its first configure - a size set as the
+    // window is built, a menu bar installed - the size is simply taken, and
+    // the configure that maps it uses it. A buffer attached before that is a
+    // protocol error that costs the connection.
     void setSize(Point newSize) override
     {
         if (state.hasSystemManagedSize())
@@ -330,14 +377,19 @@ struct WaylandWindowNative final
                 libdecor_frame_set_max_content_size(frame, width, height);
             }
 
-            auto* newState = libdecor_state_new(width, height);
-            libdecor_frame_commit(frame, newState, nullptr);
-            libdecor_state_free(newState);
+            if (mapped)
+            {
+                auto* newState = libdecor_state_new(width, height);
+                libdecor_frame_commit(frame, newState, nullptr);
+                libdecor_state_free(newState);
+            }
         }
 
         state.resizeTo({(float) width, (float) height});
         floatingSize = contentSize;
-        present();
+
+        if (mapped)
+            present();
     }
 
     void setTitle(const std::string& newTitle) override
@@ -357,6 +409,9 @@ struct WaylandWindowNative final
             libdecor_frame_set_minimized(frame);
     }
 
+    // A window with an aspect ratio, or one that does not resize, cannot take
+    // the size a maximise gives it, so it is not asked for. Any other rule is
+    // checked against the size itself when the configure comes.
     void toggleMaximize() override
     {
         if (frame == nullptr)
@@ -364,7 +419,7 @@ struct WaylandWindowNative final
 
         if (state.maximized)
             libdecor_frame_unset_maximized(frame);
-        else
+        else if (state.resizable && !state.aspectRatioHint)
             libdecor_frame_set_maximized(frame);
     }
 
@@ -440,6 +495,29 @@ struct WaylandWindowNative final
         // size with it, so nothing else reports either.
         linuxWindowSurfaceStateChanged(*contentView);
         notifyBackingScaleChanged(*contentView);
+
+        if (menuBarView != nullptr)
+            notifyBackingScaleChanged(*menuBarView);
+    }
+
+    void sizeHintsChanged() override
+    {
+        if (frame == nullptr)
+            return;
+
+        if (state.resizable)
+        {
+            libdecor_frame_set_min_content_size(
+                frame, state.minimumSurfaceWidth(), state.minimumSurfaceHeight());
+            return;
+        }
+
+        auto pinned = state.surfaceSizeFor(state.getContentSize());
+        auto width = std::max((int) std::lround(pinned.x), 1);
+        auto height = std::max((int) std::lround(pinned.y), 1);
+
+        libdecor_frame_set_min_content_size(frame, width, height);
+        libdecor_frame_set_max_content_size(frame, width, height);
     }
 
     void setMouseLocked(bool locked) override
@@ -500,17 +578,27 @@ struct WaylandWindowNative final
         {
             auto built = libdecor_frame_interface {};
 
-            built.configure = [](libdecor_frame*,
+            // A frame let go of from inside one of its own callbacks - the ✕
+            // that hides a hidesOnClose window - lives on until that callback
+            // returns, and can still call these. It is not ours any more.
+            built.configure = [](libdecor_frame* from,
                                  libdecor_configuration* configuration,
                                  void* data)
-            { self(data).configure(configuration); };
+            {
+                if (from == self(data).frame)
+                    self(data).configure(configuration);
+            };
 
-            built.close = [](libdecor_frame*, void* data)
-            { self(data).state.closeRequested(); };
+            built.close = [](libdecor_frame* from, void* data)
+            {
+                if (from == self(data).frame)
+                    self(data).state.closeRequested();
+            };
 
             // The decorations are on synchronous subsurfaces of ours, and
             // reach the screen only when this surface commits.
-            built.commit = [](libdecor_frame*, void* data) { self(data).present(); };
+            built.commit = [](libdecor_frame*, void* data)
+            { self(data).decorationsChanged(); };
 
             built.dismiss_popup = [](libdecor_frame*, const char*, void*) {};
 

@@ -4,6 +4,28 @@
 
 namespace eacp::GPU
 {
+namespace
+{
+bool wasShownAndIsNowHidden(const ViewVisibilityFacts& facts)
+{
+    if (facts.windowOnScreen)
+        return false;
+
+    return facts.windowMinimised || facts.windowHasBeenOnScreen;
+}
+} // namespace
+
+ViewVisibility decideViewVisibility(const ViewVisibilityFacts& facts)
+{
+    if (facts.viewHidden)
+        return ViewVisibility::ViewHidden;
+
+    if (facts.hasWindow && !facts.headless && wasShownAndIsNowHidden(facts))
+        return ViewVisibility::WindowNotVisible;
+
+    return ViewVisibility::Visible;
+}
+
 ContinuousRenderSwitch::ContinuousRenderSwitch(Callback startLinkToUse,
                                                Callback stopLinkToUse)
     : startLink(std::move(startLinkToUse))

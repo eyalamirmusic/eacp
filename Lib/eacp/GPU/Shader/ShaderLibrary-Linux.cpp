@@ -148,6 +148,18 @@ struct ShaderLibrary::Native
         program = {};
     }
 
+    // At once rather than deferred: no pipeline has seen these yet, and the
+    // retired list is the owning thread's, while a library may be built on a
+    // worker (ShaderWarmUp).
+    void destroyUnusedModules()
+    {
+        for (auto module: {program.vertex, program.fragment, program.compute})
+            if (module != VK_NULL_HANDLE)
+                vkDestroyShaderModule(context->getDevice(), module, nullptr);
+
+        program = {};
+    }
+
     Vector<PrecompiledSpirvStage> precompiledStages(const ShaderSource& source)
     {
         if (source.isCompute())
@@ -203,7 +215,7 @@ struct ShaderLibrary::Native
                     modules[index], *stage.module, stage.textureBindingBase))
                 continue;
 
-            releaseModules();
+            destroyUnusedModules();
 
             return Precompiled::fallBackAfterLoadFailure(
                 Precompiled::spirvResourceName(key, target, stage.stage),

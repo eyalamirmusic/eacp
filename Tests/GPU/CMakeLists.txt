@@ -138,6 +138,7 @@ set(gpu_test_sources
         SelectTests.cpp
         ShaderBlendTests.cpp
         ShaderCompileTests.cpp
+        ShaderWarmUpTests.cpp
         ShadowSamplingTests.cpp
         SharedMemoryTests.cpp
         SimdMatrixTests.cpp
@@ -210,10 +211,21 @@ if (WIN32)
     list(APPEND gpu_test_sources TransparentViewTests-Windows.cpp)
 endif ()
 
+# A plug-in module unloaded by its host after bringing up the shared devices,
+# with SharedDeviceUnloadFixture and SharedDeviceUnloadHost below.
+if (WIN32)
+    list(APPEND gpu_test_sources SharedDeviceUnloadTests-Windows.cpp)
+endif ()
+
 # The opt-in DXC compile, and EACP_D3D12_DXC=1 in TestMain.cpp, which runs the
 # whole suite under it.
 if (WIN32)
     list(APPEND gpu_test_sources DxcTests-Windows.cpp)
+endif ()
+
+if (WIN32)
+    list(APPEND gpu_test_sources RenderPipelineCacheTests-Windows.cpp
+                                 IntelDirect3D12AdapterTests-Windows.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
@@ -236,6 +248,23 @@ eacp_embed_test_shaders(GPUTests)
 
 if (WIN32)
     target_link_libraries(GPUTests PRIVATE eacp-gpu-dxc)
+endif ()
+
+# The module has eacp linked in, as a plug-in has; the host links nothing of
+# eacp's, as a DAW or a validator does, and runs in a process of its own so a
+# deadlocked unload ends in a timeout rather than a hung suite.
+if (WIN32)
+    eacp_add_plugin(SharedDeviceUnloadFixture SharedDeviceUnloadFixture-Windows.cpp)
+    target_link_libraries(SharedDeviceUnloadFixture
+            PRIVATE eacp-gpu eacp-gpuwidgets eacp-graphics)
+
+    add_executable(SharedDeviceUnloadHost SharedDeviceUnloadHost-Windows.cpp)
+    set_default_target_setting(SharedDeviceUnloadHost)
+
+    target_compile_definitions(GPUTests PRIVATE
+            EACP_SHARED_DEVICE_UNLOAD_FIXTURE="$<TARGET_FILE:SharedDeviceUnloadFixture>"
+            EACP_SHARED_DEVICE_UNLOAD_HOST="$<TARGET_FILE:SharedDeviceUnloadHost>")
+    add_dependencies(GPUTests SharedDeviceUnloadFixture SharedDeviceUnloadHost)
 endif ()
 
 # TextureSettleTests reads VulkanContext::submissionCount, so this one test

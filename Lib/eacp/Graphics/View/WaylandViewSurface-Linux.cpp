@@ -134,6 +134,20 @@ public:
         return changed;
     }
 
+    // Applied, like the position, by the parent's commit.
+    void placeAbove(const NativeSurfaceHandle& sibling) override
+    {
+        if (subsurface == nullptr || sibling.surface == nullptr)
+            return;
+
+        wl_subsurface_place_above(subsurface,
+                                  static_cast<wl_surface*>(sibling.surface));
+        wl_surface_commit(window.getSurface());
+
+        if (auto* connection = waylandDisplay())
+            connection->flush();
+    }
+
     void requestFrame() override
     {
         // One request outstanding: an earlier one still unanswered would

@@ -2,13 +2,21 @@
 #import <UIKit/UIKit.h>
 #include "View.h"
 #include "../Graphics/GraphicsContextImpl.h"
+#include "../Graphics/Keyboard-iOS.h"
 #include "../Image/Image.h"
 
+#include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Core/Threads/Async.h>
 
 #include <map>
 
-@interface NativeView : UIView
+namespace
+{
+constexpr auto carriageReturnCharacter = "\r";
+constexpr auto deleteCharacter = "\x7f";
+} // namespace
+
+@interface NativeView : UIView <UIKeyInput>
 {
 @public
     eacp::Graphics::View* cppView;
@@ -184,6 +192,145 @@
     }
 }
 
+- (BOOL)canBecomeFirstResponder
+{
+    return YES;
+}
+
+// The software keyboard comes up only for a view that wants text input. Any
+// other focused view gets an empty input view in its place, which keeps the
+// keyboard down while a hardware keyboard still reaches the view.
+- (UIView*)inputView
+{
+    static UIView* noSoftwareKeyboard = [[UIView alloc] initWithFrame:CGRectZero];
+
+    if (cppView->getProperties().wantsTextInput)
+        return nil;
+
+    return noSoftwareKeyboard;
+}
+
+// The view takes keys, not edits a document UIKit can see, so the keyboard's
+// own rewriting has nothing to work on and only gets in the way: autocorrect,
+// capitals, smart quotes and dashes are off.
+- (UITextAutocorrectionType)autocorrectionType
+{
+    return UITextAutocorrectionTypeNo;
+}
+
+- (UITextAutocapitalizationType)autocapitalizationType
+{
+    return UITextAutocapitalizationTypeNone;
+}
+
+- (UITextSpellCheckingType)spellCheckingType
+{
+    return UITextSpellCheckingTypeNo;
+}
+
+- (UITextSmartQuotesType)smartQuotesType
+{
+    return UITextSmartQuotesTypeNo;
+}
+
+- (UITextSmartDashesType)smartDashesType
+{
+    return UITextSmartDashesTypeNo;
+}
+
+- (UITextSmartInsertDeleteType)smartInsertDeleteType
+{
+    return UITextSmartInsertDeleteTypeNo;
+}
+
+// Always, so the keyboard's delete key stays live with nothing typed yet: what
+// it deletes is the app's business.
+- (BOOL)hasText
+{
+    return YES;
+}
+
+- (void)typeKey:(uint16_t)keyCode characters:(const std::string&)characters
+{
+    auto event = eacp::Graphics::KeyEvent {};
+    event.characters = characters;
+    event.charactersIgnoringModifiers = characters;
+    event.keyCode = keyCode;
+    event.timestamp = [NSProcessInfo processInfo].systemUptime;
+
+    cppView->dispatchKeyEvent(event);
+
+    event.type = eacp::Graphics::KeyEventType::Up;
+    cppView->dispatchKeyEvent(event);
+}
+
+// The keyboard's return key types a newline; it arrives as the Return key,
+// with the carriage return a hardware Return types.
+- (void)insertText:(NSString*)text
+{
+    using namespace eacp::Graphics;
+
+    if ([text isEqualToString:@"\n"])
+    {
+        [self typeKey:KeyCode::Return characters:carriageReturnCharacter];
+        return;
+    }
+
+    [self typeKey:KeyCode::Unknown characters:eacp::Strings::toStdString(text)];
+}
+
+// With the character a hardware backspace types (DEL), as on macOS.
+- (void)deleteBackward
+{
+    [self typeKey:eacp::Graphics::KeyCode::Delete characters:deleteCharacter];
+}
+
+// Hands each hardware key to the view and returns the presses no view kept,
+// which go on to UIKit: a key passed on still types through insertText.
+- (NSSet<UIPress*>*)dispatchPresses:(NSSet<UIPress*>*)presses
+                               type:(eacp::Graphics::KeyEventType)type
+{
+    auto* unkept = [NSMutableSet<UIPress*> set];
+
+    for (UIPress* press in presses)
+    {
+        if (press.key == nil)
+        {
+            [unkept addObject:press];
+            continue;
+        }
+
+        auto event = eacp::Graphics::iosKeyEventFromPress(press, type);
+        eacp::Graphics::iosKeyboardEvent(event);
+
+        if (!cppView->dispatchKeyEvent(event))
+            [unkept addObject:press];
+    }
+
+    return unkept;
+}
+
+- (void)pressesBegan:(NSSet<UIPress*>*)presses withEvent:(UIPressesEvent*)event
+{
+    auto* unkept = [self dispatchPresses:presses
+                                    type:eacp::Graphics::KeyEventType::Down];
+
+    if (unkept.count > 0)
+        [super pressesBegan:unkept withEvent:event];
+}
+
+- (void)pressesEnded:(NSSet<UIPress*>*)presses withEvent:(UIPressesEvent*)event
+{
+    [self dispatchPresses:presses type:eacp::Graphics::KeyEventType::Up];
+    [super pressesEnded:presses withEvent:event];
+}
+
+- (void)pressesCancelled:(NSSet<UIPress*>*)presses withEvent:(UIPressesEvent*)event
+{
+    [self dispatchPresses:presses type:eacp::Graphics::KeyEventType::Up];
+    [super pressesCancelled:presses withEvent:event];
+}
+
 - (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event
 {
     [self dispatchTouches:touches phase:eacp::Graphics::TouchPhase::Began];
@@ -267,7 +414,13 @@ struct View::Native
         return {0.f, 0.f};
     }
 
-    void focus() { [nativeView.get() becomeFirstResponder]; }
+    // Reloads the input views first, so a focused view that changed
+    // wantsTextInput raises or puts away the software keyboard.
+    void focus()
+    {
+        [nativeView.get() reloadInputViews];
+        [nativeView.get() becomeFirstResponder];
+    }
 
     bool hasFocus() const { return [nativeView.get() isFirstResponder]; }
 

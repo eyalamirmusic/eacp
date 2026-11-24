@@ -160,6 +160,7 @@ void ListBox::selectRowAt(const MouseEvent& event)
         return;
 
     setSelectedRow(row, true);
+    model->rowClicked(row, event);
 
     if (event.clickCount >= 2)
         model->rowDoubleClicked(row);
@@ -313,6 +314,8 @@ void ListBoxModel::paintCell(Graphics&, int, int, const Rect&, bool) {}
 void ListBoxModel::selectedRowChanged(int) {}
 
 void ListBoxModel::rowDoubleClicked(int) {}
+
+void ListBoxModel::rowClicked(int, const MouseEvent&) {}
 
 ListBoxModel* ListBox::getModel() const
 {

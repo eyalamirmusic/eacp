@@ -11,9 +11,11 @@
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/FilePath.h>
+#include <eacp/Core/Utils/Singleton.h>
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1372,9 +1374,29 @@ void VulkanShared::savePipelineCache() const
     writeFileAtomically(vulkanPipelineCachePath(properties), blob);
 }
 
+namespace
+{
+void savePipelineCacheAtExit()
+{
+    getVulkanShared().savePipelineCache();
+}
+} // namespace
+
+// Never destroyed: a GPU view closed after main returns - from an exit handler,
+// or by a static built before it - still reaches the device after every
+// function-local static made since is gone. The pipeline cache its destructor
+// would have saved is saved by an exit handler registered as it is built, so
+// it runs exactly where that destructor did; a pipeline built after it, from an
+// exit handler registered earlier, is used but not kept.
 VulkanShared& getVulkanShared()
 {
-    static auto shared = VulkanShared();
+    static auto& shared = []() -> VulkanShared&
+    {
+        auto& created = Singleton::getImmortal<VulkanShared>();
+        std::atexit(savePipelineCacheAtExit);
+        return created;
+    }();
+
     return shared;
 }
 

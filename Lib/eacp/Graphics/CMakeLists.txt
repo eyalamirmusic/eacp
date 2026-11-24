@@ -33,6 +33,11 @@ endif ()
 # per-source -O2 also broke the Xcode generator, which the iOS build uses.)
 target_link_libraries(eacp-graphics PUBLIC eacp-core ESIMD)
 
+# Only Windows has shared devices whose release at unload hangs the host.
+if (NOT WIN32)
+    target_sources(eacp-graphics PRIVATE Graphics/SharedDevices-Default.cpp)
+endif ()
+
 # PUBLIC so the capability is a compile-time fact for every consumer, not just
 # a CMake variable: Graphics.h leaves the 2D-tier headers out where there is no
 # 2D tier, and a caller that reaches for one gets a compile error rather than a
@@ -164,6 +169,7 @@ elseif (EMSCRIPTEN)
             Window/Display-Web.cpp
             Window/HeadlessWindow-Linux.cpp
             Window/LinuxWindowNative-Linux.cpp
+            Window/LinuxWindowSurface-Linux.cpp
             Window/PointerTrackers.cpp
             Window/Window-Web.cpp)
 
@@ -186,7 +192,7 @@ elseif (ANDROID)
             Image/Image-Android.cpp
             Input/GameInput-Default.cpp
             Layers/Layer-Linux.cpp
-            Menu/Menu-Linux.cpp
+            Menu/Menu-Android.cpp
             Primitives/Path-Linux.cpp
             Tray/TrayIcon-Linux.cpp
             View/AndroidViewSurface-Android.cpp
@@ -194,6 +200,7 @@ elseif (ANDROID)
             Window/AndroidEnvironment-Android.cpp
             Window/AndroidMain-Android.c
             Window/Display-Android.cpp
+            Window/LinuxWindowSurface-Linux.cpp
             Window/Window-Android.cpp)
 
     # The glue is the NDK's own source, not clean under eacp's warning set.
@@ -234,7 +241,9 @@ elseif (UNIX)
             Window/HeadlessWindow-Linux.cpp
             Window/LinuxInput-Linux.cpp
             Window/LinuxWindowNative-Linux.cpp
+            Window/LinuxWindowSurface-Linux.cpp
             Window/LinuxWindowSystem-Linux.cpp
+            Window/NativeChildSurface-Linux.cpp
             Window/PointerTrackers.cpp
             Window/WaylandClipboard-Linux.cpp
             Window/WaylandDisplay-Linux.cpp

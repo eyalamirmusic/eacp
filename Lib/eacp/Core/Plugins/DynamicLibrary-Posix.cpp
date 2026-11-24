@@ -1,6 +1,8 @@
 #include "DynamicLibraryPlatform.h"
 
+#include <cerrno>
 #include <dlfcn.h>
+#include <signal.h>
 #include <unistd.h>
 
 namespace eacp::Plugins::Detail
@@ -19,6 +21,11 @@ std::string lastLoadError()
 long long currentProcessId()
 {
     return (long long) getpid();
+}
+
+bool isProcessRunning(long long processId)
+{
+    return kill((pid_t) processId, 0) == 0 || errno == EPERM;
 }
 
 void unloadImage(void* handle)

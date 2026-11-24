@@ -145,7 +145,7 @@ private:
         if constexpr (hotReload)
             return {{}, true, hotReloadTarget()};
         else
-            return {eacpReloadableTable(), false, {}};
+            return {*eacpReloadableTable(), false, {}};
     }
 
     ReloadableEntry::Erased lookup(std::string_view signature) const;

@@ -400,6 +400,15 @@ protected:
     void mouseExited(const MouseEvent&) override;
     void mouseWheel(const MouseEvent&) override;
 
+    // For the same reason WebView2 has no drop target of its own on Windows:
+    // the host window routes OS file drags here and these hand them on to the
+    // browser, so the page gets the HTML5 drag events a WKWebView gets
+    // natively. No-ops on macOS/iOS.
+    bool fileDragEnter(const Vector<std::string>& files, Point position) override;
+    bool fileDragMove(const Vector<std::string>& files, Point position) override;
+    void fileDragExit() override;
+    void filesDropped(const Vector<std::string>& files, Point position) override;
+
 private:
     friend struct WebViewNativeAccess;
 

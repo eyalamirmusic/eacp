@@ -155,7 +155,8 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `runAsync(options)` — `Async<ProcessResult>` resolved on the main thread
 - `Process` — `writeToInput`, `closeInput`, `wait`, `terminate`, `kill`, `output`
 - `ProcessOptions` — `executable`, `arguments`, `workingDirectory`, `environment`,
-  `commandLine`, `captureOutput`, `mergeErrorOutput`, `onOutput`
+  `commandLine`, `captureOutput`, `mergeErrorOutput`, `onOutput`,
+  `newProcessGroup`, `killDescendants` (terminate/kill end the whole tree)
 - `tokeniseCommandLine(line)` — split a command line JUCE's way
 - `BuildRunner` (`BuildRunner.h`) — one command rerun on demand
 

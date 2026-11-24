@@ -28,6 +28,9 @@ public:
     void run();
 
     // A cancelled run still finishes, with ProcessResult::exited false.
+    // Cancelling, and destroying the runner, end the command with the
+    // processes it started (ProcessOptions::killDescendants), so neither waits
+    // for a build tool under the command to finish.
     void cancel();
 
     [[nodiscard]] bool isRunning() const;

@@ -8,6 +8,7 @@
 #include "FileDrag-Windows.h"
 #include <eacp/Graphics/View/FileDragOut-Windows.h>
 #include <eacp/Graphics/DComp-Windows.h>
+#include <eacp/Graphics/Window/CompositionHostWindow-Windows.h>
 #include <eacp/Core/Utils/Format.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <memory>
 #include <queue>
+#include <utility>
 
 #include <objbase.h>
 #include <shlwapi.h>
@@ -30,8 +32,6 @@ namespace eacp::Graphics
 {
 
 using Microsoft::WRL::ComPtr;
-
-HWND findHostHwndForView(View* view);
 
 // Defined in Graphics/Keyboard-Windows.cpp: Windows virtual key -> framework
 // KeyCode (KeyCode::Unknown when unmapped). Lets forwarded keys carry the same
@@ -279,6 +279,7 @@ struct WebView::Native
         // release their connection while the heap is still valid. The shared
         // environment (popup mode) is owned by the opener; just drop our ref.
         webView.Reset();
+        dragController.Reset();
         compositionController.Reset();
         controller.Reset();
         environment.Reset();
@@ -306,8 +307,10 @@ struct WebView::Native
             return;
 
         // In visual hosting mode WebView2 is not an HWND, so it receives no
-        // native input. Route the framework's mouse events to it instead.
+        // native input. Route the framework's mouse events and the host
+        // window's file drags to it instead.
         owner.setHandlesMouseEvents(true);
+        owner.setAcceptsFileDrops(true);
 
         createRenderVisual();
 
@@ -473,6 +476,10 @@ struct WebView::Native
                         initInProgress = false;
                         return E_NOINTERFACE;
                     }
+
+                    // Drag and drop arrives through the host window's drop
+                    // target, which this hands on (see handleFileDragEnter).
+                    ctrl->QueryInterface(IID_PPV_ARGS(&dragController));
 
                     controller->get_CoreWebView2(&webView);
                     applyBackground();
@@ -1295,14 +1302,8 @@ struct WebView::Native
         if (!compositionController)
             return;
 
-        // Bounds are in physical pixels (see updateBounds), so input points must
-        // be too. The framework hands us positions local to this View in logical
-        // units, so scale them up by the DPI factor.
-        auto scale = getDpiScale();
-        POINT pt = {static_cast<LONG>(std::lround(localPos.x * scale)),
-                    static_cast<LONG>(std::lround(localPos.y * scale))};
-
-        compositionController->SendMouseInput(kind, virtualKeys, mouseData, pt);
+        compositionController->SendMouseInput(
+            kind, virtualKeys, mouseData, toWebViewPixels(localPos, getDpiScale()));
     }
 
     // The button held during a drag. WebView2 treats a MOVE whose virtualKeys
@@ -1389,6 +1390,76 @@ struct WebView::Native
                       toWheelDelta(event.delta.x));
     }
 
+    // --- Native file drops ---------------------------------------------------
+    // Visual hosting leaves WebView2 no drop target of its own: the host
+    // window's is registered on the HWND and routes file drags to the view
+    // under the pointer. This view hands each one on to the browser with the
+    // drag's own data object, key state and effects, so the page gets its
+    // HTML5 drag events as a WKWebView's does natively.
+    bool handleFileDragEnter(const Point& localPos)
+    {
+        auto drag = currentOleFileDrag(hostHwnd);
+        auto effect = drag.allowedEffects;
+
+        pageFileDragEntered = dragController && drag.data != nullptr
+                              && SUCCEEDED(dragController->DragEnter(
+                                  drag.data,
+                                  drag.keyState,
+                                  toWebViewPixels(localPos, getDpiScale()),
+                                  &effect));
+
+        return webViewTakesFileDrag(pageFileDragEntered ? effect : DROPEFFECT_NONE,
+                                    ownFileDragOutInProgress);
+    }
+
+    bool handleFileDragMove(const Point& localPos)
+    {
+        if (!pageFileDragEntered)
+            return handleFileDragEnter(localPos);
+
+        auto drag = currentOleFileDrag(hostHwnd);
+        auto effect = drag.allowedEffects;
+
+        if (FAILED(dragController->DragOver(
+                drag.keyState, toWebViewPixels(localPos, getDpiScale()), &effect)))
+            effect = DROPEFFECT_NONE;
+
+        return webViewTakesFileDrag(effect, ownFileDragOutInProgress);
+    }
+
+    void handleFileDragExit()
+    {
+        if (std::exchange(pageFileDragEntered, false))
+            dragController->DragLeave();
+    }
+
+    // The page's own dragover verdict decides what the drop does: where it
+    // refused the files Chromium ends the drag with a dragleave, so a drop the
+    // copy cursor was only forced for (see webViewTakesFileDrag) never reaches
+    // a drop handler or navigates the page.
+    void handleFilesDropped(const Point& localPos)
+    {
+        if (!pageFileDragEntered)
+            handleFileDragEnter(localPos);
+
+        if (!std::exchange(pageFileDragEntered, false))
+            return;
+
+        auto drag = currentOleFileDrag(hostHwnd);
+        auto effect = drag.allowedEffects;
+
+        if (drag.data == nullptr)
+        {
+            dragController->DragLeave();
+            return;
+        }
+
+        dragController->Drop(drag.data,
+                             drag.keyState,
+                             toWebViewPixels(localPos, getDpiScale()),
+                             &effect);
+    }
+
     // --- Native file drag-out -----------------------------------------------
     // The page arms a drag on mousedown (via the armFileDrag bridge command);
     // by the time the pointer starts dragging the armed paths have arrived over
@@ -1438,15 +1509,13 @@ struct WebView::Native
                     { return fileDragPointFromCursor(hostWindow, dpiScale); },
                     onDragMoved));
 
-                // Register our own window as a drop target for the length
-                // of the drag purely for cursor feedback (see
-                // FileDragTarget) — without it the shell shows ⊘ over our
-                // own window. Fails harmlessly (leaving the old ⊘) if
-                // something else already owns the window's drop slot.
-                ComPtr<IDropTarget> dropTarget;
-                dropTarget.Attach(new FileDragTarget());
-                auto registered =
-                    SUCCEEDED(RegisterDragDrop(hostWindow, dropTarget.Get()));
+                // Over our own window the drop target is the host window's,
+                // which routes the drag back to this view; while this flag
+                // is up the view takes it anywhere, so the shell shows a copy
+                // cursor rather than ⊘ (see webViewTakesFileDrag). The loop
+                // can outlive this Native, so it is lowered only if not.
+                auto stillAlive = alive;
+                ownFileDragOutInProgress = true;
 
                 DWORD effect = DROPEFFECT_NONE;
                 SHDoDragDrop(hostWindow,
@@ -1455,8 +1524,8 @@ struct WebView::Native
                              DROPEFFECT_COPY,
                              &effect);
 
-                if (registered)
-                    RevokeDragDrop(hostWindow);
+                if (*stillAlive)
+                    ownFileDragOutInProgress = false;
 
                 // The modal loop is over: report the release point so the
                 // app can file the drop (or stand its filing UI down).
@@ -1567,6 +1636,7 @@ struct WebView::Native
     ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2CompositionController> compositionController;
+    ComPtr<ICoreWebView2CompositionController3> dragController;
     ComPtr<ICoreWebView2> webView;
 
     // The composition visual the browser renders into. It is a child of the
@@ -1616,6 +1686,13 @@ struct WebView::Native
     // Set by armWindowDrag (the __eacpWindowDrag bridge command); consumed by
     // the next mouseDragged, which hands the gesture to the OS move loop.
     bool windowDragArmed = false;
+
+    // Whether the routed file drag over this view has been entered into the
+    // page, so the browser is owed a DragOver, DragLeave or Drop.
+    bool pageFileDragEntered = false;
+
+    // Up while performFileDrag's SHDoDragDrop runs. See webViewTakesFileDrag.
+    bool ownFileDragOutInProgress = false;
 
     std::queue<std::function<void()>> pendingOperations;
     Vector<std::wstring> pendingDocStartScripts;
@@ -2021,6 +2098,26 @@ void WebView::mouseExited(const MouseEvent&)
 void WebView::mouseWheel(const MouseEvent& event)
 {
     impl->handleMouseWheel(event);
+}
+
+bool WebView::fileDragEnter(const Vector<std::string>&, Point position)
+{
+    return impl->handleFileDragEnter(position);
+}
+
+bool WebView::fileDragMove(const Vector<std::string>&, Point position)
+{
+    return impl->handleFileDragMove(position);
+}
+
+void WebView::fileDragExit()
+{
+    impl->handleFileDragExit();
+}
+
+void WebView::filesDropped(const Vector<std::string>&, Point position)
+{
+    impl->handleFilesDropped(position);
 }
 
 void WebView::armFileDrag(const Vector<std::string>& paths)

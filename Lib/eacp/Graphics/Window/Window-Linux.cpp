@@ -8,11 +8,20 @@
 
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Singleton.h>
+
+#include <unordered_map>
 
 namespace eacp::Graphics
 {
 namespace
 {
+// Never destroyed, as the view registries in View-Linux.cpp are not.
+std::unordered_map<Window*, LinuxWindowNative*>& linuxWindowNatives()
+{
+    return Singleton::getImmortal<std::unordered_map<Window*, LinuxWindowNative*>>();
+}
+
 std::unique_ptr<LinuxWindowNative> makeWindowNative(const WindowOptions& options,
                                                     WindowEvents& events)
 {
@@ -53,13 +62,22 @@ struct Window::Native
     std::unique_ptr<LinuxWindowNative> native;
 };
 
+LinuxWindowNative& linuxWindowNative(Window& window)
+{
+    return *linuxWindowNatives().at(&window);
+}
+
 Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
     , impl(optionsToUse, events)
 {
+    linuxWindowNatives()[this] = impl->native.get();
 }
 
-Window::~Window() = default;
+Window::~Window()
+{
+    linuxWindowNatives().erase(this);
+}
 
 void Window::setTitle(const std::string& title)
 {
@@ -132,15 +150,17 @@ void Window::setPosition(Point position)
 }
 
 // The content size the window is holding, which under headless is simply the
-// one it was given: the state is real there, only never shown.
+// one it was given: the state is real there, only never shown. A menu bar is
+// not part of it.
 Point Window::getSize() const
 {
-    return impl->native->getWindowSurface().contentSize;
+    return impl->native->getState().getContentSize();
 }
 
 void Window::setSize(Point size)
 {
-    impl->native->setSize(options.effectiveSize(size));
+    auto& state = impl->native->getState();
+    impl->native->setSize(state.surfaceSizeFor(options.effectiveSize(size)));
 }
 
 void Window::setMouseLocked(bool locked)

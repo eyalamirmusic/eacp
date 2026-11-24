@@ -1,5 +1,7 @@
 #include "ShaderProgram.h"
 
+#include "../Shader/ShaderLibraryCache.h"
+
 #include <eacp/Core/Utils/Logging.h>
 
 #include <algorithm>
@@ -570,18 +572,35 @@ void ShaderProgram::prepare(RenderPipelineDescriptor descriptor,
 
     if (!fitsFloat16 || !fitsSampleRate)
     {
-        shaderLibrary.emplace(Device::shared(), ShaderSource {});
+        shaderLibrary =
+            std::make_shared<const ShaderLibrary>(Device::shared(), ShaderSource {});
         useRefusedPipeline();
         return;
     }
 
-    shaderLibrary.emplace(Device::shared(), generated.source);
+    auto& device = Device::shared();
+    shaderLibrary = ShaderLibraryCache::of(device).acquire(device, generated.source);
 
-    descriptor.library = &*shaderLibrary;
+    descriptor.library = shaderLibrary.get();
     descriptor.vertexLayout = generated.vertexLayout;
     preparedDescriptor = descriptor;
 
     specialize(overrides);
+}
+
+std::optional<RenderPipelineDescriptor>
+    ShaderProgram::pipelineDescriptorFor(RenderPipelineDescriptor descriptor,
+                                         const ShaderLibrary& library) const
+{
+    const auto resolved = resolveOverrides(graph(), OverrideValues {});
+
+    if (!resolved.isValid())
+        return std::nullopt;
+
+    descriptor.library = &library;
+    descriptor.vertexLayout = generated.vertexLayout;
+    descriptor.constants = resolved.specialized;
+    return descriptor;
 }
 
 bool ShaderProgram::specialize(const OverrideValues& overrides)
@@ -633,7 +652,7 @@ const RenderPipeline& ShaderProgram::pipeline() const
 
 bool ShaderProgram::isPrecompiled() const
 {
-    return shaderLibrary.has_value() && shaderLibrary->isPrecompiled();
+    return shaderLibrary != nullptr && shaderLibrary->isPrecompiled();
 }
 
 const Buffer& ShaderProgram::vertices() const

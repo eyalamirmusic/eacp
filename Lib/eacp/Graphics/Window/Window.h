@@ -25,8 +25,29 @@ enum class WindowFlags
     HUDWindow
 };
 
+// The iOS status bar (clock, battery) over the top of a window. Shown, it sits
+// inside the safe area's top inset. Automatic picks its text colour from the
+// system's light or dark appearance; LightText and DarkText fix it, for a
+// window whose own background decides what can be read.
+enum class SystemStatusBar
+{
+    Hidden,
+    Automatic,
+    LightText,
+    DarkText
+};
+
 using ResizeCallback = std::function<void(int width, int height)>;
 using WillResizeCallback = std::function<void(int& width, int& height)>;
+
+// Where an on-screen keyboard is going, as UIKit announces it: how much of the
+// window's bottom it will cover, in points (0 once it is down), and how long
+// the system takes to animate it there.
+struct SoftwareKeyboardChange
+{
+    float coveredHeight = 0.f;
+    double animationSeconds = 0.0;
+};
 
 // Observable window events. Assign a handler to react; all fire on the main
 // thread.
@@ -57,6 +78,13 @@ struct WindowEvents
     // size, nothing needs a position before the window exists: a handler set
     // after construction has still missed nothing.
     std::function<void(Point position)> onMoved = [](auto&&) {};
+
+    // iOS: fires as the on-screen keyboard starts to come up, change height (a
+    // different keyboard, the suggestion bar) or go down, with where it will
+    // end. Laying the content out again over animationSeconds keeps it moving
+    // with the keyboard. Never fires on other platforms.
+    std::function<void(const SoftwareKeyboardChange&)> onSoftwareKeyboardChanged =
+        [](auto&&) {};
 
     // The raw key, mouse and focus stream, for input layers beside the view
     // tree (see WindowInput.h). Framework-owned: the platform reports into it
@@ -139,7 +167,12 @@ struct WindowOptions
     //
     // Fullscreen and maximise give a constrained window the largest size the
     // rule allows on that display, centred: macOS and the Wayland compositor
-    // letterbox the rest in black, Windows leaves it to the desktop.
+    // letterbox the rest in black, Windows leaves it to the desktop. Wayland
+    // has no letterbox for a maximise, whose size a window must take exactly,
+    // so there a constrained window stays a window: toggleMaximize asks for
+    // nothing when aspectRatio is set or the window does not resize, and a
+    // maximise the compositor starts itself is turned down whenever the rule
+    // would change the size it gives.
     SizeConstraint sizeConstraint = [](const ResizeRequest& request)
     { return request.size; };
 
@@ -267,6 +300,10 @@ struct WindowOptions
     // value is ignored there; earlier Windows stays square.
     std::optional<float> cornerRadius;
 
+    // iOS only; see SystemStatusBar. Hidden by default, as a game or a
+    // full-screen canvas wants.
+    SystemStatusBar statusBar = SystemStatusBar::Hidden;
+
     EA::Vector<WindowFlags> flags;
 };
 
@@ -361,7 +398,8 @@ public:
 
     // Maximizes (macOS zoom, Windows SW_MAXIMIZE), or restores the previous
     // frame when already maximized — the standard caption-button toggle.
-    // No-op under headless and on iOS.
+    // No-op under headless and on iOS, and on Wayland for a window whose size
+    // a maximise would break (see sizeConstraint).
     void toggleMaximize();
 
     // Takes the window full screen, or brings it back to the window it was -

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Graphics/SharedDevices.h"
 #include "Image/ImageOps.h"
 #include "Helpers/DisplayLink.h"
 #include "Helpers/SystemAppearance.h"

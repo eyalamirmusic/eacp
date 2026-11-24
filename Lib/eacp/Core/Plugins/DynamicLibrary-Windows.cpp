@@ -34,6 +34,18 @@ long long currentProcessId()
     return (long long) GetCurrentProcessId();
 }
 
+bool isProcessRunning(long long processId)
+{
+    auto process = OpenProcess(SYNCHRONIZE, FALSE, (DWORD) processId);
+
+    if (process == nullptr)
+        return GetLastError() == ERROR_ACCESS_DENIED;
+
+    auto running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+    CloseHandle(process);
+    return running;
+}
+
 void unloadImage(void* handle)
 {
     FreeLibrary((HMODULE) handle);

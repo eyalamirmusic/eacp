@@ -404,6 +404,7 @@ std::uint32_t packSharedExponent(const float (&rgb)[3])
         return 0;
 
     const auto binary = std::ilogb(brightest) + 1;
+
     auto exponent = std::max(0, binary + 15);
 
     if (std::floor(std::ldexp(brightest, 24 - exponent) + 0.5f) >= 512.f)

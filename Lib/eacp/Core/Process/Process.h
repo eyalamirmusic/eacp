@@ -76,6 +76,23 @@ struct ProcessOptions
     // it under `stty tostop`. terminate() and kill() still reach the child
     // alone, not the rest of its group. Ignored for detached launches.
     bool newProcessGroup = false;
+
+    // When true, terminate() and kill() end the processes the child started as
+    // well as the child, and so does destroying the Process before wait() has
+    // returned, even when the child itself has already exited, so none of them
+    // is left holding the captured output open. Windows puts the child in a
+    // job object of its own before it runs, and ends the job; every process it
+    // starts joins the job unless it breaks away. POSIX starts the child in a
+    // process group of its own, as newProcessGroup does, and signals the group;
+    // a process that moved to another group (ninja runs each job in one) is not
+    // reached. The child then leaves the terminal's foreground group: Ctrl+C
+    // pressed for this process no longer reaches it or what it started, and if
+    // this process dies without destroying the Process they run to completion
+    // on their own. Until it is waited for or destroyed, a POSIX child is not
+    // reaped by isRunning() or requestStop(), only observed, so its group's id
+    // cannot be reused while it may still be signalled. Ignored for detached
+    // launches.
+    bool killDescendants = false;
 };
 
 struct ProcessResult

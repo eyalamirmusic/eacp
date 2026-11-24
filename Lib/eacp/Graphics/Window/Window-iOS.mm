@@ -4,13 +4,35 @@
 #import <UIKit/UIKit.h>
 
 @interface WindowViewController : UIViewController
+{
+@public
+    eacp::Graphics::SystemStatusBar statusBar;
+}
 @end
 
 @implementation WindowViewController
 
 - (BOOL)prefersStatusBarHidden
 {
-    return YES;
+    return statusBar == eacp::Graphics::SystemStatusBar::Hidden;
+}
+
+- (UIStatusBarStyle)preferredStatusBarStyle
+{
+    using eacp::Graphics::SystemStatusBar;
+
+    switch (statusBar)
+    {
+        case SystemStatusBar::LightText:
+            return UIStatusBarStyleLightContent;
+        case SystemStatusBar::DarkText:
+            return UIStatusBarStyleDarkContent;
+        case SystemStatusBar::Hidden:
+        case SystemStatusBar::Automatic:
+            return UIStatusBarStyleDefault;
+    }
+
+    return UIStatusBarStyleDefault;
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations
@@ -22,10 +44,39 @@
 
 namespace eacp::Graphics
 {
+namespace
+{
+// The part of the window under the keyboard's frame; the notification gives
+// that frame in screen coordinates.
+float heightCoveredByKeyboard(UIWindow* window, CGRect keyboardFrameOnScreen)
+{
+    auto keyboardFrame = [window convertRect:keyboardFrameOnScreen
+                         fromCoordinateSpace:window.screen.coordinateSpace];
+    auto covered = CGRectIntersection(window.bounds, keyboardFrame);
+
+    if (CGRectIsNull(covered))
+        return 0.f;
+
+    return (float) covered.size.height;
+}
+
+SoftwareKeyboardChange softwareKeyboardChangeFrom(UIWindow* window,
+                                                  NSNotification* notification)
+{
+    auto* info = notification.userInfo;
+    auto endFrame = [info[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+
+    auto change = SoftwareKeyboardChange {};
+    change.coveredHeight = heightCoveredByKeyboard(window, endFrame);
+    change.animationSeconds =
+        [info[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    return change;
+}
+} // namespace
 
 struct Window::Native
 {
-    Native(const WindowOptions&)
+    Native(const WindowOptions& options, WindowEvents& events)
     {
         UIWindowScene* windowScene = nil;
         for (UIScene* scene in [UIApplication sharedApplication].connectedScenes)
@@ -47,10 +98,32 @@ struct Window::Native
         }
 
         viewController = [[WindowViewController alloc] init];
+        viewController.get()->statusBar = options.statusBar;
         window.get().rootViewController = viewController.get();
         window.get().backgroundColor = [UIColor blackColor];
 
         [window.get() makeKeyAndVisible];
+
+        observeSoftwareKeyboard(events);
+    }
+
+    // UIKeyboardWillChangeFrame covers coming up, changing height and going
+    // down alike: a keyboard going down ends below the window.
+    void observeSoftwareKeyboard(WindowEvents& events)
+    {
+        auto* uiWindow = window.get();
+        auto* windowEvents = &events;
+        auto* center = [NSNotificationCenter defaultCenter];
+        auto* observer =
+            [center addObserverForName:UIKeyboardWillChangeFrameNotification
+                                object:nil
+                                 queue:nil
+                            usingBlock:^(NSNotification* notification) {
+                              windowEvents->onSoftwareKeyboardChanged(
+                                  softwareKeyboardChangeFrom(uiWindow, notification));
+                            }];
+
+        keyboardObserver = ObjC::Ptr<NSObject>(observer, ObjC::RetainMode {});
     }
 
     void setTitle(const std::string&)
@@ -69,17 +142,19 @@ struct Window::Native
 
     ~Native()
     {
+        [[NSNotificationCenter defaultCenter] removeObserver:keyboardObserver.get()];
         window.get().hidden = YES;
         window.get().rootViewController = nil;
     }
 
     ObjC::Ptr<UIWindow> window;
     ObjC::Ptr<WindowViewController> viewController;
+    ObjC::Ptr<NSObject> keyboardObserver;
 };
 
 Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
-    , impl(options)
+    , impl(options, events)
 {
     events.input.activationChanged(true);
 }

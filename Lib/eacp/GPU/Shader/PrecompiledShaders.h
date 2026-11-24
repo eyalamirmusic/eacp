@@ -31,6 +31,11 @@ void clearForTesting();
 bool isRequired();
 void setRequiredForTesting(bool required);
 
+// Bumped by every setForTesting, clearForTesting and setRequiredForTesting, so
+// a library cached under one configuration (ShaderLibraryCache.h) is not handed
+// out under another.
+std::uint64_t configurationGeneration();
+
 // True when anything at all is precompiled - embedded or injected. A miss in
 // an app that embeds nothing is the expected case, not one worth a log line.
 bool isAvailable();

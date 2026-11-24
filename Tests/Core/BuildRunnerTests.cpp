@@ -1,4 +1,5 @@
 #include "Common.h"
+#include "HarnessScript.h"
 
 using namespace nano;
 
@@ -7,12 +8,9 @@ namespace BuildRunnerTests
 namespace Proc = eacp::Processes;
 using eacp::Threads::runEventLoopUntil;
 
-Proc::ProcessOptions sleepCommand(const std::string& seconds)
+Proc::ProcessOptions sleepCommand(int milliseconds)
 {
-    auto options = Proc::ProcessOptions {};
-    options.executable = "/bin/sleep";
-    options.arguments = {seconds};
-    return options;
+    return HarnessScript {}.sleep(milliseconds).options();
 }
 
 struct Recorder
@@ -52,7 +50,8 @@ struct Recorder
 
 auto tSucceeds = test("BuildRunner/succeedingCommandStreamsOutput") = []
 {
-    auto runner = Proc::BuildRunner {shellCommand("echo one; echo two")};
+    auto runner =
+        Proc::BuildRunner {HarnessScript {}.print("one").print("two").options()};
     auto recorder = Recorder {runner};
 
     runner.run();
@@ -76,7 +75,7 @@ auto tSucceeds = test("BuildRunner/succeedingCommandStreamsOutput") = []
 
 auto tFailingExitCode = test("BuildRunner/failingCommandReportsExitCode") = []
 {
-    auto runner = Proc::BuildRunner {shellCommand("exit 3")};
+    auto runner = Proc::BuildRunner {HarnessScript {}.exit(3).options()};
     auto recorder = Recorder {runner};
 
     runner.run();
@@ -88,8 +87,8 @@ auto tFailingExitCode = test("BuildRunner/failingCommandReportsExitCode") = []
 
 auto tMergesStderr = test("BuildRunner/stderrIsMergedIntoTheStream") = []
 {
-    auto runner =
-        Proc::BuildRunner {shellCommand("echo out; echo err 1>&2; echo end")};
+    auto script = HarnessScript {}.print("out").printError("err").print("end");
+    auto runner = Proc::BuildRunner {script.options()};
     auto recorder = Recorder {runner};
 
     runner.run();
@@ -101,7 +100,7 @@ auto tMergesStderr = test("BuildRunner/stderrIsMergedIntoTheStream") = []
 
 auto tCoalesces = test("BuildRunner/runsDuringARunCoalesceIntoOne") = []
 {
-    auto runner = Proc::BuildRunner {sleepCommand("0.3")};
+    auto runner = Proc::BuildRunner {sleepCommand(300)};
     auto recorder = Recorder {runner};
 
     runner.run();
@@ -125,7 +124,7 @@ auto tCoalesces = test("BuildRunner/runsDuringARunCoalesceIntoOne") = []
 
 auto tCancel = test("BuildRunner/cancelFinishesPromptlyWithoutRerun") = []
 {
-    auto runner = Proc::BuildRunner {sleepCommand("10")};
+    auto runner = Proc::BuildRunner {sleepCommand(10000)};
     auto recorder = Recorder {runner};
 
     runner.run();
@@ -146,23 +145,54 @@ auto tCancel = test("BuildRunner/cancelFinishesPromptlyWithoutRerun") = []
     check(!runner.isRunning());
 };
 
-auto tDestroy = test("BuildRunner/destroyingDuringARunReturnsPromptly") = []
+void checkDestroyingDuringARunReturnsPromptly(const HarnessScript& script)
 {
     auto calls = 0;
 
     auto started = std::chrono::steady_clock::now();
     {
-        auto runner = Proc::BuildRunner {shellCommand("echo hi; exec sleep 10")};
+        auto runner = Proc::BuildRunner {script.options()};
         runner.onOutput = [&calls](std::string_view) { ++calls; };
         runner.onFinished = [&calls](const Proc::ProcessResult&) { ++calls; };
 
         runner.run();
         runner.run();
-        std::this_thread::sleep_for(std::chrono::milliseconds {100});
+        std::this_thread::sleep_for(std::chrono::milliseconds {300});
     }
     check(std::chrono::steady_clock::now() - started < std::chrono::seconds {2});
 
     runEventLoopUntil([] { return false; }, eacp::Time::MS {300});
     check(calls == 0);
+}
+
+auto tDestroy = test("BuildRunner/destroyingDuringARunReturnsPromptly") = []
+{
+    checkDestroyingDuringARunReturnsPromptly(
+        HarnessScript {}.print("hi").sleep(10000));
+};
+
+// What `cmake --build` does: the command starts a build tool that writes to the
+// same output, and the tool must end with it.
+auto tDestroyTree =
+    test("BuildRunner/destroyingDuringARunEndsWhatTheCommandStarted") = []
+{
+    auto script = HarnessScript {}.print("hi").spawnSleeping(10000).sleep(10000);
+    checkDestroyingDuringARunReturnsPromptly(script);
+};
+
+auto tCancelTree = test("BuildRunner/cancelEndsWhatTheCommandStarted") = []
+{
+    auto script = HarnessScript {}.spawnSleeping(10000).sleep(10000);
+    auto runner = Proc::BuildRunner {script.options()};
+    auto recorder = Recorder {runner};
+
+    runner.run();
+    runEventLoopUntil([] { return false; }, eacp::Time::MS {200});
+
+    auto started = std::chrono::steady_clock::now();
+    runner.cancel();
+    check(recorder.waitForFinishes(1, 3000));
+    check(std::chrono::steady_clock::now() - started < std::chrono::seconds {2});
+    check(recorder.results.size() == 1 && !recorder.results[0].exited);
 };
 } // namespace BuildRunnerTests

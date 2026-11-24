@@ -25,7 +25,7 @@ Core reuse map; `HotReload.md` for
 `Plugins::Reloadable`, `eacp_add_hot_reload` and the reload machinery under
 them) and beside the modules
 they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`,
-`Lib/eacp/UI/README.md`). New
+`Lib/eacp/UI/README.md`, `Lib/eacp/ExportList/README.md`). New
 implementation-level documentation goes there, not in the README.
 
 Platform coverage splits on whether a module draws, decided once in the
@@ -363,8 +363,11 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 
 - `EACP_HOT_RELOAD` (default `OFF`): dev or static mode for every app wired
   with `eacp_add_hot_reload` that passes no `HOT_RELOAD` of its own (both
-  in-tree examples pass `ON`; Windows, iOS, Android and the web are always
-  static).
+  in-tree examples pass `ON`; iOS, Android and the web are always static, and
+  Windows is static under any generator but Ninja, since its dev mode links
+  the app with an export list of its whole closure, `eacp_add_export_list`,
+  and in Release unless `-DEACP_HOT_RELOAD=ON` turns link-time optimisation
+  off).
   `eacp_add_hot_reload(<app> <library> SOURCES ...)` creates the library: a
   static one linked into the app in static mode, a module the app loads in
   dev mode, whose own links are routed to the app and reach it compile-only.
@@ -472,7 +475,11 @@ the content (`Window/WaylandWindow-Linux.cpp`; maximise and full screen are
 libdecor requests whose state comes back in the configure, a full screen asked
 for before the frame exists is set on it before the map, and a configure with
 no size goes back to the last floating size, which is what un-maximising and
-leaving full screen restore), a `wl_subsurface` per presenting
+leaving full screen restore; a maximised configure the size constraint would
+change is left unanswered and undone with `unset_maximized`, since xdg-shell
+holds a maximised window to its size exactly, and `toggleMaximize` asks for
+nothing on a window with an aspect ratio or a fixed size), a `wl_subsurface`
+per presenting
 view (`View/WaylandViewSurface-Linux.cpp`, the Wayland `ViewSurfaceBackend`),
 seat protocol glue feeding the shared state machines with pointer-constraints
 for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
@@ -482,8 +489,16 @@ into `Core`'s `Clipboard` through the backend hook in
 keyboard focus on one of our windows), a compositor disconnect that fires
 `onLost` on every view surface and leaves the process headless, the PNG/JPEG
 codec (`Image/Image-Linux.cpp` over stb_image and stb_image_write, linked
-PRIVATE and kept out of the unity batches), and stubs for menus, tray and
-system appearance.
+PRIVATE and kept out of the unity batches), and stubs for the tray and system
+appearance. The menu bar is drawn in the window (`Docs/Linux.md`, "Menu bar"):
+`Menu/Menu-Linux.cpp` keeps the window half — the bar's view as a second root
+bound beside the content (`LinuxWindowSurface::menuBarView`), the content laid
+out `contentTop` lower with every app-facing size leaving the bar out, pointer
+routing between the two roots, and the shortcuts run from
+`LinuxWindowSurface::keyFilter` ahead of the focused view with command as
+Ctrl — and `eacp-ui` registers the presenter that draws it
+(`UI/Widgets/MenuBarPresenter-Linux.cpp`, kept in every link by
+`--undefined=eacpUILinuxMenuBar`).
 
 The X11 half is its twin, on xcb with no Xlib symbol anywhere.
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
@@ -678,6 +693,52 @@ now takes both paths at once, since it is an eacp app as well: the plugin
 attaches through the bridge and the host registers the same fd through the C
 ABI, and `addLoopSource` keeps whichever came last.
 
+The opposite direction, a foreign X11 client inside our layout, is
+`Window/NativeChildSurface-Linux.cpp`: the host side of VST3's
+`kPlatformTypeX11EmbedWindowID`. Its container is an `xcb_create_window`
+child of the X11 window the view is in — a toplevel on the X11 backend or an
+`EmbeddedView`'s child, whatever `dynamic_cast<X11WindowSurface*>` of
+`linuxWindowForView` finds, and nothing in a Wayland or headless window, where
+the handle is null (logged once for Wayland, naming `EACP_WINDOW_SYSTEM=x11`)
+and no X connection is opened for it. It is not a presenting view's child
+(`ViewSurfaceBackend`), because those are destroyed whenever the view hides
+and destroying a window destroys the client in it: instead the view registers
+itself as a `LinuxNativeChild` (`Window/LinuxWindowSurface-Linux.h`), which
+`View-Linux.cpp` calls `sync()` on wherever it syncs a presenting view's
+surface — bounds, an ancestor's move, visibility, the window's scale — and
+`release()` on wherever it releases one. A sync places the container at the
+view's origin in window pixels, rounded outwards as an `EmbeddedView` is,
+reparents it if the view is now in another window, and maps or unmaps it; a
+release (the view leaving its window, or the window going) unmaps it and
+parks it on the root, so the id is stable for the surface's life and a
+client outlives the window it was in. The container selects
+`StructureNotify|SubstructureNotify`, a `do_not_propagate` mask for core
+pointer events and the XI2 pointer events (which the seat drops, the container
+being in no map), so a press the client ignores reaches no view of ours; keys
+are left to propagate to the window above. Its events come from
+`X11Connection::addEventObserver`, a per-owner list called for every core
+event before routing, since a substructure event names the client rather than
+the container. Clients are whatever is created in or reparented into it: each
+is sized to fill the container (the embedder decides, per XEmbed), selected
+for `PropertyChange` unless it is a window of this copy's, mapped or unmapped
+by the `XEMBED_MAPPED` bit of its `_XEMBED_INFO` and sent
+`XEMBED_EMBEDDED_NOTIFY` (version 0) when it has one, and given the X focus
+with `XEMBED_FOCUS_IN` on `XEMBED_REQUEST_FOCUS`; window activation and focus
+out are not sent. Destroying the surface unmaps every child and reparents it
+to the root before destroying the container, as XEmbed says an embedder
+ends, so a plugin's later `XDestroyWindow` is not a `BadWindow` (which Xlib's
+default handler turns into an exit). A host window the server reaped
+(`inferiorsGone`, or the container's own `DestroyNotify`) is never asked about
+again. `backingScale()` is the window's `LinuxWindowSurface::scale` (1 in
+none), and `onBackingScaleChanged` is fired from `sync()`, which every scale
+change already reaches; the header's inline `reportBackingScale` is the
+cross-platform half, comparing against the last value asked for or reported,
+and macOS reports from `backingScaleChanged` while Windows reports on
+placement and on `WM_DPICHANGED_AFTERPARENT`.
+`Tests/Graphics/NativeChildSurfaceTests-Linux.cpp` is the suite: 17 cases in a plain-`main` binary like `EmbeddedViewTests`, a second xcb
+connection of the test's own playing the plugin, and
+`Wayland/aNativeChildSurfaceHasNoHandle` in `WaylandWindowTests`.
+
 Under both is the Vulkan backend (`GPU/Vulkan/`): everything from `Device` to
 `RenderPass` is real, the drawable `Frame` presents a swapchain image, and
 `GPUView-Linux.cpp` owns the swapchain over the view's subsurface or child
@@ -747,12 +808,12 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
       -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
       with-weston ctest --test-dir build-ci-linux --output-on-failure \
-      -E '^(X11|EmbeddedView)(/|$)'
+      -E '^(X11|EmbeddedView|NativeChildSurface)(/|$)'
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
       -v "$PWD":/workspace eacp-ci-linux \
       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-      -R '^(X11|EmbeddedView|Present)(/|$)'
+      -R '^(X11|EmbeddedView|NativeChildSurface|Present)(/|$)'
 ```
 
 `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
@@ -771,7 +832,7 @@ same override so the binary run by hand on a desktop still tests X11; the 9
 `X11/clipboard` ones in `X11ClipboardTests-Linux.cpp` drive a second xcb
 connection as another client, on a thread of its own where it has to own the
 selection while eacp blocks reading it), `EmbeddedViewTests` (17, the
-same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
+same default), `NativeChildSurfaceTests` (17, the same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
 the X11 suites are filtered in and out; everything else already ran under
 Weston. `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
 without a display server, as
@@ -795,8 +856,8 @@ repaint. A ctest entry is a group of cases, not one case:
 `Tests/CMakeLists.txt` sets `NANO_TEST_GROUP_BY PREFIX`, so the cases named
 `X11/...` run in one process behind the entry `X11`, and
 `Tests/Graphics/CMakeLists.txt` and `Tests/GPU/CMakeLists.txt` give the groups a
-`RESOURCE_LOCK` by name: `eacp-linux-display` over `X11`, `EmbeddedView` and
-`Present`, and `eacp-system-clipboard` over `X11`, `Wayland` and `Tests/Core`'s
+`RESOURCE_LOCK` by name: `eacp-linux-display` over `X11`, `EmbeddedView`,
+`NativeChildSurface` and `Present`, and `eacp-system-clipboard` over `X11`, `Wayland` and `Tests/Core`'s
 `Clipboard`. Each serialises its own set under `ctest -j` while the rest of the
 suite runs beside them. One case runs on its own through its binary
 (`X11WindowTests --test X11/windowComesUpAtItsConfiguredSize`), one group
@@ -1084,9 +1145,14 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Graphics/EmbeddedViewTests-iOS.mm` is built into the simulator's
   `GraphicsTests`, which CI builds and does not run
 - `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
-  layout whose `getNativeParentHandle()` (an `NSView*` or a child `HWND`) a
-  foreign toolkit parents its own editor into, for plugin hosts. The macOS
-  container clips to its bounds since the macOS 14 SDK stopped doing so
+  layout whose `getNativeParentHandle()` (an `NSView*`, a child `HWND`, or on
+  Linux an X11 window id) a foreign toolkit parents its own editor into, for
+  plugin hosts. The macOS container clips to its bounds since the macOS 14 SDK
+  stopped doing so. Not in the `Graphics.h` umbrella (it sits under
+  `EACP_HAS_CONTEXT` there, which Linux lacks); include it directly.
+  `backingScale()`/`onBackingScaleChanged` (the GPUView pair's shape) are the
+  container's pixels per point, which a plugin format measuring editors in
+  pixels needs. The Linux one is described under "The Linux Backend"
 - `Window/KeyForwarding`, `KeyGrab`: `EmbedderKeyForwarder` sends the keys a
   hosted editor leaves unhandled back to the host's main window; on macOS it
   briefly makes that window key and dispatches through `NSApp` so a DAW's
@@ -1161,6 +1227,18 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   which is where the Wayland connection flushes its requests and dispatches
   events another reader left queued. The loop is one `epoll` instance holding
   the waker and every source, so the whole copy is a single descriptor
+- `FdWatcher` (`Threads/EventLoop-Linux.h`, Linux and Android): the RAII,
+  public form of a loop source for descriptors that are not eacp's own — what
+  a VST3 host's `IRunLoop::registerEventHandler` maps to (its `registerTimer`
+  is a `Timer` taking `Time::MS`). Calls back on the loop thread while the fd
+  is readable or hung up, level-triggered. Watchers have ids of their own in
+  the loop's source list beside `addLoopSource`'s one id-0 entry per
+  descriptor, so several watchers on one fd (two instances of a plugin sharing
+  a display connection) are each called, and destroying one never removes
+  another or an `addLoopSource` entry; the epoll registration is the union of
+  what a descriptor's entries want and leaves with the last. Each due entry is
+  looked up again just before its call, so one destroyed earlier in the pump is
+  not called. `Tests/Core/FdWatcherTests-Linux.cpp` (9 `FdWatcher/` cases)
 - `getEventLoopFd()` / `pumpEventLoop()` (`Threads/EventLoop-Linux.h`, Linux
   only): the hosted loop. A plugin host that owns the process's loop watches
   the one fd (VST3 `IRunLoop`, CLAP posix-fd) or calls the pump from a timer
@@ -1363,8 +1441,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `BuildRunner` (`Process/BuildRunner.h`): one command rerun on demand on a
   background thread, stderr merged; `onOutput`/`onFinished` on the main thread;
   `run()` mid-run coalesces into exactly one rerun; a cancelled run finishes
-  with `exited == false` (cancel kills the direct child only, not ninja under
-  cmake)
+  with `exited == false`; cancelling or destroying it ends what the command
+  started too (`ProcessOptions::killDescendants`: a job object on Windows, a
+  process group on POSIX)
 - Hot reload (`Plugins/`): `Reloadable` with `EACP_RELOADABLE` is the
   interface (`Apps/UI/HotReload` reloads a layout function, `Apps/GPU/HotReload`
   a `GPUView` factory held in a `Graphics::OptionalView`, replaced inside

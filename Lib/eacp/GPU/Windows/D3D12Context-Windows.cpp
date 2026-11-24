@@ -7,7 +7,9 @@
 #include "../Device/Device.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Core/Utils/Singleton.h>
 #include <eacp/Core/Utils/Strings.h>
+#include <eacp/Graphics/Graphics/SharedDevices.h>
 
 #include <d3dcompiler.h>
 
@@ -19,6 +21,27 @@
 
 namespace eacp::GPU
 {
+constexpr UINT intelVendorId = 0x8086;
+constexpr UINT intelDeviceFamilyMask = 0xFF00;
+
+// Dawn's "Gen 7" Intel device families (src/dawn/gpu_info.json), which it
+// refuses Direct3D 12 on for the same driver fault.
+constexpr UINT intelGen7DeviceFamilies[] = {
+    0x0100, 0x0400, 0x0A00, 0x0C00, 0x0D00, 0x0F00};
+
+bool isIntelAdapterWhoseDirect3D12LosesItsDevice(UINT vendorId, UINT deviceId)
+{
+    if (vendorId != intelVendorId)
+        return false;
+
+    const auto family = deviceId & intelDeviceFamilyMask;
+
+    return std::find(std::begin(intelGen7DeviceFamilies),
+                     std::end(intelGen7DeviceFamilies),
+                     family)
+           != std::end(intelGen7DeviceFamilies);
+}
+
 namespace
 {
 // How many textures can exist at once. It is a descriptor each, held for the
@@ -67,6 +90,51 @@ bool environmentFlag(const char* name)
 bool forcesWarp()
 {
     return environmentFlag("EACP_D3D12_WARP");
+}
+
+// The adapter D3D12CreateDevice(nullptr, ...) picks is the first one DXGI
+// enumerates, so it can be identified without creating a device on it.
+std::optional<DXGI_ADAPTER_DESC1> describeDefaultAdapter()
+{
+    auto factory = winrt::com_ptr<IDXGIFactory4>();
+
+    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void())))
+        return std::nullopt;
+
+    auto adapter = winrt::com_ptr<IDXGIAdapter1>();
+
+    if (FAILED(factory->EnumAdapters1(0, adapter.put())))
+        return std::nullopt;
+
+    auto description = DXGI_ADAPTER_DESC1 {};
+
+    if (FAILED(adapter->GetDesc1(&description)))
+        return std::nullopt;
+
+    return description;
+}
+
+bool isDefaultAdapterIntelWhoseDirect3D12LosesItsDevice()
+{
+    const auto description = describeDefaultAdapter();
+
+    return description.has_value()
+           && isIntelAdapterWhoseDirect3D12LosesItsDevice(description->VendorId,
+                                                          description->DeviceId);
+}
+
+bool usesSoftwareRenderer()
+{
+    if (forcesWarp())
+        return true;
+
+    if (!isDefaultAdapterIntelWhoseDirect3D12LosesItsDevice())
+        return false;
+
+    LOG("D3D12: this Intel graphics generation loses its Direct3D 12 device "
+        "shortly after start (Intel support article 000057520), so the "
+        "software renderer is used instead");
+    return true;
 }
 
 winrt::com_ptr<ID3D12Resource> makeProbeResource(ID3D12Device* device,
@@ -332,7 +400,7 @@ bool detectsSamplerTableBug(ID3D12Device* device)
 // EACP_D3D12_QUIRKS=1 sets every flag without asking, so the routes around
 // them can be exercised on a driver that does not need them - WARP in CI,
 // for one.
-DriverQuirks probeDriverQuirks()
+DriverQuirks probeDriverQuirks(bool onSoftwareRenderer)
 {
     auto quirks = DriverQuirks {};
 
@@ -344,7 +412,7 @@ DriverQuirks probeDriverQuirks()
         return quirks;
     }
 
-    if (forcesWarp())
+    if (onSoftwareRenderer)
     {
         quirks.samplerTablesIgnoreOffset = detectsSamplerTableBug(nullptr);
         return quirks;
@@ -378,7 +446,7 @@ DriverQuirks probeDriverQuirks()
     return quirks;
 }
 
-winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
+winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice(bool onSoftwareRenderer)
 {
     auto device = winrt::com_ptr<ID3D12Device>();
 
@@ -390,7 +458,7 @@ winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
         debug->EnableDebugLayer();
 #endif
 
-    if (!forcesWarp()
+    if (!onSoftwareRenderer
         && SUCCEEDED(D3D12CreateDevice(nullptr,
                                        D3D_FEATURE_LEVEL_11_0,
                                        __uuidof(ID3D12Device),
@@ -542,37 +610,55 @@ void CommandContext::rewindUploads()
     uploadCursor = 0;
 }
 
-D3D12Shared::D3D12Shared()
+D3D12Shared::D3D12Shared(std::uint64_t firstGeneration)
+    : generation(firstGeneration)
 {
     createAll();
-
-    // A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
-    // together. The graphics layer's recovery fires this listener after it
-    // re-established its own device; if ours died too (or never existed),
-    // rebuild it and every GPUView swapchain. The 2D layer also replaces its
-    // device voluntarily, so a healthy D3D12 device is left alone.
-    //
-    // Registered here rather than by Device, because there is one of these and
-    // there may be any number of Devices â€” a listener each would rebuild the
-    // swapchains once per Device.
-    Graphics::addRenderingDeviceReplacedListener(
-        []
-        {
-            auto& shared = getD3D12Shared();
-
-            if (shared.isValid()
-                && SUCCEEDED(shared.getDevice()->GetDeviceRemovedReason()))
-                return;
-
-            shared.recreateAfterDeviceLoss();
-
-            // The shared Device's context is what the swapchains below are
-            // rebuilt against, so it is renewed here and now. Every other
-            // Device renews on its own thread, at its next acquire().
-            getD3D12Context(Device::shared()).renewForNewDevice();
-            refreshAllGPUViewsForNewDevice();
-        });
 }
+
+namespace
+{
+// A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
+// together. The graphics layer's recovery fires this listener after it
+// re-established its own device; if ours died too (or never existed), rebuild
+// it and every GPUView swapchain. The 2D layer also replaces its device
+// voluntarily, so a healthy D3D12 device is left alone.
+//
+// Registered once per image rather than by Device, because there is one
+// D3D12Shared and there may be any number of Devices — a listener each would
+// rebuild the swapchains once per Device — and rather than by D3D12Shared,
+// which a release builds again.
+void rebuildIfRenderingDeviceReplacedOursToo()
+{
+    auto& shared = getD3D12Shared();
+
+    if (shared.isValid() && SUCCEEDED(shared.getDevice()->GetDeviceRemovedReason()))
+        return;
+
+    shared.recreateAfterDeviceLoss();
+
+    // The shared Device's context is what the swapchains below are rebuilt
+    // against, so it is renewed here and now. Every other Device renews on its
+    // own thread, at its next acquire().
+    getD3D12Context(Device::shared()).renewForNewDevice();
+    refreshAllGPUViewsForNewDevice();
+}
+
+void listenToTheGraphicsLayer()
+{
+    Graphics::addRenderingDeviceReplacedListener(
+        rebuildIfRenderingDeviceReplacedOursToo);
+    Graphics::addSharedDevicesReleaseListener(releaseSharedGPUDevice);
+}
+
+ReleasableShared<D3D12Shared>& d3d12SharedHolder()
+{
+    return Singleton::getImmortal<ReleasableShared<D3D12Shared>>();
+}
+
+// Carried across a release; see the D3D12Shared constructor.
+std::uint64_t nextD3D12SharedGeneration = 1;
+} // namespace
 
 void D3D12Shared::createAll()
 {
@@ -588,8 +674,15 @@ void D3D12Shared::createDevice()
 {
     // Before the device, and not merely first: the probe's own device has to
     // be gone before this one is made. See probeDriverQuirks.
-    quirks = probeDriverQuirks();
-    device = createHardwareOrWarpDevice();
+    const auto onSoftwareRenderer = usesSoftwareRenderer();
+    quirks = probeDriverQuirks(onSoftwareRenderer);
+    auto created = createHardwareOrWarpDevice(onSoftwareRenderer);
+
+    {
+        auto lock = std::lock_guard {referenceLock};
+        device = created;
+    }
+
     adapterName = describeAdapter(device.get());
 }
 
@@ -720,7 +813,12 @@ void D3D12Shared::createRootSignatures()
     renderDesc.pStaticSamplers = staticSamplers;
     renderDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-    renderRootSignature = makeRootSignature(device.get(), renderDesc);
+    auto renderSignature = makeRootSignature(device.get(), renderDesc);
+
+    {
+        auto lock = std::lock_guard {referenceLock};
+        renderRootSignature = renderSignature;
+    }
 
     D3D12_DESCRIPTOR_RANGE computeSrvRanges[maxTextureSlots] = {};
     D3D12_DESCRIPTOR_RANGE computeUavRanges[maxTextureSlots] = {};
@@ -1097,9 +1195,25 @@ ID3D12PipelineState* D3D12Shared::getMipShader(int kind)
     return state.get();
 }
 
+winrt::com_ptr<ID3D12Device> D3D12Shared::deviceReference() const
+{
+    auto lock = std::lock_guard {referenceLock};
+    return device;
+}
+
+winrt::com_ptr<ID3D12RootSignature> D3D12Shared::renderRootSignatureReference() const
+{
+    auto lock = std::lock_guard {referenceLock};
+    return renderRootSignature;
+}
+
 void D3D12Shared::recreateAfterDeviceLoss()
 {
-    renderRootSignature = nullptr;
+    {
+        auto lock = std::lock_guard {referenceLock};
+        renderRootSignature = nullptr;
+    }
+
     computeRootSignature = nullptr;
     dispatchSignature = nullptr;
     drawSignatures.clear();
@@ -1110,7 +1224,10 @@ void D3D12Shared::recreateAfterDeviceLoss()
     for (auto& state: mipShaders)
         state = nullptr;
 
-    device = nullptr;
+    {
+        auto lock = std::lock_guard {referenceLock};
+        device = nullptr;
+    }
 
     ++generation;
     createAll();
@@ -1118,8 +1235,24 @@ void D3D12Shared::recreateAfterDeviceLoss()
 
 D3D12Shared& getD3D12Shared()
 {
-    static auto shared = D3D12Shared();
-    return shared;
+    return d3d12SharedHolder().get(
+        [](std::optional<D3D12Shared>& shared)
+        {
+            [[maybe_unused]] static const auto listening =
+                (listenToTheGraphicsLayer(), true);
+
+            shared.emplace(nextD3D12SharedGeneration);
+        });
+}
+
+void releaseD3D12Shared()
+{
+    auto& holder = d3d12SharedHolder();
+
+    if (auto* shared = holder.find())
+        nextD3D12SharedGeneration = shared->getGeneration() + 1;
+
+    holder.release();
 }
 
 D3D12Context::D3D12Context(D3D12_COMMAND_LIST_TYPE type)

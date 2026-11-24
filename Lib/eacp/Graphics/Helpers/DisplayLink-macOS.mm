@@ -1,5 +1,8 @@
 #include "DisplayLink.h"
+#include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Core/Threads/Timer.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <CoreVideo/CoreVideo.h>
 
 #include <atomic>
@@ -44,6 +47,12 @@ struct DisplayLink::Native
     {
         assertMainThread();
 
+        if (hasNoDisplayToFollow())
+        {
+            startFallbackTimer();
+            return;
+        }
+
         CVDisplayLinkCreateWithActiveCGDisplays(&displayLink);
 
         // Captured by value, so the handler shares ownership of the state rather
@@ -64,6 +73,33 @@ struct DisplayLink::Native
         CVDisplayLinkStart(displayLink);
     }
 
+    // A CVDisplayLink over no active display never fires: under EACP_HEADLESS,
+    // with every display asleep, or in a session with no window server. Frames
+    // still have to be driven there, so a timer at a nominal refresh stands in.
+    static bool hasNoDisplayToFollow()
+    {
+        if (Apps::getAppEnvironment().headless)
+            return true;
+
+        auto activeDisplays = std::uint32_t {0};
+        CGGetActiveDisplayList(0, nullptr, &activeDisplays);
+        return activeDisplays == 0;
+    }
+
+    void startFallbackTimer()
+    {
+        constexpr auto nominalRefreshHz = 60;
+
+        auto ticking = state;
+        auto tick = [ticking]
+        {
+            if (ticking->alive)
+                ticking->callback();
+        };
+
+        fallbackTimer = makeOwned<Timer>(tick, nominalRefreshHz);
+    }
+
     static void postTick(std::shared_ptr<State> state)
     {
         if (state->pending.exchange(true))
@@ -81,12 +117,18 @@ struct DisplayLink::Native
     {
         assertMainThread();
         state->alive = false;
+        fallbackTimer = nullptr;
+
+        if (displayLink == nullptr)
+            return;
+
         CVDisplayLinkStop(displayLink);
         CVDisplayLinkRelease(displayLink);
     }
 
     std::shared_ptr<State> state;
     CVDisplayLinkRef displayLink {};
+    OwningPointer<Timer> fallbackTimer;
 };
 
 DisplayLink::DisplayLink(const FrameCallback& cb)

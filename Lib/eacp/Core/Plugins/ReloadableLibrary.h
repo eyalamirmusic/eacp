@@ -4,13 +4,26 @@
 
 namespace eacp::Plugins
 {
+namespace Detail
+{
+// The loader's message, with the advice to restart where it names a symbol
+// the running process does not have.
+std::string explainedLoadError(const std::string& loaderError);
+} // namespace Detail
+
 // A DynamicLibrary over a module file that is rebuilt while the process runs.
 //
-// reload() opens a fresh copy of builtPath staged under its own name in
-// stagingDirectory, never builtPath itself: a new path per load sidesteps
-// DynamicLibrary's path-keyed registry (which would hand back the old image)
-// and Windows' lock on a loaded DLL, which the linker must be free to
-// overwrite.
+// reload() opens a fresh copy of builtPath, never builtPath itself, staged
+// under the built file's own name in a folder of its own inside
+// stagingDirectory (<stem>-<generation>-<pid>-<serial>): a new path per load
+// sidesteps DynamicLibrary's path-keyed registry (which would hand back the
+// old image) and Windows' lock on a loaded DLL, which the linker must be free
+// to overwrite. A PDB beside the built file is staged beside the copy, so a
+// debugger never holds the one the next link writes. A staged copy is removed
+// with its folder. On Windows, where a run that ends with an image loaded
+// leaves its folder behind, construction removes the folders earlier runs left
+// for the same module; one whose image another running copy has loaded will
+// not delete, and stays.
 //
 // Every pointer obtained through findFunction/findSymbol, and anything a
 // function in the image returned, is invalid after the next successful
@@ -27,6 +40,10 @@ namespace eacp::Plugins
 // rest of the current turn, as members destroyed after its owner do. A staged
 // copy Windows will not delete while it is loaded goes on that later turn too,
 // and with no loop running stays in the staging directory.
+//
+// A module that fails to load because it calls a function the running process
+// lacks (the loader's "undefined symbol" or "symbol not found", Windows' error
+// 127) says so in lastError(), and that only restarting the app helps.
 class ReloadableLibrary
 {
 public:
@@ -69,6 +86,10 @@ public:
     [[nodiscard]] void* findSymbol(const std::string& name) const;
 
     ValidateFunc validate = [](const DynamicLibrary&) { return std::string {}; };
+
+    // The built module's symbol file, staged beside each copy under its own
+    // file name. Empty means builtPath with the extension .pdb.
+    FilePath symbolsPath;
 
 private:
     FilePath nextStagedPath() const;

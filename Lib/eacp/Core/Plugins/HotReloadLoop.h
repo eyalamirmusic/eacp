@@ -43,6 +43,10 @@ public:
         Files::SourceWatcher::Options sources;
         Processes::ProcessOptions buildCommand;
         FilePath modulePath;
+
+        // The module's symbol file, when it is not the module's path with
+        // .pdb (ReloadableLibrary::symbolsPath).
+        FilePath symbolsPath;
         FilePath stagingDirectory = FilePath::appCacheDirectory() / "HotReload";
         std::string requiredSymbol;
         ReloadableLibrary::ValidateFunc validate = [](const DynamicLibrary&)

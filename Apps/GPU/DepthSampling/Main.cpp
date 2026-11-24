@@ -1067,6 +1067,11 @@ float quantiseToByte(float value)
     return std::round(std::clamp(value, 0.f, 1.f) * 255.f) / 255.f;
 }
 
+int binaryExponent(float value)
+{
+    return value == 0.f ? 0 : std::ilogb(value) + 1;
+}
+
 // And out of a half float: ten stored mantissa bits below the leading one, so
 // the step is 2^(exponent - 11) at whatever exponent the value has. Computed
 // rather than converted through a half type, there being no portable one.

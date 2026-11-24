@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Containers.h>
+#include <eacp/Core/Utils/ReleasableShared.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include <d3d12.h>
@@ -9,9 +10,11 @@
 
 #include <winrt/base.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -156,11 +159,17 @@ struct DriverQuirks
     bool samplerTablesIgnoreOffset = false;
 };
 
+// Intel's driver for these chips, Haswell's HD Graphics 4600 among them, creates
+// a Direct3D 12 device and then loses it seconds later (Intel article 000057520).
+bool isIntelAdapterWhoseDirect3D12LosesItsDevice(UINT vendorId, UINT deviceId);
+
 // The process-wide half. Created on first use by getD3D12Shared().
 class D3D12Shared
 {
 public:
-    D3D12Shared();
+    // Numbered on from the instance released before it, if any, so a context
+    // still holding that one's queue renews instead of reusing it.
+    explicit D3D12Shared(std::uint64_t firstGeneration);
 
     bool isValid() const { return device != nullptr; }
 
@@ -226,6 +235,13 @@ public:
     // asks it for anything. See D3D12Context::renewIfDeviceRecreated.
     std::uint64_t getGeneration() const { return generation; }
 
+    // The device and the render root signature, each with a reference of its
+    // own, read under the lock recreateAfterDeviceLoss replaces them under: for
+    // a thread other than the one driving recovery, such as a ShaderWarmUp's
+    // worker, which the raw getters above would race.
+    winrt::com_ptr<ID3D12Device> deviceReference() const;
+    winrt::com_ptr<ID3D12RootSignature> renderRootSignatureReference() const;
+
     // Drops the device and both root signatures and builds them again after
     // device removal. Resources created on the old device (app buffers,
     // textures, pipelines) stay dead; their owners rebuild via
@@ -250,9 +266,16 @@ private:
     winrt::com_ptr<ID3D12PipelineState> mipShaders[3];
 
     std::uint64_t generation = 1;
+    mutable std::mutex referenceLock;
 };
 
 D3D12Shared& getD3D12Shared();
+
+// The process-wide Device's context and then D3D12Shared, each built again on
+// its next use. Graphics::releaseSharedDevices reaches it through a listener
+// getD3D12Shared() registers. Main thread, with nothing left using either.
+void releaseSharedGPUDevice();
+void releaseD3D12Shared();
 
 class D3D12Context
 {

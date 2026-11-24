@@ -87,6 +87,10 @@ if (EACP_HAS_TEXT)
     # faces: registerMemoryFont, and a weight asked of an axis rather than
     # matched.
     add_subdirectory(VariableFont)
+
+    # Shaders compiled on a worker thread behind a progress screen, then found
+    # in the device's library cache by the view that draws with them.
+    add_subdirectory(ShaderWarmUp)
 endif ()
 
 if (APPLE AND NOT IOS)

@@ -42,18 +42,19 @@ set(core_test_sources
         TimeTests.cpp
         ZipTests.cpp)
 
-# A child process and a loaded library every case: the web has neither.
+# A child process or a loaded library every case: the web has neither.
 # ConsoleTests runs ConsoleHarness as a child for runConsole's exit codes and
-# streams.
+# streams, and each build command the reload and build-runner cases run is
+# ScriptHarness, so those run the same on every other platform.
 if (NOT EMSCRIPTEN)
     list(APPEND core_test_sources
-            ConsoleTests.cpp DynamicLibraryTests.cpp ReloadableLibraryTests.cpp)
-endif ()
-
-# These drive POSIX commands (/bin/sh, ...), so they only run on macOS and Linux.
-if (NOT WIN32 AND NOT EMSCRIPTEN)
-    list(APPEND core_test_sources
-            BuildRunnerTests.cpp HotReloadLoopTests.cpp ReloadableTests.cpp)
+            BuildRunnerTests.cpp
+            ConsoleTests.cpp
+            DynamicLibraryTests.cpp
+            HotReloadLoopTests.cpp
+            ProcessDescendantsTests.cpp
+            ReloadableLibraryTests.cpp
+            ReloadableTests.cpp)
 endif ()
 
 # The file/folder picker seam is Windows-only (App-Windows-FilePicker.h), and
@@ -107,11 +108,12 @@ if (APPLE AND NOT IOS)
     list(APPEND core_test_sources AppTerminationTests.cpp)
 endif ()
 
-# Threads::addLoopSource and the hosted pump live in EventLoop-Linux.h and
-# nowhere else.
+# Threads::addLoopSource, FdWatcher and the hosted pump live in
+# EventLoop-Linux.h and nowhere else.
 if (LINUX)
     list(APPEND core_test_sources
             EventLoopSourceTests-Linux.cpp
+            FdWatcherTests-Linux.cpp
             HostedLoopTests-Linux.cpp
             RootLoopTests-Linux.cpp)
 endif ()
@@ -160,6 +162,19 @@ if (NOT EMSCRIPTEN)
     target_compile_definitions(CoreTests PRIVATE
             EACP_CONSOLE_HARNESS="$<TARGET_FILE:ConsoleHarness>")
     add_dependencies(CoreTests ConsoleHarness)
+endif ()
+
+# The build command BuildRunnerTests, HotReloadLoopTests and ReloadableTests
+# run, and the child ProcessDescendantsTests starts: a list of steps (print,
+# sleep, copy a file, ...) in place of a shell script, so the same command
+# works on every platform (HarnessScript.h). The web launches nothing.
+if (NOT EMSCRIPTEN)
+    add_executable(ScriptHarness ScriptHarness.cpp)
+    target_link_libraries(ScriptHarness PRIVATE eacp-core)
+
+    target_compile_definitions(CoreTests PRIVATE
+            EACP_SCRIPT_HARNESS="$<TARGET_FILE:ScriptHarness>")
+    add_dependencies(CoreTests ScriptHarness)
 endif ()
 
 # A short-lived program that runs the loop and prints how many threads it
@@ -254,6 +269,10 @@ if (NOT EMSCRIPTEN)
         eacp_add_plugin(${fixture} ${fixture}.cpp)
         target_include_directories(${fixture} PRIVATE
                 $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)
+
+        # A module, as eacp_add_hot_reload's is in dev mode, so its
+        # EACP_RELOADABLE table is exported on Windows too.
+        target_compile_definitions(${fixture} PRIVATE EACP_HOT_RELOAD_MODULE=1)
 
         string(REGEX REPLACE "([a-z])([A-Z])" "\\1_\\2" define ${fixture})
         string(TOUPPER ${define} define)

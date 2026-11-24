@@ -1359,11 +1359,10 @@ void StageEmitter::dropStaleLocals(const Statement& statement, Vector<int>& open
     auto query =
         StalenessQuery {getGraph(), written, buffersWritten, sharedMoved, visited};
     auto kept = Vector<int> {};
+    visited.restart();
 
     for (auto node: open)
     {
-        visited.restart();
-
         if (node != heldRecord && query.doesReadStaleValue(node))
             locals[node] = -1;
         else

@@ -146,7 +146,15 @@ its README.
   `<library>`, configured afterwards like any target: a static library linked
   into the app in static mode, a module the app loads in dev mode. An app's
   `HOT_RELOAD` wins over the option either way, and both in-tree examples
-  pass `ON`. iOS, Android, Windows and the web are always static. A configure prints
+  pass `ON`. iOS, Android and the web are always static. Windows dev mode needs a
+  Ninja generator, `cl` or clang-cl, x64 or ARM64 and the DLL C runtime
+  (`/MD`); any other Windows build directory is static, and the configure
+  line says why. It links the app with an export list of its own objects and
+  every static library in its closure (`eacp_add_export_list`,
+  `Lib/eacp/ExportList/README.md`), and turns link-time optimisation off for
+  that closure in the whole build directory, so in a configuration that has
+  it (Release) only `-DEACP_HOT_RELOAD=ON` gives dev mode; an app's own
+  `HOT_RELOAD ON` leaves Release static and optimised. A configure prints
   `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
   `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
 
@@ -550,13 +558,23 @@ builds the web target: there is no Emscripten lane, so it is checked by a
 local build under node and headless Chrome ([Web.md](Web.md)). The two
 Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
 run their npm installs inside configure, several times slower on the ARM
-runners, and the x64 lanes cover the WebView2 backend. Every lane
-configures with `EACP_CI_BUILD=ON` and builds `RelWithDebInfo`: the tests run
-optimized code, as a shipped build does, while the link-time optimization
-eacp's targets take under `Release` stays off — it roughly tripled the macOS
-and MSVC build steps for a few seconds of test time. The `NDEBUG`-only paths —
-the D3D12 debug layer, `Device::assertOwningThread`, the Android JNI
-local-reference check — are exercised by a local Debug build, not by CI.
+runners, and the x64 lanes cover the WebView2 backend. The clang-cl lanes
+compile with the clang-cl inside Visual Studio (`VC\Tools\Llvm`, handed to
+CMake as `CC` and `CXX`), not the image's standalone LLVM on `PATH`: an MSVC
+STL newer than that LLVM refuses to compile (STL1000), and Visual Studio's own
+is the one its STL was released against. The Windows lanes
+build the two hot-reload examples in dev mode, as every RelWithDebInfo Ninja
+build with `cl` or clang-cl does, and run `HotReloadEndToEnd`, which rebuilds
+and reloads a module of its own through `eacp_add_hot_reload`; a CI build in
+which that app came out static fails the configure rather than skip the
+test. Every lane
+configures with `EACP_CI_BUILD=ON` and `CMAKE_COMPILE_WARNING_AS_ERROR=ON`, so
+a warning in any compiled target fails the lane, and builds `RelWithDebInfo`:
+the tests run optimized code, as a shipped build does, while the link-time
+optimization eacp's targets take under `Release` stays off — it roughly
+tripled the macOS and MSVC build steps for a few seconds of test time. The
+`NDEBUG`-only paths — the D3D12 debug layer, `Device::assertOwningThread`, the
+Android JNI local-reference check — are exercised by a local Debug build, not by CI.
 
 Every lane of the build matrix compiles through [ccache](https://ccache.dev)
 (`hendrikmuhs/ccache-action`, which installs it and keeps its directory in the
@@ -591,12 +609,12 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
     with-weston ctest --test-dir build-ci-linux --output-on-failure \
-    -E '^(X11|EmbeddedView)(/|$)'
+    -E '^(X11|EmbeddedView|NativeChildSurface)(/|$)'
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -v "$PWD":/workspace eacp-ci-linux \
     with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-    -R '^(X11|EmbeddedView|Present)(/|$)'
+    -R '^(X11|EmbeddedView|NativeChildSurface|Present)(/|$)'
 ```
 
 A ctest entry is a group, not a case: `Tests/CMakeLists.txt` sets

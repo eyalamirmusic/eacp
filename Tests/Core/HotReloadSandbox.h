@@ -1,13 +1,9 @@
 #pragma once
 
 #include "Common.h"
+#include "HarnessScript.h"
 #include <eacp/Core/Plugins/HotReloadLoop.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
-
-inline std::string quotedPath(const eacp::FilePath& path)
-{
-    return "'" + path.str() + "'";
-}
 
 struct HotReloadSandbox
 {
@@ -22,33 +18,33 @@ struct HotReloadSandbox
     }
 
     eacp::Plugins::HotReloadLoop::Options
-        loopOptions(const std::string& buildScript) const
+        loopOptions(const HarnessScript& buildScript) const
     {
         auto options = eacp::Plugins::HotReloadLoop::Options {};
         options.sources.directory = sources();
         options.sources.watcher.pollInterval = eacp::Time::MS {20};
         options.sources.watcher.settle = eacp::Time::MS {50};
-        options.buildCommand = shellCommand(buildScript);
+        options.buildCommand = buildScript.options();
         options.modulePath = modulePath();
         options.stagingDirectory = root.path() / "Staging";
         return options;
     }
 
-    std::string copyScript(const eacp::FilePath& fixture) const
+    HarnessScript copyScript(const eacp::FilePath& fixture) const
     {
-        return "cp " + quotedPath(fixture) + " " + quotedPath(modulePath());
+        return HarnessScript {}.copy(fixture, modulePath());
     }
 
-    std::string copyInTurnScript(const eacp::FilePath& first,
-                                 const eacp::FilePath& then) const
+    // The first build copies `first`, every later one `then`, the module's
+    // presence being what tells them apart.
+    HarnessScript copyInTurnScript(const eacp::FilePath& first,
+                                   const eacp::FilePath& then) const
     {
-        return inTurnScript(copyScript(first), copyScript(then));
-    }
-
-    std::string inTurnScript(const std::string& first, const std::string& then) const
-    {
-        return "if [ -f " + quotedPath(modulePath()) + " ]; then " + then + "; else "
-               + first + "; fi";
+        return HarnessScript {}
+            .ifExists(modulePath())
+            .copy(then, modulePath())
+            .unlessExists(modulePath())
+            .copy(first, modulePath());
     }
 
     void install(const eacp::FilePath& fixture) const
@@ -57,13 +53,19 @@ struct HotReloadSandbox
         nano::check(eacp::Files::copyFile(fixture, modulePath()));
     }
 
-    std::string copyEachBuildScript(const eacp::FilePath& first,
-                                    const eacp::FilePath& then) const
+    // As copyInTurnScript, for a module installed before the first build: a
+    // marker file the first build leaves tells them apart instead.
+    HarnessScript copyEachBuildScript(const eacp::FilePath& first,
+                                      const eacp::FilePath& then) const
     {
-        auto marker = quotedPath(root.path() / "Built");
+        auto marker = root.path() / "Built";
 
-        return "if [ -f " + marker + " ]; then " + copyScript(then) + "; else touch "
-               + marker + "; " + copyScript(first) + "; fi";
+        return HarnessScript {}
+            .ifExists(marker)
+            .copy(then, modulePath())
+            .unlessExists(marker)
+            .copy(first, modulePath())
+            .write(marker, "");
     }
 
     void touchSource(std::string_view contents) const

@@ -8,6 +8,7 @@
 #include "../View/WebViewSurface-Web.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Utils/Singleton.h>
 
 #include <emscripten/emscripten.h>
 
@@ -61,6 +62,12 @@ std::unordered_map<int, WebWindowNative*>& webWindows()
 {
     static auto windows = std::unordered_map<int, WebWindowNative*> {};
     return windows;
+}
+
+// Never destroyed, as the view registries in View-Linux.cpp are not.
+std::unordered_map<Window*, LinuxWindowNative*>& webWindowNatives()
+{
+    return Singleton::getImmortal<std::unordered_map<Window*, LinuxWindowNative*>>();
 }
 
 int nextWebWindowId()
@@ -144,8 +151,7 @@ public:
 
     ~WebWindowNative() override
     {
-        if (contentView != nullptr)
-            linuxUnbindWindowFromContentView(*contentView);
+        linuxUnbindWindow(*this);
 
         auto& seat = webSeat();
 
@@ -513,13 +519,22 @@ struct Window::Native
     std::unique_ptr<LinuxWindowNative> native;
 };
 
+LinuxWindowNative& linuxWindowNative(Window& window)
+{
+    return *webWindowNatives().at(&window);
+}
+
 Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
     , impl(optionsToUse, events)
 {
+    webWindowNatives()[this] = impl->native.get();
 }
 
-Window::~Window() = default;
+Window::~Window()
+{
+    webWindowNatives().erase(this);
+}
 
 void Window::setTitle(const std::string& title)
 {
@@ -591,14 +606,16 @@ void Window::setPosition(Point position)
     impl->native->setPosition(position);
 }
 
+// The content's size: a menu bar is not part of it.
 Point Window::getSize() const
 {
-    return impl->native->getWindowSurface().contentSize;
+    return impl->native->getState().getContentSize();
 }
 
 void Window::setSize(Point size)
 {
-    impl->native->setSize(options.effectiveSize(size));
+    auto& state = impl->native->getState();
+    impl->native->setSize(state.surfaceSizeFor(options.effectiveSize(size)));
 }
 
 void Window::setMouseLocked(bool locked)

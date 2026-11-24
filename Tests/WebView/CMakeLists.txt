@@ -19,10 +19,10 @@ set(webview_test_sources
         MessageOriginPolicyTests.cpp
         StreamingRangeTests.cpp)
 
-# The drag-out drop source/target that stream onFileDragMoved / onFileDragEnded
-# through SHDoDragDrop's modal loop (FileDrag-Windows.h). The cursor reader is
-# injected, so the COM verdict logic and the physical->CSS pixel mapping test
-# without a live drag or window.
+# The drag-out drop source that streams onFileDragMoved / onFileDragEnded
+# through SHDoDragDrop's modal loop, and the WebView's answer to a routed file
+# drag (FileDrag-Windows.h). The cursor reader is injected, so the COM verdict
+# logic and the pixel mappings test without a live drag or window.
 if (WIN32)
     list(APPEND webview_test_sources FileDragTests-Windows.cpp)
 endif ()
