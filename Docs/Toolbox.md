@@ -207,7 +207,8 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
   `Response::contentFilePath` — serve a file in slices
 - `Json::Server` / `Json::makeHandler` / `Json::setJson` — reflected JSON routes
 - `throwError(message, status)` / `makePlainTextResponse` — error responses
-- `Rpc::Server` / `Rpc::Client` (`HTTPRpc/`) — RPC over HTTP
+- `Rpc::Server` / `Rpc::Client` (`HTTPRpc/`) — RPC over HTTP;
+  `Rpc::ClientOptions` carries each call's request timeouts
 - Not here: a server-side multipart parser
 
 ## Other networking — `Network/`

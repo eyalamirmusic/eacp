@@ -262,7 +262,7 @@ struct TransferFailure
     if (failure.tooLarge)
         throw std::runtime_error(responseTooLargeError(req.maxResponseSize));
 
-    if (failure.wentIdle)
+    if (failure.wentIdle || rc == CURLE_OPERATION_TIMEDOUT)
         throw std::runtime_error(timedOutError());
 
     if (failure.couldNotOpenFile)
