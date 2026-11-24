@@ -20,10 +20,18 @@ std::string extractError(const Miro::JSON& body)
     return {};
 }
 
+void applyOptions(Request& req, const ClientOptions& options)
+{
+    req.timeout = options.timeout;
+    req.connectTimeout = options.connectTimeout;
+    req.idleTimeout = options.idleTimeout;
+}
+
 } // namespace
 
-Client::Client(std::string baseUrlToUse)
+Client::Client(std::string baseUrlToUse, ClientOptions optionsToUse)
     : baseUrl(std::move(baseUrlToUse))
+    , options(optionsToUse)
 {
 }
 
@@ -36,8 +44,13 @@ Miro::JSON Client::invokeRaw(const std::string& command,
 
     auto req = Request::post(baseUrl, Miro::Json::print(envelope));
     req.headers["Content-Type"] = "application/json";
+    applyOptions(req, options);
 
     auto res = req.perform();
+
+    if (!res.error.empty())
+        throw Error(res.statusCode,
+                    "RPC call '" + command + "' failed: " + res.error);
 
     auto parsed = Miro::JSON {};
     try

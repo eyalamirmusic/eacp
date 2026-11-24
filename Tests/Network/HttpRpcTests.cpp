@@ -305,3 +305,150 @@ auto tRpcAsInvokerWorks = test("HttpRpc/asInvokerProducesUsableInvokeCallable") 
 
     check(out == "Hello, Invoker!");
 };
+
+// ---------- Client timeouts ----------
+
+namespace
+{
+struct CaughtError
+{
+    bool thrown = false;
+    int statusCode = -1;
+    std::string message;
+};
+
+CaughtError greetCatchingError(const Rpc::Client& client)
+{
+    auto caught = CaughtError();
+
+    try
+    {
+        auto payload = Miro::toJSON(GreetRequest {.name = "x"});
+        (void) client.invokeRaw("greet", payload);
+    }
+    catch (const Error& e)
+    {
+        caught.thrown = true;
+        caught.statusCode = e.statusCode;
+        caught.message = e.what();
+    }
+
+    return caught;
+}
+
+bool mentionsATimeout(const std::string& message)
+{
+    return eacp::Strings::toLower(message).find("timed out") != std::string::npos;
+}
+
+GreetResponse slowGreet(const GreetRequest& req)
+{
+    eacp::Time::sleep(eacp::Time::MS {300});
+    return rpcGreet(req);
+}
+
+Rpc::ClientOptions timeoutOf(eacp::Time::MS limit)
+{
+    auto options = Rpc::ClientOptions();
+    options.timeout = limit;
+    return options;
+}
+} // namespace
+
+auto tRpcClientOptionsDefaultToUnset =
+    test("HttpRpc/clientOptionsDefaultToUnset") = []
+{
+    auto options = Rpc::ClientOptions();
+    check(options.timeout.count == 0);
+    check(options.connectTimeout.count == 0);
+    check(options.idleTimeout.count == 0);
+};
+
+auto tRpcClientTimeoutEndsStalledCall =
+    test("HttpRpc/clientTimeoutEndsACallTheServerIsStillWorkingOn") = []
+{
+    auto httpServer = eacp::HTTP::Server(threadPoolOptions());
+    auto bridge = Miro::Bridge {};
+    auto rpc = Rpc::Server {httpServer, bridge};
+    auto stalled = StallGate();
+
+    auto stallThenGreet = [&](const GreetRequest& req)
+    {
+        stalled.wait();
+        return rpcGreet(req);
+    };
+
+    bridge.on<GreetRequest, GreetResponse>("greet", stallThenGreet);
+    check(httpServer.listen(0));
+
+    auto port = httpServer.boundPort();
+    auto caught = CaughtError();
+    auto gaveUpEarly = false;
+
+    runWithServer(port,
+                  httpServer,
+                  [&]
+                  {
+                      auto client = Rpc::Client {baseUrl(port) + "/rpc",
+                                                 timeoutOf(eacp::Time::MS {200})};
+
+                      auto beforeTheServerReplies =
+                          eacp::Time::Deadline {withoutWaitingForTheServer};
+                      caught = greetCatchingError(client);
+                      gaveUpEarly = !beforeTheServerReplies.expired();
+                      stalled.release();
+                  });
+
+    check(caught.thrown);
+    check(gaveUpEarly);
+    check(caught.statusCode == 0);
+    check(mentionsATimeout(caught.message));
+    check(caught.message.find("'greet'") != std::string::npos);
+};
+
+auto tRpcClientGenerousTimeoutCompletes =
+    test("HttpRpc/clientTimeoutLongerThanTheCallStillCompletes") = []
+{
+    auto httpServer = eacp::HTTP::Server(threadPoolOptions());
+    auto bridge = Miro::Bridge {};
+    auto rpc = Rpc::Server {httpServer, bridge};
+
+    bridge.on<GreetRequest, GreetResponse>("greet", &slowGreet);
+    check(httpServer.listen(0));
+
+    auto port = httpServer.boundPort();
+    auto reply = GreetResponse {};
+
+    runWithServer(port,
+                  httpServer,
+                  [&]
+                  {
+                      auto client = Rpc::Client {baseUrl(port) + "/rpc",
+                                                 timeoutOf(eacp::Time::MS {4000})};
+                      reply = client.invoke<GreetResponse>(
+                          "greet", GreetRequest {.name = "Patient"});
+                  });
+
+    check(reply.greeting == "Hello, Patient!");
+};
+
+auto tRpcClientReportsTransportError =
+    test("HttpRpc/clientReportsTheTransportErrorWhenThereIsNoReply") = []
+{
+    auto caught = CaughtError();
+
+    auto callRefusedPort = [&]
+    {
+        auto client = Rpc::Client {"http://127.0.0.1:1/rpc"};
+        caught = greetCatchingError(client);
+    };
+
+    check(runOffTheLoop(callRefusedPort));
+
+    check(caught.thrown);
+    check(caught.statusCode == 0);
+
+    auto prefix = std::string("RPC call 'greet' failed: ");
+    check(caught.message.starts_with(prefix));
+    check(caught.message.size() > prefix.size());
+};
