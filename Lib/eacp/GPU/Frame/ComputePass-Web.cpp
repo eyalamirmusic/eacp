@@ -12,7 +12,7 @@ namespace eacp::GPU
 {
 namespace
 {
-WebGPUTextureData* textureDataOf(const Texture& texture)
+WebGPUTextureData* boundTextureDataOf(const Texture& texture)
 {
     auto* data = static_cast<WebGPUTextureData*>(texture.nativeTexture());
     return data != nullptr && data->isValid() ? data : nullptr;
@@ -269,7 +269,7 @@ void ComputePass::setInputTexture(const Texture& texture,
                                   int slot,
                                   TextureSampling sampling)
 {
-    auto* data = textureDataOf(texture);
+    auto* data = boundTextureDataOf(texture);
 
     if (data == nullptr || impl->contextPointer == nullptr)
         return;
@@ -285,7 +285,7 @@ void ComputePass::setInputTexture(const Texture& texture,
                                   int slot,
                                   const Sampler& sampler)
 {
-    auto* data = textureDataOf(texture);
+    auto* data = boundTextureDataOf(texture);
 
     if (data == nullptr || !sampler.isValid() || impl->contextPointer == nullptr)
         return;
@@ -318,7 +318,7 @@ void ComputePass::setInputTextureLevel(const Texture& texture,
                                        int level,
                                        TextureSampling sampling)
 {
-    auto* data = textureDataOf(texture);
+    auto* data = boundTextureDataOf(texture);
 
     if (data == nullptr || level < 0 || level >= data->mipLevels
         || impl->contextPointer == nullptr)
@@ -333,7 +333,7 @@ void ComputePass::setInputTextureLevel(const Texture& texture,
 
 void ComputePass::setOutputTextureLevel(const Texture& texture, int slot, int level)
 {
-    auto* data = textureDataOf(texture);
+    auto* data = boundTextureDataOf(texture);
 
     if (!impl->isSlot(slot, maxTextureSlots) || data == nullptr
         || !data->computeWrite || level < 0 || level >= data->mipLevels)
@@ -349,7 +349,7 @@ void ComputePass::setInputTextureAsArray(const Texture& texture,
                                          int level,
                                          TextureSampling sampling)
 {
-    auto* data = textureDataOf(texture);
+    auto* data = boundTextureDataOf(texture);
 
     if (data == nullptr || level < 0 || level >= data->mipLevels
         || impl->contextPointer == nullptr)
@@ -393,7 +393,7 @@ void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
                                             int slot,
                                             TextureSampling sampling)
 {
-    auto* data = textureDataOf(renderTarget);
+    auto* data = boundTextureDataOf(renderTarget);
 
     if (data == nullptr || data->depth == nullptr || impl->contextPointer == nullptr)
         return;
@@ -409,7 +409,7 @@ void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
                                             int slot,
                                             const Sampler& sampler)
 {
-    auto* data = textureDataOf(renderTarget);
+    auto* data = boundTextureDataOf(renderTarget);
 
     if (data == nullptr || data->depth == nullptr || !sampler.isValid())
         return;

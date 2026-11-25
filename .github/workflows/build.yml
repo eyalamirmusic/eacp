@@ -326,3 +326,107 @@ jobs:
 
       - name: Build
         run: cmake --build build --target HelloGPU HelloNetwork
+
+  # The web target: Emscripten's wasm32, run under node and in headless Chrome
+  # (Docs/Web.md, "Testing"). Debug, unlike every other lane: the app entries
+  # fail on what Emscripten's ASSERTIONS print when an exit is aborted or the
+  # exited runtime is called into, and an optimised web build prints none of
+  # it. The runner has no GPU, so the headless Chrome entries run WebGPU on
+  # Chrome's own SwiftShader adapter, which Launch.mjs turns on for Linux.
+  build-web:
+    name: Web Emscripten
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_DEPEND: '1'
+      CCACHE_COMPILERCHECK: string:emscripten-7.0.0
+      EMSCRIPTEN_VERSION: 7.0.0
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # One ccache, kept and saved exactly as the build matrix's are. em++ is
+      # the compiler ccache sees, a script emsdk writes afresh on every run,
+      # so ccache's default check, its modification time, would miss every
+      # object; CCACHE_COMPILERCHECK names the release instead, which pins the
+      # clang inside it. Keep the two versions above in step.
+      - name: Set up the compiler cache
+        uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: web-emscripten
+          max-size: 1G
+          evict-old-files: job
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+
+      # The suites link JSPI for their nested pump, which node has unflagged
+      # from 25; emsdk's own node is 24 and the image's older still, so the
+      # test node is named at configure rather than searched for.
+      - name: Set up node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+
+      # emsdk at the release tag, installing the same release, which carries
+      # its sysroot prebuilt. The image's google-chrome is the browser
+      # configure finds for the <app>Headless entries and GPUTests.
+      - name: Install Ninja and Emscripten
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          git clone --depth 1 --branch "$EMSCRIPTEN_VERSION" https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          "$HOME/emsdk/emsdk" install "$EMSCRIPTEN_VERSION"
+          "$HOME/emsdk/emsdk" activate "$EMSCRIPTEN_VERSION"
+          echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
+          "$HOME/emsdk/upstream/emscripten/em++" --version
+          google-chrome --version
+
+      # What a build adds to Emscripten's cache beyond the prebuilt sysroot is
+      # the emdawnwebgpu port eacp-gpu uses: its sources, fetched from GitHub
+      # on first use, and the library built from them. Small and fixed per
+      # release, so it is keyed on the release alone and saved once.
+      - name: Cache the Emscripten ports
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: emscripten-ports-${{ env.EMSCRIPTEN_VERSION }}
+          path: |
+            ~/emsdk/upstream/emscripten/cache/ports
+            ~/emsdk/upstream/emscripten/cache/sysroot/lib/wasm32-emscripten/libemdawnwebgpu-*
+
+      - name: Configure
+        run: >
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
+          -DCMAKE_TOOLCHAIN_FILE="$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DEACP_WEB_TEST_NODE="$(command -v node)"
+
+      - name: Build
+        run: cmake --build build
+
+      # A page has no environment for EACP_REQUIRE_GPU to reach, and without
+      # a WebGPU device every GPUTests case self-skips into a green; this is
+      # the step that refuses that, printing the adapter Chrome gave the page.
+      - name: Show the WebGPU device
+        run: |
+          node CMake/Web/Launch.mjs headless build/Tests/GPU/GPUTests.js --webgpu \
+            --chrome "$(command -v google-chrome)" \
+            -- --test GPU/aDeviceIsPresentWhenRequired | tee webgpu-device.log
+          if ! grep 'GPU device: ' webgpu-device.log \
+              || grep -q 'GPU device: no WebGPU device' webgpu-device.log; then
+            echo "::error::headless Chrome gave the page no WebGPU device"
+            exit 1
+          fi
+
+      # Everything but the GPUTests groups whose cases fail on SwiftShader
+      # alone: they pass on a hardware adapter (macOS's Metal) and are named
+      # here so each one is a decision, not a filter that grows quietly.
+      # Formats makes an RG16Unorm texture, which SwiftShader's device refuses
+      # (it has no texture-formats-tier1), and the page then hangs until the
+      # 300 s timeout. PackedHalf's packing cases and
+      # Intrinsics/errorFunctionIsOddAboutZero get bit patterns from
+      # SwiftShader's half conversion and erf that are not the exact ones the
+      # cases check for.
+      - name: Test
+        run: >
+          ctest --test-dir build --output-on-failure -j 4
+          -E '^(Formats|PackedHalf|Intrinsics)$'

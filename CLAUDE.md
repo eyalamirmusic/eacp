@@ -97,7 +97,12 @@ tests on), and builds iOS for the simulator and HelloGPU and HelloNetwork
 for Android (arm64-v8a, an NDK installed with `sdkmanager`). The Windows ARM64
 lanes configure with `-DEACP_BUILD_WEBVIEW=OFF`, because the WebView example
 apps' npm installs run inside configure and are several times slower on the
-ARM runners; the x64 lanes cover WebView2. No lane builds the web target.
+ARM runners; the x64 lanes cover WebView2. A web lane on Ubuntu builds the
+Emscripten target `Debug` (emsdk pinned, node 26 for JSPI) and runs its suite
+under node and in headless Chrome on its SwiftShader WebGPU adapter, failing
+when the page gets no device and excluding by name the three `GPUTests`
+groups that fail on SwiftShader alone (`Formats`, `PackedHalf`,
+`Intrinsics`).
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed`, `ESIMD` (`eyalamirmusic/ESIMD`, `CMake/FindESIMD.cmake`: the

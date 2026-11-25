@@ -495,10 +495,16 @@ function killChromeNow(chrome)
 
 // Headless Chrome exposes WebGPU only with its GPU process: with --webgpu the
 // GPU stays on, and --enable-unsafe-webgpu lets it through where the platform
-// has not shipped it yet (Linux).
+// has not shipped it yet (Linux). Linux's Dawn runs on Vulkan, which Chrome
+// leaves off there; with it on, a machine with no GPU, a CI runner among them,
+// gets Chrome's own SwiftShader adapter rather than no adapter at all.
 function headlessGpuFlags(webgpu)
 {
-    return webgpu ? ['--enable-unsafe-webgpu'] : ['--disable-gpu'];
+    if (!webgpu)
+        return ['--disable-gpu'];
+
+    const vulkan = process.platform === 'linux' ? ['--enable-features=Vulkan'] : [];
+    return ['--enable-unsafe-webgpu', ...vulkan];
 }
 
 function startHeadlessChrome(executable, url, webgpu)

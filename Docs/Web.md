@@ -639,9 +639,12 @@ itself (`ShaderBuilder` picks `ShaderBackend::WebGPU` on the web).
 
 Headless Chrome on macOS exposes WebGPU (Metal) only with its GPU process:
 `Launch.mjs headless --webgpu` drops the `--disable-gpu` every other run gets
-and adds `--enable-unsafe-webgpu`, which Linux needs and macOS ignores.
-SwiftShader (`--use-webgpu-adapter=swiftshader`) also works there, as a CPU
-adapter, if a machine has no GPU; nothing selects it yet.
+and adds `--enable-unsafe-webgpu`, which Linux needs and macOS ignores. On
+Linux it also adds `--enable-features=Vulkan`, since Chrome's WebGPU runs on
+Vulkan there and leaves it off; without it `requestAdapter` never answered on
+the Linux machine it was tried on. A Linux machine with no GPU, a CI runner
+among them, then gets Chrome's own SwiftShader adapter (`google swiftshader`,
+a fallback adapter) with no flag naming it.
 
 ## Files
 
@@ -849,8 +852,17 @@ takes about twenty seconds on an M4 Max. The cases a backend
 feature the web lacks is behind fail rather than skip, and are listed in
 `plan.md` (Phase 3, open items).
 
-There is no web lane in CI: `.github/workflows/build.yml` neither installs
-Emscripten nor builds the target.
+CI's web lane (`build-web` in `.github/workflows/build.yml`, Ubuntu,
+`Debug`) runs all of this, `GPUTests` on SwiftShader (see "The GPU"). Its
+`Show the WebGPU device` step runs `GPU/aDeviceIsPresentWhenRequired` in a
+page and fails on `no WebGPU device`,
+because `EACP_REQUIRE_GPU` cannot reach a page's environment. Three groups
+fail on SwiftShader and pass on Metal, and the lane excludes them by name:
+`Formats` makes an RG16Unorm texture the device has no
+`texture-formats-tier1` for, which throws in the page and leaves it hanging
+until the 300 s timeout, and `PackedHalf` (the four packing cases) and
+`Intrinsics/errorFunctionIsOddAboutZero` get bit patterns from SwiftShader
+that are not the exact ones they check for.
 
 ## Not there yet
 
@@ -875,5 +887,5 @@ Emscripten nor builds the target.
 - **Browsers.** Headless Chrome, through the `<app>Headless` entries, is the
   only browser anything has run in, beside node; Firefox and Safari are
   untried. The nested pump has run in Chrome (`GPUTests`, the `NESTED_PUMP`
-  GPU examples), and WebGPU only on macOS's Metal adapter.
-- **CI.** No lane builds or runs it.
+  GPU examples), and WebGPU on macOS's Metal adapter and Chrome's SwiftShader
+  on Linux.

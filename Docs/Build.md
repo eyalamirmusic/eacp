@@ -553,10 +553,16 @@ and Android: an Ubuntu lane installs a pinned NDK with `sdkmanager`, configures
 against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` and
 `HelloNetwork` for `arm64-v8a`, which is every module an Android app links,
 the network backend included, then configures once
-more with no NDK named, which exercises the newest-installed path. Nothing
-builds the web target: there is no Emscripten lane, so it is checked by a
-local build under node and headless Chrome ([Web.md](Web.md)). The two
-Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
+more with no NDK named, which exercises the newest-installed path. A web lane
+on Ubuntu builds the Emscripten target ([Web.md](Web.md)) with emsdk at a
+pinned release and runs its suite under node 26, for JSPI, and in the image's
+headless Chrome, whose WebGPU there is its own SwiftShader adapter; a step
+before the tests fails the lane when the page got no device, since the GPU
+cases would otherwise self-skip, and the three `GPUTests` groups that fail on
+SwiftShader alone (`Formats`, `PackedHalf`, `Intrinsics`) are excluded by
+name. It is the one lane built `Debug`: the app entries fail on what
+Emscripten's `ASSERTIONS` print, which an optimised web build leaves out. The
+two Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
 run their npm installs inside configure, several times slower on the ARM
 runners, and the x64 lanes cover the WebView2 backend. The clang-cl lanes
 compile with the clang-cl inside Visual Studio (`VC\Tools\Llvm`, handed to
@@ -569,17 +575,19 @@ and reloads a module of its own through `eacp_add_hot_reload`; a CI build in
 which that app came out static fails the configure rather than skip the
 test. Every lane
 configures with `EACP_CI_BUILD=ON` and `CMAKE_COMPILE_WARNING_AS_ERROR=ON`, so
-a warning in any compiled target fails the lane, and builds `RelWithDebInfo`:
+a warning in any compiled target fails the lane, and all but the web one
+build `RelWithDebInfo`:
 the tests run optimized code, as a shipped build does, while the link-time
 optimization eacp's targets take under `Release` stays off — it roughly
 tripled the macOS and MSVC build steps for a few seconds of test time. The
 `NDEBUG`-only paths — the D3D12 debug layer, `Device::assertOwningThread`, the
 Android JNI local-reference check — are exercised by a local Debug build, not by CI.
 
-Every lane of the build matrix compiles through [ccache](https://ccache.dev)
-(`hendrikmuhs/ccache-action`, which installs it and keeps its directory in the
-Actions cache under one key per compiler and architecture; the two Linux Clang
-lanes compile identical objects and share one). A translation unit whose
+Every lane of the build matrix, and the web lane, compiles through
+[ccache](https://ccache.dev) (`hendrikmuhs/ccache-action`, which installs it
+and keeps its directory in the Actions cache under one key per compiler and
+architecture; the two Linux Clang lanes compile identical objects and share
+one, and the web lane's sees `em++` as its compiler). A translation unit whose
 preprocessed text, compiler and flags match an earlier run is restored rather
 than compiled, which is every third-party object on every run — glslang, Miro,
 NanoTest's generated registrations — and most of eacp's own on a change that
@@ -588,8 +596,11 @@ any file in it changed. It runs in depend mode (`CCACHE_DEPEND`), hashing the
 include files the compiler's own dependency output names rather than running
 the preprocessor a second time, so a miss costs the compile and nothing more.
 Each lane's cache is capped at 1 GB and trimmed after
-the build to what that build touched, so the eight stay inside the repository's
-10 GB. Two configure flags go with it: the Windows lanes pass
+the build to what that build touched, so the nine stay inside the repository's
+10 GB. The web lane also caches what a build adds to Emscripten's own cache,
+the `emdawnwebgpu` port's sources and its library, about 3 MB keyed on the
+release; the rest of that cache is the sysroot the release ships prebuilt.
+Two configure flags go with ccache: the Windows lanes pass
 `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` (`/Z7`), because the default
 `/Zi` writes one PDB per target that every translation unit appends to, which
 no per-object cache can restore, and `EACP_PCH` stays off (see above). CPM's

@@ -241,7 +241,7 @@ already builds. Brings `Apps/UI`, `Apps/SVG`, most of `Apps/Graphics`
 - A Canvas2D `Context` (`EACP_HAS_CONTEXT`): `AlertDemo`, the `Apps/GPU`
   overlays.
 - Camera through `getUserMedia` (`EACP_HAS_CAPTURE`), Video through WebCodecs.
-- Persistence (IDBFS/OPFS), opt-in threads, a web CI lane.
+- Persistence (IDBFS/OPFS), opt-in threads.
 
 ## Open items from the initial web work
 
@@ -287,7 +287,16 @@ already builds. Brings `Apps/UI`, `Apps/SVG`, most of `Apps/Graphics`
   WebSocket failure paths pass under node only.
 - Release web builds: the after-exit test patterns print nothing there.
 - A node 24 list passed as `EACP_WEB_TEST_NODE`.
-- The no-Chrome `STATUS` path; the Chrome search on Windows and Linux hosts;
+- The no-Chrome `STATUS` path; the Chrome search on Windows hosts;
   `Launch.mjs browser` (`<app>-run`) on Windows and Linux.
 - Phase 1 gating on Windows and Linux (reasoned, not configured).
-- There is no web CI lane.
+- The web CI lane (`build-web`) has not run on GitHub yet: its steps were
+  reproduced on a Fedora aarch64 box with emsdk 7.0.0, node 26 and Chrome
+  157's SwiftShader adapter, and on macOS's Metal adapter.
+- On SwiftShader, `GPUTests`' `Formats` group hangs: the RG16Unorm texture it
+  makes needs `texture-formats-tier1`, the device lacks it, `createTexture`
+  throws in the page, and nothing ends the run before the 300 s timeout. The
+  backend should refuse the format (or the case skip it) where the device has
+  no such feature. `PackedHalf`'s packing cases and
+  `Intrinsics/errorFunctionIsOddAboutZero` fail there on exact bit patterns.
+  The CI lane excludes all three groups by name.
