@@ -44,16 +44,16 @@ platform's own 2D tier — `Graphics::Context`, `Font`, `TextMetrics`,
 Android),
 `EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
 the Core ML runner, `MLTests` and `Apps/ML`). The first three are
-`APPLE OR WIN32 OR LINUX OR ANDROID`, and `EACP_HAS_DRAW` and `EACP_HAS_GPU`
-the web as well, and stay
+`APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN`, and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
 set of modules and a new port reaches them one at a time. The next three hang off
 `EACP_HAS_DRAW`: `CONTEXT` and `WEBVIEW` are Apple/Windows-only and `CAPTURE`
 is Apple, Windows and Android, so on Apple and Windows the first six are
 simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-Of the seven only `EACP_HAS_DRAW` and `EACP_HAS_GPU` are on for the web
-(Emscripten) so far: a window there is a `<canvas>` and the GPU is WebGPU (see
+Of the seven only `EACP_HAS_DRAW`, `EACP_HAS_GPU` and `EACP_HAS_TEXT` are on
+for the web (Emscripten) so far: a window there is a `<canvas>`, the GPU is
+WebGPU and text is Linux's FreeType rasterizer over fonts the build embeds (see
 "The Web Target").
 Two more capability variables in the same block decide what the host can run
 rather than what it draws, both on everywhere but the web: `EACP_HAS_THREADS`
@@ -128,8 +128,8 @@ target; no Xlib symbol anywhere), and FreeType, HarfBuzz and fontconfig for the
 glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false. A web build fetches nothing; it needs
-Emscripten (which downloads its `emdawnwebgpu` port on first use) and node
-installed.
+Emscripten (which downloads its `emdawnwebgpu`, `freetype`, `harfbuzz` and
+`zlib` ports on first use) and node installed.
 
 Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
 the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
@@ -769,8 +769,10 @@ rebuild; `onDeviceRestored` never fires).
 The text half is `Text/GlyphRasterizer-Linux.cpp` on FreeType, HarfBuzz and
 fontconfig, found by pkg-config through `CMake/FindLinuxText.cmake` into one
 `eacp-linux-text` target that `eacp-text` links PRIVATE, so nothing above the
-module sees a FreeType header. Above it sits the one piece of `eacp-text` that
-is portable but only Linux calls: `Text/Bidi.{h,cpp}` and `Text/UnicodeBidi.h`,
+module sees a FreeType header; fontconfig is reached only through
+`Text/FontDiscovery-Linux.cpp`, the discovery half the web replaces with its
+bundled-font registry. Above it sits the one piece of `eacp-text` that
+is portable but only the FreeType rasterizer calls: `Text/Bidi.{h,cpp}` and `Text/UnicodeBidi.h`,
 the Unicode Bidirectional Algorithm (UAX #9) over tables generated from the
 Unicode 16.0 database, run as a paragraph pass before itemization so a mixed
 Hebrew/Arabic/Latin line shapes in visual order. It is built on all three
@@ -878,12 +880,14 @@ See `Lib/eacp/GPU/README.md`.
 `-DCMAKE_TOOLCHAIN_FILE=<emscripten>/cmake/Modules/Platform/Emscripten.cmake`
 (or `emcmake cmake`) builds wasm32 for a browser or node: `Core`, `Network`'s
 client half, the four device-free pieces, `Graphics` (windows, views and
-input) and `GPU` over WebGPU, and of the examples what the same capability
-gates as everywhere let through: `Apps/Web` (`HelloLoop`, `HelloNetwork`,
-`HelloInput`), the `Apps/GPU` examples with no 2D overlay and, unchanged,
+input), `GPU` over WebGPU and `Text`, `UI` and `SVG`, and of the examples what
+the same capability gates as everywhere let through: `Apps/Web` (`HelloLoop`,
+`HelloNetwork`, `HelloInput`), the `Apps/GPU` examples with no 2D overlay,
+`Apps/UI`, `Apps/SVG`, the component apps of `Apps/Graphics` and, unchanged,
 `Console`, `ZipDemo`,
 `OnlineResourceDemo`, `Http` and `BasicHttp` (no socket apps, no
-`Apps/Plugins`; `plan.md` is the roadmap to the rest). It is browser-first:
+`Apps/Plugins`, no `EmbeddedViewDemo` or `TrayApp`; `plan.md` is the roadmap
+to the rest). It is browser-first:
 one thread, no `-pthread`, so the output is plain static files needing no
 cross-origin isolation headers: `<app>.js` with the wasm embedded
 (`-sSINGLE_FILE=1` under `EACP_WEB_SINGLE_FILE`, default `ON`, for every
@@ -1003,6 +1007,27 @@ page per group (`eacp_web_discover_tests(GPUTests HEADLESS)`). Occlusion
 queries, timestamps, GPU mip generation, layered rendering, border colours,
 multisampled sampleable depth and off-grid storage offsets are not there yet
 (`Lib/eacp/GPU/README.md`, "The web").
+
+`EACP_HAS_TEXT` is on there as well: `Text/GlyphRasterizer-Linux.cpp` is the
+rasterizer, over Emscripten's FreeType and HarfBuzz ports (`eacp-text` takes
+`--use-port=freetype --use-port=harfbuzz`; HarfBuzz is 3.2 there, so no
+synthetic bold or slant and no `harfbuzz-raster`). Where faces come from is a
+discovery behind `Text/FontDiscovery-Linux.h` — resolve a family, list the
+fallback faces with their coverage and colour — which is fontconfig on Linux
+(`FontDiscovery-Linux.cpp`) and on the web a registry of memory fonts
+(`FontDiscovery-Web.cpp`): DejaVu Sans and Sans Mono 2.37, regular and bold
+(`ThirdParty/DejaVu`, with the license), embedded into `eacp-text` through
+ResEmbed under `EACP_WEB_DEFAULT_FONTS` (default `ON`; 2.1 MB of wasm, 0.75 MB
+brotli) and read in place, plus whatever `Text::registerMemoryFont` adds.
+`monospace` and the other platforms' fixed-pitch names resolve to DejaVu Sans
+Mono and every other name to DejaVu Sans, which are also the web's
+`defaultMonospaceFamily()`/`defaultUIFontFamily()`; fallback walks every other
+registered family. No CJK or colour emoji face is bundled: an emoji falls back
+to DejaVu Sans as a mask. `TextTests` and `SVGImageTests` run in headless
+Chrome like `GPUTests` (and there the fonts are required whenever they are
+embedded, `EACP_TEST_BUNDLED_FONTS`, since a page has no environment for
+`EACP_REQUIRE_FONTS`); `UITests` (without `ExitTests`) and `SVGTests` under
+node.
 
 ## Architecture
 New source files are added directly to the module's CMakeLists.txt under the

@@ -16,12 +16,18 @@ using namespace eacp::Text;
 
 namespace
 {
+// The web's faces are the two it embeds, DejaVu's.
+constexpr bool hasDejaVu()
+{
+    return Platform::isLinux() || Platform::isWeb();
+}
+
 // A proportional face all three platforms ship, with kerning pairs.
 constexpr const char* proportionalFamily()
 {
     if constexpr (Platform::isWindows())
         return "Arial";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (hasDejaVu())
         return "DejaVu Sans";
     else
         return "Helvetica";
@@ -32,10 +38,35 @@ constexpr const char* ligatingFamily()
 {
     if constexpr (Platform::isWindows())
         return "Calibri";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (hasDejaVu())
         return "DejaVu Sans";
     else
         return "Helvetica";
+}
+
+// A family, and a codepoint it lacks that another face on the machine draws:
+// Han, wherever there is a CJK face to fall back to, and on the web, which
+// has none, Hebrew, which DejaVu Sans has and DejaVu Sans Mono does not.
+constexpr const char* fallbackFamily()
+{
+    if constexpr (Platform::isWeb())
+        return "DejaVu Sans Mono";
+    else
+        return proportionalFamily();
+}
+
+constexpr const char* fallbackCodepoint()
+{
+    if constexpr (Platform::isWeb())
+        return "\xd7\x90";
+    else
+        return "\xe6\xbc\xa2";
+}
+
+// Whether the weighted family has a face lighter than its regular one.
+constexpr bool hasLightFace()
+{
+    return !Platform::isWeb();
 }
 
 // A family whose design changes with the size it is set at: a variable face
@@ -46,7 +77,7 @@ constexpr const char* opticallySizedFamily()
 {
     if constexpr (Platform::isWindows())
         return "Segoe UI Variable";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (hasDejaVu())
         return "Inter";
     else
         return ".AppleSystemUIFont";
@@ -57,7 +88,7 @@ constexpr const char* weightedFamily()
 {
     if constexpr (Platform::isWindows())
         return "Segoe UI";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (hasDejaVu())
         return "DejaVu Sans";
     else
         return "Helvetica Neue";
@@ -152,27 +183,28 @@ auto tClustersMapToBytes = test("Shaping/clustersAreByteOffsets") = []
 // that face.
 auto tFallbackRunsAreNumbered = test("Shaping/fallbackFacesAreNumbered") = []
 {
-    const auto rasterizer = GlyphRasterizer {requestFor(proportionalFamily())};
+    const auto rasterizer = GlyphRasterizer {requestFor(fallbackFamily())};
 
-    if (!has(rasterizer, proportionalFamily()))
+    if (!has(rasterizer, fallbackFamily()))
         return;
 
-    const auto run = rasterizer.shape("a\xe6\xbc\xa2z", {});
+    const auto missing = std::string {fallbackCodepoint()};
+    const auto run = rasterizer.shape("a" + missing + "z", {});
 
     check(run.glyphs.size() == 3);
     check(run.glyphs[0].key.font == 0);
     check(run.glyphs[1].key.font != 0);
     check(run.glyphs[2].key.font == 0);
     check(run.glyphs[1].cluster == 1);
-    check(run.glyphs[2].cluster == 4);
+    check(run.glyphs[2].cluster == 1 + (int) missing.size());
 
-    const auto han = rasterizer.rasterize(run.glyphs[1].key, {}, {});
-    check(han.valid);
-    check(!han.isEmpty());
-    check(han.advance > 0.f);
+    const auto fallback = rasterizer.rasterize(run.glyphs[1].key, {}, {});
+    check(fallback.valid);
+    check(!fallback.isEmpty());
+    check(fallback.advance > 0.f);
 
     // Met again, the same face gets the same number.
-    const auto again = rasterizer.shape("\xe6\xbc\xa2", {});
+    const auto again = rasterizer.shape(missing, {});
     check(again.glyphs.size() == 1);
     check(again.glyphs[0].key.font == run.glyphs[1].key.font);
 };
@@ -199,8 +231,10 @@ auto tWeightsDrawDifferently =
     const auto bold = at(700);
 
     check(light.valid && regular.valid && bold.valid);
-    check(ink(light) < ink(regular));
     check(ink(regular) < ink(bold));
+
+    if constexpr (hasLightFace())
+        check(ink(light) < ink(regular));
 
     // 650 is nearest 700 by CSS's rules, so it is the same face.
     check(ink(at(650)) == ink(bold));

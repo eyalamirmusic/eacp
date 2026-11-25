@@ -227,9 +227,57 @@ Not yet verified:
 
 `EACP_HAS_TEXT` on the web: FreeType and HarfBuzz from Emscripten's ports,
 reusing `GlyphRasterizer-Linux.cpp` with fontconfig replaced by a small
-bundled-font resolver (DejaVu/Noto embedded as resources). The Bidi pass
-already builds. Brings `Apps/UI`, `Apps/SVG`, most of `Apps/Graphics`
-(`GUI`, `TaskBoard`, `Todo`, `KeyInspector`, `CursorShapes`, `MenuBarApp`).
+bundled-font resolver. Done, bar the open items.
+
+- [x] `EACP_HAS_TEXT` on for Emscripten (top-level `CMakeLists.txt`);
+      `eacp-text` takes `--use-port=freetype --use-port=harfbuzz` (FreeType
+      2.14, HarfBuzz 3.2 in Emscripten 7.0).
+- [x] Font discovery split out of `GlyphRasterizer-Linux.cpp` behind
+      `Text/FontDiscovery-Linux.h` (resolve a family; list the fallback faces
+      with their coverage and colour): fontconfig in `FontDiscovery-Linux.cpp`,
+      Linux unchanged; on the web `FontDiscovery-Web.cpp`, a registry of the
+      memory fonts with CSS-ish substitution (`monospace` and the stock
+      fixed-pitch names to DejaVu Sans Mono, the rest to DejaVu Sans).
+- [x] Bundled fonts: DejaVu Sans and Sans Mono 2.37, regular and bold, in
+      `ThirdParty/DejaVu` with the license, embedded through ResEmbed into
+      `eacp-text` behind `EACP_WEB_DEFAULT_FONTS` (default `ON`) and read in
+      place. Not Noto: a colour emoji face alone is ~10 MB, and DejaVu covers
+      Latin, Greek, Cyrillic, Hebrew and Arabic in 2.1 MB.
+- [x] Size, Release, wasm: the fonts are 2,135,464 bytes (1.13 MB gzip,
+      0.75 MB brotli); `GlyphAtlas.wasm` 4.54 MB with them, 2.40 MB without,
+      `Triangle.wasm` 0.57 MB.
+- [x] Runtime registration: `Text::registerMemoryFont`, as everywhere
+      (`VariableFont` registers its embedded Inter and draws its nine weights
+      in a page).
+- [x] Emoji: a mask fallback to DejaVu Sans's monochrome emoticons; colour
+      when the app registers a CBDT/sbix/COLRv0 face.
+- [x] Defaults: `defaultMonospaceFamily()` and `defaultUIFontFamily()` are
+      DejaVu's on the web, as on Linux.
+- [x] Apps: every `Apps/UI` example, `Apps/SVG`, `GlyphAtlas`,
+      `VariableFont`, `ShaderWarmUp`, and `GUI`, `TaskBoard`, `Todo`,
+      `KeyInspector`, `CursorShapes`, `MenuBarApp` (now `eacp_add_app`s, so
+      they get a page; native targets unchanged). `EmbeddedViewDemo` and
+      `TrayApp` kept off the web. `GlyphAtlas`, `WidgetGallery`, `SVG`,
+      `SVGDocument` and `VariableFont` checked by screenshot in headless
+      Chrome on the Studio.
+- [x] Tests: `UITests` (395, `ExitTests` left out) and `SVGTests` (88) under
+      node; `TextTests` (120, with `Bidi-LinuxTests.cpp`) and `SVGImageTests`
+      (23) as pages in headless Chrome with WebGPU. In a page the fonts are
+      required whenever the build embeds them (`EACP_TEST_BUNDLED_FONTS`)
+      rather than by `EACP_REQUIRE_FONTS`. The web suite is 334 entries, all
+      green.
+
+Open items:
+
+- No CJK face and no colour emoji by default; Han is the missing-glyph box.
+- HarfBuzz 3.2 has no synthetic bold or slant and no `harfbuzz-raster`, so a
+  COLRv1-only face draws monochrome and a synthesized bold measures narrower
+  than it draws (only for a registered family with no bold face).
+- The in-window menu bar (`MenuBarPresenter-Linux.cpp`) is not wired to the
+  web window, so `setApplicationMenuBar` draws nothing there.
+- Desktop-sized layouts (`WidgetGallery`) overlap in a short canvas.
+- Not verified: text in Firefox or Safari; `UITests`' device cases in a page
+  (they stand down under node).
 
 ### Phase 5 and later: smaller extras and the rest
 
@@ -258,7 +306,8 @@ already builds. Brings `Apps/UI`, `Apps/SVG`, most of `Apps/Graphics`
 - `Apps::run` stops the `callAfter` scheduler on every platform.
 - Phase 1: the component-tier `Apps/Graphics` apps are still kept off Linux
   (`EACP_HAS_TEXT AND NOT LINUX` in `Apps/CMakeLists.txt`) to keep the Linux
-  app set unchanged; they have never been built there.
+  app set unchanged; they have never been built there. Since Phase 4 they
+  build on the web.
 
 ### Known and left alone
 

@@ -1,5 +1,6 @@
 #include "GlyphRasterizer.h"
 #include "Bidi.h"
+#include "FontDiscovery-Linux.h"
 #include "UnicodeEmoji.h"
 #include "Utf8.h"
 
@@ -10,8 +11,6 @@
 #include <freetype/ftmm.h>
 #include <freetype/ftoutln.h>
 #include <freetype/tttables.h>
-
-#include <fontconfig/fontconfig.h>
 
 #include <hb.h>
 #include <hb-ft.h>
@@ -43,11 +42,6 @@ constexpr auto linuxPaintsColorOutlines = true;
 #else
 constexpr auto linuxPaintsColorOutlines = false;
 #endif
-
-struct LinuxFaceDeleter
-{
-    void operator()(FT_FaceRec_* face) const { FT_Done_Face(face); }
-};
 
 struct LinuxShaperFontDeleter
 {
@@ -82,60 +76,19 @@ struct LinuxRasterImageDeleter
 };
 #endif
 
-struct LinuxPatternDeleter
-{
-    void operator()(FcPattern* pattern) const { FcPatternDestroy(pattern); }
-};
-
-struct LinuxFontSetDeleter
-{
-    void operator()(FcFontSet* set) const { FcFontSetDestroy(set); }
-};
-
-struct LinuxObjectSetDeleter
-{
-    void operator()(FcObjectSet* set) const { FcObjectSetDestroy(set); }
-};
-
-using LinuxFace = std::unique_ptr<FT_FaceRec_, LinuxFaceDeleter>;
 using LinuxShaperFont = std::unique_ptr<hb_font_t, LinuxShaperFontDeleter>;
 using LinuxShaperFace = std::unique_ptr<hb_face_t, LinuxShaperFaceDeleter>;
 using LinuxShaperBuffer = std::unique_ptr<hb_buffer_t, LinuxShaperBufferDeleter>;
-using LinuxPattern = std::unique_ptr<FcPattern, LinuxPatternDeleter>;
-using LinuxFontSet = std::unique_ptr<FcFontSet, LinuxFontSetDeleter>;
-using LinuxObjectSet = std::unique_ptr<FcObjectSet, LinuxObjectSetDeleter>;
 
 #if EACP_HAS_HB_RASTER
 using LinuxRasterPaint = std::unique_ptr<hb_raster_paint_t, LinuxRasterPaintDeleter>;
 using LinuxRasterImage = std::unique_ptr<hb_raster_image_t, LinuxRasterImageDeleter>;
 #endif
 
-// The bytes live for the life of the process: every FT_Face opened over them
-// reads out of them lazily.
-struct LinuxMemoryFont
+LinuxFontSystem::LinuxFontSystem()
 {
-    Vector<std::uint8_t> bytes;
-    std::string family;
-    std::string postScriptName;
-    int weight = 400;
-    bool italic = false;
-    bool weightVaries = false;
-};
-
-// One FT_Library and one fontconfig for the process. Neither FreeType nor
-// HarfBuzz's ft funcs are thread safe, so every call into them takes the mutex.
-struct LinuxFontSystem
-{
-    LinuxFontSystem()
-    {
-        ready = FT_Init_FreeType(&library) == 0 && FcInit() == FcTrue;
-    }
-
-    std::mutex mutex;
-    FT_Library library = nullptr;
-    Vector<std::unique_ptr<LinuxMemoryFont>> memoryFonts;
-    bool ready = false;
-};
+    ready = FT_Init_FreeType(&library) == 0 && linuxStartFontDiscovery(*this);
+}
 
 LinuxFontSystem& fontSystem()
 {
@@ -165,8 +118,6 @@ const float linuxObliqueShear =
 // Fraction of the em; what HarfBuzz measures and FreeType draws share it.
 constexpr float linuxSyntheticBoldRatio = 0.02f;
 
-constexpr int linuxNormalWidth = 100;
-
 // CSS Fonts' weight matching, smaller being nearer. The same rule as
 // GlyphRasterizer-Apple.mm's weightDistance, and it has to stay the same rule.
 int linuxWeightDistance(int wanted, int have)
@@ -187,20 +138,6 @@ int linuxWeightDistance(int wanted, int have)
 
     return above ? 2 + (have - wanted) : 1000 + (wanted - have);
 }
-
-struct LinuxFamilyFace
-{
-    std::string file;
-    int faceIndex = 0;
-    const LinuxMemoryFont* memory = nullptr;
-    int weight = 400;
-    int width = linuxNormalWidth;
-    bool italic = false;
-
-    bool weightVaries = false;
-
-    bool isEmpty() const { return file.empty() && memory == nullptr; }
-};
 
 const LinuxFamilyFace* linuxNearestFace(const Vector<LinuxFamilyFace>& faces,
                                         const FontVariant& variant)
@@ -225,183 +162,6 @@ const LinuxFamilyFace* linuxNearestFace(const Vector<LinuxFamilyFace>& faces,
     }
 
     return best;
-}
-
-std::string linuxToString(const FcChar8* text)
-{
-    return text != nullptr ? std::string {(const char*) text} : std::string {};
-}
-
-LinuxPattern linuxMatchFamily(const std::string& family)
-{
-    auto pattern = LinuxPattern {FcPatternCreate()};
-
-    if (!pattern)
-        return {};
-
-    FcPatternAddString(pattern.get(), FC_FAMILY, (const FcChar8*) family.c_str());
-    FcConfigSubstitute(nullptr, pattern.get(), FcMatchPattern);
-    FcDefaultSubstitute(pattern.get());
-
-    auto status = FcResult {};
-
-    return LinuxPattern {FcFontMatch(nullptr, pattern.get(), &status)};
-}
-
-std::string linuxFamilyOf(FcPattern* pattern, const std::string& wanted)
-{
-    auto first = std::string {};
-
-    for (auto index = 0;; ++index)
-    {
-        FcChar8* name = nullptr;
-
-        if (FcPatternGetString(pattern, FC_FAMILY, index, &name) != FcResultMatch)
-            break;
-
-        const auto family = linuxToString(name);
-
-        if (Strings::equalsCaseInsensitive(family, wanted))
-            return family;
-
-        if (first.empty())
-            first = family;
-    }
-
-    return first;
-}
-
-LinuxFamilyFace linuxFaceOfPattern(FcPattern* pattern)
-{
-    auto face = LinuxFamilyFace {};
-    FcChar8* file = nullptr;
-
-    if (FcPatternGetString(pattern, FC_FILE, 0, &file) != FcResultMatch)
-        return face;
-
-    auto index = 0;
-
-    if (FcPatternGetInteger(pattern, FC_INDEX, 0, &index) == FcResultMatch)
-    {
-        // The high half of a fontconfig index names a variable-font instance.
-        if ((index >> 16) != 0)
-            return {};
-
-        face.faceIndex = index & 0xFFFF;
-    }
-
-    face.file = linuxToString(file);
-
-    auto weight = 0;
-
-    if (FcPatternGetInteger(pattern, FC_WEIGHT, 0, &weight) == FcResultMatch)
-    {
-        const auto opentype = FcWeightToOpenType(weight);
-
-        face.weight = opentype > 0 ? weightClass(opentype) : 400;
-    }
-    else
-    {
-        // Not an integer means a range, which is what a variable font reports.
-        face.weightVaries = true;
-    }
-
-    auto width = 0;
-
-    if (FcPatternGetInteger(pattern, FC_WIDTH, 0, &width) == FcResultMatch)
-        face.width = width;
-
-    auto slant = 0;
-
-    if (FcPatternGetInteger(pattern, FC_SLANT, 0, &slant) == FcResultMatch)
-        face.italic = slant != FC_SLANT_ROMAN;
-
-    return face;
-}
-
-Vector<LinuxFamilyFace> linuxFacesOfFamily(const std::string& family)
-{
-    auto faces = Vector<LinuxFamilyFace> {};
-    auto pattern = LinuxPattern {FcPatternCreate()};
-    auto objects = LinuxObjectSet {
-        FcObjectSetBuild(FC_FILE, FC_INDEX, FC_WEIGHT, FC_WIDTH, FC_SLANT, nullptr)};
-
-    if (!pattern || !objects)
-        return faces;
-
-    FcPatternAddString(pattern.get(), FC_FAMILY, (const FcChar8*) family.c_str());
-
-    auto set = LinuxFontSet {FcFontList(nullptr, pattern.get(), objects.get())};
-
-    if (!set)
-        return faces;
-
-    for (auto index = 0; index < set->nfont; ++index)
-        if (auto face = linuxFaceOfPattern(set->fonts[index]); !face.isEmpty())
-            faces.add(std::move(face));
-
-    return faces;
-}
-
-std::string linuxFamilyOfPostScriptName(const std::string& name)
-{
-    auto pattern = LinuxPattern {FcPatternCreate()};
-    auto objects = LinuxObjectSet {FcObjectSetBuild(FC_FAMILY, nullptr)};
-
-    if (!pattern || !objects)
-        return {};
-
-    FcPatternAddString(
-        pattern.get(), FC_POSTSCRIPT_NAME, (const FcChar8*) name.c_str());
-
-    auto set = LinuxFontSet {FcFontList(nullptr, pattern.get(), objects.get())};
-
-    if (!set || set->nfont <= 0)
-        return {};
-
-    return linuxFamilyOf(set->fonts[0], {});
-}
-
-LinuxFontSet linuxSortedFonts(const std::string& family,
-                              const FontVariant& variant,
-                              bool trim)
-{
-    auto pattern = LinuxPattern {FcPatternCreate()};
-
-    if (!pattern)
-        return {};
-
-    FcPatternAddString(pattern.get(), FC_FAMILY, (const FcChar8*) family.c_str());
-    FcPatternAddInteger(
-        pattern.get(), FC_WEIGHT, FcWeightFromOpenType(weightClass(variant.weight)));
-    FcPatternAddInteger(
-        pattern.get(), FC_SLANT, variant.italic ? FC_SLANT_ITALIC : FC_SLANT_ROMAN);
-
-    FcConfigSubstitute(nullptr, pattern.get(), FcMatchPattern);
-    FcDefaultSubstitute(pattern.get());
-
-    auto status = FcResult {};
-
-    return LinuxFontSet {FcFontSort(
-        nullptr, pattern.get(), trim ? FcTrue : FcFalse, nullptr, &status)};
-}
-
-bool linuxPatternHasChar(FcPattern* pattern, char32_t codepoint)
-{
-    FcCharSet* charset = nullptr;
-
-    if (FcPatternGetCharSet(pattern, FC_CHARSET, 0, &charset) != FcResultMatch)
-        return false;
-
-    return FcCharSetHasChar(charset, (FcChar32) codepoint) == FcTrue;
-}
-
-bool linuxPatternIsColor(FcPattern* pattern)
-{
-    auto color = FcBool {FcFalse};
-
-    return FcPatternGetBool(pattern, FC_COLOR, 0, &color) == FcResultMatch
-           && color == FcTrue;
 }
 
 struct LinuxSizedFace
@@ -529,7 +289,7 @@ LinuxAxisSupply linuxApplyAxes(FT_Face face,
     return supply;
 }
 
-bool linuxHasWeightAxis(FT_Face face)
+bool linuxHasWeightAxis(FT_Library library, FT_Face face)
 {
     FT_MM_Var* axes = nullptr;
 
@@ -543,7 +303,7 @@ bool linuxHasWeightAxis(FT_Face face)
         if (axes->axis[index].tag == linuxWeightAxis)
             found = true;
 
-    FT_Done_MM_Var(fontSystem().library, axes);
+    FT_Done_MM_Var(library, axes);
 
     return found;
 }
@@ -616,8 +376,8 @@ bool linuxOpenFace(LinuxSizedFace& sized,
     const auto opened =
         source.memory != nullptr
             ? FT_New_Memory_Face(system.library,
-                                 source.memory->bytes.data(),
-                                 (FT_Long) source.memory->bytes.size(),
+                                 source.memory->data,
+                                 (FT_Long) source.memory->size,
                                  source.faceIndex,
                                  &raw)
             : FT_New_Face(
@@ -754,27 +514,10 @@ struct GlyphRasterizer::Native
         if (resolveRegistered())
             return;
 
-        auto matched = linuxMatchFamily(request.family);
+        auto found = linuxResolveFamily(request.family);
 
-        if (!matched)
-            return;
-
-        resolved = linuxFamilyOf(matched.get(), request.family);
-
-        if (!Strings::equalsCaseInsensitive(resolved, request.family))
-            if (auto named = linuxFamilyOfPostScriptName(request.family);
-                !named.empty())
-                resolved = named;
-
-        if (resolved.empty())
-            return;
-
-        familyFaces = linuxFacesOfFamily(resolved);
-
-        // A family fontconfig only knows as a substitution lists no faces.
-        if (familyFaces.empty())
-            if (auto face = linuxFaceOfPattern(matched.get()); !face.isEmpty())
-                familyFaces.add(std::move(face));
+        resolved = found.family;
+        familyFaces = found.faces;
     }
 
     bool resolveRegistered()
@@ -1079,7 +822,7 @@ struct GlyphRasterizer::Native
         return firstFallbackIn(set, codepoint, false, variant);
     }
 
-    int firstFallbackIn(FcFontSet* set,
+    int firstFallbackIn(const LinuxFallbackFonts* set,
                         char32_t codepoint,
                         bool colorOnly,
                         const FontVariant& variant) const
@@ -1087,17 +830,16 @@ struct GlyphRasterizer::Native
         if (set == nullptr)
             return 0;
 
-        for (auto index = 0; index < set->nfont; ++index)
+        for (auto index = 0; index < set->size(); ++index)
         {
-            auto* pattern = set->fonts[index];
-
-            if (colorOnly && !linuxPatternIsColor(pattern))
+            if (colorOnly && !set->isColor(index))
                 continue;
 
-            if (!linuxPatternHasChar(pattern, codepoint))
+            if (!set->hasChar(index, codepoint))
                 continue;
 
-            if (const auto font = adoptFallback(pattern, variant); font > 0)
+            if (const auto font = adoptFallback(set->faceAt(index), variant);
+                font > 0)
                 return font;
         }
 
@@ -1105,10 +847,9 @@ struct GlyphRasterizer::Native
     }
 
     // Its place in the table plus one; zero is the face the request asked for.
-    int adoptFallback(FcPattern* pattern, const FontVariant& variant) const
+    int adoptFallback(const LinuxFamilyFace& source,
+                      const FontVariant& variant) const
     {
-        const auto source = linuxFaceOfPattern(pattern);
-
         if (source.isEmpty())
             return 0;
 
@@ -1139,7 +880,8 @@ struct GlyphRasterizer::Native
         return fallbacks.size();
     }
 
-    FcFontSet* sortedSetFor(const FontVariant& variant, bool trim) const
+    const LinuxFallbackFonts* sortedSetFor(const FontVariant& variant,
+                                           bool trim) const
     {
         const auto key = variantKey(variant);
         auto& sets = trim ? sortedFonts : untrimmedFonts;
@@ -1147,7 +889,7 @@ struct GlyphRasterizer::Native
 
         if (found == sets.end())
             found =
-                sets.emplace(key, linuxSortedFonts(resolved, variant, trim)).first;
+                sets.emplace(key, linuxFallbackFonts(resolved, variant, trim)).first;
 
         return found->second.get();
     }
@@ -1493,8 +1235,8 @@ struct GlyphRasterizer::Native
     std::string resolved;
     Vector<LinuxFamilyFace> familyFaces;
     mutable std::map<int, LinuxSizedFace> variants;
-    mutable std::map<int, LinuxFontSet> sortedFonts;
-    mutable std::map<int, LinuxFontSet> untrimmedFonts;
+    mutable std::map<int, std::unique_ptr<LinuxFallbackFonts>> sortedFonts;
+    mutable std::map<int, std::unique_ptr<LinuxFallbackFonts>> untrimmedFonts;
     mutable Vector<std::unique_ptr<LinuxSizedFace>> fallbacks;
     mutable std::map<std::uint64_t, int> fallbackChoices;
     bool valid = false;
@@ -1573,11 +1315,19 @@ std::optional<RegisteredFont> registerMemoryFont(const void* data, int size)
     const auto* bytes = (const std::uint8_t*) data;
 
     font->bytes.assign(bytes, bytes + size);
+    font->data = font->bytes.data();
+    font->size = size;
 
+    return LinuxText::linuxAddMemoryFont(system, std::move(font));
+}
+
+std::optional<RegisteredFont>
+    LinuxText::linuxAddMemoryFont(LinuxFontSystem& system,
+                                  std::unique_ptr<LinuxMemoryFont> font)
+{
     FT_Face raw = nullptr;
 
-    if (FT_New_Memory_Face(
-            system.library, font->bytes.data(), (FT_Long) size, 0, &raw)
+    if (FT_New_Memory_Face(system.library, font->data, (FT_Long) font->size, 0, &raw)
             != 0
         || raw == nullptr)
         return std::nullopt;
@@ -1594,7 +1344,7 @@ std::optional<RegisteredFont> registerMemoryFont(const void* data, int size)
         return std::nullopt;
 
     font->italic = (face->style_flags & FT_STYLE_FLAG_ITALIC) != 0;
-    font->weightVaries = linuxHasWeightAxis(face.get());
+    font->weightVaries = linuxHasWeightAxis(system.library, face.get());
 
     if (const auto* os2 = (const TT_OS2*) FT_Get_Sfnt_Table(face.get(), FT_SFNT_OS2);
         os2 != nullptr && os2->version != 0xFFFF && os2->usWeightClass > 0)

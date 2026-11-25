@@ -36,7 +36,8 @@ endif ()
 
 # Desktop-shell examples: a few paint through the platform's own 2D stack, the
 # rest are the component tier, each gated on its own needs inside. Linux has
-# the component tier, but none of these has been built there yet.
+# the component tier, but none of these has been built there yet; the web has
+# them, bar the ones a page has no shell for.
 if (EACP_HAS_CONTEXT OR (EACP_HAS_TEXT AND NOT LINUX))
     add_subdirectory(Graphics)
 endif ()

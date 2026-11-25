@@ -271,7 +271,7 @@ constexpr const char* proportionalMeasuringFamily()
     if constexpr (Platform::isWindows())
         return "Segoe UI";
 
-    if constexpr (Platform::isLinux())
+    if constexpr (Platform::isLinux() || Platform::isWeb())
         return "DejaVu Sans";
 
     if constexpr (Platform::isAndroid())

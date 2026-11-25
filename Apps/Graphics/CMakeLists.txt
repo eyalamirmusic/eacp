@@ -10,10 +10,13 @@ if (EACP_HAS_TEXT)
     add_subdirectory(KeyInspector)
 endif ()
 
-if (EACP_HAS_TEXT AND NOT IOS)
+# A page has no host view to embed in and no tray.
+if (EACP_HAS_TEXT AND NOT IOS AND NOT EMSCRIPTEN)
     add_subdirectory(EmbeddedViewDemo)
     add_subdirectory(TrayApp)
+endif ()
 
+if (EACP_HAS_TEXT AND NOT IOS)
     # Menu items greying themselves out from live state, with the bar installed
     # once. iOS has no menu bar, so this is desktop-only.
     add_subdirectory(MenuBarApp)

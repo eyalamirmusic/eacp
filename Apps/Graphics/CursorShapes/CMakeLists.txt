@@ -1,13 +1,8 @@
-add_executable(CursorShapes Main.cpp)
+eacp_add_app(CursorShapes Main.cpp
+        BUNDLE_ID "com.eacp.cursorshapes"
+        DISPLAY_NAME "Cursor Shapes")
 target_link_libraries(CursorShapes PRIVATE eacp-ui)
-
-set(BUNDLE_ID "com.eacp.cursorshapes")
-
-set_target_properties(CursorShapes PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Cursor Shapes"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+set_target_properties(CursorShapes PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(CursorShapes)
 set_default_target_setting(CursorShapes)

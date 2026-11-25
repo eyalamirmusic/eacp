@@ -97,12 +97,12 @@ constexpr int faceKeyOf(const FontVariant& variant)
 // The platform's stock fixed-pitch face. No family name ships on all three
 // systems, so asking for a literal one gets you a substitute on the others —
 // a proportional substitute, which quietly loses the property most callers of a
-// monospace family wanted in the first place.
+// monospace family wanted in the first place. The web's is the one it embeds.
 constexpr const char* defaultMonospaceFamily()
 {
     if constexpr (Platform::isWindows())
         return "Consolas";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (Platform::isLinux() || Platform::isWeb())
         return "DejaVu Sans Mono";
     else if constexpr (Platform::isAndroid())
         return "monospace";

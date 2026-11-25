@@ -120,7 +120,8 @@ if (EMSCRIPTEN)
     set(web_suites "")
 
     foreach (suite CoreTests NetworkTests GPUCodegenTests CpuComputeTests
-            MLGraphTests ScriptHostTests GraphicsTests GPUWidgetsTests)
+            MLGraphTests ScriptHostTests GraphicsTests GPUWidgetsTests UITests
+            SVGTests)
         if (TARGET ${suite})
             target_link_options(${suite} PRIVATE ${node_link_options})
             target_link_libraries(${suite} PRIVATE eacp-core-nested-pump)
@@ -129,10 +130,12 @@ if (EMSCRIPTEN)
         endif ()
     endforeach ()
 
-    # Discovered by Tests/GPU itself, into headless Chrome rather than node.
-    if (TARGET GPUTests)
-        list(APPEND web_suites GPUTests)
-    endif ()
+    # Discovered by their own directories, into headless Chrome rather than node.
+    foreach (suite GPUTests TextTests SVGImageTests)
+        if (TARGET ${suite})
+            list(APPEND web_suites ${suite})
+        endif ()
+    endforeach ()
 
     file(WRITE "${CMAKE_BINARY_DIR}/CTestCustom.cmake"
             "set(CTEST_CUSTOM_TESTS_IGNORE ${web_suites})\n")

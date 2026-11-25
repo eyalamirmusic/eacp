@@ -37,8 +37,10 @@ fetches nothing more and needs no libcurl: its HTTP and WebSocket clients are
 Java's own, reached through JNI. A web build fetches nothing more either and
 links nothing of the system's: its HTTP and WebSocket clients are the
 runtime's `fetch()` and `WebSocket`, reached through two JS libraries
-`eacp-network` adds to every link. It needs Emscripten and node on the
-machine (see [Web.md](Web.md)).
+`eacp-network` adds to every link, and its WebGPU, FreeType and HarfBuzz are
+Emscripten's own ports (`emdawnwebgpu`, `freetype`, `harfbuzz`), which
+Emscripten downloads into its cache on first use. It needs Emscripten and
+node on the machine (see [Web.md](Web.md)).
 
 Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
 the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
@@ -56,6 +58,13 @@ requires `/utf-8` on MSVC of every translation unit that includes it, so the
 fmt target sets the flag PRIVATE on its own `format.cc` and `eacp-core` sets it
 on `Format.cpp` alone. To update it, replace those files and the version in
 its README.
+
+One more is data rather than code: `ThirdParty/DejaVu`, DejaVu Sans and DejaVu
+Sans Mono 2.37 (regular and bold, unmodified, beside their license), which the
+web build embeds into `eacp-text` as its default fonts while
+`EACP_WEB_DEFAULT_FONTS` is on ([Web.md](Web.md), "Text"). No other platform
+builds them in. To update them, replace the four files and the license and
+change the version in its README.
 
 ## Options
 
@@ -298,10 +307,12 @@ change notification behind it on any platform; a caller asks again.
 
 `-DCMAKE_TOOLCHAIN_FILE=<emscripten>/cmake/Modules/Platform/Emscripten.cmake`,
 or `emcmake cmake ...`, configures the web target: wasm32, single-threaded,
-`Core`, `Network` and the device-free pieces below, nothing that draws.
+`Core`, `Network`, the device-free pieces below, and `Graphics`, `GPU`,
+`Text`, `UI` and `SVG` on a canvas, WebGPU and the FreeType rasterizer.
 `CMake/Web.cmake` is included before any target, so every object, dependencies
 included, is compiled with `-fwasm-exceptions`, and the top-level 64-bit check
-lets wasm32 through. Of the examples only `Apps/Web` is built. An app is an
+lets wasm32 through. The examples are what the capability variables let
+through, plus `Apps/Web`. An app is an
 `eacp_add_app`, which there calls `eacp_web_executable(<app>)` itself (with
 the `NESTED_PUMP`, `CONSOLE` and `COMPANION` it was given; a plain
 `add_executable` calls it directly), which links it with a growable memory, a 1 MB stack and `-sEXIT_RUNTIME=1` and gives it an
@@ -329,10 +340,15 @@ cache variables are the target's own:
   `OFF` keeps `<app>.wasm` beside the `.js`, which a page fetches only over
   http, and `<app>-run` then serves the page as it does for an app with a
   companion.
+- `EACP_WEB_DEFAULT_FONTS` (default `ON`) — embeds DejaVu Sans and DejaVu
+  Sans Mono (`ThirdParty/DejaVu`) into `eacp-text`, so every app that links
+  it has the default families: 2,135,464 bytes of wasm (0.75 MB brotli). `OFF`
+  is for an app that registers fonts of its own with
+  `Text::registerMemoryFont`; with nothing registered no family resolves.
 
 [Web.md](Web.md) is the account: the loop and `run()`/`quit()`, the nested
-pump, threads, the network's browser differences, the file system and the
-tests.
+pump, threads, the network's browser differences, text and its fonts, the
+file system and the tests.
 
 ## A local Miro source
 
@@ -470,10 +486,11 @@ to fool the Linux check.
 
 The top-level `CMakeLists.txt` decides this once, in nine capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
-Seven decide what draws (and, last of them, Core ML); of them only
-`EACP_HAS_DRAW` and `EACP_HAS_GPU` are on for the web so far, a window being a
-`<canvas>` and the GPU WebGPU ([Web.md](Web.md)). The three drawing ones are on together on
-every other platform that draws — they
+Seven decide what draws (and, last of them, Core ML); of them
+`EACP_HAS_DRAW`, `EACP_HAS_GPU` and `EACP_HAS_TEXT` are on for the web, a
+window being a `<canvas>`, the GPU WebGPU and text the FreeType rasterizer
+over fonts the build embeds ([Web.md](Web.md)). The three drawing ones are on
+together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, capture excepted, which Android
@@ -490,7 +507,7 @@ host can run rather than what it draws; both are on everywhere but the web:
 | --- | --- | --- |
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux, Android or the web | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one, though Android and the web have none — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux, Android or the web | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
+| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux, Android or the web | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |

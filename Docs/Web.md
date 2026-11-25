@@ -5,12 +5,13 @@ browser page or under node. So far it is `Core` and `Network`, the
 device-free pieces that build everywhere — `eacp-gpu-codegen`,
 `eacp-cpu-compute`, `eacp-ml-graph` and `eacp-webview-bridge` — and
 `Graphics`: `EACP_HAS_DRAW` is on, a window being a `<canvas>` (see "Windows,
-views and input"), and so is `EACP_HAS_GPU`, over WebGPU (see "The GPU"),
-while the other drawing capability variables are still off (see
-[Build.md](Build.md)), so `Text`, `UI` and everything above them are not
-built. This page is the account of what the target is, how it is
-built and run, and where it behaves differently from the other platforms;
-`CLAUDE.md` has the short version.
+views and input"), and so are `EACP_HAS_GPU`, over WebGPU (see "The GPU"),
+and `EACP_HAS_TEXT`, over FreeType and HarfBuzz with fonts the build embeds
+(see "Text"), so `Text`, `UI` and `SVG` build as everywhere, while the
+platform 2D tier, capture and the native web view are still off (see
+[Build.md](Build.md)). This page is the account of what the target is, how
+it is built and run, and where it behaves differently from the other
+platforms; `CLAUDE.md` has the short version.
 
 ## The stance
 
@@ -55,7 +56,7 @@ look for itself: `emcmake` names it, and the toolchain file alone takes the
 shell `PATH` — the emulator is the test node (see "Testing").
 
 `Apps/` goes through the same capability variables there as everywhere, so
-what builds is what needs no text or 2D tier and no socket of its own: the
+what builds is what needs no 2D tier and no socket of its own: the
 three `Apps/Web` examples written for the browser, `HelloLoop`,
 `HelloNetwork` and `HelloInput` (a window on a canvas printing the pointer,
 wheel and key events its view receives; it never exits, so it has no ctest
@@ -67,8 +68,13 @@ overlay: `Triangle`, `TriangleGen`, `RotatingTriangle`, `Teapot`,
 `ComputeParticles`, `ComputeImage`, `Paths`, `PathCoverage`, `Texture`,
 `Maze`, `Sprites`, `Clipping`, `StreamingStress`, `TextureAtlas` and
 `HotReloadGPU` in a window, and `Compute`, `AsyncCompute`, `CpuCompute` and
-`PathBench`, which compute and exit. The servers, TCP and IPC examples are behind
-`EACP_HAS_SOCKETS` and `Apps/Plugins` is never added. An app joins the web
+`PathBench`, which compute and exit — and with text, the component tier: every
+`Apps/UI` example, `Apps/SVG`, the `Apps/Graphics` component apps (`GUI`,
+`TaskBoard`, `Todo`, `KeyInspector`, `MenuBarApp`, `CursorShapes`; not
+`EmbeddedViewDemo` or `TrayApp`, which a page has no shell for) and the glyph
+examples `GlyphAtlas`, `VariableFont` and `ShaderWarmUp`. The servers, TCP and
+IPC examples are behind `EACP_HAS_SOCKETS` and `Apps/Plugins` is never added.
+An app joins the web
 by being an `eacp_add_app`, the same call that makes it everywhere else, and
 on the web produces `<app>.js`, with the wasm inside it (or beside it as
 `<app>.wasm`, see `EACP_WEB_SINGLE_FILE` below); its CMake has no web branch:
@@ -646,6 +652,72 @@ the Linux machine it was tried on. A Linux machine with no GPU, a CI runner
 among them, then gets Chrome's own SwiftShader adapter (`google swiftshader`,
 a fallback adapter) with no flag naming it.
 
+## Text
+
+`EACP_HAS_TEXT` is on: the glyph rasterizer is desktop Linux's,
+`Text/GlyphRasterizer-Linux.cpp` unchanged, over Emscripten's FreeType
+(2.14) and HarfBuzz (3.2) ports, whose `--use-port=freetype` and
+`--use-port=harfbuzz` reach every link that takes `eacp-text`. What differs is
+where faces come from. The rasterizer asks a font discovery
+(`Text/FontDiscovery-Linux.h`) to resolve a family and to list the faces a
+missing codepoint may fall back to; on Linux that is fontconfig
+(`FontDiscovery-Linux.cpp`), and on the web a registry of the fonts the
+program carries (`FontDiscovery-Web.cpp`):
+
+- **Bundled fonts.** `ThirdParty/DejaVu` holds DejaVu Sans and DejaVu Sans
+  Mono 2.37, regular and bold, beside their license. While
+  `EACP_WEB_DEFAULT_FONTS` is on (the default) `eacp-text` embeds them through
+  ResEmbed, so every web app that links it carries them in its wasm and
+  registers them, read in place with no copy, the first time a rasterizer is
+  made. They are the defaults: `Text::defaultMonospaceFamily()` is `DejaVu
+  Sans Mono` and `UI::defaultUIFontFamily()` `DejaVu Sans`, as on Linux. An app
+  that brings its own fonts turns the option off and saves their bytes (below).
+- **Resolution.** A family registered under that name or PostScript name is
+  itself; `monospace`, `ui-monospace` and the stock fixed-pitch names of the
+  other platforms (`Menlo`, `Monaco`, `Consolas`, `Courier`, `Courier New`,
+  `SF Mono`, `Liberation Mono`) resolve to DejaVu Sans Mono, and every other
+  name to DejaVu Sans, so a request is never left with nothing, as fontconfig
+  never leaves one, and `resolvedFamily()` names the substitute. With the
+  bundle off and nothing registered no family resolves.
+- **Fallback.** A codepoint the face lacks is looked for in every other
+  registered family, bundled ones first, in the face nearest the variant, a
+  colour face first for one that wants emoji presentation.
+- **Registering more.** `Text::registerMemoryFont(bytes, size)` works as on
+  every platform: the bytes are copied and the face joins the registry under
+  its own family and PostScript names, as a family of its own and as a
+  fallback for the others. An app can embed a file with `res_embed_add` and
+  register it (as `Apps/GPU/VariableFont` does), or register bytes it
+  fetched. A variable face's axes work as on Linux.
+- **Emoji.** No colour emoji font is bundled (Noto Color Emoji alone is about
+  10 MB). An emoji DejaVu Sans covers — most of the Emoticons block and the
+  symbols and dingbats — falls back to it and draws as a monochrome mask in
+  the text's colour; one it does not is the missing-glyph box. An app that
+  registers a colour font gets colour: FreeType draws CBDT/sbix and COLRv0
+  bitmaps, and the port's HarfBuzz is too old for `harfbuzz-raster`, so a
+  COLRv1-only face draws as its monochrome outline.
+- **Bidi and scripts.** The UAX #9 pass in `Text/Bidi` runs before itemizing,
+  as on Linux, so mixed Hebrew, Arabic and Latin shape in visual order; DejaVu
+  Sans covers Latin, Greek, Cyrillic, Hebrew and Arabic. There is no CJK face:
+  Han and kana draw as the missing-glyph box unless the app registers one.
+- **Synthesis.** Italic is the synthetic oblique (no oblique face is
+  bundled), and a weight above the bold face's or between regular and bold
+  takes the nearest face by CSS's rules. HarfBuzz 3.2 has no synthetic bold or
+  slant of its own, so a synthesized bold is drawn wider than it is measured,
+  as on a Linux with an old HarfBuzz.
+
+The cost is in every app that links `eacp-text`. Measured on Release builds
+with `EACP_WEB_SINGLE_FILE` off: the four fonts are 2,135,464 bytes of the
+wasm, 1.13 MB gzipped and 0.75 MB with brotli (`GlyphAtlas.wasm` is 4.54 MB
+with them and 2.40 MB with `-DEACP_WEB_DEFAULT_FONTS=OFF`; `WidgetGallery.wasm`
+4.93 MB and 2.80 MB), and the text stack itself — FreeType, HarfBuzz,
+`eacp-text` and the sprite batcher — is most of the 1.83 MB (0.66 MB gzipped)
+between `GlyphAtlas.wasm` without fonts and `Triangle.wasm`, which draws no
+glyphs (0.57 MB). A single-file build embeds that wasm in its `.js`, about an
+eighth larger.
+
+The menu bar `setApplicationMenuBar` draws in the window on Linux is not drawn
+on the web yet: `eacp-ui`'s presenter is Linux's alone.
+
 ## Files
 
 An app's file system is Emscripten's in-memory one: in a page it starts empty
@@ -695,11 +767,14 @@ callers need no special case:
 ## Testing
 
 `Tests/` builds `CoreTests`, `NetworkTests`, `GPUCodegenTests`,
-`CpuComputeTests`, `MLGraphTests`, `ScriptHostTests`, `GraphicsTests` and
-`GPUWidgetsTests` (whose device cases stand down there) for
+`CpuComputeTests`, `MLGraphTests`, `ScriptHostTests`, `GraphicsTests`,
+`GPUWidgetsTests`, `UITests` and `SVGTests` (the device cases of
+`GPUWidgetsTests` and `UITests` stand down there) for
 the web, each
 linked with `eacp-core-nested-pump` and `-sNODERAWFS=1`, and runs them under
-node. The node-only link options are given per target, to the suites and
+node; `UITests` leaves out `ExitTests`, whose harness is a child process.
+`TextTests` and `SVGImageTests` draw through the GPU, so they run in headless
+Chrome as `GPUTests` does (below). The node-only link options are given per target, to the suites and
 `CpuComputeBench`, not to the whole `Tests/` directory, so an executable there
 that must also run in a page is not made node-only. What a platform without threads, processes or modules cannot run is left
 out of the source lists or self-skips: `ThreadTests` and `ThreadPoolTests` give
@@ -852,6 +927,20 @@ takes about twenty seconds on an M4 Max. The cases a backend
 feature the web lacks is behind fail rather than skip, and are listed in
 `plan.md` (Phase 3, open items).
 
+`TextTests` (120 cases, the Linux bidi shaping cases among them) and
+`SVGImageTests` (23) are pages in the same way, each group in headless Chrome
+with WebGPU, so the atlas uploads, the glyph and text renderers and the SVG
+image cases draw on a real device. A page has no environment for
+`EACP_REQUIRE_FONTS` to be read from, so `Text/fontsArePresentWhenRequired`
+requires the fonts whenever the build embeds them (`EACP_TEST_BUNDLED_FONTS`,
+from `EACP_WEB_DEFAULT_FONTS`): both DejaVu families must resolve to
+themselves and an emoji must draw, from DejaVu Sans as a mask; the Han and
+colour-emoji checks of the other platforms are not made, there being no face
+for either. The shaping cases that name a family per platform use DejaVu's,
+the fallback case shapes Hebrew in DejaVu Sans Mono (which has none) rather
+than Han, and the weight case checks only regular against bold, the bundle
+having no light face.
+
 CI's web lane (`build-web` in `.github/workflows/build.yml`, Ubuntu,
 `Debug`) runs all of this, `GPUTests` on SwiftShader (see "The GPU"). Its
 `Show the WebGPU device` step runs `GPU/aDeviceIsPresentWhenRequired` in a
@@ -866,9 +955,10 @@ that are not the exact ones they check for.
 
 ## Not there yet
 
-- **Graphics.** Windows, views, input and the GPU are there, but no text, UI,
-  SVG or 2D `Context`, so of `Apps/GPU` only the examples with no 2D overlay
-  build (`plan.md` is the roadmap to the rest). No
+- **Graphics.** Windows, views, input, the GPU, text, UI and SVG are there,
+  but no 2D `Context`, so of `Apps/GPU` only the examples with no 2D overlay
+  build (`plan.md` is the roadmap to the rest). No colour emoji or CJK face is
+  bundled, and the in-window menu bar is not drawn. No
   `TouchEvent`s (a finger is the left button), no `Magnify` from a pinch, no
   gamepads, image cursors are the arrow, and a presenting view smaller than
   its window still gets the whole canvas.

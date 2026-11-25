@@ -5471,4 +5471,5 @@ sampler clamps to the edge; `supportsClampToBorder` false), storage binds off
 the 256-byte offset grid (`storageBufferOffsetAlignment`), and worker-thread
 `Device`s (the web has no threads). Occlusion queries are WebGPU's own and
 only not wired up yet; the rest are WebGPU's limits. `GPUTests` runs in headless Chrome (`Docs/Web.md`,
-"Testing").
+"Testing"), and so do `TextTests` and `SVGImageTests`, whose glyph atlas,
+text renderers and SVG images draw on this backend.
