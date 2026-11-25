@@ -49,3 +49,20 @@ if (LINUX)
             EmojiPresentation-LinuxTests.cpp
             Bidi-LinuxTests.cpp)
 endif ()
+
+# The web shapes through the same rasterizer, in the DejaVu Sans it embeds; it
+# has no colour emoji face for the presentation rule to choose. The suite draws
+# through WebGPU, so it runs in headless Chrome as GPUTests does, one page per
+# group; a page has no environment, so the fonts are required whenever the
+# build embeds them rather than when EACP_REQUIRE_FONTS says so.
+if (EMSCRIPTEN)
+    target_sources(TextTests PRIVATE Bidi-LinuxTests.cpp)
+    target_compile_definitions(TextTests PRIVATE
+            EACP_TEST_BUNDLED_FONTS=$<BOOL:${EACP_WEB_DEFAULT_FONTS}>)
+
+    eacp_web_link_options(text_web_link_options)
+    target_link_options(TextTests PRIVATE ${text_web_link_options})
+    target_link_libraries(TextTests PRIVATE eacp-core-nested-pump)
+    set_target_properties(TextTests PROPERTIES EACP_WEB_NESTED_PUMP TRUE)
+    eacp_web_discover_tests(TextTests HEADLESS)
+endif ()

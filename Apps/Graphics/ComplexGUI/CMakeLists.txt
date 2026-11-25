@@ -1,13 +1,8 @@
-add_executable(TaskBoard TaskBoard.cpp)
+eacp_add_app(TaskBoard TaskBoard.cpp
+        BUNDLE_ID "com.eacp.taskboard"
+        DISPLAY_NAME "Task Board")
 target_link_libraries(TaskBoard PRIVATE eacp-ui)
-
-set(BUNDLE_ID "com.eacp.taskboard")
-
-set_target_properties(TaskBoard PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Task Board"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+set_target_properties(TaskBoard PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(TaskBoard)
 set_default_target_setting(TaskBoard)

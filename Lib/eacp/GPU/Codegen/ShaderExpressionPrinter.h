@@ -71,6 +71,11 @@ private:
                                  const std::string& name,
                                  const std::string& sampler) const;
     std::string printFetch(const Expr& expr) const;
+    std::string printWgslSample(const Expr& expr) const;
+    std::string printWgslArrayIndex(int layer) const;
+    std::string printWgslDepthLevel(int level) const;
+    std::string printWgslTextureFunction(const Expr& expr) const;
+    std::string printWgslBinary(const Expr& expr, const std::string& op) const;
     std::string printTextureFunction(const Expr& expr) const;
     std::string printMetalTextureFunction(const Expr& expr) const;
     std::string printHlslTextureFunction(const Expr& expr) const;

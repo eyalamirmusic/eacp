@@ -146,6 +146,43 @@ elseif (WIN32)
             ole32
             shell32
             windowscodecs)
+elseif (EMSCRIPTEN)
+    # Ahead of UNIX, which Emscripten also sets. A window is a <canvas> on the
+    # Linux-neutral seam Android reuses - the view records, the toplevel
+    # state, the headless native under node - with the DOM reached through a
+    # JS library every executable that links this one takes. The codec and
+    # Path are desktop Linux's, over stb and as recorded geometry.
+    target_sources(eacp-graphics PRIVATE
+            Graphics/Keyboard-Web.cpp
+            Helpers/AnimationFrame-Web.cpp
+            Helpers/DisplayLink-Web.cpp
+            Helpers/SystemAppearance-Web.cpp
+            HotKey/GlobalHotKey-Linux.cpp
+            Image/Image-Linux.cpp
+            Input/GameInput-Default.cpp
+            Layers/Layer-Linux.cpp
+            Menu/Menu-Linux.cpp
+            Primitives/Path-Linux.cpp
+            Tray/TrayIcon-Linux.cpp
+            View/View-Linux.cpp
+            View/WebViewSurface-Web.cpp
+            Window/Display-Web.cpp
+            Window/HeadlessWindow-Linux.cpp
+            Window/LinuxWindowNative-Linux.cpp
+            Window/LinuxWindowSurface-Linux.cpp
+            Window/PointerTrackers.cpp
+            Window/Window-Web.cpp)
+
+    set(eacp_graphics_web_library "${CMAKE_CURRENT_SOURCE_DIR}/Window/Window-Web.js")
+    target_link_options(eacp-graphics INTERFACE
+            "SHELL:--js-library \"${eacp_graphics_web_library}\"")
+    set_property(TARGET eacp-graphics APPEND PROPERTY
+            INTERFACE_LINK_DEPENDS "${eacp_graphics_web_library}")
+
+    include(FindStb)
+    target_link_libraries(eacp-graphics PRIVATE eacp-stb)
+    set_source_files_properties(Image/Image-Linux.cpp
+            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 elseif (ANDROID)
     target_sources(eacp-graphics PRIVATE
             Graphics/Keyboard-Android.cpp
@@ -207,6 +244,7 @@ elseif (UNIX)
             Window/LinuxWindowSurface-Linux.cpp
             Window/LinuxWindowSystem-Linux.cpp
             Window/NativeChildSurface-Linux.cpp
+            Window/PointerTrackers.cpp
             Window/WaylandClipboard-Linux.cpp
             Window/WaylandDisplay-Linux.cpp
             Window/WaylandInput-Linux.cpp

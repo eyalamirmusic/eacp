@@ -36,6 +36,12 @@ enum class State
 
 // closeTimeout bounds the closing handshake: a peer that answers close()
 // with neither a close frame nor an end of stream is dropped, as 1006.
+//
+// On the web the connection is the runtime's own WebSocket, which takes no
+// headers from a script, so a connection given any fails as it opens;
+// maxMessageSize is checked once a message has arrived whole, since the
+// runtime reassembles it first; and text is sent as a string, so text that is
+// not valid UTF-8 goes out with each invalid sequence replaced by U+FFFD.
 struct Options
 {
     std::map<std::string, std::string> headers;
@@ -80,7 +86,8 @@ public:
     void sendBinary(std::string_view bytes);
 
     // Starts the closing handshake. Before open it abandons the attempt,
-    // reporting onClose with 1006 and no onError.
+    // reporting onClose with 1006 and no onError. A browser lets a script
+    // send only 1000 and 3000-4999, so on the web any other code goes as 1000.
     void close(int code = 1000, std::string_view reason = {});
 
     [[nodiscard]] State state() const;

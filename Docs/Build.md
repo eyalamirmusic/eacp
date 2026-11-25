@@ -34,7 +34,13 @@ links `libvulkan`: `volkInitialize()` opens it by name at runtime, so a
 machine with no driver builds the same binary and reports `Device::isValid()`
 false. The package names are in [Linux.md](Linux.md). An Android build
 fetches nothing more and needs no libcurl: its HTTP and WebSocket clients are
-Java's own, reached through JNI.
+Java's own, reached through JNI. A web build fetches nothing more either and
+links nothing of the system's: its HTTP and WebSocket clients are the
+runtime's `fetch()` and `WebSocket`, reached through two JS libraries
+`eacp-network` adds to every link, and its WebGPU, FreeType and HarfBuzz are
+Emscripten's own ports (`emdawnwebgpu`, `freetype`, `harfbuzz`), which
+Emscripten downloads into its cache on first use. It needs Emscripten and
+node on the machine (see [Web.md](Web.md)).
 
 Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
 the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
@@ -52,6 +58,13 @@ requires `/utf-8` on MSVC of every translation unit that includes it, so the
 fmt target sets the flag PRIVATE on its own `format.cc` and `eacp-core` sets it
 on `Format.cpp` alone. To update it, replace those files and the version in
 its README.
+
+One more is data rather than code: `ThirdParty/DejaVu`, DejaVu Sans and DejaVu
+Sans Mono 2.37 (regular and bold, unmodified, beside their license), which the
+web build embeds into `eacp-text` as its default fonts while
+`EACP_WEB_DEFAULT_FONTS` is on ([Web.md](Web.md), "Text"). No other platform
+builds them in. To update them, replace the four files and the license and
+change the version in its README.
 
 ## Options
 
@@ -142,7 +155,7 @@ its README.
   `<library>`, configured afterwards like any target: a static library linked
   into the app in static mode, a module the app loads in dev mode. An app's
   `HOT_RELOAD` wins over the option either way, and both in-tree examples
-  pass `ON`. iOS and Android are always static. Windows dev mode needs a
+  pass `ON`. iOS, Android and the web are always static. Windows dev mode needs a
   Ninja generator, `cl` or clang-cl, x64 or ARM64 and the DLL C runtime
   (`/MD`); any other Windows build directory is static, and the configure
   line says why. It links the app with an export list of its own objects and
@@ -290,6 +303,53 @@ from any thread. `isSystemDarkMode()` reads the night bit of the activity's
 current configuration (`SystemAppearance-Android.cpp`). There is no
 change notification behind it on any platform; a caller asks again.
 
+## Web
+
+`-DCMAKE_TOOLCHAIN_FILE=<emscripten>/cmake/Modules/Platform/Emscripten.cmake`,
+or `emcmake cmake ...`, configures the web target: wasm32, single-threaded,
+`Core`, `Network`, the device-free pieces below, and `Graphics`, `GPU`,
+`Text`, `UI` and `SVG` on a canvas, WebGPU and the FreeType rasterizer.
+`CMake/Web.cmake` is included before any target, so every object, dependencies
+included, is compiled with `-fwasm-exceptions`, and the top-level 64-bit check
+lets wasm32 through. The examples are what the capability variables let
+through, plus `Apps/Web`. An app is an
+`eacp_add_app`, which there calls `eacp_web_executable(<app>)` itself (with
+the `NESTED_PUMP`, `CONSOLE` and `COMPANION` it was given; a plain
+`add_executable` calls it directly), which links it with a growable memory, a 1 MB stack and `-sEXIT_RUNTIME=1` and gives it an
+`<app>-run` target, not part of `all`, that opens it in the default browser;
+`eacp_web_add_app_tests(<app>)` makes
+its node and headless Chrome runs ctest entries. `eacp_add_plugin` is a
+configure `FATAL_ERROR` there, since the web loads no dynamic libraries. These
+cache variables are the target's own:
+
+- `CMAKE_CROSSCOMPILING_EMULATOR` — the node that runs the launchers and the
+  app entries. The Emscripten toolchain supplies it — `emcmake` names it, the
+  toolchain file alone takes the `node` on `PATH` — and where it has none it
+  is the test node.
+- `EACP_WEB_TEST_NODE` — the node, and its flags, for the test suites, which
+  link JSPI: the first of the emulator, `/opt/homebrew/bin/node` and
+  `/usr/local/bin/node` that has `WebAssembly.Suspending` (node 25 or later;
+  node 22 cannot). A node 24 has it only behind a flag, which configure does
+  not try: `-DEACP_WEB_TEST_NODE="<node>;--experimental-wasm-jspi"`.
+- `EACP_WEB_CHROME` — the Chrome, found once at configure, that the
+  `<app>Headless` ctest entries run in; those entries exist only when one is
+  found, and a `STATUS` line says when none was.
+- `EACP_WEB_SINGLE_FILE` (default `ON`) — links every executable that can run
+  in a browser `-sSINGLE_FILE=1`, its wasm embedded in its `.js`, so its page,
+  `<app>-run` and the `web-gallery` folder open from `file://` with no server.
+  `OFF` keeps `<app>.wasm` beside the `.js`, which a page fetches only over
+  http, and `<app>-run` then serves the page as it does for an app with a
+  companion.
+- `EACP_WEB_DEFAULT_FONTS` (default `ON`) — embeds DejaVu Sans and DejaVu
+  Sans Mono (`ThirdParty/DejaVu`) into `eacp-text`, so every app that links
+  it has the default families: 2,135,464 bytes of wasm (0.75 MB brotli). `OFF`
+  is for an app that registers fonts of its own with
+  `Text::registerMemoryFont`; with nothing registered no family resolves.
+
+[Web.md](Web.md) is the account: the loop and `run()`/`quit()`, the nested
+pump, threads, the network's browser differences, text and its fonts, the
+file system and the tests.
+
 ## A local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against
@@ -382,6 +442,8 @@ segments from `dl_iterate_phdr` on Linux), never from paths, so a bare name on
 nothing. On Linux the executable's path is `/proc/self/exe`, so under an
 explicitly invoked loader (`ld.so ./app`) `applicationPath()` names the loader.
 Android's app is a library NativeActivity loads, and `isDLL()` is false there.
+A web program is one wasm module with no dynamic linking, so its copy is always
+the application and the only image.
 
 A thin launcher whose application, eacp included, lives in a library it links
 claims that library's copy, which then is the application with the launcher as
@@ -422,38 +484,51 @@ to fool the Linux check.
 
 ## Capability variables
 
-The top-level `CMakeLists.txt` decides this once, in seven capability variables
+The top-level `CMakeLists.txt` decides this once, in nine capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
-The three drawing ones are on together on every platform that draws — they
+Seven decide what draws (and, last of them, Core ML); of them
+`EACP_HAS_DRAW`, `EACP_HAS_GPU` and `EACP_HAS_TEXT` are on for the web, a
+window being a `<canvas>`, the GPU WebGPU and text the FreeType rasterizer
+over fonts the build embeds ([Web.md](Web.md)). The three drawing ones are on
+together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, capture excepted, which Android
 has too, and `EACP_HAS_COREML` hangs off
 `EACP_HAS_GPU` and is Apple-only. `Network` needs none of them: it is
 unconditional, over NSURLSession and Network.framework on Apple, WinHTTP on
-Windows, libcurl on Linux and Java's `HttpURLConnection` and sockets through
-JNI on Android, and the WebView page bridge over its RPC, `eacp-ui-network`
-and their tests build with it:
+Windows, libcurl on Linux, Java's `HttpURLConnection` and sockets through
+JNI on Android and the runtime's `fetch()` and `WebSocket` on the web, and the
+WebView page bridge over its RPC, `eacp-ui-network` and their tests build with
+it. The other two, `EACP_HAS_THREADS` and `EACP_HAS_SOCKETS`, decide what the
+host can run rather than what it draws; both are on everywhere but the web:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
-| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
+| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux, Android or the web | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one, though Android and the web have none — and `Tests/Graphics` |
+| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux, Android or the web | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
+| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux, Android or the web | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android and Linux have those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
+| `EACP_HAS_THREADS` | not Emscripten | threads a body can run on: `ThreadTests` and `ThreadPoolTests` (`ThreadlessTests-Web.cpp` without), and in `Network` the worker-thread async calls, parallel chunk downloads and `OnlineResource`'s threaded fetch (the web's own asynchronous ones without) |
+| `EACP_HAS_SOCKETS` | not Emscripten | sockets of eacp's own: `HTTPServer`, `TCP`, `IPC`, `WebSocket::Server`, `eacp-network-json`, the HTTP and IPC RPC transports, and the `NetworkTests` cases that start a server |
+
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
 caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
-one on `eacp-ml` in the same way.
+one on `eacp-ml` in the same way, and `EACP_HAS_SOCKETS` on `eacp-network`,
+read by the `Network.h` umbrella. `EACP_HAS_THREADS` is not a compile
+definition: code asks `Platform::hasThreads()`, its compile-time twin, so a
+`Thread` refuses to start and a `ThreadPool` runs its work on the main thread
+where it is false.
 
 ## The pieces that build everywhere
 
-Four pieces of the gated modules are portable and so sit outside all seven:
-they are built and tested on every platform, Linux included, because none
-touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
+Four pieces of the gated modules are portable and so sit outside all seven
+drawing variables: they are built and tested on every platform, Linux and the
+web included, because none touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
 `GPUCodegenTests`. `eacp-cpu-compute` runs the kernels that EDSL records on the
 CPU, checked by `CpuComputeTests` and timed by `CpuComputeBench`; it is also
@@ -470,7 +545,15 @@ one that ships it, and the two Linux lanes without a Vulkan device build it
 too, so the GLSL dialect is compiled for real there before any device is
 involved — every GLSL source `GPUCodegenTests` emits, every hand-written GLSL
 twin in `GPUTests` and every module shader `UITests` reaches is compiled by
-glslang as part of the test. macOS and Windows skip the fetch; passing
+glslang as part of the test. The hand-written shaders a suite carries are files
+rather than string literals: one per dialect (`.metal`, `.hlsl`, `.glsl`,
+`.wgsl`) under the suite's `Shaders/` directory — `Tests/GPU/Shaders/<suite>/`,
+`Tests/Spirv/Shaders/` — embedded by `eacp_embed_test_shaders`
+(`Tests/CMakeLists.txt`) through ResEmbed, keyed by their path there, and read
+back with `testShaderFile` (`Tests/TestShaders.h`) or, for the four twins at
+once, `Tests/GPU/Common.h`'s `nativeShaderSource("<suite>/<name>")`, which
+hands each backend its own dialect. A shader a test composes per format or
+type stays in the code. macOS and Windows skip the fetch; passing
 `-DEACP_BUILD_SPIRV=ON` there builds it and turns those checks on. Passing
 `OFF` on Linux is only meaningful together with `-DEACP_BUILD_GRAPHICS=OFF`:
 the Vulkan backend has no shader compiler in the OS, so a Linux graphics build
@@ -487,8 +570,16 @@ and Android: an Ubuntu lane installs a pinned NDK with `sdkmanager`, configures
 against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` and
 `HelloNetwork` for `arm64-v8a`, which is every module an Android app links,
 the network backend included, then configures once
-more with no NDK named, which exercises the newest-installed path. The two
-Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
+more with no NDK named, which exercises the newest-installed path. A web lane
+on Ubuntu builds the Emscripten target ([Web.md](Web.md)) with emsdk at a
+pinned release and runs its suite under node 26, for JSPI, and in the image's
+headless Chrome, whose WebGPU there is its own SwiftShader adapter; a step
+before the tests fails the lane when the page got no device, since the GPU
+cases would otherwise self-skip, and the three `GPUTests` groups that fail on
+SwiftShader alone (`Formats`, `PackedHalf`, `Intrinsics`) are excluded by
+name. It is the one lane built `Debug`: the app entries fail on what
+Emscripten's `ASSERTIONS` print, which an optimised web build leaves out. The
+two Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
 run their npm installs inside configure, several times slower on the ARM
 runners, and the x64 lanes cover the WebView2 backend. The clang-cl lanes
 compile with the clang-cl inside Visual Studio (`VC\Tools\Llvm`, handed to
@@ -501,17 +592,19 @@ and reloads a module of its own through `eacp_add_hot_reload`; a CI build in
 which that app came out static fails the configure rather than skip the
 test. Every lane
 configures with `EACP_CI_BUILD=ON` and `CMAKE_COMPILE_WARNING_AS_ERROR=ON`, so
-a warning in any compiled target fails the lane, and builds `RelWithDebInfo`:
+a warning in any compiled target fails the lane, and all but the web one
+build `RelWithDebInfo`:
 the tests run optimized code, as a shipped build does, while the link-time
 optimization eacp's targets take under `Release` stays off — it roughly
 tripled the macOS and MSVC build steps for a few seconds of test time. The
 `NDEBUG`-only paths — the D3D12 debug layer, `Device::assertOwningThread`, the
 Android JNI local-reference check — are exercised by a local Debug build, not by CI.
 
-Every lane of the build matrix compiles through [ccache](https://ccache.dev)
-(`hendrikmuhs/ccache-action`, which installs it and keeps its directory in the
-Actions cache under one key per compiler and architecture; the two Linux Clang
-lanes compile identical objects and share one). A translation unit whose
+Every lane of the build matrix, and the web lane, compiles through
+[ccache](https://ccache.dev) (`hendrikmuhs/ccache-action`, which installs it
+and keeps its directory in the Actions cache under one key per compiler and
+architecture; the two Linux Clang lanes compile identical objects and share
+one, and the web lane's sees `em++` as its compiler). A translation unit whose
 preprocessed text, compiler and flags match an earlier run is restored rather
 than compiled, which is every third-party object on every run — glslang, Miro,
 NanoTest's generated registrations — and most of eacp's own on a change that
@@ -520,8 +613,11 @@ any file in it changed. It runs in depend mode (`CCACHE_DEPEND`), hashing the
 include files the compiler's own dependency output names rather than running
 the preprocessor a second time, so a miss costs the compile and nothing more.
 Each lane's cache is capped at 1 GB and trimmed after
-the build to what that build touched, so the eight stay inside the repository's
-10 GB. Two configure flags go with it: the Windows lanes pass
+the build to what that build touched, so the nine stay inside the repository's
+10 GB. The web lane also caches what a build adds to Emscripten's own cache,
+the `emdawnwebgpu` port's sources and its library, about 3 MB keyed on the
+release; the rest of that cache is the sysroot the release ships prebuilt.
+Two configure flags go with ccache: the Windows lanes pass
 `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` (`/Z7`), because the default
 `/Zi` writes one PDB per target that every translation unit appends to, which
 no per-object cache can restore, and `EACP_PCH` stays off (see above). CPM's

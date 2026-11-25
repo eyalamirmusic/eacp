@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../TestShaders.h"
 #include "CodegenCommon.h"
 
 #include <eacp/Core/Platform/Platform.h>
@@ -7,6 +8,7 @@
 #include <eacp/GPU/GPU.h>
 
 #include <string>
+#include <string_view>
 #include <utility>
 
 // WARP's ARM64 JIT access-violates running the three largest kernels in the
@@ -28,51 +30,134 @@ inline bool isWarpOnArm64()
 }
 
 // The hand-written twins, one per dialect. The GLSL one also goes through
-// eacp-spirv wherever that is built, so one that has drifted fails there.
-inline eacp::GPU::ShaderSource
-    nativeDialect(std::string msl, std::string hlsl, std::string glsl)
+// eacp-spirv wherever that is built, so one that has drifted fails there. The
+// WGSL one follows the MSL one, whose conventions WebGPU shares.
+struct ShaderTwins
 {
-    if constexpr (eacp::Platform::isWindows())
-        return eacp::GPU::ShaderSource::hlsl(std::move(hlsl));
-    else if constexpr (eacp::Platform::isLinuxFamily())
-        return eacp::GPU::ShaderSource::glsl(std::move(glsl));
-    else
-        return eacp::GPU::ShaderSource::msl(std::move(msl));
+    std::string msl;
+    std::string hlsl;
+    std::string glsl;
+    std::string wgsl;
+};
+
+// The twins of one shader under Shaders/: "Scissor/green" is
+// Scissor/green.metal, .hlsl, .glsl and .wgsl. A dialect without a file is
+// empty, as a missing twin always was.
+inline ShaderTwins shaderTwins(
+    std::string_view name,
+    const std::source_location& location = std::source_location::current())
+{
+    const auto base = std::string {name};
+    auto twins = ShaderTwins {testShaderFile(base + ".metal"),
+                              testShaderFile(base + ".hlsl"),
+                              testShaderFile(base + ".glsl"),
+                              testShaderFile(base + ".wgsl")};
+
+    nano::check(!twins.msl.empty() || !twins.hlsl.empty() || !twins.glsl.empty()
+                    || !twins.wgsl.empty(),
+                "no shader files named " + base,
+                location);
+    return twins;
+}
+
+inline eacp::GPU::ShaderSource nativeDialect(ShaderTwins twins)
+{
+    return eacp::GPU::ShaderSource::native({std::move(twins.msl),
+                                            std::move(twins.hlsl),
+                                            std::move(twins.glsl),
+                                            std::move(twins.wgsl)});
+}
+
+inline eacp::GPU::ShaderSource nativeDialect(
+    std::string_view name,
+    const std::source_location& location = std::source_location::current())
+{
+    return nativeDialect(shaderTwins(name, location));
+}
+
+inline eacp::GPU::ShaderSource nativeDialect(std::string msl,
+                                             std::string hlsl,
+                                             std::string glsl,
+                                             std::string wgsl)
+{
+    return nativeDialect(ShaderTwins {
+        std::move(msl), std::move(hlsl), std::move(glsl), std::move(wgsl)});
+}
+
+inline eacp::GPU::ShaderSource nativeShaderSource(
+    ShaderTwins twins,
+    const std::source_location& location = std::source_location::current())
+{
+    expectGlslCompiles(twins.glsl, false, location);
+    return nativeDialect(std::move(twins));
+}
+
+inline eacp::GPU::ShaderSource nativeShaderSource(
+    std::string_view name,
+    const std::source_location& location = std::source_location::current())
+{
+    return nativeShaderSource(shaderTwins(name, location), location);
 }
 
 inline eacp::GPU::ShaderSource nativeShaderSource(
     std::string msl,
     std::string hlsl,
     std::string glsl,
+    std::string wgsl,
     const std::source_location& location = std::source_location::current())
 {
-    expectGlslCompiles(glsl, false, location);
-    return nativeDialect(std::move(msl), std::move(hlsl), std::move(glsl));
+    return nativeShaderSource(
+        ShaderTwins {
+            std::move(msl), std::move(hlsl), std::move(glsl), std::move(wgsl)},
+        location);
+}
+
+inline eacp::GPU::ShaderSource nativeComputeShaderSource(
+    ShaderTwins twins,
+    const std::source_location& location = std::source_location::current())
+{
+    expectGlslCompiles(twins.glsl, true, location);
+    return nativeDialect(std::move(twins));
+}
+
+inline eacp::GPU::ShaderSource nativeComputeShaderSource(
+    std::string_view name,
+    const std::source_location& location = std::source_location::current())
+{
+    return nativeComputeShaderSource(shaderTwins(name, location), location);
 }
 
 inline eacp::GPU::ShaderSource nativeComputeShaderSource(
     std::string msl,
     std::string hlsl,
     std::string glsl,
+    std::string wgsl,
     const std::source_location& location = std::source_location::current())
 {
-    expectGlslCompiles(glsl, true, location);
-    return nativeDialect(std::move(msl), std::move(hlsl), std::move(glsl));
+    return nativeComputeShaderSource(
+        ShaderTwins {
+            std::move(msl), std::move(hlsl), std::move(glsl), std::move(wgsl)},
+        location);
 }
 
 // A vertex-only source: no fragment entry, so only the vertex stage is checked.
 inline eacp::GPU::ShaderSource nativeVertexOnlySource(
-    std::string msl,
-    std::string hlsl,
-    std::string glsl,
+    ShaderTwins twins,
     const std::source_location& location = std::source_location::current())
 {
 #ifdef EACP_HAS_SPIRV
-    expectStageCompiles(eacp::GPU::Spirv::Stage::Vertex, glsl, location);
+    expectStageCompiles(eacp::GPU::Spirv::Stage::Vertex, twins.glsl, location);
 #else
     (void) location;
 #endif
-    auto source = nativeDialect(std::move(msl), std::move(hlsl), std::move(glsl));
+    auto source = nativeDialect(std::move(twins));
     source.withVertex("vertexMain").withFragment({});
     return source;
+}
+
+inline eacp::GPU::ShaderSource nativeVertexOnlySource(
+    std::string_view name,
+    const std::source_location& location = std::source_location::current())
+{
+    return nativeVertexOnlySource(shaderTwins(name, location), location);
 }

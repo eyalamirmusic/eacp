@@ -1,8 +1,9 @@
-eacp_add_app(Triangle Main.cpp)
+eacp_add_app(Triangle Main.cpp
+        DESCRIPTION "The hello-world triangle, from a hand-written WGSL shader.")
 target_link_libraries(Triangle PRIVATE eacp-gpu)
 
 res_embed_add(Triangle
-        FILES Triangle.metal Triangle.hlsl Triangle.glsl
+        FILES Triangle.metal Triangle.hlsl Triangle.glsl Triangle.wgsl
         NAMESPACE TriangleShaders
         CATEGORY TriangleShaders)
 

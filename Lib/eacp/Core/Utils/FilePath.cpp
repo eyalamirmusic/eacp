@@ -207,8 +207,8 @@ bool FilePath::isAbsolute() const
         return text.front() == '\\'
                || (text.size() >= 3 && text[1] == ':'
                    && (text[2] == '/' || text[2] == '\\'));
-
-    return false;
+    else
+        return false;
 }
 
 namespace

@@ -66,6 +66,9 @@ std::string describeLags(const std::vector<double>& lags)
 auto tWaitForReturnsOnResolve =
     test("EventLoop/waitFor/returnsOnResolveNotAFrameLater") = []
 {
+    if constexpr (!eacp::Platform::hasThreads())
+        return;
+
     constexpr auto attempts = 11;
     constexpr auto maxMedianLagMs = 2.0;
 

@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <algorithm>
+
 // The render side's ranged binds: a storage buffer read from part-way into its
 // resource, and the ranges no backend can take - a range naming no buffer, one
 // starting before its buffer, one at or past its end - which have to bind
@@ -60,12 +62,33 @@ constexpr Vertex rightHalf[] = {
 
 constexpr std::uint32_t triangle[] = {0, 1, 2};
 
-// Records of four floats, so the offset is a multiple of the widest thing
-// either backend aligns a root descriptor to. Record zero is red and record one
-// is green: a bind that ignored the range's offset paints red where green was
+// Records of four floats, each starting on the device's storage-offset grid
+// (packed on Metal and D3D12, up to 256 bytes apart on Vulkan and WebGPU), so
+// the second one is a range every backend binds. Record zero is red and record one is
+// green: a bind that ignored the range's offset paints red where green was
 // asked for.
-constexpr float paletteValues[] = {0.9f, 0.1f, 0.1f, 0.f, 0.1f, 0.9f, 0.1f, 0.f};
+constexpr float redRecord[] = {0.9f, 0.1f, 0.1f, 0.f};
+constexpr float greenRecordValues[] = {0.1f, 0.9f, 0.1f, 0.f};
 constexpr auto recordBytes = 4 * (int) sizeof(float);
+
+int recordStride()
+{
+    return std::max(recordBytes, Device::shared().storageBufferOffsetAlignment());
+}
+
+Vector<float> paletteValues()
+{
+    const auto floatsPerRecord = recordStride() / (int) sizeof(float);
+    auto values = Vector<float>(2 * floatsPerRecord);
+
+    for (auto channel = 0; channel < 4; ++channel)
+    {
+        values[channel] = redRecord[channel];
+        values[floatsPerRecord + channel] = greenRecordValues[channel];
+    }
+
+    return values;
+}
 
 constexpr auto clearBlue = Graphics::Color {0.f, 0.f, 1.f, 1.f};
 
@@ -119,9 +142,10 @@ struct FlatShader final : ShaderProgram
 struct PaletteView : GPUView
 {
     PaletteView()
-        : colors(Device::shared(),
-                 paletteValues,
-                 (int) sizeof(paletteValues),
+        : values(paletteValues())
+        , colors(Device::shared(),
+                 values.data(),
+                 (int) (sizeof(float) * values.size()),
                  BufferUsage::Storage)
     {
         setSampleCount(1);
@@ -129,8 +153,12 @@ struct PaletteView : GPUView
         shader.prepare(sampleCount());
     }
 
-    BufferRange greenRecord() const { return {&colors, recordBytes, recordBytes}; }
+    BufferRange greenRecord() const
+    {
+        return {&colors, recordStride(), recordBytes};
+    }
 
+    Vector<float> values;
     Buffer colors;
     PaletteShader shader;
 };

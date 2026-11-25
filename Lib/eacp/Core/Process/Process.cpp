@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "../Platform/Platform.h"
 
 #include <thread>
 
@@ -106,14 +107,17 @@ Threads::Async<ProcessResult> runAsync(ProcessOptions options)
 {
     auto promise = Threads::AsyncPromise<ProcessResult> {};
 
-    std::thread(
-        [promise, processOptions = std::move(options)]() mutable
-        {
-            auto result = run(std::move(processOptions));
-            Threads::callAsync([promise, finished = std::move(result)]() mutable
-                               { promise.resolve(std::move(finished)); });
-        })
-        .detach();
+    auto job = [promise, processOptions = std::move(options)]() mutable
+    {
+        auto result = run(std::move(processOptions));
+        Threads::callAsync([promise, finished = std::move(result)]() mutable
+                           { promise.resolve(std::move(finished)); });
+    };
+
+    if constexpr (Platform::hasThreads())
+        std::thread(std::move(job)).detach();
+    else
+        Threads::callAsync(job);
 
     return promise.get();
 }

@@ -8,6 +8,7 @@
 #include "ShaderGraph.h"
 #include "ShaderSets.h"
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Strings.h>
 
 #include <atomic>
@@ -451,7 +452,11 @@ Threads::Async<ShaderWarmUp::Result> ShaderWarmUp::start()
 
     auto run =
         Run {job, recipes, &target, options.simulatedCompileTime, buildsPipelines()};
-    worker.start(run);
+
+    if constexpr (Platform::hasThreads())
+        worker.start(run);
+    else
+        Threads::callAsync(run);
 
     return job->promise.get();
 }

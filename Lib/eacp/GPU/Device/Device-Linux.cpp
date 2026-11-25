@@ -413,6 +413,16 @@ bool Device::supportsPerBindSamplers() const
     return isValid();
 }
 
+bool Device::supportsClampToBorder() const
+{
+    return isValid();
+}
+
+bool Device::supportsMultisampledSampleableDepth() const
+{
+    return isValid();
+}
+
 void Device::trackSubmittedWork(void*)
 {
     // Nothing to record: every submit already signals this Device's timeline.

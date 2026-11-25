@@ -19,6 +19,11 @@ std::string emitHlsl(const ShaderGraph& graph);
 // #ifdef EACP_VERTEX / EACP_FRAGMENT; a kernel has one unguarded main().
 std::string emitGlsl(const ShaderGraph& graph);
 
+// WGSL for WebGPU: one module holding both render entry points, or the kernel.
+// Every resource is in @group(0) at the bindings ShaderBindings.h names, one
+// declaration to a line, so a runtime can build its layout from the text.
+std::string emitWgsl(const ShaderGraph& graph);
+
 // Whether a stage's expressions read a uniform at all - the same answer the
 // emitter declares the Metal function parameter from, so a bind cannot disagree
 // with the signature it is aimed at. GeneratedShader carries both so

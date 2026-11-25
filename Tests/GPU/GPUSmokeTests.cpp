@@ -11,114 +11,15 @@ namespace
 // so pipeline creation exercises the full vertex-descriptor path. Provided in
 // the backend the platform compiles (MSL on Metal, HLSL on D3D12, GLSL on
 // Vulkan).
-const char* hlslSmokeShader = R"(
-struct VertexIn { float4 position : TEXCOORD0; };
-struct VertexOut { float4 position : SV_Position; };
-
-VertexOut vertexMain(VertexIn input) { VertexOut o; o.position = input.position; return o; }
-float4 fragmentMain(VertexOut input) : SV_Target { return float4(1.0, 1.0, 1.0, 1.0); }
-)";
-
-const char* mslSmokeShader = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn { float4 position [[attribute(0)]]; };
-
-vertex float4 vertexMain(VertexIn in [[stage_in]]) { return in.position; }
-fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
-)";
-
-const char* glslSmokeShader = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec4 attr0;
-
-void main()
-{
-    gl_Position = attr0;
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(1.0, 1.0, 1.0, 1.0);
-}
-#endif
-)";
-
 ShaderSource smokeShaderSource()
 {
-    return nativeShaderSource(mslSmokeShader, hlslSmokeShader, glslSmokeShader);
+    return nativeShaderSource("GPUSmoke/smoke");
 }
 
 // A compute kernel writing output[i] = input[i] * scale, exercising a storage
 // input, a storage output and a uniform block. Mirrors the Compute example.
-const char* hlslComputeShader = R"(
-StructuredBuffer<float> input : register(t0);
-RWStructuredBuffer<float> output : register(u1);
-cbuffer Params : register(b0) { float scale; uint count; };
-
-[numthreads(64, 1, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    if (gid.x >= count) return;
-    output[gid.x] = input[gid.x] * scale;
-}
-)";
-
-const char* mslComputeShader = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct Params { float scale; uint count; };
-
-kernel void computeMain(device const float* input [[buffer(0)]],
-                        device float* output [[buffer(1)]],
-                        constant Params& params [[buffer(16)]],
-                        uint gid [[thread_position_in_grid]])
-{
-    if (gid >= params.count) return;
-    output[gid] = input[gid] * params.scale;
-}
-)";
-
 // `input` and `output` are reserved words in GLSL, so the runs are renamed.
-const char* glslComputeShader = R"(#version 450
-
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-
-layout(std140, set = 0, binding = 16) uniform Params
-{
-    float scale;
-    uint count;
-} params;
-
-layout(std430, set = 0, binding = 0) readonly buffer Source
-{
-    float sourceValues[];
-};
-
-layout(std430, set = 0, binding = 1) buffer Target
-{
-    float targetValues[];
-};
-
-void main()
-{
-    uint gid = gl_GlobalInvocationID.x;
-
-    if (gid >= params.count)
-        return;
-
-    targetValues[gid] = sourceValues[gid] * params.scale;
-}
-)";
-
-// Every binding number in the sources above is one of these.
+// Every binding number in its sources is one of these.
 static_assert(vulkanComputeUniformBinding == 16);
 static_assert(vulkanComputeBufferBinding(0) == 0);
 static_assert(vulkanComputeBufferBinding(1) == 1);
@@ -126,9 +27,7 @@ static_assert(ComputePass::threadGroupWidth == 64);
 
 ShaderSource computeShaderSource()
 {
-    return nativeComputeShaderSource(
-               mslComputeShader, hlslComputeShader, glslComputeShader)
-        .withCompute("computeMain");
+    return nativeComputeShaderSource("GPUSmoke/scale").withCompute("computeMain");
 }
 
 struct ComputeParams

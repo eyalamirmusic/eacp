@@ -61,4 +61,11 @@ fi
 
 export DISPLAY=":$display"
 
+# Xvfb has no DRI3, through which alone a hardware Vulkan driver presents to an
+# X server ("No DRI3 support detected" from Mesa, and no surface support), and
+# no build of it adds one. Mesa's software presentation copies each image
+# through MIT-SHM instead, which is what lavapipe does in any case, so on CI
+# this changes nothing and on a machine with a GPU the GPU still renders.
+export MESA_VK_WSI_DEBUG="${MESA_VK_WSI_DEBUG:+$MESA_VK_WSI_DEBUG,}sw"
+
 "$@"

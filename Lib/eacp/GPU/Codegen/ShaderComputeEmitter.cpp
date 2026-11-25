@@ -7,6 +7,7 @@
 #include "ShaderGroupSpelling.h"
 #include "ShaderHelpers.h"
 #include "ShaderStageEmitter.h"
+#include "ShaderWgslHelpers.h"
 
 #include <eacp/Core/Utils/Format.h>
 
@@ -137,13 +138,34 @@ std::string printKernelUniformBlock(const ShaderGraph& graph, Backend backend)
         backend, uniformTypes, uniformNames, vulkanComputeUniformBinding);
 }
 
-// HLSL and GLSL act atomically on plain integers; Metal needs its atomic types.
+// HLSL and GLSL act atomically on plain integers; Metal and WGSL need their
+// atomic types.
 std::string_view getSharedElementType(const SharedArray& shared, Backend backend)
 {
+    auto isSigned = shared.elementType == ValueType::Int;
+
     if (shared.atomic && backend == Backend::Metal)
-        return shared.elementType == ValueType::Int ? "atomic_int" : "atomic_uint";
+        return isSigned ? "atomic_int" : "atomic_uint";
+
+    if (shared.atomic && backend == Backend::WebGPU)
+        return isSigned ? "atomic<i32>" : "atomic<u32>";
 
     return getDialectTypeName(backend, shared.elementType);
+}
+
+// A group memory array: `threadgroup float s0[64];` in the C family,
+// `var<workgroup> s0: array<f32, 64>;` in WGSL.
+std::string printGroupArray(Backend backend,
+                            std::string_view qualifier,
+                            std::string_view type,
+                            const std::string& name,
+                            int elements)
+{
+    if (backend == Backend::WebGPU)
+        return Strings::format(
+            "{} {}: array<{}, {}>;\n", qualifier, name, type, elements);
+
+    return Strings::format("{} {} {}[{}];\n", qualifier, type, name, elements);
 }
 
 std::string printSharedArrays(const ShaderGraph& graph,
@@ -156,10 +178,10 @@ std::string printSharedArrays(const ShaderGraph& graph,
     {
         const auto& shared = graph.sharedArrays()[i];
 
-        source += Strings::format("{} {} s{}[{}];\n",
+        source += printGroupArray(backend,
                                   qualifier,
                                   getSharedElementType(shared, backend),
-                                  i,
+                                  Strings::format("s{}", i),
                                   shared.elements);
     }
 
@@ -174,10 +196,10 @@ std::string printReductionScratch(const ShaderGraph& graph,
     auto source = std::string {};
 
     for (auto elementType: elementTypes)
-        source += Strings::format("{} {} {}[{}];\n",
+        source += printGroupArray(backend,
                                   qualifier,
                                   getDialectTypeName(backend, elementType),
-                                  getGroupScratchName(elementType),
+                                  std::string(getGroupScratchName(elementType)),
                                   getThreadsPerGroup(graph));
 
     return source;
@@ -469,6 +491,110 @@ std::string printHlslKernelOpening(const ShaderGraph& graph,
                 "groupIndex"});
 }
 
+std::string printWgslKernelBindings(const ShaderGraph& graph)
+{
+    const auto& buffers = graph.storageBuffers();
+    auto source = std::string {};
+
+    for (auto i = 0; i < buffers.size(); ++i)
+        source += formatWgslBuffer(graph, buffers[i], i);
+
+    if (buffers.size() > 0)
+        source += "\n";
+
+    for (auto i = 0; i < graph.textureCount(); ++i)
+        source += formatWgslTexture(graph, i);
+
+    if (graph.textureCount() > 0)
+        source += "\n";
+
+    return source;
+}
+
+// The builtins arrive as uint vectors of three, taken to the dispatch's rank
+// under the names the other dialects give them.
+std::string printWgslKernelSignature(const ShaderGraph& graph)
+{
+    const auto group = graph.threadGroupShape();
+
+    auto source =
+        Strings::format("@compute @workgroup_size({}, {}, {})\nfn computeMain("
+                        "@builtin(global_invocation_id) gidIn: vec3<u32>",
+                        group.x,
+                        group.y,
+                        group.z);
+
+    if (graph.usesLocalId())
+        source += ",\n    @builtin(local_invocation_id) lidIn: vec3<u32>";
+
+    if (graph.usesGroupId())
+        source += ",\n    @builtin(workgroup_id) tgidIn: vec3<u32>";
+
+    if (doesHlslReadGroupLane(graph))
+        source += ",\n    @builtin(local_invocation_index) groupLane: u32";
+
+    if (graph.dispatchRank() == DispatchRank::OneD)
+        source += ",\n    @builtin(num_workgroups) gridGroups: vec3<u32>";
+    else if (graph.usesBuiltIn(ShaderBuiltIn::GroupCount))
+        source += ",\n    @builtin(num_workgroups) groupCount: vec3<u32>";
+
+    return source + ")\n{\n";
+}
+
+// WebGPU dispatches at most 65535 groups along an axis, so a 1D dispatch past
+// that arrives as rows of groups, and its thread and group indices are taken
+// linear over them; the bounds guard drops the threads past the count.
+std::string printWgslLinearIndices(const ShaderGraph& graph)
+{
+    auto source = Strings::format(
+        "    let gid: u32 = gidIn.x + gidIn.y * (gridGroups.x * {}u);\n",
+        graph.threadGroupShape().x);
+
+    if (graph.usesLocalId())
+        source += "    let lid: u32 = lidIn.x;\n";
+
+    if (graph.usesGroupId())
+        source += "    let tgid: u32 = tgidIn.x + tgidIn.y * gridGroups.x;\n";
+
+    return source;
+}
+
+std::string printWgslKernelIndices(const ShaderGraph& graph)
+{
+    if (graph.dispatchRank() == DispatchRank::OneD)
+        return printWgslLinearIndices(graph);
+
+    const auto type = getIndexTypeName(Backend::WebGPU, graph.dispatchRank());
+    const auto swizzle = getIndexSwizzle(graph.dispatchRank());
+
+    auto declare = [&](std::string_view name)
+    {
+        return Strings::format(
+            "    let {}: {} = {}In{};\n", name, type, name, swizzle);
+    };
+
+    auto source = declare("gid");
+
+    if (graph.usesLocalId())
+        source += declare("lid");
+
+    if (graph.usesGroupId())
+        source += declare("tgid");
+
+    return source;
+}
+
+std::string printWgslKernelOpening(const ShaderGraph& graph,
+                                   const std::string& functions)
+{
+    auto source = printWgslKernelBindings(graph);
+    source +=
+        printGroupMemoryGlobals(graph, Backend::WebGPU, wgslWorkgroupQualifier);
+    source += functions;
+    source += printWgslKernelSignature(graph);
+    return source + printWgslKernelIndices(graph);
+}
+
 // The functions the kernel calls are defined after every global they may name
 // and ahead of the entry point.
 std::string printKernelOpening(const ShaderGraph& graph,
@@ -480,6 +606,9 @@ std::string printKernelOpening(const ShaderGraph& graph,
 
     if (backend == Backend::Vulkan)
         return printGlslKernelOpening(graph, functions);
+
+    if (backend == Backend::WebGPU)
+        return printWgslKernelOpening(graph, functions);
 
     return printHlslKernelOpening(graph, functions);
 }
@@ -536,7 +665,7 @@ std::string printKernelPrologue(const ShaderGraph& graph, Backend backend)
         source += formatSimdMatrixPreamble(backend);
 
     if (!graph.usesBarrier())
-        source += formatBoundsGuard(graph.dispatchRank());
+        source += formatBoundsGuard(graph.dispatchRank(), backend);
 
     return source;
 }
@@ -566,6 +695,11 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
            && "eacp: a kernel called a function that takes the fragment's "
               "derivatives - dfdx, dfdy, fwidth, or a sample with no level. A "
               "kernel has none of them.");
+
+    assert((backend != Backend::WebGPU || usesOnlyWgslIdentifiers(graph))
+           && "eacp: a struct, a member, a function or an override is named with "
+              "a word WGSL reserves, or with a double underscore, which no WGSL "
+              "identifier may be.");
 
     auto source = getSourcePreamble(graph, backend);
     source += printKernelUniformBlock(graph, backend);

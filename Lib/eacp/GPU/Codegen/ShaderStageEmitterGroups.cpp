@@ -99,7 +99,31 @@ constexpr std::string_view getPackedSimdMatrixHelper(SimdMatrixElement element)
 
 constexpr std::string_view getBitsOfFloatFunction(Backend backend)
 {
+    if (backend == Backend::WebGPU)
+        return "bitcast<u32>";
+
     return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
+}
+
+// A counted loop over a uint, which WGSL declares as a var and steps without
+// the C family's prefix increment.
+std::string printCountedLoopHeader(Backend backend,
+                                   const std::string& name,
+                                   const std::string& first,
+                                   const std::string& condition,
+                                   const std::string& step)
+{
+    if (backend == Backend::WebGPU)
+        return Strings::format(
+            "for (var {}: u32 = {}; {}; {})\n", name, first, condition, step);
+
+    return Strings::format(
+        "for (uint {} = {}; {}; {})\n", name, first, condition, step);
+}
+
+std::string printIncrement(Backend backend, const std::string& name)
+{
+    return backend == Backend::WebGPU ? name + "++" : "++" + name;
 }
 
 } // namespace
@@ -120,6 +144,12 @@ std::string formatSimdMatrixScratchDeclaration(const ShaderGraph& graph,
     if (graph.simdMatrixCount() == 0)
         return {};
 
+    if (qualifier == wgslWorkgroupQualifier)
+        return Strings::format("{} {}: array<f32, {}>;\n",
+                               qualifier,
+                               simdMatrixScratchName,
+                               getSimdMatrixScratchElementCount(graph));
+
     return Strings::format("{} float {}[{}];\n",
                            qualifier,
                            simdMatrixScratchName,
@@ -135,15 +165,21 @@ bool hasGroupMemoryDeclarations(const ShaderGraph& graph)
 std::string formatSimdMatrixPreamble(Backend backend)
 {
     auto lane = getGroupLaneName(backend);
+    auto declare = backend == Backend::WebGPU ? std::string_view {"let {}: u32"}
+                                              : std::string_view {"uint {}"};
+    auto named = [&](std::string_view name)
+    { return Strings::format("    " + std::string(declare), name); };
 
     auto source =
-        Strings::format("    uint sgmLane = {} % {}u;\n", lane, simdGroupWidth);
-    source +=
-        Strings::format("    uint sgmRow = sgmLane / {}u;\n", simdMatrixLanesPerRow);
-    source += Strings::format("    uint sgmColumn = (sgmLane % {}u) * {}u;\n",
+        Strings::format("{} = {} % {}u;\n", named("sgmLane"), lane, simdGroupWidth);
+    source += Strings::format(
+        "{} = sgmLane / {}u;\n", named("sgmRow"), simdMatrixLanesPerRow);
+    source += Strings::format("{} = (sgmLane % {}u) * {}u;\n",
+                              named("sgmColumn"),
                               simdMatrixLanesPerRow,
                               simdMatrixLaneElements);
-    source += Strings::format("    uint sgmBase = ({} / {}u) * {}u;\n",
+    source += Strings::format("{} = ({} / {}u) * {}u;\n",
+                              named("sgmBase"),
                               lane,
                               simdGroupWidth,
                               simdMatrixScratchPerGroup);
@@ -169,6 +205,9 @@ std::string formatFoldedPair(GroupReduction operation,
 
 std::string formatBarrierStatement(Backend backend, const std::string& indent)
 {
+    if (backend == Backend::WebGPU)
+        return indent + "workgroupBarrier();\n";
+
     if (backend == Backend::Vulkan)
         return Strings::format(
             "{}memoryBarrierShared();\n{}barrier();\n", indent, indent);
@@ -288,13 +327,14 @@ std::string StageEmitter::formatTreeGroupReduction(const Statement& statement,
     auto source = Strings::format(
         "{}{} = {};\n", indent, element, printer.printReference(statement.value));
     source += barrier;
-    source += Strings::format("{}for (uint {} = {}u; {} > 0u; {} >>= 1u)\n{}{{\n",
-                              indent,
-                              step,
-                              getReductionStride(width),
-                              step,
-                              step,
-                              indent);
+    source +=
+        indent
+        + printCountedLoopHeader(printer.backend,
+                                 step,
+                                 Strings::format("{}u", getReductionStride(width)),
+                                 step + " > 0u",
+                                 step + " >>= 1u")
+        + indent + "{\n";
     source += Strings::format("{}    if ({} < {} && {} + {} < {}{})\n",
                               indent,
                               within,
@@ -303,19 +343,29 @@ std::string StageEmitter::formatTreeGroupReduction(const Statement& statement,
                               step,
                               widthText,
                               bounded);
-    source +=
-        Strings::format("{}        {} = {};\n",
-                        indent,
+
+    auto fold =
+        Strings::format("{} = {};\n",
                         element,
                         formatFoldedPair(statement.reduction, element, partner));
+
+    if (isWgsl())
+        source +=
+            Strings::format("{0}    {{\n{0}        {1}{0}    }}\n", indent, fold);
+    else
+        source += Strings::format("{}        {}", indent, fold);
+
     source += formatBarrierStatement(printer.backend, indent + "    ");
     source += indent + "}\n";
-    source += Strings::format("{}{} v{} = {}[{}];\n",
-                              indent,
-                              getDialectTypeName(printer.backend, elementType),
-                              statement.slot,
-                              scratch,
-                              first);
+    source += Strings::format(
+        "{}{} = {}[{}];\n",
+        indent,
+        printDeclaration(
+            "var",
+            std::string(getDialectTypeName(printer.backend, elementType)),
+            Strings::format("v{}", statement.slot)),
+        scratch,
+        first);
 
     return source + barrier;
 }
@@ -335,8 +385,9 @@ std::string StageEmitter::formatSimdMatrixDeclaration(int slot) const
             getMetalSimdMatrixType(getGraph().simdMatrixElement(slot)),
             getSimdMatrixName(slot));
 
-    return Strings::format(
-        "{} {}", getSimdMatrixLaneType(printer.backend), getSimdMatrixName(slot));
+    return printDeclaration("var",
+                            std::string(getSimdMatrixLaneType(printer.backend)),
+                            getSimdMatrixName(slot));
 }
 
 std::string StageEmitter::formatSimdMatrixFill(const Statement& statement,
@@ -471,13 +522,20 @@ std::string StageEmitter::formatSimdMatrixMultiplyAdd(const Statement& statement
 
     auto source = stageSimdMatrixOperands(statement, scope);
     source += barrier;
-    source += Strings::format(
-        "{}for (uint {} = 0u; {} < {}u; ++{})\n", indent, step, step, side, step);
+    source += indent
+              + printCountedLoopHeader(printer.backend,
+                                       step,
+                                       "0u",
+                                       Strings::format("{} < {}u", step, side),
+                                       printIncrement(printer.backend, step));
     source += indent + "{\n";
     source += Strings::format(
-        "{}    float {} = {};\n",
+        "{}    {} = {};\n",
         indent,
-        term,
+        printDeclaration(
+            "let",
+            std::string(getDialectTypeName(printer.backend, ValueType::Float)),
+            term),
         printStagedSimdMatrixElement(
             StagedOperand::Left, Strings::format("sgmRow * {}u + {}", side, step)));
     source +=

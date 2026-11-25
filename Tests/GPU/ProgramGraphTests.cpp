@@ -70,9 +70,13 @@ auto tComputeProgramExposesItsGraph =
     auto metal = emitMetal(kernel.graph());
     auto hlsl = emitHlsl(kernel.graph());
     auto glsl = emitGlsl(kernel.graph());
+    auto wgsl = emitWgsl(kernel.graph());
 
     check(metal == kernel.source().source || hlsl == kernel.source().source
-          || glsl == kernel.source().source);
+          || glsl == kernel.source().source || wgsl == kernel.source().source);
+
+    check(contains(wgsl, "var<storage, read> buffer0: array<f32>;"));
+    check(contains(wgsl, "buffer1[gid] = (buffer0[gid] * uniforms.u0);"));
 
     check(contains(metal, "device const float* buffer0"));
     check(contains(metal, "device float* buffer1"));
@@ -97,9 +101,13 @@ auto tShaderProgramExposesItsGraph =
     auto metal = emitMetal(program.graph());
     auto hlsl = emitHlsl(program.graph());
     auto glsl = emitGlsl(program.graph());
+    auto wgsl = emitWgsl(program.graph());
 
     check(metal == program.source().source || hlsl == program.source().source
-          || glsl == program.source().source);
+          || glsl == program.source().source || wgsl == program.source().source);
+
+    check(contains(wgsl, "fn vertexMain("));
+    check(contains(wgsl, "fn fragmentMain("));
 
     check(contains(metal, "vertex VertexOut vertexMain("));
     check(contains(metal, "fragment float4 fragmentMain("));

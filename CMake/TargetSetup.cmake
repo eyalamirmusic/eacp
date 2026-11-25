@@ -52,9 +52,14 @@ endif ()
 # PERMISSIONS are Android's, CAMERA being android.permission.CAMERA and a name
 # with a dot taken as it is, and land in the manifest beside INTERNET; the
 # dangerous ones still have to be asked for at run time.
+#
+# DESCRIPTION is one line saying what the app shows, kept as the target's
+# EACP_APP_DESCRIPTION property; the web page and gallery are what read it. On the web
+# the app is also an eacp_web_executable, given NESTED_PUMP, CONSOLE and
+# COMPANION, which only that branch reads (CMake/Web.cmake).
 function(eacp_add_app target)
-    cmake_parse_arguments(APP ""
-            "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;ORIENTATION"
+    cmake_parse_arguments(APP "NESTED_PUMP;CONSOLE"
+            "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;ORIENTATION;DESCRIPTION;COMPANION"
             "PERMISSIONS" ${ARGN})
 
     if (APP_ORIENTATION AND NOT APP_ORIENTATION MATCHES "^(portrait|landscape)$")
@@ -90,7 +95,24 @@ function(eacp_add_app target)
             XCODE_ATTRIBUTE_MARKETING_VERSION "${APP_VERSION}"
             XCODE_ATTRIBUTE_CURRENT_PROJECT_VERSION "${APP_VERSION_CODE}"
             EACP_APP_VERSION "${APP_VERSION}"
-            EACP_APP_VERSION_CODE "${APP_VERSION_CODE}")
+            EACP_APP_VERSION_CODE "${APP_VERSION_CODE}"
+            EACP_APP_DESCRIPTION "${APP_DESCRIPTION}")
+
+    if (EMSCRIPTEN)
+        set(web_arguments "")
+
+        foreach (flag NESTED_PUMP CONSOLE)
+            if (APP_${flag})
+                list(APPEND web_arguments ${flag})
+            endif ()
+        endforeach ()
+
+        if (APP_COMPANION)
+            list(APPEND web_arguments COMPANION "${APP_COMPANION}")
+        endif ()
+
+        eacp_web_executable(${target} ${web_arguments})
+    endif ()
 
     if (ANDROID)
         eacp_add_android_app(${target})

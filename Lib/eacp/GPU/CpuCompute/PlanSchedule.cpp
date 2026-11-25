@@ -80,18 +80,18 @@ void PlanBuilder::visit(int root, int site, int pinned, Emit emit)
         return;
 
     marks[root] = stamp;
-    walk.clear();
-    walk.add({root, 0});
+    visitStack.clear();
+    visitStack.add({root, 0});
 
-    while (!walk.empty())
+    while (!visitStack.empty())
     {
-        auto& top = walk.back();
+        auto& top = visitStack.back();
         const auto& node = plan.nodes[top.node];
 
         if (top.next >= node.argCount)
         {
             emit(top.node);
-            walk.pop_back();
+            visitStack.pop_back();
             continue;
         }
 
@@ -100,7 +100,7 @@ void PlanBuilder::visit(int root, int site, int pinned, Emit emit)
         if (!isVisited(child))
         {
             marks[child] = stamp;
-            walk.add({child, 0});
+            visitStack.add({child, 0});
         }
     }
 }

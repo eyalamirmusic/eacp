@@ -517,6 +517,16 @@ bool Device::supportsPerBindSamplers() const
     return isValid();
 }
 
+bool Device::supportsClampToBorder() const
+{
+    return isValid();
+}
+
+bool Device::supportsMultisampledSampleableDepth() const
+{
+    return isValid();
+}
+
 void Device::trackSubmittedWork(void* nativeCommandBuffer)
 {
     impl->lastSubmitted.reset(

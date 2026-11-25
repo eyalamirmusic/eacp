@@ -1,3 +1,4 @@
+#include "../TestShaders.h"
 #include "CodegenCommon.h"
 
 #include <eacp/GPU/Shader/CompilationInfo.h>
@@ -318,33 +319,13 @@ auto tDescribe = test("CompilationInfo/describeNamesEverything") = []
 };
 
 #ifdef EACP_HAS_SPIRV
-constexpr auto brokenKernel = std::string_view {
-    "#version 450\n"
-    "layout(local_size_x = 64) in;\n"
-    "layout(std430, binding = 0) buffer Out { float values[]; } outBuffer;\n"
-    "\n"
-    "void main()\n"
-    "{\n"
-    "    outBuffer.values[gl_GlobalInvocationID.x] = undeclaredThing * 2.0;\n"
-    "}\n"};
-
-constexpr auto warnedKernel = std::string_view {
-    "#version 450\n"
-    "#extension GL_EXT_eacp_nonexistent : warn\n"
-    "layout(local_size_x = 64) in;\n"
-    "layout(std430, binding = 0) buffer Out { float values[]; } outBuffer;\n"
-    "\n"
-    "void main()\n"
-    "{\n"
-    "    outBuffer.values[gl_GlobalInvocationID.x] = 2.0;\n"
-    "}\n"};
-
+// The GLSL twins CompilationInfoDevice/ compiles, shared with GPUTests.
 auto tLiveGlslang = test("CompilationInfo/glslangsOwnOutputParses") = []
 {
     using Spirv::Stage;
 
-    const auto broken =
-        Spirv::compileGlsl(Stage::Compute, std::string(brokenKernel));
+    const auto broken = Spirv::compileGlsl(
+        Stage::Compute, testShaderFile("CompilationInfo/brokenKernel.glsl"));
     check(!broken.succeeded());
     check(broken.log == glslangErrors, broken.log);
 
@@ -356,8 +337,8 @@ auto tLiveGlslang = test("CompilationInfo/glslangsOwnOutputParses") = []
                  49,
                  "'undeclaredThing' : undeclared identifier");
 
-    const auto warned =
-        Spirv::compileGlsl(Stage::Compute, std::string(warnedKernel));
+    const auto warned = Spirv::compileGlsl(
+        Stage::Compute, testShaderFile("CompilationInfo/warnedKernel.glsl"));
     check(warned.succeeded(), warned.log);
     check(warned.log == glslangWarning, warned.log);
 

@@ -16,6 +16,11 @@ using eacp::MemoryMappedFile;
 // O_RDONLY would not fail this test, it would hang it forever.
 auto tFifoIsInvalid = test("MemoryMappedFile/fifoIsInvalid") = []
 {
+    // Emscripten's file systems have no FIFOs: under node one is the host's,
+    // whose open blocks node's own thread until a writer comes.
+    if constexpr (eacp::Platform::isWeb())
+        return;
+
     const auto dir = scratchDirectory("mapped-fifo");
     const auto path = dir / "pipe";
 

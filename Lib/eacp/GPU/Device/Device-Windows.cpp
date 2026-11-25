@@ -474,6 +474,16 @@ bool Device::supportsPerBindSamplers() const
     return isValid() && hasSamplerTables();
 }
 
+bool Device::supportsClampToBorder() const
+{
+    return isValid();
+}
+
+bool Device::supportsMultisampledSampleableDepth() const
+{
+    return isValid();
+}
+
 void Device::trackSubmittedWork(void*)
 {
     // Nothing to record: every submit already stamps this Device's fence, and

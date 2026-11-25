@@ -248,6 +248,20 @@ the display server what `EACP_REQUIRE_GPU=1` does for the device, and
 `EACP_REQUIRE_FONTS=1` does it for the fonts, which is the third way a suite can
 report green by skipping everything.
 
+A hardware Vulkan driver presents only through DRI3 on X11 and
+`zwp_linux_dmabuf_v1` on Wayland. Xvfb has no DRI3, and headless Weston's
+default renderer uses no GPU and offers no dmabuf, so on a machine with a GPU
+both harnesses would leave every `GPUView` dark (Mesa reports no surface
+support on X11, and fails the Wayland surface with
+`VK_ERROR_SURFACE_LOST_KHR`). `with-weston` therefore starts Weston with its GL
+renderer wherever a DRM render node exists, so the driver presents through
+dmabuf as it does to a desktop, and falls back to the default renderer with
+`MESA_VK_WSI_DEBUG=sw` when that renderer cannot start; `with-xvfb` always sets
+`MESA_VK_WSI_DEBUG=sw`, Mesa's software presentation, which copies each image
+through shared memory. Lavapipe presents that way regardless, so CI is
+unchanged. Outside the harnesses a `GPUView` on such a server logs once per
+window that it cannot present, and renders off-screen only.
+
 The HTTP client is libcurl on Linux, so a build needs its development headers
 too (`libcurl4-openssl-dev` on Debian/Ubuntu).
 

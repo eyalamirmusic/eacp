@@ -30,7 +30,7 @@ constexpr const char* defaultUIFontFamily()
 {
     if constexpr (Platform::isWindows())
         return "Segoe UI";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (Platform::isLinux() || Platform::isWeb())
         return "DejaVu Sans";
     else if constexpr (Platform::isAndroid())
         return "sans-serif";

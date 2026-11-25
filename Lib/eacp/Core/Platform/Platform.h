@@ -15,7 +15,8 @@ enum class OS
     iOS,
     Windows,
     Linux,
-    Android
+    Android,
+    Web
 };
 
 // The operating system this binary was built for. The single compile-time
@@ -35,6 +36,8 @@ constexpr OS current()
     return OS::Android;
 #elif defined(__linux__)
     return OS::Linux;
+#elif defined(__EMSCRIPTEN__)
+    return OS::Web;
 #else
 #error "eacp::Platform: unsupported target platform"
 #endif
@@ -78,9 +81,26 @@ constexpr bool isLinuxFamily() // Linux || Android
     return isLinux() || isAndroid();
 }
 
-constexpr bool isPosix() // Apple || Linux family
+// WebAssembly through Emscripten, in a browser or under node.
+constexpr bool isWeb()
 {
-    return isApple() || isLinuxFamily();
+    return current() == OS::Web;
+}
+
+// Whether a Thread can run a body. The web build is single-threaded: a page is
+// a guest on the browser's one loop, so Thread::start refuses and a ThreadPool
+// runs its work on the main thread. EACP_HAS_THREADS in CMake.
+constexpr bool hasThreads()
+{
+    return !isWeb();
+}
+
+// Apple || Linux family || Web. The web counts because Emscripten's musl is the
+// POSIX API its -Posix sources compile against; it has no processes, signals
+// or dynamic libraries behind that API.
+constexpr bool isPosix()
+{
+    return isApple() || isLinuxFamily() || isWeb();
 }
 
 constexpr std::string_view name()
@@ -97,15 +117,19 @@ constexpr std::string_view name()
             return "Linux";
         case OS::Android:
             return "Android";
+        case OS::Web:
+            return "Web";
     }
     return "Unknown";
 }
 
-// The CPU architecture this binary was built for: "arm64" or "x64".
+// The CPU architecture this binary was built for: "arm64", "x64" or "wasm32".
 constexpr std::string_view architectureName()
 {
 #if defined(__aarch64__) || defined(_M_ARM64)
     return "arm64";
+#elif defined(__wasm32__)
+    return "wasm32";
 #else
     return "x64";
 #endif

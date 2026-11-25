@@ -1,13 +1,8 @@
-add_executable(MenuBarApp Main.cpp)
+eacp_add_app(MenuBarApp Main.cpp
+        BUNDLE_ID "com.eacp.menubarapp"
+        DISPLAY_NAME "Menu Bar App")
 target_link_libraries(MenuBarApp PRIVATE eacp-ui)
-
-set(BUNDLE_ID "com.eacp.menubarapp")
-
-set_target_properties(MenuBarApp PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Menu Bar App"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+set_target_properties(MenuBarApp PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(MenuBarApp)
 set_default_target_setting(MenuBarApp)

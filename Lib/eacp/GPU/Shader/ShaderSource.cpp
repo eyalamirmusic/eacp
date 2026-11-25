@@ -1,4 +1,5 @@
 #include "ShaderSource.h"
+#include "../Codegen/ShaderBuilder.h"
 
 namespace eacp::GPU
 {
@@ -36,6 +37,28 @@ ShaderSource ShaderSource::hlsl(std::string sourceToUse)
 ShaderSource ShaderSource::glsl(std::string sourceToUse)
 {
     return makeShaderSourceFor(ShaderBackend::Vulkan, std::move(sourceToUse));
+}
+
+ShaderSource ShaderSource::wgsl(std::string sourceToUse)
+{
+    return makeShaderSourceFor(ShaderBackend::WebGPU, std::move(sourceToUse));
+}
+
+ShaderSource ShaderSource::native(ShaderDialects dialects)
+{
+    switch (detail::nativeShaderBackend())
+    {
+        case ShaderBackend::DirectX:
+            return hlsl(std::move(dialects.hlsl));
+        case ShaderBackend::Vulkan:
+            return glsl(std::move(dialects.glsl));
+        case ShaderBackend::WebGPU:
+            return wgsl(std::move(dialects.wgsl));
+        case ShaderBackend::Metal:
+            break;
+    }
+
+    return msl(std::move(dialects.msl));
 }
 
 ShaderSource& ShaderSource::withVertex(std::string entry)

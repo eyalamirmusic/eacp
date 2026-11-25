@@ -2,6 +2,7 @@
 
 #include "ShaderOverrideEmission.h"
 #include "ShaderStructEmission.h"
+#include "ShaderWgslHelpers.h"
 
 namespace eacp::GPU::ShaderEmission
 {
@@ -1152,6 +1153,7 @@ const auto bitHelpers = Array<BitHelper, 8> {
                insertBitsHelperHlsl,
                insertBitsHelperGlsl}};
 
+// WGSL's are its own table (ShaderWgslHelpers.cpp).
 std::string_view getHelperDefinition(const ShaderHelper& helper, Backend backend)
 {
     switch (backend)
@@ -1162,6 +1164,8 @@ std::string_view getHelperDefinition(const ShaderHelper& helper, Backend backend
             return helper.directX;
         case Backend::Vulkan:
             return helper.glsl;
+        case Backend::WebGPU:
+            return {};
     }
 
     return helper.metal;
@@ -1212,6 +1216,8 @@ std::string_view getBitHelperDefinition(const BitHelper& helper, Backend backend
             return helper.directX;
         case Backend::Vulkan:
             return helper.glsl;
+        case Backend::WebGPU:
+            return {};
     }
 
     return helper.metal;
@@ -1443,6 +1449,9 @@ std::string getRoundHalfDefinitions(const ShaderGraph& graph, Backend backend)
 
 std::string getHelperDefinitions(const ShaderGraph& graph, Backend backend)
 {
+    if (backend == Backend::WebGPU)
+        return getWgslHelperDefinitions(graph);
+
     auto definitions = std::string {};
 
     for (const auto& helper: shaderHelpers)
@@ -1470,6 +1479,8 @@ std::string getDialectHeader(const ShaderGraph& graph, Backend backend)
             break;
         case Backend::DirectX:
             return {};
+        case Backend::WebGPU:
+            return getWgslHeader(graph);
     }
 
     auto header = std::string {"#version 450\n"};

@@ -38,67 +38,6 @@ constexpr PositionVertex fullQuad[] = {
     {{-1.f, 1.f}},
 };
 
-// (0.25, 0.5, 0.75, 1): exact in a half and within a step of eight bits.
-constexpr auto mslFlat = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]])
-{
-    return float4(0.25, 0.5, 0.75, 1.0);
-}
-)";
-
-constexpr auto hlslFlat = R"(
-float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
-{
-    return float4(position, 0.0, 1.0);
-}
-
-float4 fragmentMain(float4 position : SV_Position) : SV_Target
-{
-    return float4(0.25, 0.5, 0.75, 1.0);
-}
-)";
-
-constexpr auto glslFlat = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 0.0, 1.0);
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vec4(0.25, 0.5, 0.75, 1.0);
-}
-#endif
-)";
-
 struct FrameRunner final : GPUView
 {
     FrameRunner() { setSampleCount(1); }
@@ -167,7 +106,8 @@ auto tFormatTargetDraws = test("FormatTarget/aPassDrawsIntoEachFormat") = []
     if (!Device::shared().isValid())
         return;
 
-    auto source = nativeShaderSource(mslFlat, hlslFlat, glslFlat);
+    // (0.25, 0.5, 0.75, 1): exact in a half and within a step of eight bits.
+    auto source = nativeShaderSource("FormatTarget/flat");
     auto library = Device::shared().makeShaderLibrary(
         source.withVertex("vertexMain").withFragment("fragmentMain"));
     auto quad = Device::shared().makeBuffer(fullQuad, sizeof(fullQuad));

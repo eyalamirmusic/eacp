@@ -472,6 +472,9 @@ auto tNeverBeforeReturn = test("Alert/showAlertReturnsBeforeAnythingIsShown") = 
 auto tPresenterOnMainThread =
     test("Alert/aWorkerThreadsAlertIsShownOnTheMainThread") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     auto presentedOnMain = std::atomic<int> {-1};
     auto answeredOnMain = std::atomic<int> {-1};
     auto worker = std::thread();
@@ -506,6 +509,9 @@ auto tPresenterOnMainThread =
 auto tWorkerAnswerReachesMain =
     test("Alert/aPresenterAnsweringFromAWorkerIsHeardOnTheMainThread") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     auto answeredOnMain = std::atomic<int> {-1};
     auto answer = std::atomic<int> {-1};
     auto answerer = std::thread();
@@ -671,6 +677,9 @@ auto tHeadlessOutOfRange = test("Alert/headlessOutOfRangeDefaultIsTheFirst") = [
 
 auto tHeadlessOnMainThread = test("Alert/headlessAnswerIsOnTheMainThread") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     auto answeredOnMain = std::atomic<int> {-1};
     auto worker = std::thread();
     auto isolation = AlertIsolation {};
@@ -780,6 +789,9 @@ auto tNoLoop = test("Alert/withNoEventLoopRunningItIsAnsweredAtOnce") = []
 auto tWorkerNoLoop =
     test("Alert/aWorkersAlertWithNoLoopRunningIsAnsweredOnTheWorker") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     if (Threads::isEventLoopRunning())
         return;
 
@@ -896,6 +908,9 @@ auto tDroppedAnswer =
 auto tGeneration =
     test("Alert/replacingThePresenterSparesTheAlertTheNewOneHolds") = []
 {
+    if constexpr (!Platform::hasThreads())
+        return;
+
     auto first = Shown {};
     auto second = Shown {};
     auto answers = Vector<std::string> {};

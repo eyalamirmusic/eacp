@@ -159,6 +159,9 @@ auto tThenInvokesErrorCallback = test("Async/then/invokesErrorCallback") = []
 auto tWorkerThreadResolvesViaCallAsync =
     test("Async/waitFor/workerThreadResolves") = []
 {
+    if constexpr (!eacp::Platform::hasThreads())
+        return;
+
     auto promise = AsyncPromise<int>();
     auto async = promise.get();
 

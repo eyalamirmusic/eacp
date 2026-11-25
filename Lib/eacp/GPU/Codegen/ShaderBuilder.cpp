@@ -100,6 +100,8 @@ ShaderSource shaderSourceFor(const ShaderGraph& graph, ShaderBackend backend)
             return ShaderSource::hlsl(emitHlsl(graph));
         case ShaderBackend::Vulkan:
             return ShaderSource::glsl(emitGlsl(graph));
+        case ShaderBackend::WebGPU:
+            return ShaderSource::wgsl(emitWgsl(graph));
     }
 
     return ShaderSource::glsl(emitGlsl(graph));

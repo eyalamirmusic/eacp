@@ -50,6 +50,14 @@ auto tFillCodegen = test("GPUWidgets/fillShaderCodegen") = []
         check(contains(source, "fragColor = uniforms.u1;"));
         check(!contains(source, "vary0"));
     }
+    else if (shader.source().backend == GPU::ShaderBackend::WebGPU)
+    {
+        check(contains(source, "struct Uniforms"));
+        check(contains(source, "u0: ")); // viewport
+        check(contains(source, "u1: ")); // colour
+        check(contains(source, "uniforms.u1"));
+        check(!contains(source, "@location(0) v0"));
+    }
     else
     {
         check(contains(source, "struct Uniforms"));

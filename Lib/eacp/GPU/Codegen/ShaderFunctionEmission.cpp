@@ -264,6 +264,34 @@ std::string printReturnTypeName(const ShaderGraph& graph,
     return std::string(getDialectTypeName(backend, declaration.returnType));
 }
 
+// WGSL reaches every module-scope resource directly, as GLSL does, and names
+// a parameter's type after it; a parameter is never assigned, which WGSL
+// would refuse.
+std::string printWgslFunctionDefinition(const ShaderGraph& graph,
+                                        int function,
+                                        StageEmitter& stage)
+{
+    const auto& declaration = graph.function(function);
+    auto signature = std::string {};
+
+    for (auto slot: declaration.parameters)
+        signature += Strings::format("{}v{}: {}",
+                                     signature.empty() ? "" : ", ",
+                                     slot,
+                                     stage.printer.printVariableTypeName(slot));
+
+    auto result =
+        declaration.returnsValue
+            ? " -> " + printReturnTypeName(graph, Backend::WebGPU, declaration)
+            : std::string {};
+
+    return Strings::format("fn {}({}){}\n{{\n{}}}\n\n",
+                           getFunctionName(graph, function),
+                           signature,
+                           result,
+                           stage.emitBlock(declaration.body, functionBodyIndent));
+}
+
 std::string
     printFunctionDefinition(const ShaderGraph& graph, Backend backend, int function)
 {
@@ -277,6 +305,9 @@ std::string
         parameters.add(Strings::format(
             "{} v{}", stage.printer.printVariableTypeName(slot), slot));
     }
+
+    if (backend == Backend::WebGPU)
+        return printWgslFunctionDefinition(graph, function, stage);
 
     if (backend == Backend::Metal)
         for (const auto& resource: getMetalResourceParameters(graph, function))

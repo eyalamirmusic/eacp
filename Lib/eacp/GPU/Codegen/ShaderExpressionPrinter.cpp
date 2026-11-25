@@ -8,6 +8,7 @@
 
 #include <eacp/Core/Utils/Format.h>
 
+#include <algorithm>
 #include <climits>
 
 namespace eacp::GPU::ShaderEmission
@@ -47,6 +48,13 @@ bool isShiftOperator(const std::string& op)
 {
     return op == "<<" || op == ">>";
 }
+
+std::string_view wgslUnsignedVectorName(int width)
+{
+    constexpr auto names =
+        Array<std::string_view, 3> {"vec2<u32>", "vec3<u32>", "vec4<u32>"};
+    return names[std::clamp(width, 2, 4) - 2];
+}
 } // namespace
 
 int ExprPrinter::findCarryingVarying(int slot) const
@@ -62,10 +70,15 @@ std::string ExprPrinter::printReference(int node) const
     return print(node);
 }
 
+// WGSL takes no scalar beside a vector anywhere a built-in's arguments share a
+// type, which is every gen-type call either of the other two widens.
 ValueType ExprPrinter::getBroadcastType(const Expr& call) const
 {
-    auto widens = (backend == Backend::Vulkan && isGenTypeCall(call.text))
-                  || (backend == Backend::Metal && isMetalGenTypeCall(call.text));
+    auto widens =
+        (backend == Backend::Vulkan && isGenTypeCall(call.text))
+        || (backend == Backend::Metal && isMetalGenTypeCall(call.text))
+        || (backend == Backend::WebGPU
+            && (isGenTypeCall(call.text) || isMetalGenTypeCall(call.text)));
 
     if (!widens)
         return ValueType::Float;
@@ -272,12 +285,13 @@ std::string ExprPrinter::printVarying(const Expr& expr) const
     return getVaryingName(backend, expr.index);
 }
 
-// A two-row matrix is held as float4 columns on Metal (UniformLayout.h).
+// A two-row matrix is held as float4 columns on Metal and WGSL (UniformLayout.h).
 std::string ExprPrinter::printUniform(const Expr& expr) const
 {
     auto name = printNumberedName("uniforms.u", expr.index);
+    auto widened = backend == Backend::Metal || backend == Backend::WebGPU;
 
-    if (backend != Backend::Metal || !isMetalWidenedUniform(expr.type))
+    if (!widened || !isMetalWidenedUniform(expr.type))
         return name;
 
     auto columns = std::string {};
@@ -286,12 +300,18 @@ std::string ExprPrinter::printUniform(const Expr& expr) const
         columns +=
             Strings::format("{}{}[{}].xy", column > 0 ? ", " : "", name, column);
 
-    return Strings::format("{}({})", typeName(expr.type), columns);
+    return Strings::format(
+        "{}({})", getDialectTypeName(backend, expr.type), columns);
 }
 
 // A uint above INT_MAX is held in Expr::index as a negative.
 std::string ExprPrinter::printConstant(const Expr& expr) const
 {
+    auto isFloat = expr.type == ValueType::Float || expr.type == ValueType::Half;
+
+    if (backend == Backend::WebGPU && isFloat)
+        return formatWgslFloatLiteral(expr.value, expr.type == ValueType::Half);
+
     if (isUnsignedConstant(expr))
     {
         auto bits = static_cast<unsigned>(expr.index);
@@ -380,9 +400,13 @@ std::string ExprPrinter::printSwizzle(const Expr& expr) const
 
 std::string ExprPrinter::printCall(const Expr& expr) const
 {
-    return Strings::format("{}({})",
-                           getCallName(backend, expr.text),
-                           printArguments(expr, getBroadcastType(expr)));
+    auto name =
+        backend == Backend::WebGPU && isWgslTypedHelper(expr.text)
+            ? getWgslTypedHelperName(expr.text, graph.expr(expr.args[0]).type)
+            : getCallName(backend, expr.text);
+
+    return Strings::format(
+        "{}({})", name, printArguments(expr, getBroadcastType(expr)));
 }
 
 // The operand gets its own parentheses so -(-1.0) never prints as --1.0.
@@ -413,6 +437,9 @@ std::string ExprPrinter::printBinary(const Expr& expr) const
 {
     auto op = getBinaryOperator(expr);
 
+    if (backend == Backend::WebGPU)
+        return printWgslBinary(expr, op);
+
     auto left = isGlslShift(op) ? printWidened(expr.args[0], expr.type)
                                 : printReference(expr.args[0]);
     auto right = printReference(expr.args[1]);
@@ -421,6 +448,50 @@ std::string ExprPrinter::printBinary(const Expr& expr) const
         return Strings::format("({} - (({} / {}) * {}))", left, left, right, right);
 
     return Strings::format("({} {} {})", left, op, right);
+}
+
+// WGSL pairs a scalar with a vector only in arithmetic: a bitwise operand is
+// widened to the vector, and a shift's count is unsigned at the shifted
+// value's width.
+std::string ExprPrinter::printWgslBinary(const Expr& expr,
+                                         const std::string& op) const
+{
+    auto arithmetic = op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+
+    if (op == "/" && isMatrix(expr.type))
+        return Strings::format("{}({}, {})",
+                               getWgslMatrixDivideName(expr.type),
+                               printReference(expr.args[0]),
+                               printReference(expr.args[1]));
+
+    if (arithmetic)
+        return Strings::format("({} {} {})",
+                               printReference(expr.args[0]),
+                               op,
+                               printReference(expr.args[1]));
+
+    auto left = printWidened(expr.args[0], expr.type);
+
+    if (!isShiftOperator(op))
+        return Strings::format(
+            "({} {} {})", left, op, printWidened(expr.args[1], expr.type));
+
+    auto count = expr.args[1];
+    auto countType = graph.expr(count).type;
+    auto unsignedScalar = printConverted(count, ValueType::UInt);
+    auto width = componentCount(expr.type);
+
+    if (isUnsignedInteger(countType) && componentCount(countType) == width)
+        return Strings::format("({} {} {})", left, op, printReference(count));
+
+    if (width == 1)
+        return Strings::format("({} {} {})", left, op, unsignedScalar);
+
+    auto counts =
+        componentCount(countType) == width ? printReference(count) : unsignedScalar;
+
+    return Strings::format(
+        "({} {} {}({}))", left, op, wgslUnsignedVectorName(width), counts);
 }
 
 std::string ExprPrinter::printCompare(const Expr& expr) const
@@ -437,6 +508,12 @@ std::string ExprPrinter::printCompare(const Expr& expr) const
 
 std::string ExprPrinter::printSelect(const Expr& expr) const
 {
+    if (backend == Backend::WebGPU)
+        return Strings::format("select({}, {}, {})",
+                               printReference(expr.args[2]),
+                               printReference(expr.args[1]),
+                               printReference(expr.args[0]));
+
     return Strings::format("({} ? {} : {})",
                            printReference(expr.args[0]),
                            printReference(expr.args[1]),
@@ -471,6 +548,9 @@ std::string ExprPrinter::printMul(const Expr& expr) const
 
 std::string ExprPrinter::printSample(const Expr& expr) const
 {
+    if (backend == Backend::WebGPU)
+        return printWgslSample(expr);
+
     auto name = printNumberedName("texture", expr.index);
     auto sampler = backend == Backend::Metal
                        ? printNumberedName("sampler", expr.index)
@@ -540,7 +620,84 @@ std::string ExprPrinter::printFetch(const Expr& expr) const
     if (backend == Backend::Vulkan)
         return Strings::format("texelFetch({}, {}, 0)", name, coordinates);
 
+    if (backend == Backend::WebGPU)
+        return Strings::format("textureLoad({}, {}, 0)", name, coordinates);
+
     return Strings::format("{}.Load(int3({}, 0))", name, coordinates);
+}
+
+// A plain sample, the old surface's: WGSL has no implicit level in a kernel,
+// where Metal's sample reads level 0, and its depth levels are integers.
+std::string ExprPrinter::printWgslSample(const Expr& expr) const
+{
+    auto name = printNumberedName("texture", expr.index);
+    auto sampler = printNumberedName("sampler", expr.index);
+    auto kind = graph.textureKind(expr.index);
+    auto uv = printReference(expr.args[0]);
+
+    if (expr.text == "compare")
+    {
+        auto layer = expr.args.size() == 3 ? ", " + printWgslArrayIndex(expr.args[1])
+                                           : std::string {};
+
+        return Strings::format("textureSampleCompareLevel({}, {}, {}{}, {})",
+                               name,
+                               sampler,
+                               uv,
+                               layer,
+                               printReference(expr.args.back()));
+    }
+
+    if (isLayered(kind) && graph.isCompute())
+        return Strings::format("textureSampleLevel({}, {}, {}, {}, {})",
+                               name,
+                               sampler,
+                               uv,
+                               printWgslArrayIndex(expr.args[1]),
+                               isDepth(kind) ? "0" : "0.0");
+
+    if (isLayered(kind))
+        return Strings::format("textureSample({}, {}, {}, {})",
+                               name,
+                               sampler,
+                               uv,
+                               printWgslArrayIndex(expr.args[1]));
+
+    auto hasLevel = expr.args.size() >= 2;
+
+    if (!hasLevel && !graph.isCompute())
+        return Strings::format("textureSample({}, {}, {})", name, sampler, uv);
+
+    auto level = std::string {};
+
+    if (isDepth(kind))
+        level = hasLevel ? printWgslDepthLevel(expr.args[1]) : std::string {"0"};
+    else
+        level = hasLevel ? printReference(expr.args[1]) : std::string {"0.0"};
+
+    return Strings::format(
+        "textureSampleLevel({}, {}, {}, {})", name, sampler, uv, level);
+}
+
+// A Float layer goes to the nearest one, ties to even, as Vulkan and D3D round.
+std::string ExprPrinter::printWgslArrayIndex(int layer) const
+{
+    const auto type = graph.expr(layer).type;
+
+    if (type == ValueType::Int || type == ValueType::UInt)
+        return printReference(layer);
+
+    return Strings::format("i32(round({}))", printReference(layer));
+}
+
+std::string ExprPrinter::printWgslDepthLevel(int level) const
+{
+    const auto type = graph.expr(level).type;
+
+    if (type == ValueType::Int || type == ValueType::UInt)
+        return printReference(level);
+
+    return Strings::format("i32({})", printReference(level));
 }
 
 std::string ExprPrinter::printThreadId(const Expr& expr) const
@@ -634,7 +791,10 @@ std::string ExprPrinter::printBufferVectorRead(const Expr& expr) const
             elements += ", ";
 
         auto element =
-            component > 0 ? Strings::format("{} + {}u", base, component) : base;
+            component > 0
+                ? Strings::format(
+                      "{} + {}{}", base, component, getIndexOffsetSuffix(backend))
+                : base;
 
         elements += printBufferElementRead(expr.index, element);
     }
@@ -650,6 +810,9 @@ std::string ExprPrinter::printAtomicLoad(const Expr& expr) const
     if (backend == Backend::Metal)
         return Strings::format("atomic_load_explicit(&{}, memory_order_relaxed)",
                                element);
+
+    if (backend == Backend::WebGPU)
+        return Strings::format("atomicLoad(&{})", element);
 
     return element;
 }
@@ -681,9 +844,15 @@ std::string ExprPrinter::printSharedRead(const Expr& expr) const
 {
     auto element = printSubscript("s", expr.index, printReference(expr.args[0]));
 
-    if (backend == Backend::Metal && graph.sharedArrays()[expr.index].atomic)
+    if (!graph.sharedArrays()[expr.index].atomic)
+        return element;
+
+    if (backend == Backend::Metal)
         return Strings::format("atomic_load_explicit(&{}, memory_order_relaxed)",
                                element);
+
+    if (backend == Backend::WebGPU)
+        return Strings::format("atomicLoad(&{})", element);
 
     return element;
 }
@@ -735,6 +904,11 @@ std::string ExprPrinter::printGroupCount() const
     if (backend == Backend::Vulkan)
         return "gl_NumWorkGroups";
 
+    // A 1D WGSL dispatch arrives as rows of groups (ShaderComputeEmitter.cpp),
+    // so its count is taken from the extent as HLSL's is.
+    if (backend == Backend::WebGPU && graph.dispatchRank() != DispatchRank::OneD)
+        return "groupCount";
+
     const auto rank = graph.dispatchRank();
     const auto group = graph.threadGroupShape();
     const auto sizes = Array<int, 3> {group.x, group.y, group.z};
@@ -749,7 +923,21 @@ std::string ExprPrinter::printGroupCount() const
         axes[axis] = Strings::format("(({} - 1u) / {}u + 1u)", extent, sizes[axis]);
     }
 
-    return Strings::format("uint3({}, {}, {})", axes[0], axes[1], axes[2]);
+    auto fromExtent = Strings::format("{}({}, {}, {})",
+                                      getDialectTypeName(backend, ValueType::UInt3),
+                                      axes[0],
+                                      axes[1],
+                                      axes[2]);
+
+    if (backend != Backend::WebGPU)
+        return fromExtent;
+
+    // A 1D WGSL dispatch arrives in one row unless it was folded into several
+    // (ShaderComputeEmitter.cpp): one row - an indirect dispatch among them -
+    // is its own count, and only a folded one is taken from the extent.
+    return Strings::format(
+        "select({}, vec3<u32>(gridGroups.x, 1u, 1u), gridGroups.y == 1u)",
+        fromExtent);
 }
 
 std::string ExprPrinter::printBuiltIn(ShaderBuiltIn which) const

@@ -55,5 +55,13 @@ bool isSampledThroughSampler(const ShaderGraph& graph, int slot);
 std::string_view getGlslImageType(TextureKind kind);
 std::string_view getGlslSampledType(TextureKind kind, bool comparison);
 
-std::string formatBoundsGuard(DispatchRank rank);
+// WGSL's declarations at the bindings ShaderBindings.h names, one to a line: a
+// storage buffer, and a texture slot with the sampler its sampling needs (or a
+// sampler slot alone).
+std::string
+    formatWgslBuffer(const ShaderGraph& graph, BufferAccess access, int slot);
+std::string formatWgslTexture(const ShaderGraph& graph, int slot);
+
+// Braced in WGSL, which takes no unbraced body; alike in the other three.
+std::string formatBoundsGuard(DispatchRank rank, Backend backend = Backend::Metal);
 } // namespace eacp::GPU::ShaderEmission

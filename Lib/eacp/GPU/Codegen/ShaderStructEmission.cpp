@@ -8,6 +8,13 @@ namespace
 {
 constexpr auto structComponentNames = std::string_view {"xyzw"};
 
+// GLSL and WGSL construct a struct from its members in order by its own name;
+// MSL and HLSL go through a helper.
+bool hasStructConstructorHelper(Backend backend)
+{
+    return backend == Backend::Metal || backend == Backend::DirectX;
+}
+
 bool isPackedStructMember(const ShaderGraph& graph, int owner, ValueType type)
 {
     return graph.structType(owner).hostShareable && !isMatrix(type)
@@ -37,10 +44,29 @@ std::string formatStructPadding(int bytes, int& padCount)
     return Strings::format("    uchar eacpPad{}[{}];\n", padCount++, bytes);
 }
 
+// WGSL's own layout is the one the offsets were taken in, so its members
+// need nothing beside them.
+std::string formatWgslStructBody(const ShaderGraph& graph, int structId)
+{
+    const auto& type = graph.structType(structId);
+    auto source = Strings::format("struct {}\n{{\n", type.name);
+
+    for (const auto& member: type.members)
+        source +=
+            Strings::format("    {}: {},\n",
+                            member.name,
+                            getStructMemberTypeName(graph, Backend::WebGPU, member));
+
+    return source + "}\n\n";
+}
+
 // MSL pads a shareable struct out to WGSL's offsets; every other declaration
 // is the members as they are.
 std::string formatStructBody(const ShaderGraph& graph, Backend backend, int structId)
 {
+    if (backend == Backend::WebGPU)
+        return formatWgslStructBody(graph, structId);
+
     const auto& type = graph.structType(structId);
     auto laysOut = backend == Backend::Metal && type.hostShareable;
     auto source = Strings::format("struct {}\n{{\n", type.name);
@@ -296,7 +322,7 @@ std::string getStructDeclarations(const ShaderGraph& graph, Backend backend)
     {
         source += formatStructBody(graph, backend, structId);
 
-        if (backend != Backend::Vulkan)
+        if (hasStructConstructorHelper(backend))
             source += formatStructConstructor(graph, backend, structId);
     }
 
@@ -310,7 +336,7 @@ std::string printStructConstruct(const ShaderGraph& graph,
 {
     const auto& name = getStructName(graph, structId);
 
-    if (backend == Backend::Vulkan)
+    if (!hasStructConstructorHelper(backend))
         return Strings::format("{}({})", name, members);
 
     return Strings::format("eacpMake{}({})", name, members);

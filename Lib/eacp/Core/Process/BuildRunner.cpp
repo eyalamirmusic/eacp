@@ -1,5 +1,6 @@
 #include "BuildRunner.h"
 
+#include "../Platform/Platform.h"
 #include "../Threads/EventLoop.h"
 
 #include <atomic>
@@ -160,7 +161,10 @@ void BuildRunner::startRun()
         Threads::callAsync(deliver);
     };
 
-    worker.start(work);
+    if constexpr (Platform::hasThreads())
+        worker.start(work);
+    else
+        Threads::callAsync(work);
 }
 
 void BuildRunner::finish(const std::shared_ptr<Run>& finishedRun,

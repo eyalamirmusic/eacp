@@ -25,6 +25,7 @@ nano_add_executable(GPUCodegenTests
             TypesCodegenTests.cpp
             VertexStatementCodegenTests.cpp
             WgslBuiltinCodegenTests.cpp
+            WgslCodegenTests.cpp
         TARGETS eacp-gpu-codegen eacp-cpu-compute eacp-shader-compiler)
 
 # With eacp-spirv around, every emitted GLSL source is compiled by glslang too;
@@ -37,6 +38,13 @@ function(eacp_enable_glsl_compile_checks target)
 endfunction()
 
 eacp_enable_glsl_compile_checks(GPUCodegenTests)
+
+# glslang's own diagnostics, parsed from the GLSL twins the device suite's
+# CompilationInfoDevice cases compile.
+eacp_embed_test_shaders(GPUCodegenTests
+        FILES
+            CompilationInfo/brokenKernel.glsl
+            CompilationInfo/warnedKernel.glsl)
 
 if (MSVC)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -183,6 +191,8 @@ if (APPLE)
     list(APPEND gpu_test_sources PrecompiledTestBlobs-Apple.cpp)
 elseif (WIN32)
     list(APPEND gpu_test_sources PrecompiledTestBlobs-Windows.cpp)
+elseif (EMSCRIPTEN)
+    list(APPEND gpu_test_sources PrecompiledTestBlobs-Web.cpp)
 else ()
     list(APPEND gpu_test_sources PrecompiledTestBlobs-Linux.cpp)
 endif ()
@@ -232,6 +242,10 @@ nano_add_executable(GPUTests
 
 eacp_enable_glsl_compile_checks(GPUTests)
 
+# The hand-written shaders, one file per dialect under Shaders/<suite>/, read
+# through Common.h's shaderTwins.
+eacp_embed_test_shaders(GPUTests)
+
 if (WIN32)
     target_link_libraries(GPUTests PRIVATE eacp-gpu-dxc)
 endif ()
@@ -261,6 +275,18 @@ endif ()
 
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")
+endif ()
+
+# On the web the suite needs WebGPU, which node has none of, so it runs in
+# headless Chrome with its GPU on: one ctest entry per case group, each a page
+# of its own (eacp_web_discover_tests HEADLESS). It links the nested pump, as
+# every web suite does, but not node's file system, since a page has none.
+if (EMSCRIPTEN)
+    eacp_web_link_options(gpu_web_link_options)
+    target_link_options(GPUTests PRIVATE ${gpu_web_link_options})
+    target_link_libraries(GPUTests PRIVATE eacp-core-nested-pump)
+    set_target_properties(GPUTests PROPERTIES EACP_WEB_NESTED_PUMP TRUE)
+    eacp_web_discover_tests(GPUTests HEADLESS)
 endif ()
 
 if (APPLE AND NOT IOS)

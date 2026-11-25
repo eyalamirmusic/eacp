@@ -1055,15 +1055,16 @@ float cellLuminance(const Graphics::Image& image, int panel, int column, int row
     return total / (float) ((right - left) * (bottom - top));
 }
 
+// The exponent frexp would give: value = m * 2^exponent with m in [0.5, 1).
+int binaryExponent(float value)
+{
+    return value == 0.f ? 0 : std::ilogb(value) + 1;
+}
+
 // What the same value would have come back as out of an eight-bit texture.
 float quantiseToByte(float value)
 {
     return std::round(std::clamp(value, 0.f, 1.f) * 255.f) / 255.f;
-}
-
-int binaryExponent(float value)
-{
-    return value == 0.f ? 0 : std::ilogb(value) + 1;
 }
 
 // And out of a half float: ten stored mantissa bits below the leading one, so

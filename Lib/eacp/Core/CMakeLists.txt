@@ -36,7 +36,6 @@ target_sources(eacp-core PRIVATE
         Process/BuildRunner.cpp
         Process/Process.cpp
         Threads/Async.cpp
-        Threads/CallAfter.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
         Threads/Thread.cpp
@@ -61,6 +60,12 @@ target_sources(eacp-core PRIVATE
         Utils/TemporaryFile.cpp
         Utils/Time.cpp
         Utils/Zip.cpp)
+
+# One scheduler thread for every delay. The web has its main thread's own
+# timers instead (EventLoop-Web.cpp).
+if (NOT EMSCRIPTEN)
+    target_sources(eacp-core PRIVATE Threads/CallAfter.cpp)
+endif ()
 
 if (APPLE)
     target_sources(eacp-core PRIVATE
@@ -90,7 +95,7 @@ if (APPLE)
                 App/Clipboard-iOS.mm
                 App/FilePickerAsync-Default.cpp
                 App/LoginItem-iOS.cpp
-                Process/Process-iOS.cpp
+                Process/Process-Default.cpp
                 Threads/EventLoop-iOS.mm
                 Utils/FilesOpen-Default.cpp)
         target_link_libraries(eacp-core PRIVATE "-framework UIKit")
@@ -133,6 +138,37 @@ elseif (WIN32)
             Utils/MemoryMappedFile-Windows.cpp)
     target_link_libraries(eacp-core PRIVATE
             windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
+elseif (EMSCRIPTEN)
+    # Ahead of UNIX, which Emscripten also sets.
+    target_sources(eacp-core PRIVATE
+            App/Alert-Default.cpp
+            App/App-Web.cpp
+            App/Clipboard-Linux.cpp
+            App/CommandLine-Default.cpp
+            App/FilePickerAsync-Default.cpp
+            App/LoginItem-Linux.cpp
+            Platform/ScopedAutoReleasePool-Default.cpp
+            Plugins/DynamicLibrary-Web.cpp
+            Plugins/ModuleInfo-Web.cpp
+            Process/Process-Default.cpp
+            Threads/EventLoop-Web.cpp
+            Threads/ThreadUtils-Web.cpp
+            Threads/Timer-Web.cpp
+            Utils/Environment-Posix.cpp
+            Utils/FilePath-Linux.cpp
+            Utils/Files-Web.cpp
+            Utils/FilesOpen-Default.cpp
+            Utils/Logging-Posix.cpp
+            Utils/MemoryMappedFile-Posix.cpp)
+
+    # Nested pumps (runEventLoopFor and what waits on it) for the executables
+    # that need them, the test suites: linking this links them with JSPI and
+    # replaces eacp-core's weak "cannot suspend" (EventLoop-Web.h). An app
+    # never needs one, and links without JSPI.
+    add_library(eacp-core-nested-pump OBJECT Threads/NestedPump-Web.cpp)
+    target_link_libraries(eacp-core-nested-pump PUBLIC eacp-core)
+    target_link_options(eacp-core-nested-pump INTERFACE -sJSPI)
+    set_default_target_setting(eacp-core-nested-pump)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/Alert-Default.cpp

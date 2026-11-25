@@ -15,7 +15,6 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include <chrono>
-#include <cstdio>
 
 #include <tlhelp32.h>
 
@@ -225,15 +224,15 @@ struct HandleCounts
 HandleCounts handlesAcrossDetachInLoopExitHarness()
 {
     auto result = eacp::Processes::run(EACP_LOOP_EXIT_HARNESS, {"detach"});
-    auto counts = HandleCounts {};
+    auto line = eacp::Strings::lineContaining(result.output, "handles watching ");
+    auto words = eacp::Strings::split(line, ' ');
 
-    sscanf_s(result.output.c_str(),
-             "handles watching %d detached %d again %d",
-             &counts.watching,
-             &counts.detached,
-             &counts.again);
+    if (words.size() != 7)
+        return {};
 
-    return counts;
+    return {eacp::Strings::parseOr(words[2], 0),
+            eacp::Strings::parseOr(words[4], 0),
+            eacp::Strings::parseOr(words[6], 0)};
 }
 } // namespace
 

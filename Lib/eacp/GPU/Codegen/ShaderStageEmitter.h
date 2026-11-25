@@ -34,6 +34,14 @@ public:
     // parameter, which its signature declares.
     void markInScope(int slot) { variablesInScope[slot] = 1; }
 
+    bool isWgsl() const;
+
+    // `T name` in the C family, `let name: T` or `var name: T` in WGSL, which
+    // takes the keyword: let for a value never assigned again, var otherwise.
+    std::string printDeclaration(std::string_view keyword,
+                                 const std::string& type,
+                                 const std::string& name) const;
+
     Vector<int> locals; // node id -> local index, -1 = inline
     ExprPrinter printer;
     int localCount = 0;
@@ -160,6 +168,12 @@ private:
 
     Vector<char> findUsedArrays(const Vector<int>& roots) const;
     std::string printArrayDeclaration(int slot, std::string_view indent) const;
+    std::string printWgslArrayDeclaration(int slot, std::string_view indent) const;
+    std::string printWgslArrayFill(int slot,
+                                   const std::string& type,
+                                   int size,
+                                   const Statement& statement,
+                                   const StatementScope& scope) const;
     bool isRecordStillUnnamed(const Statement& statement) const;
     Vector<int> countUsesOver(const Vector<int>& roots) const;
     Vector<int> countBlockUses(int block) const;

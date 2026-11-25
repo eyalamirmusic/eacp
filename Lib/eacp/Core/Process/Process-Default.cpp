@@ -1,18 +1,13 @@
 #include "Process.h"
 
-// iOS sandboxes third-party apps and forbids process creation: posix_spawn,
-// fork and exec are all denied at runtime (EPERM), so the POSIX implementation
-// cannot function here regardless of what compiles. This stub fails loudly in
-// debug if a launch is attempted and otherwise reports a clean not-launched
-// result, so run() returns ProcessResult{launched = false}.
+// For the platforms that start no child processes: iOS denies posix_spawn,
+// fork and exec to third-party apps at run time, and the web has no processes.
+// Every launch reports that it did not happen, as a failed spawn does elsewhere.
 namespace eacp::Processes
 {
 struct Process::Native
 {
-    explicit Native(const ProcessOptions&)
-    {
-        assert(false && "Process spawning is unavailable on iOS");
-    }
+    explicit Native(const ProcessOptions&) {}
 
     bool launched() const { return false; }
     bool isRunning() const { return false; }
@@ -41,10 +36,12 @@ bool Process::launched() const
 {
     return impl->launched();
 }
+
 bool Process::isRunning() const
 {
     return impl->isRunning();
 }
+
 long Process::id() const
 {
     return impl->id();
@@ -64,14 +61,17 @@ int Process::wait()
 {
     return impl->wait();
 }
+
 void Process::terminate()
 {
     impl->terminate();
 }
+
 void Process::kill()
 {
     impl->kill();
 }
+
 bool Process::requestStop()
 {
     return impl->requestStop();
@@ -81,6 +81,7 @@ std::string Process::output() const
 {
     return impl->output();
 }
+
 std::string Process::errorOutput() const
 {
     return impl->errorOutput();

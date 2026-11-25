@@ -38,85 +38,9 @@ bool isBlue(const Graphics::Color& c)
     return c.b > 0.5f && c.r < 0.5f && c.g < 0.5f;
 }
 
-const char* mslShader = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float3 position [[attribute(0)]];
-    float4 color [[attribute(1)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float4 color;
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 1.0);
-    out.color = in.color;
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]]) { return in.color; }
-)";
-
-const char* hlslShader = R"(
-struct VertexIn
-{
-    float3 position : TEXCOORD0;
-    float4 color : TEXCOORD1;
-};
-
-struct VertexOut
-{
-    float4 position : SV_Position;
-    float4 color : TEXCOORD0;
-};
-
-VertexOut vertexMain(VertexIn input)
-{
-    VertexOut output;
-    output.position = float4(input.position, 1.0);
-    output.color = input.color;
-    return output;
-}
-
-float4 fragmentMain(VertexOut input) : SV_Target { return input.color; }
-)";
-
-const char* glslShader = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec3 attr0;
-layout(location = 1) in vec4 attr1;
-layout(location = 0) out vec4 vary0;
-
-void main()
-{
-    gl_Position = vec4(attr0, 1.0);
-    vary0 = attr1;
-}
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) in vec4 vary0;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = vary0;
-}
-#endif
-)";
-
 ShaderSource shaderSource()
 {
-    return nativeShaderSource(mslShader, hlslShader, glslShader);
+    return nativeShaderSource("Viewport/color");
 }
 
 struct Vertex

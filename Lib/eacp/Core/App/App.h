@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Platform/Platform.h"
+#include "../Threads/CallAfter.h"
 #include "../Threads/EventLoop.h"
 #include "../Threads/ThreadPool.h"
 #include "../Utils/Common.h"
@@ -274,9 +275,14 @@ int run(Args&&... args)
     // The single teardown point: the app is constructed on the first loop
     // tick and destroyed here on the main thread once the loop has fully
     // exited, so no native event delivery or nested pump can still be
-    // referencing the views. Apps::quit() only stops the loop.
+    // referencing the views. Apps::quit() only stops the loop. On the web,
+    // unless the executable links eacp-core-nested-pump, runEventLoop does
+    // not return: it unwinds this stack to the browser as an exception would,
+    // running the destructors of every caller's locals before the app is
+    // constructed, and quit() does these steps itself (EventLoop-Web.cpp).
     destroyApp();
     Threads::stopSharedThreadPool();
+    Threads::stopCallAfterScheduler();
     return getReturnValue();
 }
 

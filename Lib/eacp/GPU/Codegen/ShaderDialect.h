@@ -13,7 +13,8 @@ enum class Backend
 {
     Metal,
     DirectX,
-    Vulkan
+    Vulkan,
+    WebGPU
 };
 
 constexpr std::string_view getDialectTypeName(Backend backend, ValueType type)
@@ -21,16 +22,24 @@ constexpr std::string_view getDialectTypeName(Backend backend, ValueType type)
     if (backend == Backend::Vulkan)
         return glslTypeName(type);
 
+    if (backend == Backend::WebGPU)
+        return wgslTypeName(type);
+
     return backend == Backend::DirectX ? hlslTypeName(type) : typeName(type);
 }
 std::string formatShaderFloatLiteral(float value);
 
-// What makes a float literal an f16 one: MSL's 0.5h, GLSL's 0.5hf (from
-// GL_EXT_shader_explicit_arithmetic_types_float16). HLSL holds f16 in float,
-// and the literal is already a value a half holds.
+// WGSL has no spelling for an infinity or a NaN, so one is its bits, passed
+// through the helper below.
+std::string formatWgslFloatLiteral(float value, bool half);
+inline constexpr auto wgslRuntimeBitsHelper = std::string_view {"eacpRuntimeBits"};
+
+// What makes a float literal an f16 one: MSL's and WGSL's 0.5h, GLSL's 0.5hf
+// (from GL_EXT_shader_explicit_arithmetic_types_float16). HLSL holds f16 in
+// float, and the literal is already a value a half holds.
 constexpr std::string_view getHalfLiteralSuffix(Backend backend)
 {
-    if (backend == Backend::Metal)
+    if (backend == Backend::Metal || backend == Backend::WebGPU)
         return "h";
 
     return backend == Backend::Vulkan ? "hf" : "";
@@ -156,6 +165,15 @@ bool isRoundedToHalf(const Expr& expr);
 std::string getRoundHalfFunction(ValueType type);
 
 std::string getCallName(Backend backend, const std::string& name);
+
+// WGSL has no overloading, so a helper defined per argument type is named after
+// it: eacpErf_float2 for eacpErf of a float2. Empty for a call that is not one.
+std::string getWgslTypedHelperName(const std::string& name, ValueType argument);
+bool isWgslTypedHelper(const std::string& name);
+
+// WGSL divides no matrix by a scalar, so it is a helper per matrix type that
+// divides each column.
+std::string getWgslMatrixDivideName(ValueType matrix);
 bool isGenTypeCall(const std::string& name);
 bool isMetalGenTypeCall(const std::string& name);
 std::string_view getGlslComparisonFunction(const std::string& op);
@@ -200,4 +218,12 @@ constexpr std::string_view getIndexSwizzle(DispatchRank rank)
 }
 
 std::string wrapInParentheses(const std::string& expression);
+
+// What follows the offset added to an index for the next element: an unsigned
+// literal, which C-family dialects convert to the index's own type; WGSL
+// converts nothing, so it takes a bare one, which becomes either.
+constexpr std::string_view getIndexOffsetSuffix(Backend backend)
+{
+    return backend == Backend::WebGPU ? "" : "u";
+}
 } // namespace eacp::GPU::ShaderEmission

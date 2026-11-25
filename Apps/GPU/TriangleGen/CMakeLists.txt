@@ -1,4 +1,5 @@
-eacp_add_app(TriangleGen Main.cpp)
+eacp_add_app(TriangleGen Main.cpp
+        DESCRIPTION "The triangle again, its shader and vertex layout generated from C++.")
 target_link_libraries(TriangleGen PRIVATE eacp-gpu)
 set_target_properties(TriangleGen PROPERTIES MACOSX_BUNDLE TRUE)
 

@@ -1,5 +1,7 @@
 #include "ConnectionInternal.h"
 
+#include <eacp/Core/Utils/WinInclude.h>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 

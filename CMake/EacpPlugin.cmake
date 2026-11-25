@@ -8,7 +8,14 @@
 #
 #   eacp_add_plugin(MyPlugin Plugin.cpp)
 #   target_link_libraries(MyPlugin PRIVATE eacp-core)
+#
+# The web loads no dynamic libraries, so there it refuses.
 function(eacp_add_plugin target)
+    if (EMSCRIPTEN)
+        message(FATAL_ERROR "eacp_add_plugin(${target}): the web loads no "
+                "dynamic libraries, so a web build cannot have plugins")
+    endif ()
+
     add_library(${target} MODULE ${ARGN})
 
     set_target_properties(${target} PROPERTIES
@@ -537,7 +544,7 @@ function(eacp_add_hot_reload app library)
         endif ()
     endif ()
 
-    if (IOS OR ANDROID)
+    if (IOS OR ANDROID OR EMSCRIPTEN)
         set(enabled OFF)
     endif ()
 

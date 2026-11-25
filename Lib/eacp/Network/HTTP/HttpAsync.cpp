@@ -7,13 +7,6 @@
 namespace eacp::HTTP
 {
 
-DownloadRequest::DownloadRequest(const std::string& urlToUse,
-                                 const std::string& filePathToUse)
-    : Request(urlToUse)
-    , filePath(filePathToUse)
-{
-}
-
 namespace
 {
 using PerformFn = std::function<Response(const Request&)>;

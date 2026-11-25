@@ -344,7 +344,7 @@ private:
     Vector<int> marks;
     Vector<char> arrayUsed;
     Vector<char> blockReached;
-    Vector<WalkEntry> walk;
+    Vector<WalkEntry> visitStack;
     Vector<PlanLevel> levels;
     Vector<int> hoistSites;
     Vector<Vector<int>> hoistedAt;

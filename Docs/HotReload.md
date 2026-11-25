@@ -351,7 +351,10 @@ mode is decided like this:
 - With no `HOT_RELOAD`, or one whose value is empty (an unset variable, say),
   the app follows the `EACP_HOT_RELOAD` cache option (default `OFF`), read the
   same way.
-- iOS and Android are always static, whatever either says.
+- iOS, Android and the web are always static, whatever either says.
+  The web loads no module at all: `eacp_add_plugin` stops its configure with
+  a `FATAL_ERROR`, and `DynamicLibraryTests`, `ReloadableLibraryTests`,
+  `HotReloadLoopTests` and `ReloadableTests` are not built there.
 - Windows is static, whatever either says, where its dev mode cannot run:
   under a generator other than Ninja (Visual Studio's and the Makefile
   generators included), a compiler that is not `cl` or clang-cl, a target
@@ -373,7 +376,8 @@ mode is decided like this:
 Both in-tree examples pass `HOT_RELOAD ON`, so on macOS and Linux they are in
 dev mode in every build directory, on Windows in every one that allows it
 (every Debug and RelWithDebInfo Ninja build, and Release with
-`-DEACP_HOT_RELOAD=ON`), and in static mode on iOS and Android:
+`-DEACP_HOT_RELOAD=ON`), and in static mode on iOS and Android (the web
+builds neither, since both draw):
 
 - `Apps/UI/HotReload` (`HotReload`, library `HotReloadLayout`) reloads a
   layout function.

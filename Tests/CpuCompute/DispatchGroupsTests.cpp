@@ -1,5 +1,6 @@
 #include <NanoTest/NanoTest.h>
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 
 #include <array>
@@ -107,7 +108,8 @@ Vector<GroupRange> rangesAt(std::int64_t total, std::span<const double> fraction
     return ranges;
 }
 
-// Each range on a thread of its own, each thread in a workspace of its own.
+// Each range on a thread of its own, each thread in a workspace of its own;
+// one after another on the calling thread where there are no threads.
 bool runOnThreads(const Executor& executor,
                   const PreparedDispatch& prepared,
                   const Vector<GroupRange>& ranges)
@@ -116,15 +118,21 @@ bool runOnThreads(const Executor& executor,
     auto threads = std::vector<std::thread> {};
 
     for (auto range: ranges)
-        threads.emplace_back(
-            [&executor, &prepared, &failures, range]
-            {
-                auto workspace = Workspace {executor.plan()};
+    {
+        auto runRange = [&executor, &prepared, &failures, range]
+        {
+            auto workspace = Workspace {executor.plan()};
 
-                if (!executor.dispatchGroups(
-                        prepared, range.first, range.count, workspace))
-                    failures.fetch_add(1);
-            });
+            if (!executor.dispatchGroups(
+                    prepared, range.first, range.count, workspace))
+                failures.fetch_add(1);
+        };
+
+        if constexpr (Platform::hasThreads())
+            threads.emplace_back(runRange);
+        else
+            runRange();
+    }
 
     for (auto& thread: threads)
         thread.join();

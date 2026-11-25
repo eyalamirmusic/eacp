@@ -16,10 +16,28 @@ constexpr const char* stockProportionalFamily()
 {
     if constexpr (Platform::isWindows())
         return "Arial";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (Platform::isLinux() || Platform::isWeb())
         return "DejaVu Sans";
     else
         return "Helvetica";
+}
+
+// The web draws with the two families it embeds and what the program
+// registers: no Han face, and an emoji in DejaVu Sans's monochrome outline.
+constexpr bool hasOnlyBundledFonts()
+{
+    return Platform::isWeb();
+}
+
+// A web build that embeds its fonts requires them: a page has no environment
+// to say EACP_REQUIRE_FONTS in, and fonts the build carries are never absent.
+bool fontsAreRequired()
+{
+#if EACP_TEST_BUNDLED_FONTS
+    return true;
+#else
+    return getEnvValue("EACP_REQUIRE_FONTS") == "1";
+#endif
 }
 
 FontRequest presenceRequest(const char* family)
@@ -81,7 +99,7 @@ auto tFontsArePresentWhenRequired = test("Text/fontsArePresentWhenRequired") = [
     LOG("Text CJK glyph U+6F22: ", describe(han));
     LOG("Text emoji glyph U+1F600: ", describe(emoji));
 
-    if (getEnvValue("EACP_REQUIRE_FONTS") != "1")
+    if (!fontsAreRequired())
         return;
 
     check(Strings::equalsCaseInsensitive(monospace, defaultMonospaceFamily()),
@@ -93,6 +111,14 @@ auto tFontsArePresentWhenRequired = test("Text/fontsArePresentWhenRequired") = [
           "EACP_REQUIRE_FONTS=1 but the platform's proportional family did not "
           "resolve to itself - the kerning, ligature and weight tests would "
           "have skipped and reported a pass");
+
+    if constexpr (hasOnlyBundledFonts())
+    {
+        check(emoji.valid && !emoji.isEmpty(),
+              "EACP_REQUIRE_FONTS=1 but the bundled DejaVu Sans did not draw "
+              "the emoji as a fallback from the fixed-pitch family");
+        return;
+    }
 
     check(han.valid && !han.isEmpty(),
           "EACP_REQUIRE_FONTS=1 but nothing on this machine draws Han, so "

@@ -1,0 +1,15 @@
+Texture2D<float> depthImage : register(t0);
+SamplerComparisonState depthSampler : register(s8);
+
+float4 vertexMain(float3 column : TEXCOORD0) : SV_Position
+{
+    float2 uv = float2(column.y, 0.5);
+    float passed = depthImage.SampleCmpLevelZero(depthSampler, uv, 0.5);
+    float h = 0.5 + 0.5 * passed;
+    return float4(column.x, -1.0 + 2.0 * h * column.z, 0.0, 1.0);
+}
+
+float4 fragmentMain(float4 position : SV_Position) : SV_Target
+{
+    return float4(1.0, 1.0, 1.0, 1.0);
+}

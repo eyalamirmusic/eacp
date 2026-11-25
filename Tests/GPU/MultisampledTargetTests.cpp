@@ -601,7 +601,8 @@ auto tSuspensionKeepsColourAndStencil =
 auto tDepthResolvesForSampling =
     test("MultisampledTarget/theDepthPlaneResolvesForSampling") = []
 {
-    if (!supportsMultisampling())
+    if (!supportsMultisampling()
+        || !Device::shared().supportsMultisampledSampleableDepth())
         return;
 
     auto view = DepthSampleView {samples};

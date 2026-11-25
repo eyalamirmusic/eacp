@@ -18,6 +18,10 @@ auto tTargetReportsWhatItWasAskedFor =
     if (!device.supportsSampleCount(samples))
         return;
 
+    // Where a multisampled depth plane cannot be read (the web), asking for it
+    // is refused outright, and the rest is checked on a target without it.
+    const auto sampleable = device.supportsMultisampledSampleableDepth();
+
     auto descriptor = TextureDescriptor {};
     descriptor.width = 32;
     descriptor.height = 16;
@@ -27,6 +31,12 @@ auto tTargetReportsWhatItWasAskedFor =
     descriptor.sampleableDepth = true;
     descriptor.sampleCount = samples;
 
+    if (!sampleable)
+    {
+        check(!device.makeTexture(descriptor).isValid());
+        descriptor.sampleableDepth = false;
+    }
+
     auto target = device.makeTexture(descriptor);
 
     check(target.isValid());
@@ -34,7 +44,7 @@ auto tTargetReportsWhatItWasAskedFor =
     check(target.sampleCount() == samples);
     check(target.hasDepth());
     check(target.hasStencil());
-    check(target.hasSampleableDepth());
+    check(target.hasSampleableDepth() == sampleable);
 
     check(target.width() == 32);
     check(target.height() == 16);

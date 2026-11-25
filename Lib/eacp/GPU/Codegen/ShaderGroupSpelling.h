@@ -34,6 +34,10 @@ std::string formatFoldedPair(GroupReduction operation,
 
 std::string formatBarrierStatement(Backend backend, const std::string& indent);
 
+// What every group memory declaration starts with in WGSL, which names the
+// type after the variable.
+inline constexpr auto wgslWorkgroupQualifier = std::string_view {"var<workgroup>"};
+
 constexpr std::string_view getGroupLaneName(Backend backend)
 {
     return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";

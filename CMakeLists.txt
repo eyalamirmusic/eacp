@@ -4,9 +4,18 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android" AND NOT CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/CMake/AndroidToolchain.cmake")
 endif ()
 
+option(EACP_WASM_SETUP "Default WASM setup" OFF)
+
+if (EACP_WASM_SETUP)
+    if (APPLE)
+        set(CMAKE_TOOLCHAIN_FILE "/opt/homebrew/opt/emscripten/libexec/cmake/Modules/Platform/Emscripten.cmake" CACHE INTERNAL "")
+    endif ()
+endif ()
+
 project(eacp VERSION 0.1.0 LANGUAGES C CXX)
 
-if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+# The web is wasm32 by design: wasm64 is not what browsers run by default.
+if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
     message(FATAL_ERROR
             "eacp requires a 64-bit toolchain (x64 or ARM64), but the "
             "selected compiler targets 32-bit "
@@ -27,6 +36,12 @@ endif ()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
 include(ConfigureLog)
+
+# Before any target, dependencies included: every object in a web link has to
+# be compiled with the same exception model.
+if (EMSCRIPTEN)
+    include(Web)
+endif ()
 
 option(EACP_UNITY_BUILD "Compile eacp libraries as CMake unity builds" OFF)
 option(EACP_UNITY_BUILD_TESTS "Compile the test executables as unity builds" OFF)
@@ -76,21 +91,36 @@ endif ()
 #   EACP_HAS_CAPTURE Camera, CameraView; Video, VideoView but not on iOS or Android.
 #   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
+#   EACP_HAS_THREADS threads a body can run on: Thread, the pool's threads.
+#   EACP_HAS_SOCKETS sockets of our own: the servers, TCP, IPC, the RPC
+#                    transports over them.
+set(EACP_HAS_THREADS ON)
+
+if (EMSCRIPTEN)
+    set(EACP_HAS_THREADS OFF)
+endif ()
+
+set(EACP_HAS_SOCKETS ON)
+
+if (EMSCRIPTEN)
+    set(EACP_HAS_SOCKETS OFF)
+endif ()
+
 set(EACP_HAS_DRAW OFF)
 
-if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID))
+if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_DRAW ON)
 endif ()
 
 set(EACP_HAS_GPU OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX OR ANDROID))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_GPU ON)
 endif ()
 
 set(EACP_HAS_TEXT OFF)
 
-if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX OR ANDROID))
+if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_TEXT ON)
 endif ()
 
@@ -117,6 +147,8 @@ set(EACP_HAS_COREML OFF)
 if (EACP_HAS_GPU AND APPLE)
     set(EACP_HAS_COREML ON)
 endif ()
+
+
 
 include(TargetSetup)
 include(EacpSchema)

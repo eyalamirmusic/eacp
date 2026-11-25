@@ -141,8 +141,10 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 ## Platform — `Core/Platform/Platform.h`
 
 - `isMac`, `isIOS`, `isApple`, `isWindows`, `isAndroid`, `isLinux`,
-  `isLinuxFamily`, `isPosix`, `name()` — compile-time OS checks
-- `architectureName()` — `"arm64"` or `"x64"`
+  `isLinuxFamily`, `isWeb`, `isPosix`, `name()` — compile-time OS checks
+- `hasThreads()` — whether a `Thread` can run a body (false on the web); ask
+  it, not `isWeb()`, before starting a thread
+- `architectureName()` — `"arm64"`, `"x64"` or `"wasm32"`
 - `isStandalone()` / `isDLL()` — app or plugin copy
 - `getAppName()`, `getCompanyName()`, `getAppVersion()` — from AppInfo
 - Not here: `isDebuggerAttached`
@@ -170,7 +172,8 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
   calling thread, true if it took
 - `ThreadPool` / `ThreadPool::shared()` (`ThreadPool.h`) — worker threads,
   `submit(work | PoolTask)`, `cancelPending`, `waitUntilIdle`, `stop`;
-  `ThreadPoolOptions::thread` is each thread's `ThreadOptions`, realtime included
+  `ThreadPoolOptions::thread` is each thread's `ThreadOptions`, realtime included;
+  without threads it runs its work on the main thread, one task per loop turn
 - `TaskGroup` (`ThreadPool.h`) — a pool's tasks waited on and cancelled together
 - `setCurrentThreadName(name)` (`ThreadUtils.h`) — name the calling thread
 - `setCurrentThreadPriority(priority)` (`ThreadUtils.h`) — `Low`, `Normal`,
@@ -192,7 +195,8 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 
 ## HTTP — `Network/HTTP/`, `Network/HTTPServer/` (`eacp::HTTP`)
 
-- `httpRequest(req)` / `Request::perform()` — blocking request
+- `httpRequest(req)` / `Request::perform()` — blocking request (on the web only
+  in an executable linking `eacp-core-nested-pump`; apps use the async calls)
 - `downloadFile(req, path)` — stream a response to a file, resumable
 - `asyncRequest` / `asyncDownload` (`HttpAsync.h`) — callback on the main thread
 - `Request::post`, `addFormField`, `addFileField`, `addFileBytes` — multipart body
@@ -212,6 +216,9 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - Not here: a server-side multipart parser
 
 ## Other networking — `Network/`
+
+The servers, `TCP` and `IPC` (here and under HTTP above) need
+`EACP_HAS_SOCKETS`, which the web lacks.
 
 - `WebSocket::Connection` — `send`, `sendBinary`, `close`, `Callbacks`
 - `WebSocket::Server` — `listen`, `send`, `broadcast`, `close`, `clientCount`

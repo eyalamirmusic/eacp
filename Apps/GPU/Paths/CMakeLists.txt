@@ -1,4 +1,5 @@
-eacp_add_app(Paths Main.cpp)
+eacp_add_app(Paths Main.cpp
+        DESCRIPTION "Vector paths tessellated and filled on the GPU.")
 target_link_libraries(Paths PRIVATE eacp-gpuwidgets)
 set_target_properties(Paths PROPERTIES MACOSX_BUNDLE TRUE)
 

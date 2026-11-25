@@ -513,6 +513,36 @@ void main()
 )";
 }
 
+std::string attributeWgsl(InputKind kind)
+{
+    const auto* type = kind == InputKind::Float  ? "vec4f"
+                       : kind == InputKind::UInt ? "vec4u"
+                                                 : "vec4i";
+
+    return std::string(R"(
+struct VertexOut
+{
+    @builtin(position) position: vec4f,
+    @location(0) @interpolate(flat) colour: vec4f,
+}
+
+@vertex fn vertexMain(@location(0) position: vec2f, @location(1) value: )")
+           + type + R"()
+    -> VertexOut
+{
+    var out: VertexOut;
+    out.position = vec4f(position, 0.0, 1.0);
+    out.colour = vec4f(value);
+    return out;
+}
+
+@fragment fn fragmentMain(in: VertexOut) -> @location(0) vec4f
+{
+    return in.colour;
+}
+)";
+}
+
 struct AttributeRunner final : GPUView
 {
     AttributeRunner() { setSampleCount(1); }
@@ -745,8 +775,10 @@ auto tEveryFormatReadsItsValue = test("VertexFormat/everyFormatReadsItsValue") =
     auto makeLibrary = [](InputKind kind)
     {
         return Device::shared().makeShaderLibrary(
-            nativeShaderSource(
-                attributeMsl(kind), attributeHlsl(kind), attributeGlsl(kind))
+            nativeShaderSource(attributeMsl(kind),
+                               attributeHlsl(kind),
+                               attributeGlsl(kind),
+                               attributeWgsl(kind))
                 .withVertex("vertexMain")
                 .withFragment("fragmentMain"));
     };

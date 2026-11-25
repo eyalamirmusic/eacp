@@ -12,6 +12,12 @@ endif ()
 add_subdirectory(Console)
 add_subdirectory(Network)
 
+# The examples written for the browser's loop, beside the ones above that run
+# there unchanged.
+if (EMSCRIPTEN)
+    add_subdirectory(Web)
+endif ()
+
 # Core ML is Apple's; the spike is a macOS console app.
 if (EACP_HAS_COREML AND NOT IOS)
     add_subdirectory(ML)
@@ -21,12 +27,18 @@ if (EACP_HAS_GPU)
     add_subdirectory(GPU)
 
     # Every host and plugin under here draws a GPUView, so a window and a
-    # device are the whole of what the pairs need.
-    add_subdirectory(Plugins)
+    # device are the whole of what the pairs need, but each pair loads a
+    # dynamic library, which the web cannot.
+    if (NOT EMSCRIPTEN)
+        add_subdirectory(Plugins)
+    endif ()
 endif ()
 
-# This one paints through the platform's own 2D stack.
-if (EACP_HAS_CONTEXT)
+# Desktop-shell examples: a few paint through the platform's own 2D stack, the
+# rest are the component tier, each gated on its own needs inside. Linux has
+# the component tier, but none of these has been built there yet; the web has
+# them, bar the ones a page has no shell for.
+if (EACP_HAS_CONTEXT OR (EACP_HAS_TEXT AND NOT LINUX))
     add_subdirectory(Graphics)
 endif ()
 

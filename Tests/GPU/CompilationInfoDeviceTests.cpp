@@ -36,32 +36,7 @@ ShaderBackend currentBackend()
 // Line 7 in every dialect: the undeclared identifier's.
 ShaderSource brokenKernel()
 {
-    return nativeDialect(
-               "#include <metal_stdlib>\n"
-               "using namespace metal;\n"
-               "\n"
-               "kernel void computeMain(device float* out [[buffer(0)]],\n"
-               "                        uint gid [[thread_position_in_grid]])\n"
-               "{\n"
-               "    out[gid] = undeclaredThing * 2.0f;\n"
-               "}\n",
-               "// eacp\n"
-               "RWStructuredBuffer<float> output : register(u0);\n"
-               "\n"
-               "[numthreads(64, 1, 1)]\n"
-               "void computeMain(uint3 gid : SV_DispatchThreadID)\n"
-               "{\n"
-               "    output[gid.x] = undeclaredThing * 2.0f;\n"
-               "}\n",
-               "#version 450\n"
-               "layout(local_size_x = 64) in;\n"
-               "layout(std430, binding = 0) buffer Out { float values[]; } outBuffer;\n"
-               "\n"
-               "void main()\n"
-               "{\n"
-               "    outBuffer.values[gl_GlobalInvocationID.x] = undeclaredThing * 2.0;\n"
-               "}\n")
-        .withCompute("computeMain");
+    return nativeDialect("CompilationInfo/brokenKernel").withCompute("computeMain");
 }
 
 int brokenColumn()
@@ -72,6 +47,8 @@ int brokenColumn()
             return 16;
         case ShaderBackend::DirectX:
             return 21;
+        case ShaderBackend::WebGPU:
+            return 17;
         case ShaderBackend::Vulkan:
             break;
     }
@@ -80,37 +57,11 @@ int brokenColumn()
 }
 
 // A warning and nothing else: Metal's #warning on line 3, glslang's unknown
-// extension on line 2, FXC's implicit truncation on line 7.
+// extension on line 2, FXC's implicit truncation on line 7, the WGSL
+// compiler's unreachable statement on line 8.
 ShaderSource warnedKernel()
 {
-    return nativeDialect(
-               "#include <metal_stdlib>\n"
-               "using namespace metal;\n"
-               "#warning eacp sample warning\n"
-               "kernel void computeMain(device float* out [[buffer(0)]],\n"
-               "                        uint gid [[thread_position_in_grid]])\n"
-               "{\n"
-               "    out[gid] = 1.0f;\n"
-               "}\n",
-               "// eacp\n"
-               "RWStructuredBuffer<float> output : register(u0);\n"
-               "\n"
-               "[numthreads(64, 1, 1)]\n"
-               "void computeMain(uint3 gid : SV_DispatchThreadID)\n"
-               "{\n"
-               "    float2 v = float4(1, 2, 3, 4);\n"
-               "    output[gid.x] = v.x;\n"
-               "}\n",
-               "#version 450\n"
-               "#extension GL_EXT_eacp_nonexistent : warn\n"
-               "layout(local_size_x = 64) in;\n"
-               "layout(std430, binding = 0) buffer Out { float values[]; } outBuffer;\n"
-               "\n"
-               "void main()\n"
-               "{\n"
-               "    outBuffer.values[gl_GlobalInvocationID.x] = 2.0;\n"
-               "}\n")
-        .withCompute("computeMain");
+    return nativeDialect("CompilationInfo/warnedKernel").withCompute("computeMain");
 }
 
 int warnedLine()
@@ -121,6 +72,8 @@ int warnedLine()
             return 3;
         case ShaderBackend::DirectX:
             return 7;
+        case ShaderBackend::WebGPU:
+            return 8;
         case ShaderBackend::Vulkan:
             break;
     }
@@ -132,42 +85,7 @@ int warnedLine()
 // stage a backend compiling them apart names.
 ShaderSource brokenFragment()
 {
-    return nativeDialect("#include <metal_stdlib>\n"
-                         "using namespace metal;\n"
-                         "\n"
-                         "vertex float4 vertexMain(uint id [[vertex_id]])\n"
-                         "{\n"
-                         "    return float4(0.0, 0.0, 0.0, 1.0);\n"
-                         "}\n"
-                         "\n"
-                         "fragment float4 fragmentMain()\n"
-                         "{\n"
-                         "    return missingColour;\n"
-                         "}\n",
-                         "float4 vertexMain(uint id : SV_VertexID) : SV_Position\n"
-                         "{\n"
-                         "    return float4(0.0, 0.0, 0.0, 1.0);\n"
-                         "}\n"
-                         "\n"
-                         "float4 fragmentMain() : SV_Target\n"
-                         "{\n"
-                         "    return missingColour;\n"
-                         "}\n",
-                         "#version 450\n"
-                         "#ifdef EACP_VERTEX\n"
-                         "void main()\n"
-                         "{\n"
-                         "    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);\n"
-                         "}\n"
-                         "#endif\n"
-                         "#ifdef EACP_FRAGMENT\n"
-                         "layout(location = 0) out vec4 colour;\n"
-                         "\n"
-                         "void main()\n"
-                         "{\n"
-                         "    colour = missingColour;\n"
-                         "}\n"
-                         "#endif\n");
+    return nativeDialect("CompilationInfo/brokenFragment");
 }
 
 std::string describe(const ShaderLibrary& library)
@@ -206,8 +124,9 @@ auto tBroken = test("CompilationInfoDevice/aBrokenKernelReportsWhereItBroke") = 
     check(error.message.find("undeclaredThing") != std::string::npos,
           error.describe());
 
-    if (currentBackend() == ShaderBackend::Metal)
-        check(!error.stage.has_value(), "a Metal library is compiled whole");
+    if (currentBackend() == ShaderBackend::Metal
+        || currentBackend() == ShaderBackend::WebGPU)
+        check(!error.stage.has_value(), "a Metal or WGSL library is compiled whole");
     else
         check(error.stage == ShaderStage::Compute, error.describe());
 
@@ -244,15 +163,7 @@ auto tMetalWarning =
         return;
 
     const auto library = Device::shared().makeShaderLibrary(
-        ShaderSource::msl(
-            "#include <metal_stdlib>\n"
-            "using namespace metal;\n"
-            "#warning eacp sample warning\n"
-            "kernel void computeMain(device float* out [[buffer(0)]],\n"
-            "                        uint gid [[thread_position_in_grid]])\n"
-            "{\n"
-            "    out[gid] = missingValue;\n"
-            "}\n")
+        ShaderSource::msl(testShaderFile("CompilationInfo/warningBesideError.metal"))
             .withCompute("computeMain"));
     const auto& info = library.compilationInfo();
 
@@ -298,6 +209,8 @@ auto tFragment = test("CompilationInfoDevice/aBrokenStageIsNamed") = []
             check(error.line == 8, error.describe());
             check(error.stage.has_value(), error.describe());
             break;
+        case ShaderBackend::WebGPU:
+            break;
     }
 };
 
@@ -307,7 +220,7 @@ auto tInvalid = test("CompilationInfoDevice/everyInvalidLibraryHoldsAnError") = 
         return;
 
     const auto empty = Device::shared().makeShaderLibrary(
-        nativeDialect({}, {}, {}).withCompute("computeMain"));
+        nativeDialect({}, {}, {}, {}).withCompute("computeMain"));
     check(!empty.isValid());
     check(empty.compilationInfo().hasErrors());
     check(!firstOf(empty.compilationInfo(), CompilationMessageType::Error)
@@ -368,38 +281,7 @@ auto tClean = test("CompilationInfoDevice/aCleanCompileSaysNothing") = []
 // messages every set shares.
 ShaderSource valueSetKernel()
 {
-    return nativeDialect(
-               "#include <metal_stdlib>\n"
-               "using namespace metal;\n"
-               "constant int eacpOverride0 [[function_constant(0)]];\n"
-               "kernel void computeMain(device float* out [[buffer(0)]],\n"
-               "                        uint gid [[thread_position_in_grid]])\n"
-               "{\n"
-               "    out[gid] = 1.0f;\n"
-               "}\n",
-               "#ifndef EACP_OVERRIDE_0\n"
-               "#define EACP_OVERRIDE_0 1\n"
-               "#endif\n"
-               "RWStructuredBuffer<float> output : register(u0);\n"
-               "\n"
-               "[numthreads(64, 1, 1)]\n"
-               "void computeMain(uint3 gid : SV_DispatchThreadID)\n"
-               "{\n"
-               "#if EACP_OVERRIDE_0 == 7\n"
-               "    output[gid.x] = brokenForSeven;\n"
-               "#else\n"
-               "    output[gid.x] = (float) EACP_OVERRIDE_0;\n"
-               "#endif\n"
-               "}\n",
-               "#version 450\n"
-               "layout(local_size_x = 64) in;\n"
-               "layout(constant_id = 0) const int override_k = 1;\n"
-               "layout(std430, binding = 0) buffer Out { float values[]; } outBuffer;\n"
-               "\n"
-               "void main()\n"
-               "{\n"
-               "    outBuffer.values[gl_GlobalInvocationID.x] = float(override_k);\n"
-               "}\n")
+    return nativeDialect("CompilationInfo/valueSetKernel")
         .withCompute("computeMain")
         .withPipelineConstants();
 }

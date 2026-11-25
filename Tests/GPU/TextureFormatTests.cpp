@@ -81,38 +81,6 @@ void runFrame(std::function<void(Frame&)> draw)
 // address texels by the fragment's own position instead.
 // ---------------------------------------------------------------------------
 
-constexpr auto mslSample = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn
-{
-    float2 position [[attribute(0)]];
-    float2 uv [[attribute(1)]];
-};
-
-struct VertexOut
-{
-    float4 position [[position]];
-    float2 uv;
-};
-
-vertex VertexOut vertexMain(VertexIn in [[stage_in]])
-{
-    VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    out.uv = in.uv;
-    return out;
-}
-
-fragment float4 fragmentMain(VertexOut in [[stage_in]],
-                             texture2d<float> image [[texture(0)]],
-                             sampler imageSampler [[sampler(0)]])
-{
-    return image.sample(imageSampler, in.uv);
-}
-)";
-
 // The static sampler a TextureSampling picks is s<samplingIndex>: 0 for
 // Nearest and Clamp, 2 for Linear and Clamp.
 std::string hlslSample(int samplerRegister)
@@ -149,31 +117,12 @@ float4 fragmentMain(VertexOut input) : SV_Target
 )";
 }
 
-constexpr auto glslSample = R"(#version 450
-
-#ifdef EACP_VERTEX
-layout(location = 0) in vec2 attr0;
-layout(location = 1) in vec2 attr1;
-layout(location = 0) out vec2 uv;
-
-void main()
+ShaderTwins sampleTwins(int samplerRegister)
 {
-    gl_Position = vec4(attr0, 0.0, 1.0);
-    uv = attr1;
+    auto twins = shaderTwins("TextureFormat/sample");
+    twins.hlsl = hlslSample(samplerRegister);
+    return twins;
 }
-#endif
-
-#ifdef EACP_FRAGMENT
-layout(location = 0) in vec2 uv;
-layout(set = 0, binding = 8) uniform sampler2D image;
-layout(location = 0) out vec4 fragColor;
-
-void main()
-{
-    fragColor = texture(image, uv);
-}
-#endif
-)";
 
 // The integer readers: texel (x, y) of the source into pixel (x, y) of an
 // RGBA32Uint or RGBA32Sint target, every channel, missing ones included.
@@ -346,15 +295,64 @@ constexpr float flatColor[] = {0.25f, 0.5f, 0.75f, 1.f};
 constexpr std::int64_t flatUints[] = {7, 100, 200, 250};
 constexpr std::int64_t flatInts[] = {-7, 100, -100, 120};
 
+std::string wgslReadIntegers(const char* scalar)
+{
+    const auto type = std::string {scalar};
+
+    return R"(
+@group(0) @binding(17) var image: texture_2d<)"
+           + type + R"(>;
+
+@vertex fn vertexMain(@location(0) position: vec2f, @location(1) uv: vec2f)
+    -> @builtin(position) vec4f
+{
+    return vec4f(position, 0.0, 1.0);
+}
+
+@fragment fn fragmentMain(@builtin(position) position: vec4f)
+    -> @location(0) vec4<)"
+           + type + R"(>
+{
+    return textureLoad(image, vec2u(position.xy), 0);
+}
+)";
+}
+
+std::string wgslFlat(const char* type, const char* value)
+{
+    return std::string {R"(
+@vertex fn vertexMain(@location(0) position: vec2f, @location(1) uv: vec2f)
+    -> @builtin(position) vec4f
+{
+    return vec4f(position, 0.0, 1.0);
+}
+
+@fragment fn fragmentMain() -> @location(0) )"}
+           + type + R"(
+{
+    return )"
+           + value + R"(;
+}
+)";
+}
+
+ShaderLibrary makeLibrary(
+    ShaderTwins twins,
+    const std::source_location& location = std::source_location::current())
+{
+    auto source = nativeShaderSource(std::move(twins), location);
+    return Device::shared().makeShaderLibrary(
+        source.withVertex("vertexMain").withFragment("fragmentMain"));
+}
+
 ShaderLibrary makeLibrary(
     const std::string& msl,
     const std::string& hlsl,
     const std::string& glsl,
+    const std::string& wgsl,
     const std::source_location& location = std::source_location::current())
 {
-    auto source = nativeShaderSource(msl, hlsl, glsl, location);
-    return Device::shared().makeShaderLibrary(
-        source.withVertex("vertexMain").withFragment("fragmentMain"));
+    return makeLibrary(ShaderTwins {msl, hlsl, glsl, wgsl}, location);
 }
 
 RenderPipeline makePipeline(const ShaderLibrary& library,
@@ -761,7 +759,7 @@ auto tFormatSrgbSample = test("Formats/srgbIsDecodedWhenSampled") = []
     if (!canTest())
         return;
 
-    auto library = makeLibrary(mslSample, hlslSample(0), glslSample);
+    auto library = makeLibrary(sampleTwins(0));
     auto pipeline = makePipeline(library, PixelFormat::RGBA32Float);
 
     constexpr std::uint8_t texel[] = {0, 128, 255, 64};
@@ -806,7 +804,7 @@ auto tFormatSrgbFilter = test("Formats/srgbIsDecodedBeforeTheFilter") = []
     // Halfway between a black texel and a white one: 0.5 when the sampler
     // decodes each texel and then filters, which is the rule, and 0.214 when
     // it filters the code values and decodes the mean.
-    auto library = makeLibrary(mslSample, hlslSample(2), glslSample);
+    auto library = makeLibrary(sampleTwins(2));
     auto pipeline = makePipeline(library, PixelFormat::RGBA32Float);
 
     constexpr std::uint8_t pixels[] = {0, 0, 0, 255, 255, 255, 255, 255};
@@ -831,7 +829,7 @@ auto tFormatPackedSample = test("Formats/sixteenBitAndPackedFormatsSample") = []
     if (!canTest())
         return;
 
-    auto library = makeLibrary(mslSample, hlslSample(0), glslSample);
+    auto library = makeLibrary(sampleTwins(0));
     auto pipeline = makePipeline(library, PixelFormat::RGBA32Float);
 
     struct Case
@@ -898,10 +896,14 @@ auto tFormatIntegerRead = test("Formats/integerFormatsReadAsIntegers") = []
     if (!canTest())
         return;
 
-    auto uintLibrary = makeLibrary(
-        mslReadIntegers("uint"), hlslReadIntegers("uint"), glslReadIntegers("u"));
-    auto intLibrary = makeLibrary(
-        mslReadIntegers("int"), hlslReadIntegers("int"), glslReadIntegers("i"));
+    auto uintLibrary = makeLibrary(mslReadIntegers("uint"),
+                                   hlslReadIntegers("uint"),
+                                   glslReadIntegers("u"),
+                                   wgslReadIntegers("u32"));
+    auto intLibrary = makeLibrary(mslReadIntegers("int"),
+                                  hlslReadIntegers("int"),
+                                  glslReadIntegers("i"),
+                                  wgslReadIntegers("i32"));
 
     auto uintPipeline = makePipeline(uintLibrary, PixelFormat::RGBA32Uint);
     auto intPipeline = makePipeline(intLibrary, PixelFormat::RGBA32Sint);
@@ -964,7 +966,8 @@ auto tFormatFloatTargets = test("Formats/aPassDrawsIntoEachNewFloatFormat") = []
 
     auto library = makeLibrary(mslFlat("float4", "float4(0.25, 0.5, 0.75, 1.0)"),
                                hlslFlat("float4", "float4(0.25, 0.5, 0.75, 1.0)"),
-                               glslFlat("vec4", "vec4(0.25, 0.5, 0.75, 1.0)"));
+                               glslFlat("vec4", "vec4(0.25, 0.5, 0.75, 1.0)"),
+                               wgslFlat("vec4f", "vec4f(0.25, 0.5, 0.75, 1.0)"));
 
     for (const auto format: floatTargets)
     {
@@ -1006,7 +1009,8 @@ auto tFormatSrgbBlend = test("Formats/srgbTargetsBlendInLinearLight") = []
     // it 137 + 137.
     auto library = makeLibrary(mslFlat("float4", "float4(0.25, 0.25, 0.25, 1.0)"),
                                hlslFlat("float4", "float4(0.25, 0.25, 0.25, 1.0)"),
-                               glslFlat("vec4", "vec4(0.25, 0.25, 0.25, 1.0)"));
+                               glslFlat("vec4", "vec4(0.25, 0.25, 0.25, 1.0)"),
+                               wgslFlat("vec4f", "vec4f(0.25, 0.25, 0.25, 1.0)"));
 
     auto pipeline =
         makePipeline(library, PixelFormat::RGBA8UnormSrgb, BlendMode::Additive);
@@ -1035,10 +1039,12 @@ auto tFormatIntegerTargets = test("Formats/aPassWritesEachIntegerFormat") = []
 
     auto uintLibrary = makeLibrary(mslFlat("uint4", "uint4(7, 100, 200, 250)"),
                                    hlslFlat("uint4", "uint4(7, 100, 200, 250)"),
-                                   glslFlat("uvec4", "uvec4(7u, 100u, 200u, 250u)"));
+                                   glslFlat("uvec4", "uvec4(7u, 100u, 200u, 250u)"),
+                                   wgslFlat("vec4u", "vec4u(7u, 100u, 200u, 250u)"));
     auto intLibrary = makeLibrary(mslFlat("int4", "int4(-7, 100, -100, 120)"),
                                   hlslFlat("int4", "int4(-7, 100, -100, 120)"),
-                                  glslFlat("ivec4", "ivec4(-7, 100, -100, 120)"));
+                                  glslFlat("ivec4", "ivec4(-7, 100, -100, 120)"),
+                                  wgslFlat("vec4i", "vec4i(-7, 100, -100, 120)"));
 
     for (const auto format: integerFormats)
     {
@@ -1068,32 +1074,6 @@ auto tFormatIntegerTargets = test("Formats/aPassWritesEachIntegerFormat") = []
 
 namespace
 {
-constexpr auto mslKernelFloats = R"(
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void computeMain(texture2d<float, access::write> target [[texture(0)]],
-                        uint2 gid [[thread_position_in_grid]])
-{
-    if (gid.x < target.get_width() && gid.y < target.get_height())
-        target.write(float4(0.25, 0.5, 0.75, 1.0), gid);
-}
-)";
-
-constexpr auto hlslKernelFloats = R"(
-RWTexture2D<float4> target : register(u8);
-
-[numthreads(8, 8, 1)]
-void computeMain(uint3 gid : SV_DispatchThreadID)
-{
-    uint width, height;
-    target.GetDimensions(width, height);
-
-    if (gid.x < width && gid.y < height)
-        target[gid.xy] = float4(0.25, 0.5, 0.75, 1.0);
-}
-)";
-
 std::string mslKernelIntegers(const char* type, const char* value)
 {
     return std::string {R"(
@@ -1149,49 +1129,78 @@ void main()
 )";
 }
 
+std::string wgslKernel(const char* format, const char* value)
+{
+    return std::string {R"(
+@group(0) @binding(17) var image: texture_storage_2d<)"}
+           + format + R"(, write>;
+
+@compute @workgroup_size(8, 8)
+fn computeMain(@builtin(global_invocation_id) gid: vec3u)
+{
+    let size = textureDimensions(image);
+
+    if (gid.x < size.x && gid.y < size.y)
+    {
+        textureStore(image, gid.xy, )"
+           + value + R"();
+    }
+}
+)";
+}
+
 struct KernelFormat
 {
     TextureFormat format;
     const char* qualifier;
+    const char* wgslFormat;
 };
 
 constexpr KernelFormat kernelFloatFormats[] = {
-    {TextureFormat::RG16Unorm, "rg16"},
-    {TextureFormat::RGBA16Unorm, "rgba16"},
-    {TextureFormat::RGB10A2Unorm, "rgb10_a2"},
-    {TextureFormat::RG11B10Float, "r11f_g11f_b10f"},
+    {TextureFormat::RG16Unorm, "rg16", "rg16unorm"},
+    {TextureFormat::RGBA16Unorm, "rgba16", "rgba16unorm"},
+    {TextureFormat::RGB10A2Unorm, "rgb10_a2", "rgb10a2unorm"},
+    {TextureFormat::RG11B10Float, "r11f_g11f_b10f", "rg11b10ufloat"},
 };
 
 constexpr KernelFormat kernelIntegerFormats[] = {
-    {TextureFormat::R8Uint, "r8ui"},
-    {TextureFormat::RG8Uint, "rg8ui"},
-    {TextureFormat::RGBA8Uint, "rgba8ui"},
-    {TextureFormat::R16Uint, "r16ui"},
-    {TextureFormat::RG16Uint, "rg16ui"},
-    {TextureFormat::RGBA16Uint, "rgba16ui"},
-    {TextureFormat::RG32Uint, "rg32ui"},
-    {TextureFormat::RGBA32Uint, "rgba32ui"},
-    {TextureFormat::R8Sint, "r8i"},
-    {TextureFormat::RG8Sint, "rg8i"},
-    {TextureFormat::RGBA8Sint, "rgba8i"},
-    {TextureFormat::R16Sint, "r16i"},
-    {TextureFormat::RG16Sint, "rg16i"},
-    {TextureFormat::RGBA16Sint, "rgba16i"},
-    {TextureFormat::R32Sint, "r32i"},
-    {TextureFormat::RG32Sint, "rg32i"},
-    {TextureFormat::RGBA32Sint, "rgba32i"},
+    {TextureFormat::R8Uint, "r8ui", "r8uint"},
+    {TextureFormat::RG8Uint, "rg8ui", "rg8uint"},
+    {TextureFormat::RGBA8Uint, "rgba8ui", "rgba8uint"},
+    {TextureFormat::R16Uint, "r16ui", "r16uint"},
+    {TextureFormat::RG16Uint, "rg16ui", "rg16uint"},
+    {TextureFormat::RGBA16Uint, "rgba16ui", "rgba16uint"},
+    {TextureFormat::RG32Uint, "rg32ui", "rg32uint"},
+    {TextureFormat::RGBA32Uint, "rgba32ui", "rgba32uint"},
+    {TextureFormat::R8Sint, "r8i", "r8sint"},
+    {TextureFormat::RG8Sint, "rg8i", "rg8sint"},
+    {TextureFormat::RGBA8Sint, "rgba8i", "rgba8sint"},
+    {TextureFormat::R16Sint, "r16i", "r16sint"},
+    {TextureFormat::RG16Sint, "rg16i", "rg16sint"},
+    {TextureFormat::RGBA16Sint, "rgba16i", "rgba16sint"},
+    {TextureFormat::R32Sint, "r32i", "r32sint"},
+    {TextureFormat::RG32Sint, "rg32i", "rg32sint"},
+    {TextureFormat::RGBA32Sint, "rgba32i", "rgba32sint"},
 };
+
+ComputePipeline makeKernel(
+    ShaderTwins twins,
+    const std::source_location& location = std::source_location::current())
+{
+    auto source = nativeComputeShaderSource(std::move(twins), location)
+                      .withCompute("computeMain");
+    auto library = Device::shared().makeShaderLibrary(source);
+    return Device::shared().makeComputePipeline(library);
+}
 
 ComputePipeline makeKernel(
     const std::string& msl,
     const std::string& hlsl,
     const std::string& glsl,
+    const std::string& wgsl,
     const std::source_location& location = std::source_location::current())
 {
-    auto source = nativeComputeShaderSource(msl, hlsl, glsl, location)
-                      .withCompute("computeMain");
-    auto library = Device::shared().makeShaderLibrary(source);
-    return Device::shared().makeComputePipeline(library);
+    return makeKernel(ShaderTwins {msl, hlsl, glsl, wgsl}, location);
 }
 
 Vector<std::uint8_t> writeWithKernel(const ComputePipeline& pipeline,
@@ -1280,10 +1289,10 @@ auto tFormatKernelWrites = test("Formats/aKernelWritesTheNewFormats") = []
         if (!Device::shared().supportsComputeWrite(written.format))
             continue;
 
-        auto pipeline = makeKernel(
-            mslKernelFloats,
-            hlslKernelFloats,
-            glslKernel(written.qualifier, "", "vec4(0.25, 0.5, 0.75, 1.0)"));
+        auto twins = shaderTwins("TextureFormat/kernelFloats");
+        twins.glsl = glslKernel(written.qualifier, "", "vec4(0.25, 0.5, 0.75, 1.0)");
+        twins.wgsl = wgslKernel(written.wgslFormat, "vec4f(0.25, 0.5, 0.75, 1.0)");
+        auto pipeline = makeKernel(twins);
 
         const auto out = writeWithKernel(pipeline, written.format);
         const auto stride = bytesPerPixel(written.format);
@@ -1311,16 +1320,18 @@ auto tFormatKernelWrites = test("Formats/aKernelWritesTheNewFormats") = []
 
         auto pipeline =
             signedFormat
-                ? makeKernel(mslKernelIntegers("int", "int4(-7, 100, -100, 120)"),
-                             hlslKernelIntegers("int", "int4(-7, 100, -100, 120)"),
-                             glslKernel(written.qualifier,
-                                        "i",
-                                        "ivec4(-7, 100, -100, 120)"))
-                : makeKernel(mslKernelIntegers("uint", "uint4(7, 100, 200, 250)"),
-                             hlslKernelIntegers("uint", "uint4(7, 100, 200, 250)"),
-                             glslKernel(written.qualifier,
-                                        "u",
-                                        "uvec4(7u, 100u, 200u, 250u)"));
+                ? makeKernel(
+                      mslKernelIntegers("int", "int4(-7, 100, -100, 120)"),
+                      hlslKernelIntegers("int", "int4(-7, 100, -100, 120)"),
+                      glslKernel(
+                          written.qualifier, "i", "ivec4(-7, 100, -100, 120)"),
+                      wgslKernel(written.wgslFormat, "vec4i(-7, 100, -100, 120)"))
+                : makeKernel(
+                      mslKernelIntegers("uint", "uint4(7, 100, 200, 250)"),
+                      hlslKernelIntegers("uint", "uint4(7, 100, 200, 250)"),
+                      glslKernel(
+                          written.qualifier, "u", "uvec4(7u, 100u, 200u, 250u)"),
+                      wgslKernel(written.wgslFormat, "vec4u(7u, 100u, 200u, 250u)"));
 
         const auto out = writeWithKernel(pipeline, written.format);
         const auto stride = bytesPerPixel(written.format);
@@ -1431,7 +1442,7 @@ auto tFormatBlocks = test("Formats/theNewBlockFormatsDecode") = []
     if (!canTest() || !Device::shared().supportsBlockCompression())
         return;
 
-    auto library = makeLibrary(mslSample, hlslSample(0), glslSample);
+    auto library = makeLibrary(sampleTwins(0));
     auto pipeline = makePipeline(library, PixelFormat::RGBA32Float);
 
     // BC4 unsigned: 200 on the first row, 100 below it.
@@ -1856,7 +1867,7 @@ auto tFormatSharedExponentSample = test("Formats/rgb9e5SamplesAsItsDecode") = []
     if (!canTest())
         return;
 
-    auto library = makeLibrary(mslSample, hlslSample(0), glslSample);
+    auto library = makeLibrary(sampleTwins(0));
     auto pipeline = makePipeline(library, PixelFormat::RGBA32Float);
 
     auto pixels = Vector<std::uint8_t> {};

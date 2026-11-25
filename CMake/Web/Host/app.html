@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@EACP_WEB_PAGE_NAME@</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafaf9;
+    --panel: #ffffff;
+    --text: #1c1917;
+    --muted: #78716c;
+    --line: #e7e5e4;
+    --accent: #2563eb;
+    --ok: #15803d;
+    --bad: #b91c1c;
+    --warn: #a16207;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0a09;
+      --panel: #1c1917;
+      --text: #e7e5e4;
+      --muted: #a8a29e;
+      --line: #292524;
+      --accent: #60a5fa;
+      --ok: #4ade80;
+      --bad: #f87171;
+      --warn: #facc15;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 var(--sans);
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  header a { color: var(--accent); text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+  header a[hidden] { display: none; }
+  h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  header p { flex: 1; min-width: 12em; margin: 0; color: var(--muted); }
+  .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+  .badge {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .badge.webgpu { color: var(--accent); border-color: currentColor; }
+  .badge.jspi { color: var(--ok); border-color: currentColor; }
+  .badge.companion { color: var(--warn); border-color: currentColor; }
+  #status {
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+  #status.exited { color: var(--ok); }
+  #status.failed { color: var(--bad); }
+  #status.blocked { color: var(--warn); }
+  #status button {
+    margin-left: 8px;
+    padding: 0 8px;
+    font: inherit;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  #status button:hover { border-color: var(--accent); }
+  #stage { display: none; position: relative; flex: 1; min-height: 0; }
+  #canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    outline: none;
+  }
+  #output {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 10px 12px;
+    overflow: auto;
+    font: 12.5px/1.45 var(--mono);
+    white-space: pre-wrap;
+    background: var(--panel);
+  }
+  #output .err { color: var(--bad); }
+  #output .note { color: var(--muted); }
+  body.claimed #stage { display: block; }
+  body.claimed #output {
+    flex: 0 0 min(25%, 180px);
+    border-top: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+<header>
+  <a id="back" href="../index.html" hidden>&larr; Examples</a>
+  <h1>@EACP_WEB_PAGE_NAME@</h1>
+  <p>@EACP_WEB_PAGE_DESCRIPTION@</p>
+  <div id="badges" class="badges"></div>
+</header>
+<div id="status">Loading</div>
+<div id="stage"><canvas id="canvas"></canvas></div>
+<pre id="output"></pre>
+<script>
+// Runs this one app, whose settings eacp_web_executable wrote into the page.
+// Module is set up here before the app's script loads, so the program's output
+// goes to the pane and its first window takes the canvas. Every arg parameter
+// is one argument, and any replace the defaults; gallery=1 shows the way back
+// to the gallery's list; with relay=1 (Launch.mjs's browser mode) every line
+// and the exit code also go to POST /events, so the terminal sees what the page
+// does. Nothing else is fetched, so with the wasm in the .js (singleFile) the
+// page runs from file:// too.
+(() =>
+{
+    const config = @EACP_WEB_PAGE_CONFIG@;
+    const params = new URLSearchParams(location.search);
+    const name = config.name;
+    const args = params.has('arg') ? params.getAll('arg') : config.arguments;
+    const relay = params.get('relay') === '1';
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+    const canvas = document.getElementById('canvas');
+    const queue = [];
+    let sending = false;
+
+    document.getElementById('back').hidden = params.get('gallery') !== '1';
+
+    const badges = [[config.webgpu, 'webgpu', 'WebGPU'], [config.jspi, 'jspi', 'JSPI'],
+                    [config.console, 'console', 'console'],
+                    [config.companion, 'companion', 'needs ' + config.companion]];
+
+    for (const [shown, kind, label] of badges)
+    {
+        if (!shown)
+            continue;
+
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + kind;
+        badge.textContent = label;
+        document.getElementById('badges').append(badge);
+    }
+
+    const pump = () =>
+    {
+        if (!relay || sending || queue.length === 0)
+            return;
+
+        sending = true;
+        const batch = queue.splice(0);
+
+        fetch('/events', {method: 'POST', body: JSON.stringify(batch)})
+            .catch(() => {})
+            .finally(() => { sending = false; pump(); });
+    };
+
+    const report = event =>
+    {
+        queue.push(event);
+        pump();
+    };
+
+    const setStatus = (text, kind = '') =>
+    {
+        status.textContent = text;
+        status.className = kind;
+    };
+
+    const show = (text, kind) =>
+    {
+        const atBottom = output.scrollTop + output.clientHeight >= output.scrollHeight - 4;
+        const line = document.createElement('span');
+        line.className = kind;
+        line.textContent = text + '\n';
+        output.appendChild(line);
+
+        if (atBottom)
+            output.scrollTop = output.scrollHeight;
+    };
+
+    const print = (stream, text) =>
+    {
+        show(text, stream === 'err' ? 'err' : '');
+        report({kind: stream, text});
+    };
+
+    let exitCode = null;
+
+    const exited = code =>
+    {
+        if (exitCode === null || (exitCode === 0 && code !== 0))
+        {
+            setStatus(`${name} exited with code ${code}`, code === 0 ? 'exited' : 'failed');
+            show(`exited with code ${code}`, 'note');
+        }
+
+        exitCode = exitCode || code;
+        report({kind: 'exit', code});
+    };
+
+    const missing = () =>
+    {
+        const needs = [];
+
+        if (config.webgpu && !('gpu' in navigator))
+            needs.push('WebGPU (navigator.gpu)');
+
+        if (config.jspi && typeof WebAssembly.Suspending !== 'function')
+            needs.push('JSPI (WebAssembly.Suspending) for its blocking calls');
+
+        return needs;
+    };
+
+    // Window-Web.js gives the page canvas a tabindex when a window claims it.
+    const watchCanvas = () =>
+    {
+        const claimed = () => canvas.hasAttribute('tabindex');
+        const observer = new MutationObserver(() =>
+        {
+            if (!claimed())
+                return;
+
+            document.body.classList.add('claimed');
+            observer.disconnect();
+        });
+        observer.observe(canvas, {attributes: true});
+    };
+
+    const block = (text, offerAnyway) =>
+    {
+        setStatus(text, 'blocked');
+        show(text, 'note');
+
+        if (!offerAnyway)
+            return;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Run anyway';
+        button.addEventListener('click', () =>
+        {
+            params.set('force', '1');
+            location.search = params.toString();
+        });
+        status.appendChild(button);
+    };
+
+    const needs = missing();
+
+    if (needs.length > 0)
+        return block(`${name} needs ${needs.join(' and ')}, which this browser does not `
+                     + 'provide.', false);
+
+    if (!config.singleFile && location.protocol === 'file:')
+        return block(`${name} keeps its .wasm in a file of its own, which a page opened `
+                     + 'from file:// cannot fetch: serve this folder over http, run it '
+                     + `with ${name}-run, or build with EACP_WEB_SINGLE_FILE on.`, false);
+
+    if (config.companion && params.get('force') !== '1')
+        return block(`${name} talks to a server that ${config.companion} starts beside `
+                     + `it, which a static host does not have: run it with ${name}-run `
+                     + 'instead.', true);
+
+    window.addEventListener('error', e => print('err', 'page error: ' + e.message));
+    window.addEventListener('unhandledrejection',
+                            e => print('err', 'unhandled rejection: ' + e.reason));
+
+    watchCanvas();
+
+    globalThis.Module = {
+        arguments: args,
+        canvas,
+        print: text => print('out', text),
+        printErr: text => print('err', text),
+        onRuntimeInitialized: () => setStatus(`${name} running`),
+        onExit: exited,
+        onAbort: reason =>
+        {
+            print('err', 'aborted: ' + reason);
+            exited(1);
+        },
+    };
+
+    setStatus(`Loading ${name}`);
+    const element = document.createElement('script');
+    element.src = config.script;
+    element.onerror = () =>
+    {
+        print('err', 'could not load ' + config.script);
+        exited(1);
+    };
+    document.body.appendChild(element);
+})();
+</script>
+</body>
+</html>

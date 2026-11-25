@@ -24,6 +24,11 @@ namespace eacp::Graphics
 class Image;
 class Window;
 
+// Instantiates captureAsyncContent's parameter type in every file that sees
+// View: a vtable entry naming an uninstantiated class by value is emitted as
+// a () -> void import on wasm, which wasm-ld then reports as a mismatch.
+static_assert(sizeof(std::function<void(Image)>) > 0);
+
 enum class MouseEventType
 {
     Down,

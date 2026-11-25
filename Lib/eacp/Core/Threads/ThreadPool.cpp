@@ -1,6 +1,7 @@
 #include "ThreadPool.h"
 #include "EventLoop.h"
 #include "Thread.h"
+#include "../Platform/Platform.h"
 #include "../Platform/ScopedAutoReleasePool.h"
 #include "../Utils/Singleton.h"
 
@@ -26,25 +27,29 @@ namespace
 using ThreadPoolClock = std::chrono::steady_clock;
 using ThreadPoolDeadline = std::optional<ThreadPoolClock::time_point>;
 using ThreadPoolLock = std::unique_lock<std::mutex>;
+using ThreadPoolGroup = std::shared_ptr<TaskGroup::Tag>;
 
 struct ThreadPoolEntry
 {
     PoolTask task;
-    TaskGroup::Tag* group = nullptr;
+    ThreadPoolGroup group;
     bool hasMainThreadCallbacks = false;
 };
 
 struct ThreadPoolCompletion
 {
     Callback callback;
-    TaskGroup::Tag* group = nullptr;
+    ThreadPoolGroup group;
 };
 
 std::atomic<bool> threadPoolSharedCreated {false};
 
 int threadPoolResolvedCount(int requested)
 {
-    return requested > 0 ? requested : ThreadPool::defaultThreadCount();
+    if (requested > 0 && Platform::hasThreads())
+        return requested;
+
+    return ThreadPool::defaultThreadCount();
 }
 
 ThreadPoolDeadline threadPoolDeadlineAfter(Time::MS timeout)
@@ -96,26 +101,36 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
         ~FinishGuard()
         {
             auto lock = ThreadPoolLock(state.mutex);
-            state.finish(group);
+            state.finish(group.get());
         }
 
         State& state;
-        TaskGroup::Tag* group;
+        ThreadPoolGroup group;
     };
 
     // Not a thread_local: dyld never unloads an image holding one, and every
     // module linking eacp-core would then stay mapped after its last close.
     bool isCurrentThreadOurs() const
     {
+        auto onMainThread = isMainThread();
         auto lock = ThreadPoolLock(mutex);
+
+        if (onMainThread && mainThreadTasksRunning > 0)
+            return true;
+
         return workerIds.contains(std::this_thread::get_id());
+    }
+
+    static bool isClosing(const ThreadPoolGroup& group)
+    {
+        return group != nullptr && group->closing;
     }
 
     bool submit(ThreadPoolEntry entry)
     {
         auto lock = ThreadPoolLock(mutex);
 
-        if (stopping || (entry.group != nullptr && entry.group->closing))
+        if (stopping || isClosing(entry.group))
             return false;
 
         ++outstanding;
@@ -126,6 +141,14 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
             ++entry.group->outstanding;
 
         queue.push_back(std::move(entry));
+
+        if (runsOnMainThread())
+        {
+            scheduleMainThreadRun(lock);
+            lock.unlock();
+            progress.notify_all();
+            return true;
+        }
 
         auto needsThread =
             static_cast<int>(queue.size()) > idleThreads + startingThreads
@@ -149,6 +172,33 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
             startThread(index);
 
         return true;
+    }
+
+    // A pool with no threads runs its queue on the main thread instead, one
+    // task per loop turn so the loop keeps turning between them.
+    bool runsOnMainThread() const { return threadCount == 0; }
+
+    void scheduleMainThreadRun(ThreadPoolLock& lock)
+    {
+        if (mainThreadRunPending)
+            return;
+
+        mainThreadRunPending = true;
+        lock.unlock();
+        callAsync([self = shared_from_this()] { self->runOneOnMainThread(); });
+        lock.lock();
+    }
+
+    void runOneOnMainThread()
+    {
+        auto lock = ThreadPoolLock(mutex);
+        mainThreadRunPending = false;
+
+        if (auto entry = takeFront())
+            runEntry(lock, std::move(*entry));
+
+        if (!queue.empty())
+            scheduleMainThreadRun(lock);
     }
 
     // Unlocked: a realtime Thread's constructor waits for the new thread to
@@ -200,15 +250,18 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
     // may call back into the pool.
     void runEntry(ThreadPoolLock& lock, ThreadPoolEntry entry)
     {
+        auto countedOnMainThread = runsOnMainThread() ? 1 : 0;
+        mainThreadTasksRunning += countedOnMainThread;
         lock.unlock();
         auto succeeded = threadPoolRunWork(entry.task.work);
         auto delivers = succeeded && entry.hasMainThreadCallbacks;
-        auto delivery =
-            ThreadPoolCompletion {std::move(entry.task.onMainThread), entry.group};
+        auto delivery = ThreadPoolCompletion {std::move(entry.task.onMainThread),
+                                              std::move(entry.group)};
         entry = {};
         lock.lock();
+        mainThreadTasksRunning -= countedOnMainThread;
 
-        if (delivers && !stopping)
+        if (delivers && !stopping && !isClosing(delivery.group))
         {
             queueCompletion(lock, std::move(delivery));
             return;
@@ -217,7 +270,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
         lock.unlock();
         delivery.callback = nullptr;
         lock.lock();
-        finish(delivery.group);
+        finish(delivery.group.get());
     }
 
     void finish(TaskGroup::Tag* group)
@@ -271,7 +324,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
 
     void runCompletion(ThreadPoolCompletion completion)
     {
-        auto guard = FinishGuard {*this, completion.group};
+        auto guard = FinishGuard {*this, std::move(completion.group)};
         completion.callback();
     }
 
@@ -283,7 +336,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
 
         for (auto it = queue.begin(); it != queue.end();)
         {
-            if (group != nullptr && it->group != group)
+            if (group != nullptr && it->group.get() != group)
             {
                 ++it;
                 continue;
@@ -292,7 +345,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
             if (it->hasMainThreadCallbacks)
                 toDeliver.push_back({std::move(it->task.onCancelled), it->group});
             else
-                finish(it->group);
+                finish(it->group.get());
 
             removed.push_back(std::move(*it));
             it = queue.erase(it);
@@ -313,7 +366,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
     {
         for (auto it = queue.begin(); it != queue.end(); ++it)
         {
-            if (it->group == group)
+            if (it->group.get() == group)
             {
                 auto entry = std::move(*it);
                 queue.erase(it);
@@ -324,8 +377,19 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
         return std::nullopt;
     }
 
-    bool wait(TaskGroup::Tag* group, ThreadPoolDeadline deadline)
+    std::optional<ThreadPoolEntry> takeFront()
     {
+        if (queue.empty())
+            return std::nullopt;
+
+        auto entry = std::move(queue.front());
+        queue.pop_front();
+        return entry;
+    }
+
+    bool wait(ThreadPoolGroup keptAlive, ThreadPoolDeadline deadline)
+    {
+        auto* group = keptAlive.get();
         auto onMainThread = isMainThread();
         auto onPoolThread = isCurrentThreadOurs();
         auto lock = ThreadPoolLock(mutex);
@@ -357,6 +421,17 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
                 }
             }
 
+            if (runsOnMainThread())
+            {
+                auto entry = group != nullptr ? takeQueued(group) : takeFront();
+
+                if (!entry)
+                    return false;
+
+                runEntry(lock, std::move(*entry));
+                continue;
+            }
+
             if (deadline)
                 progress.wait_until(lock, *deadline);
             else
@@ -374,7 +449,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
         {
             if (matches(*it))
             {
-                finish(it->group);
+                finish(it->group.get());
                 dropped.push_back(std::move(*it));
                 it = container.erase(it);
             }
@@ -390,14 +465,15 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
         auto lock = ThreadPoolLock(mutex);
         group->closing = true;
 
-        auto inGroup = [group](const auto& item) { return item.group == group; };
+        auto inGroup = [group](const auto& item)
+        { return item.group.get() == group; };
 
         while (true)
         {
             dropMatching(queue, inGroup, droppedEntries);
             dropMatching(completions, inGroup, droppedCompletions);
 
-            if (group->outstanding == 0)
+            if (group->outstanding == 0 || runsOnMainThread())
                 return;
 
             progress.wait(lock);
@@ -443,6 +519,7 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
             stopping = false;
             exiting = false;
             pokePending = false;
+            mainThreadRunPending = false;
             idleThreads = 0;
             startingThreads = 0;
             reservedThreads = 0;
@@ -467,7 +544,9 @@ struct ThreadPool::State : std::enable_shared_from_this<ThreadPool::State>
     int reservedThreads = 0;
     int startingThreads = 0;
     int realtimeThreads = 0;
+    int mainThreadTasksRunning = 0;
     bool pokePending = false;
+    bool mainThreadRunPending = false;
     bool stopping = false;
     bool exiting = false;
 };
@@ -496,6 +575,9 @@ ThreadPool& ThreadPool::shared()
 
 int ThreadPool::defaultThreadCount()
 {
+    if constexpr (!Platform::hasThreads())
+        return 0;
+
     auto cores = static_cast<int>(std::thread::hardware_concurrency());
     return cores == 0 ? 2 : std::max(cores, 1);
 }
@@ -581,7 +663,7 @@ TaskGroup::TaskGroup()
 
 TaskGroup::TaskGroup(ThreadPool& poolToUse)
     : pool(poolToUse)
-    , tag(new Tag {})
+    , tag(std::make_shared<Tag>())
 {
 }
 
@@ -594,13 +676,13 @@ bool TaskGroup::submit(Callback work)
 {
     auto task = PoolTask {.work = std::move(work)};
     return pool.state->submit(
-        {threadPoolTaskWithDefaults(std::move(task)), tag.get(), false});
+        {threadPoolTaskWithDefaults(std::move(task)), tag, false});
 }
 
 bool TaskGroup::submit(PoolTask task)
 {
     return pool.state->submit(
-        {threadPoolTaskWithDefaults(std::move(task)), tag.get(), true});
+        {threadPoolTaskWithDefaults(std::move(task)), tag, true});
 }
 
 int TaskGroup::cancelPending()
@@ -610,12 +692,12 @@ int TaskGroup::cancelPending()
 
 void TaskGroup::wait()
 {
-    pool.state->wait(tag.get(), std::nullopt);
+    pool.state->wait(tag, std::nullopt);
 }
 
 bool TaskGroup::waitFor(Time::MS timeout)
 {
-    return pool.state->wait(tag.get(), threadPoolDeadlineAfter(timeout));
+    return pool.state->wait(tag, threadPoolDeadlineAfter(timeout));
 }
 
 bool TaskGroup::isIdle() const
