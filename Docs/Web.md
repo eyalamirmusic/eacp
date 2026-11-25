@@ -393,9 +393,11 @@ compile-time twin. Code that would start a thread asks it rather than
   `stop` from inside a task assert, and `waitUntilIdleFor` returns false. A
   `TaskGroup` destroyed while its task runs, or from its own callback, is safe
   and drops that task's `onMainThread`.
-- `Processes::runAsync`, `BuildRunner` and `Rpc`'s worker-thread commands run
-  their job on a later turn of the loop through `callAsync`. For the first two
-  that job is a launch, which fails on the web (below).
+- `Processes::runAsync`, `BuildRunner`, `Rpc`'s worker-thread commands and
+  `GPU::ShaderWarmUp` run their job on a later turn of the loop through
+  `callAsync`. For the first two that job is a launch, which fails on the web
+  (below); a warm-up compiles its whole set in that one turn, so nothing is
+  ever in flight for a prepare to wait on.
 - The network's async calls and `OnlineResource` are not on a worker at all:
   they sit on the browser's asynchronous clients.
 

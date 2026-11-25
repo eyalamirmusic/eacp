@@ -170,6 +170,13 @@ bool hasDevice()
     return Device::shared().isValid();
 }
 
+// Without threads the whole run is one turn of the loop, so nothing is ever
+// in flight for a case to catch midway.
+bool canCatchItMidRun()
+{
+    return Platform::hasThreads() && hasDevice();
+}
+
 void addTints(ShaderWarmUp& warmUp, float first, int count)
 {
     for (auto index = 0; index < count; ++index)
@@ -520,7 +527,7 @@ auto tCompileOnce =
 
 auto tWaits = test("ShaderWarmUp/aPrepareWaitsForTheShaderInFlight") = []
 {
-    if (!hasDevice())
+    if (!canCatchItMidRun())
         return;
 
     auto options = ShaderWarmUp::Options {};
@@ -548,7 +555,7 @@ auto tWaits = test("ShaderWarmUp/aPrepareWaitsForTheShaderInFlight") = []
 
 auto tCancel = test("ShaderWarmUp/cancelStopsBetweenShaders") = []
 {
-    if (!hasDevice())
+    if (!canCatchItMidRun())
         return;
 
     auto options = ShaderWarmUp::Options {};
@@ -577,7 +584,7 @@ auto tCancel = test("ShaderWarmUp/cancelStopsBetweenShaders") = []
 
 auto tDestroyMidRun = test("ShaderWarmUp/destroyingItMidRunNeverCallsBack") = []
 {
-    if (!hasDevice())
+    if (!canCatchItMidRun())
         return;
 
     auto callbacks = std::make_shared<std::atomic<int>>(0);
