@@ -301,14 +301,37 @@ struct GPUView::Native
                                              vkSurface,
                                              &presentable);
 
-        if (presentable == VK_TRUE)
+        if (presentable == VK_TRUE && surfaceAnswers(shared.getPhysicalDevice()))
             return true;
 
-        LOG("Vulkan: the queue this device renders on cannot present to this "
-            "surface, so the view has no swapchain");
+        reportUnpresentableSurface(shared.getAdapterName());
 
         destroySurface();
         return false;
+    }
+
+    // Mesa's Wayland WSI calls every surface supported, and only says no
+    // here, with VK_ERROR_SURFACE_LOST_KHR, when a hardware driver finds no
+    // zwp_linux_dmabuf_v1 to hand its images to the compositor through.
+    bool surfaceAnswers(VkPhysicalDevice physical) const
+    {
+        VkSurfaceCapabilitiesKHR capabilities = {};
+
+        return vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                   physical, vkSurface, &capabilities)
+               == VK_SUCCESS;
+    }
+
+    static void reportUnpresentableSurface(const std::string& adapter)
+    {
+        LOG("Vulkan: ",
+            adapter,
+            " cannot present to this window, so the view renders off-screen "
+            "only. A hardware driver presents through DRI3 on X11 and "
+            "zwp_linux_dmabuf_v1 on Wayland, which Xvfb, Xvnc, a forwarded X "
+            "connection and a software-rendered compositor do not offer; "
+            "MESA_VK_WSI_DEBUG=sw presents through shared memory instead, and "
+            "EACP_VK_SOFTWARE=1 picks a CPU device");
     }
 
     void destroySurface()

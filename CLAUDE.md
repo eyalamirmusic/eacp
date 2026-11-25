@@ -841,7 +841,12 @@ connection as another client, on a thread of its own where it has to own the
 selection while eacp blocks reading it), `EmbeddedViewTests` (17, the
 same default), `NativeChildSurfaceTests` (17, the same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
 the X11 suites are filtered in and out; everything else already ran under
-Weston. `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
+Weston. On a machine with a GPU, `with-weston` starts Weston's GL renderer where a
+render node exists, since a hardware Vulkan driver presents only through
+`zwp_linux_dmabuf_v1`, which the default headless renderer lacks, and
+`with-xvfb` sets `MESA_VK_WSI_DEBUG=sw`, since Xvfb has no DRI3; lavapipe
+presents through shared memory either way (`Docs/Linux.md`).
+`EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
 without a display server, as
 `EACP_REQUIRE_FONTS=1` does for the font tests. Weston's headless backend has
 no seat, so Xvfb is the first place input is exercised on any lane: 18 of the
