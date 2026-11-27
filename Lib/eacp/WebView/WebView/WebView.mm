@@ -168,6 +168,30 @@ struct WebView::PopupInit
     detail::MessageOriginPolicy originPolicy;
 };
 
+static void applyBrowserOptions(WKWebViewConfiguration* config,
+                                const WebView::Options& options)
+{
+    if (!options.applicationNameForUserAgent.empty())
+    {
+        config.applicationNameForUserAgent =
+            Strings::toNSString(options.applicationNameForUserAgent);
+    }
+
+    if (options.elementFullscreen)
+    {
+        if (@available(macOS 12.3, iOS 15.4, *))
+            config.preferences.elementFullscreenEnabled = YES;
+    }
+}
+
+static void applyBrowserGestures(WKWebView* webView, const WebView::Options& options)
+{
+    webView.allowsBackForwardNavigationGestures = options.backForwardGestures;
+#if !TARGET_OS_IPHONE
+    webView.allowsMagnification = options.pinchToZoom;
+#endif
+}
+
 struct WebView::Native
 {
     Native(WebView& ownerToUse, Options options)
@@ -180,6 +204,7 @@ struct WebView::Native
         getWebViewDelegateState(delegate.get())->originPolicy = &originPolicy;
 
         config = [[WKWebViewConfiguration alloc] init];
+        applyBrowserOptions(config.get(), options);
 
         if (options.ephemeralSession)
         {
@@ -221,6 +246,8 @@ struct WebView::Native
               .defaultContextMenu = options.defaultContextMenu
             }
         );
+
+        applyBrowserGestures(webView.get(), options);
         getWebViewDelegateState(delegate.get())->ownWebView = webView.get();
 
         if (options.transparentBackground)
@@ -464,6 +491,14 @@ WKWebView* webViewDelegateCreateWebView(id self,
         native->promptForMediaCapture,
         native->originPolicy.forPopup());
     auto* popupWKWebView = eacp::Graphics::WebViewNativeAccess::wkWebViewOf(*popup);
+
+    // Configuration-level options travel with `configuration`; view-level
+    // properties don't, so a popup inherits them from its opener here.
+    popupWKWebView.allowsBackForwardNavigationGestures =
+        webView.allowsBackForwardNavigationGestures;
+#if !TARGET_OS_IPHONE
+    popupWKWebView.allowsMagnification = webView.allowsMagnification;
+#endif
 
     if (native->owner.onNewWindowRequested(std::move(popup), url))
         return popupWKWebView;

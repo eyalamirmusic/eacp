@@ -210,6 +210,18 @@ public:
         // hardware-key chain to feed, so it is a no-op there.
         bool forwardUnhandledKeys = false;
 
+        // Apple: appended to WebKit's user agent; a non-empty userAgent wins.
+        std::string applicationNameForUserAgent;
+
+        // Apple: a two-finger swipe goes back and forward in the page's history.
+        bool backForwardGestures = false;
+
+        // macOS: a trackpad pinch zooms the page.
+        bool pinchToZoom = false;
+
+        // Apple, macOS 12.3+ and iOS 15.4+: pages may use the Fullscreen API.
+        bool elementFullscreen = false;
+
         // Ask the user before a page gets the camera or microphone. Off (the
         // default) grants every getUserMedia request once the app itself has
         // OS permission, which suits an app whose pages are its own UI. A
