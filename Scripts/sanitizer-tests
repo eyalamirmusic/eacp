@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Builds every test target under one sanitizer and runs it through ctest,
+# headless, with the GPU suites on whatever Vulkan device is present (lavapipe
+# on CI). The first report ends the test process, so any finding fails the run.
+#   Scripts/sanitizer-tests <address|thread|undefined> [build-dir] [extra cmake args...]
+set -euo pipefail
+
+sanitizer="${1:?usage: Scripts/sanitizer-tests <address|thread|undefined> [build-dir] [cmake args...]}"
+build_dir="${2:-build-$sanitizer}"
+shift $(( $# >= 2 ? 2 : 1 ))
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+case "$sanitizer" in
+    address)
+        sanitizer_flags="-fsanitize=address -fno-omit-frame-pointer"
+        export ASAN_OPTIONS="halt_on_error=1:detect_stack_use_after_return=1:strict_string_checks=1"
+        export LSAN_OPTIONS="suppressions=$script_dir/sanitizer-suppressions/lsan.txt:print_suppressions=0"
+        ;;
+    thread)
+        # The test helpers that replace global operator new step aside for TSan's own.
+        sanitizer_flags="-fsanitize=thread -DEACP_THREAD_SANITIZER"
+        export TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1:suppressions=$script_dir/sanitizer-suppressions/tsan.txt"
+        ;;
+    undefined)
+        sanitizer_flags="-fsanitize=undefined -fno-sanitize-recover=undefined"
+        export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+        ;;
+    *)
+        echo "unknown sanitizer '$sanitizer': use address, thread or undefined" >&2
+        exit 2
+        ;;
+esac
+
+cmake -G Ninja -B "$build_dir" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DEACP_UNITY_BUILD=OFF -DEACP_ENABLE_EXAMPLES=OFF \
+    -DCMAKE_C_FLAGS="$sanitizer_flags" -DCMAKE_CXX_FLAGS="$sanitizer_flags" \
+    -DCMAKE_EXE_LINKER_FLAGS="$sanitizer_flags" \
+    -DCMAKE_SHARED_LINKER_FLAGS="$sanitizer_flags" \
+    -DCMAKE_MODULE_LINKER_FLAGS="$sanitizer_flags" \
+    "$@"
+
+cmake --build "$build_dir"
+
+ctest --test-dir "$build_dir" --output-on-failure -j "$(nproc)"

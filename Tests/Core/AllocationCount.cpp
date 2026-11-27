@@ -6,6 +6,10 @@
 std::atomic<bool> countingAllocations {false};
 std::atomic<std::size_t> allocatedBytes {0};
 
+// ThreadSanitizer's runtime defines the global operator new and delete itself,
+// so a second definition fails the link; under it the count stays at zero.
+#if !defined(EACP_THREAD_SANITIZER)
+
 void* operator new(std::size_t size)
 {
     if (countingAllocations.load(std::memory_order_relaxed))
@@ -38,3 +42,4 @@ void operator delete[](void* memory, std::size_t) noexcept
 {
     std::free(memory);
 }
+#endif
