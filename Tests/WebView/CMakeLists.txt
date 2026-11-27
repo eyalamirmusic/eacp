@@ -57,9 +57,13 @@ endif ()
 #   UserAgentTests          Options::userAgent read back from the page, and
 #                           Options::loadDeclinedPopupsInline deciding whether a
 #                           declined window.open replaces the host document
+#   ContentProcessTerminationTests
+#                           the page coming back after its content process is
+#                           killed, through KillContentProcess-<platform>
 if (TARGET eacp-webview-test-main)
     list(APPEND webview_test_sources
             CommandDispatchTests.cpp
+            ContentProcessTerminationTests.cpp
             MessageOriginTests.cpp
             OffscreenAnimationTests.cpp
             RenderToImageAsyncTests.cpp
@@ -77,17 +81,27 @@ if (TARGET eacp-webview-test-main)
     # in the verdict message and drives the path with DOM-dispatched events
     # instead of OS key injection (see the file headers).
     if (APPLE)
-        list(APPEND webview_test_sources KeyForwardingTests.mm)
+        list(APPEND webview_test_sources
+                KeyForwardingTests.mm
+                KillContentProcess-Apple.mm)
     endif ()
 
     if (WIN32)
-        list(APPEND webview_test_sources KeyForwardingTests-Windows.cpp)
+        list(APPEND webview_test_sources
+                KeyForwardingTests-Windows.cpp
+                KillContentProcess-Windows.cpp)
     endif ()
 
     add_executable(WebViewTests ${webview_test_sources})
     target_link_libraries(WebViewTests PRIVATE
             eacp-webview
             eacp-webview-test-main)
+
+    # KillContentProcess-Windows.cpp reaches the CoreWebView2 behind the view.
+    if (WIN32)
+        find_package(WebView2 REQUIRED)
+        target_link_libraries(WebViewTests PRIVATE WebView2::WebView2)
+    endif ()
     nano_discover_tests(WebViewTests)
 else ()
     nano_add_executable(WebViewTests
