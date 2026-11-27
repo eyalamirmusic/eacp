@@ -3,6 +3,10 @@ set(CMAKE_FOLDER Examples/GPU)
 add_subdirectory(Triangle)
 add_subdirectory(TriangleGen)
 add_subdirectory(RotatingTriangle)
+
+# GPUView::setRenderScale: fewer pixels rendered, stretched over the view by the
+# window system, on the platforms whose compositor does that.
+add_subdirectory(RenderScale)
 add_subdirectory(Teapot)
 add_subdirectory(Compute)
 
