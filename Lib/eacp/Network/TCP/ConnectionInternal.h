@@ -36,10 +36,18 @@ int socketSend(NativeSocket socket, const char* data, int length);
 // the stream cleanly. Throws TCP::Error on timeout or failure.
 int socketReceive(NativeSocket socket, char* buffer, int length);
 
+// An IPv4 address in network byte order, the form sockaddr_in holds.
+using IPv4Address = std::uint32_t;
+
+IPv4Address getInterfaceAddress(BindInterface bindTo);
+
+// Dotted-decimal text such as "100.104.147.35", nullopt when it is not one.
+std::optional<IPv4Address> parseIPv4Address(const std::string& text);
+
 // Opens a listening socket on port (0 picks an ephemeral one), writing the
 // actually-bound port back to boundPort. Throws TCP::Error on failure.
 NativeSocket
-    socketListen(std::uint16_t port, std::uint16_t& boundPort, BindInterface bindTo);
+    socketListen(std::uint16_t port, std::uint16_t& boundPort, IPv4Address address);
 
 // Wakes a send or receive blocked on socket in another thread, and makes every
 // later one end at once: a receive reports the stream closed or throws
