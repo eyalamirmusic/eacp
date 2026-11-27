@@ -25,6 +25,8 @@ constexpr int frameEndQuery = frameStartQuery + 1;
 constexpr int queriesPerSlot = frameEndQuery + 1;
 
 constexpr UINT64 queryBytes = sizeof(UINT64);
+
+constexpr std::uint64_t notYetCreated = 0;
 } // namespace
 
 struct GpuTimestamps::Native
@@ -46,12 +48,17 @@ struct GpuTimestamps::Native
     // Deferred for the same reason as the Metal backend's: this is built by
     // Device, which is not yet itself when that runs — hence the Device
     // arriving with the first slot rather than at construction.
+    //
+    // Made again when the device is replaced after a device loss: a query heap
+    // or readback buffer of the removed device, recorded on the replacement's
+    // command list, removes the replacement too.
     void ensureCreated(GPU::Device& owner)
     {
-        if (tried)
+        if (createdForGeneration == owner.backendGeneration())
             return;
 
-        tried = true;
+        discardSlots();
+        createdForGeneration = owner.backendGeneration();
 
         auto& context = getD3D12Context(owner);
 
@@ -109,12 +116,21 @@ struct GpuTimestamps::Native
         supported = frequency != 0;
     }
 
+    void discardSlots()
+    {
+        for (auto& slot: slots)
+            slot = Slot {};
+
+        frequency = 0;
+        supported = false;
+    }
+
     Array<Slot, slotCount> slots;
 
     UINT64 frequency = 0;
 
     bool supported = false;
-    bool tried = false;
+    std::uint64_t createdForGeneration = notYetCreated;
 };
 
 GpuTimestamps::GpuTimestamps() = default;
@@ -210,6 +226,11 @@ void GpuTimestamps::noteSubmitted(int slot, std::uint64_t fenceValue)
 
 bool GpuTimestamps::isSlotComplete(int slot, const Device& device) const
 {
+    // Its fence value is one of the removed device's, which the replacement's
+    // fence does not count towards.
+    if (impl->createdForGeneration != device.backendGeneration())
+        return true;
+
     const auto& entry = impl->slots[slot];
 
     return entry.submitted && getD3D12Context(device).hasCompleted(entry.fenceValue);
