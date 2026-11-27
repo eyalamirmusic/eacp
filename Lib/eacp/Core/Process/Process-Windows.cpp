@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "DetachedChildMark-Windows.h"
 #include <algorithm>
 
 #include "../Utils/Strings.h"
@@ -586,7 +587,7 @@ private:
 
         // DETACHED_PROCESS: no inherited console, so the child survives the
         // launcher's console/job the way a setsid'd POSIX child survives its
-        // session.
+        // session. Suspended until it is marked, so its loop sees the mark.
         PROCESS_INFORMATION info {};
         auto created = CreateProcessW(
             nullptr,
@@ -595,6 +596,7 @@ private:
             nullptr,
             FALSE,
             DETACHED_PROCESS
+                | CREATE_SUSPENDED
                 | (environment.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT),
             environment.empty() ? nullptr : (LPVOID) environment.data(),
             workingDir.empty() ? nullptr : workingDir.c_str(),
@@ -603,6 +605,9 @@ private:
 
         if (!created)
             return;
+
+        markAsDetachedChild(info.hProcess, info.dwProcessId);
+        ResumeThread(info.hThread);
 
         processHandle = info.hProcess;
         threadHandle = info.hThread;

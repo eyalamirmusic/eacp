@@ -130,6 +130,7 @@ elseif (WIN32)
             Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Windows.cpp
             Plugins/ModuleInfo-Windows.cpp
+            Process/DetachedChildMark-Windows.cpp
             Process/Process-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp

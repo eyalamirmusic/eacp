@@ -237,12 +237,22 @@ HandleCounts handlesAcrossDetachInLoopExitHarness()
 }
 } // namespace
 
-auto tLoopQuitsWhenItsParentExits =
-    test("EventLoop/Windows/theLoopQuitsWhenTheProcessThatStartedItExits") = []
+namespace
+{
+struct ChildAfterItsParentExited
+{
+    bool quit = false;
+    DWORD exitCode = 0;
+};
+
+// Starts the harness in a mode that starts a child, lets the harness exit and
+// reports whether the child's loop quit within parentDeathQuitBudget. A child
+// still running then is ended.
+ChildAfterItsParentExited watchChildAfterItsParentExits(const char* parentMode)
 {
     auto options = eacp::Processes::ProcessOptions {};
     options.executable = EACP_LOOP_EXIT_HARNESS;
-    options.arguments = {"parent"};
+    options.arguments = {parentMode};
 
     auto parent = eacp::Processes::Process {options};
     auto childId = waitForChildId(parent);
@@ -258,20 +268,37 @@ auto tLoopQuitsWhenItsParentExits =
     check(parent.wait() == 0);
 
     if (child == nullptr)
-        return;
+        return {};
 
-    auto quit = WaitForSingleObject(child, (DWORD) parentDeathQuitBudget.count)
-                == WAIT_OBJECT_0;
+    auto outcome = ChildAfterItsParentExited {};
+    outcome.quit = WaitForSingleObject(child, (DWORD) parentDeathQuitBudget.count)
+                   == WAIT_OBJECT_0;
 
-    if (!quit)
+    if (!outcome.quit)
         TerminateProcess(child, 1);
 
-    auto exitCode = DWORD {};
-    GetExitCodeProcess(child, &exitCode);
+    GetExitCodeProcess(child, &outcome.exitCode);
     CloseHandle(child);
+    return outcome;
+}
+} // namespace
 
-    check(quit);
-    check(exitCode == harnessQuitExitCode);
+auto tLoopQuitsWhenItsParentExits =
+    test("EventLoop/Windows/theLoopQuitsWhenTheProcessThatStartedItExits") = []
+{
+    auto child = watchChildAfterItsParentExits("parent");
+
+    check(child.quit);
+    check(child.exitCode == harnessQuitExitCode);
+};
+
+auto tDetachedChildOutlivesItsLauncher =
+    test("EventLoop/Windows/aChildLaunchedDetachedKeepsRunningAfterItsLauncherExits") =
+        []
+{
+    auto child = watchChildAfterItsParentExits("detachedParent");
+
+    check(!child.quit);
 };
 
 auto tDetachReleasesTheParentWatch = test(
