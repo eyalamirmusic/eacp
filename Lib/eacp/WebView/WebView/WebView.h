@@ -315,6 +315,9 @@ public:
     // typing.
     void focusContent();
 
+    // macOS and Windows: the WebView in the key (foreground) window that holds
+    // keyboard focus; else, with focus elsewhere in that window, the first one
+    // in it. iOS: the most recently created WebView.
     static WebView* focused();
 
     // True when the platform web runtime backing WebView is present. Always

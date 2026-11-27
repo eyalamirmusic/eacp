@@ -427,6 +427,24 @@ double readNativeZoom(WKWebView* webView, double)
     return webView.pageZoom;
 }
 
+// The first responder is the WKWebView itself or a view inside it.
+static bool holdsKeyboardFocus(WKWebView* wkWebView, NSResponder* firstResponder)
+{
+    if (![firstResponder isKindOfClass:[NSView class]])
+        return false;
+
+    auto* firstResponderView = (NSView*) firstResponder;
+    return [firstResponderView isDescendantOf:wkWebView];
+}
+
+static bool isInWindow(WKWebView* wkWebView, NSWindow* window)
+{
+    return wkWebView != nil && wkWebView.window == window;
+}
+
+// The one holding keyboard focus; else, with focus elsewhere in the window, the
+// first in it. In a window of several (a toolbar page over the content), the
+// first in it is whichever registered first.
 WebView* findFocusedWebView()
 {
     auto* keyWindow = [NSApp keyWindow];
@@ -434,14 +452,22 @@ WebView* findFocusedWebView()
     if (keyWindow == nil)
         return nullptr;
 
+    WebView* firstInWindow = nullptr;
+
     for (auto* view: registeredWebViews())
     {
         auto* wkWebView = wkWebViewOf(view);
 
-        if (wkWebView != nil && wkWebView.window == keyWindow)
+        if (!isInWindow(wkWebView, keyWindow))
+            continue;
+
+        if (holdsKeyboardFocus(wkWebView, keyWindow.firstResponder))
             return view;
+
+        if (firstInWindow == nullptr)
+            firstInWindow = view;
     }
 
-    return nullptr;
+    return firstInWindow;
 }
 } // namespace eacp::Graphics::detail
