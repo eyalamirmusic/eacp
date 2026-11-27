@@ -3,6 +3,29 @@ set(CMAKE_FOLDER Tests)
 find_package(NanoTest REQUIRED)
 
 set(NANO_TEST_GROUP_BY PREFIX)
+
+# Runs the named test groups of this directory with Metal's validation layer
+# on, for cases whose failure is a pipeline Metal accepts silently without it.
+# The groups are discovered when ctest runs, so the property goes in through an
+# include file rather than set_tests_properties here.
+function(eacp_run_test_groups_under_metal_validation)
+    if (NOT APPLE)
+        return()
+    endif ()
+
+    set(validation_file "${CMAKE_CURRENT_BINARY_DIR}/MetalValidation.cmake")
+    file(WRITE "${validation_file}" "")
+
+    foreach (group IN LISTS ARGN)
+        file(APPEND "${validation_file}"
+                "set_tests_properties(${group} PROPERTIES\n"
+                "        ENVIRONMENT MTL_DEBUG_LAYER=1)\n")
+    endforeach ()
+
+    set_property(DIRECTORY APPEND PROPERTY
+            TEST_INCLUDE_FILES "${validation_file}")
+endfunction()
+
 set(CMAKE_UNITY_BUILD ${EACP_UNITY_BUILD_TESTS})
 
 add_subdirectory(Core)
