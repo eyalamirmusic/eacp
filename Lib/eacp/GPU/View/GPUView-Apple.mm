@@ -108,6 +108,29 @@ struct GPUView::Native
         [metalLayer.get() removeFromSuperlayer];
     }
 
+    // A CAMetalLayer keeps its drawables until it is destroyed, so the way to
+    // give them back is a fresh layer with the same settings in its place.
+    void releaseFrameMemory()
+    {
+        auto* oldLayer = metalLayer.get();
+        CAMetalLayer* newLayer = [[getImmediateMetalLayerClass() alloc] init];
+
+        newLayer.device = oldLayer.device;
+        newLayer.pixelFormat = oldLayer.pixelFormat;
+        newLayer.framebufferOnly = oldLayer.framebufferOnly;
+        newLayer.maximumDrawableCount = oldLayer.maximumDrawableCount;
+        newLayer.allowsNextDrawableTimeout = oldLayer.allowsNextDrawableTimeout;
+        newLayer.opaque = oldLayer.opaque;
+        newLayer.frame = oldLayer.frame;
+        newLayer.contentsScale = oldLayer.contentsScale;
+
+        [oldLayer.superlayer replaceSublayer:oldLayer with:newLayer];
+        metalLayer = newLayer;
+
+        msaaTexture.release();
+        depthTexture.release();
+    }
+
     void updateSize()
     {
         auto scale = platformBackingScale(view);
@@ -434,6 +457,18 @@ void GPUView::resizeFinished()
     // the new size: presentsWithTransaction makes this the frame the compositor
     // shows, so it has to be drawn with the new projection.
     renderNow();
+}
+
+void GPUView::visibilityChanged(bool isVisible)
+{
+    if (!isVisible)
+    {
+        impl->releaseFrameMemory();
+        return;
+    }
+
+    impl->updateSize();
+    repaint();
 }
 
 float GPUView::backingScale() const

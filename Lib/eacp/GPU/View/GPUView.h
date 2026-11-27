@@ -41,6 +41,11 @@ public:
     void resizeStarted() override;
     void resizeFinished() override;
 
+    // Hiding the view frees the memory its frames are drawn in (the drawables,
+    // and the multisample and depth textures) on Metal; showing it allocates
+    // them again and repaints. Other backends keep theirs.
+    void visibilityChanged(bool isVisible) override;
+
     // Multisample (MSAA) count used for rendering; defaults to 4 for smooth
     // edges. Feed this into your RenderPipelineDescriptor::sampleCount so the
     // pipeline matches the render target. Set before building the pipeline.
