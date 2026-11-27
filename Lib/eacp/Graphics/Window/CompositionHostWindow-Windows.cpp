@@ -4,6 +4,7 @@
 #include "../Helpers/SystemAppearance.h"
 #include "../Image/ImageOps.h"
 #include "../Layers/NativeLayer-Windows.h"
+#include "MouseWheel-Windows.h"
 
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Singleton.h>
@@ -1348,13 +1349,8 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 event.type = MouseEventType::Wheel;
                 event.modifiers = getModifiers();
 
-                // In lines, as the other platforms report a notched wheel: a
-                // detent is WHEEL_DELTA, and a precision touchpad sends
-                // fractions of one.
-                auto lines = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam))
-                             / static_cast<float>(WHEEL_DELTA);
-                event.delta =
-                    (msg == WM_MOUSEWHEEL) ? Point {0.f, lines} : Point {lines, 0.f};
+                event.delta = getWheelDeltaInLines(GET_WHEEL_DELTA_WPARAM(wParam),
+                                                   msg == WM_MOUSEHWHEEL);
                 dispatchMouseToContentView(event);
             }
             return 0;

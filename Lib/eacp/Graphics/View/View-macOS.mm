@@ -1,6 +1,7 @@
 
 #import <Cocoa/Cocoa.h>
 #include "View.h"
+#include "View-MacOS.h"
 #include "FileDragOut-macOS.h"
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Image/Image.h"
@@ -87,27 +88,9 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
     auto windowPos = [event locationInWindow];
     auto localPos = [root convertPoint:windowPos fromView:nil];
 
-    auto e = MouseEvent();
+    auto e = mouseEventFromNSEvent(event, type);
 
     e.pos = {(float) localPos.x, (float) localPos.y};
-    e.type = type;
-    e.button = mouseButtonFromEvent(event);
-    e.modifiers = modifierKeysFromEvent(event);
-
-    e.timestamp = event.timestamp;
-
-    // Both figures, always: `delta` is the pointer's movement, shaped by the
-    // system's acceleration curve, and `rawDelta` is the device's own. A widget
-    // dragged by the pointer wants the first; a camera wants the second. See
-    // MouseEvent.
-    e.delta = {(float) event.deltaX, (float) event.deltaY};
-    e.rawDelta = e.delta;
-
-    if (CGEventRef cgEvent = [event CGEvent])
-        e.rawDelta = {(float) CGEventGetIntegerValueField(
-                          cgEvent, kCGEventUnacceleratedPointerMovementX),
-                      (float) CGEventGetIntegerValueField(
-                          cgEvent, kCGEventUnacceleratedPointerMovementY)};
 
     // A warp is not motion, however the system reports it.
     if (detail::cursorWasWarped)
@@ -115,12 +98,6 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
         e.delta = {};
         e.rawDelta = {};
         detail::cursorWasWarped = false;
-    }
-
-    if (type == MouseEventType::Down || type == MouseEventType::Up)
-    {
-        e.pressure = event.pressure;
-        e.clickCount = (int) event.clickCount;
     }
 
     auto& mouseDownScreenPosition =
@@ -180,19 +157,35 @@ ScrollPhase scrollPhaseFromEvent(NSEvent* event)
     return gesturePhaseFromEvent(event);
 }
 
-void scrollWheel(id self, SEL, NSEvent* event)
+void fillPointerFields(MouseEvent& e, NSEvent* event)
 {
-    auto* root = getRootView(self);
-    auto windowPos = [event locationInWindow];
-    auto localPos = [root convertPoint:windowPos fromView:nil];
+    e.button = mouseButtonFromEvent(event);
 
-    auto e = MouseEvent();
+    // Both figures, always: `delta` is the pointer's movement, shaped by the
+    // system's acceleration curve, and `rawDelta` is the device's own. A widget
+    // dragged by the pointer wants the first; a camera wants the second. See
+    // MouseEvent.
+    e.delta = {(float) event.deltaX, (float) event.deltaY};
+    e.rawDelta = e.delta;
 
-    e.pos = {(float) localPos.x, (float) localPos.y};
-    e.type = MouseEventType::Wheel;
+    if (CGEventRef cgEvent = [event CGEvent])
+    {
+        e.rawDelta = {(float) CGEventGetIntegerValueField(
+                          cgEvent, kCGEventUnacceleratedPointerMovementX),
+                      (float) CGEventGetIntegerValueField(
+                          cgEvent, kCGEventUnacceleratedPointerMovementY)};
+    }
+
+    if (e.type == MouseEventType::Down || e.type == MouseEventType::Up)
+    {
+        e.pressure = event.pressure;
+        e.clickCount = (int) event.clickCount;
+    }
+}
+
+void fillWheelFields(MouseEvent& e, NSEvent* event)
+{
     e.button = MouseButton::Other;
-    e.modifiers = modifierKeysFromEvent(event);
-    e.timestamp = event.timestamp;
     e.preciseScrolling = event.hasPreciseScrollingDeltas == YES;
     e.scrollPhase = scrollPhaseFromEvent(event);
 
@@ -201,7 +194,24 @@ void scrollWheel(id self, SEL, NSEvent* event)
     // back into whole lines and the smoothness is gone.
     e.delta = {(float) event.scrollingDeltaX, (float) event.scrollingDeltaY};
     e.rawDelta = e.delta;
+}
 
+void fillMagnifyFields(MouseEvent& e, NSEvent* event)
+{
+    e.button = MouseButton::Other;
+    e.scrollPhase = gesturePhaseFromEvent(event);
+    e.magnifyScale = magnifyScaleFromMagnification(event.magnification);
+}
+
+void scrollWheel(id self, SEL, NSEvent* event)
+{
+    auto* root = getRootView(self);
+    auto windowPos = [event locationInWindow];
+    auto localPos = [root convertPoint:windowPos fromView:nil];
+
+    auto e = mouseEventFromNSEvent(event, MouseEventType::Wheel);
+
+    e.pos = {(float) localPos.x, (float) localPos.y};
     e.downPos = e.pos;
 
     if (auto* view = getView(root))
@@ -213,16 +223,10 @@ void magnifyWithEvent(id self, SEL, NSEvent* event)
     auto* root = getRootView(self);
     auto localPos = [root convertPoint:[event locationInWindow] fromView:nil];
 
-    auto e = MouseEvent();
+    auto e = mouseEventFromNSEvent(event, MouseEventType::Magnify);
 
     e.pos = {(float) localPos.x, (float) localPos.y};
     e.downPos = e.pos;
-    e.type = MouseEventType::Magnify;
-    e.button = MouseButton::Other;
-    e.modifiers = modifierKeysFromEvent(event);
-    e.timestamp = event.timestamp;
-    e.scrollPhase = gesturePhaseFromEvent(event);
-    e.magnifyScale = magnifyScaleFromMagnification(event.magnification);
 
     if (auto* view = getView(root))
         view->dispatchMouseEvent(e);
@@ -732,6 +736,32 @@ NSView* createNativeView(View* view)
     return newView;
 }
 } // namespace
+
+MouseEvent mouseEventFromNSEvent(NSEvent* event, MouseEventType type)
+{
+    auto e = MouseEvent();
+
+    e.type = type;
+    e.modifiers = modifierKeysFromEvent(event);
+    e.timestamp = event.timestamp;
+
+    switch (type)
+    {
+        case MouseEventType::Wheel:
+            fillWheelFields(e, event);
+            break;
+
+        case MouseEventType::Magnify:
+            fillMagnifyFields(e, event);
+            break;
+
+        default:
+            fillPointerFields(e, event);
+            break;
+    }
+
+    return e;
+}
 
 bool isFrameworkNativeView(NSView* view)
 {
