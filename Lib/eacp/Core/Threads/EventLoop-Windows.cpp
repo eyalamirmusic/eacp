@@ -6,6 +6,7 @@
 #include "ThreadUtils-Windows.h"
 #include "../App/App.h"
 #include "../Plugins/ModuleInfo.h"
+#include "../Process/DetachedChildMark-Windows.h"
 #include "../Utils/Environment.h"
 #include "../Utils/Singleton.h"
 
@@ -330,7 +331,8 @@ void initLoopThread()
     // Dev convenience only, never in a signed/shipped build (see the watchdog's
     // note): quit when the process that launched us exits, so an IDE "Stop" that
     // kills its launcher helper rather than the app still takes the app down.
-    if (!Apps::isDistributionSigned())
+    // A child launched detached is meant to outlive its launcher.
+    if (!Apps::isDistributionSigned() && !Processes::isCurrentProcessADetachedChild())
         installParentDeathWatchdog();
 
     // Any callbacks queued before the loop existed will have been buffered

@@ -25,7 +25,8 @@
 // "wait" runs the loop until something quits it, then exits with
 // quitExitCode. "parent" starts a "wait" child, prints its id once its loop is
 // running, and exits when its own input closes: the parent whose exit the
-// child's loop must notice.
+// child's loop must notice. "detachedParent" does the same with a child
+// launched detached through eacp, whose loop must not notice.
 //
 // "detach" prints the process's handle count while the watchdog is installed,
 // after detachCurrentThreadAsMain and after a later attach and loop pass.
@@ -36,6 +37,7 @@ using NtQueryInformationThreadFunc = LONG(NTAPI*)(HANDLE, int, void*, ULONG, ULO
 constexpr auto threadQuerySetWin32StartAddress = 9;
 constexpr auto quitExitCode = 7;
 constexpr auto loopRunningLine = "loop running";
+constexpr auto loopStartBudgetMilliseconds = DWORD {10000};
 
 std::vector<DWORD> threadsOfThisProcess()
 {
@@ -119,13 +121,27 @@ int reportRuntimeThreadsLeft(bool throughRunFor, int argc, char* argv[])
     return 0;
 }
 
-int runUntilQuit()
+// A detached child has no output to print to, so it sets an event its
+// launcher named instead.
+void setLoopRunningEvent(const std::string& eventName)
+{
+    auto loopRunning = OpenEventA(EVENT_MODIFY_STATE, FALSE, eventName.c_str());
+
+    if (loopRunning == nullptr)
+        return;
+
+    SetEvent(loopRunning);
+    CloseHandle(loopRunning);
+}
+
+int runUntilQuit(const std::string& loopRunningEventName)
 {
     eacp::Threads::callAsync(
-        []
+        [loopRunningEventName]
         {
             std::printf("%s\n", loopRunningLine);
             std::fflush(stdout);
+            setLoopRunningEvent(loopRunningEventName);
         });
 
     eacp::Threads::getEventLoop().run();
@@ -232,6 +248,63 @@ int startAChildThenExit()
     return 0;
 }
 
+DWORD findChildOfThisProcess()
+{
+    auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return 0;
+
+    auto entry = PROCESSENTRY32W {};
+    entry.dwSize = sizeof(entry);
+    auto self = GetCurrentProcessId();
+    auto child = DWORD {0};
+
+    for (auto more = Process32FirstW(snapshot, &entry); more && child == 0;
+         more = Process32NextW(snapshot, &entry))
+    {
+        if (entry.th32ParentProcessID == self)
+            child = entry.th32ProcessID;
+    }
+
+    CloseHandle(snapshot);
+    return child;
+}
+
+std::string pathOfThisExecutable()
+{
+    auto path = std::string(MAX_PATH, '\0');
+    path.resize(GetModuleFileNameA(nullptr, path.data(), MAX_PATH));
+    return path;
+}
+
+int startADetachedChildThenExit()
+{
+    auto eventName =
+        "eacp-loop-exit-harness-" + std::to_string(GetCurrentProcessId());
+    auto loopRunning = CreateEventA(nullptr, TRUE, FALSE, eventName.c_str());
+
+    if (loopRunning == nullptr)
+        return 1;
+
+    auto options = eacp::Processes::ProcessOptions {};
+    options.executable = pathOfThisExecutable();
+    options.arguments = {"wait", eventName};
+    options.detached = true;
+
+    auto child = eacp::Processes::Process {options};
+
+    if (WaitForSingleObject(loopRunning, loopStartBudgetMilliseconds)
+        != WAIT_OBJECT_0)
+        return 1;
+
+    std::printf("child %lu\n", findChildOfThisProcess());
+    std::fflush(stdout);
+
+    waitForInputToClose();
+    return 0;
+}
+
 int handleCount()
 {
     auto count = DWORD {};
@@ -268,10 +341,13 @@ bool isMode(int argc, char* argv[], const char* mode)
 int main(int argc, char* argv[])
 {
     if (isMode(argc, argv, "wait"))
-        return runUntilQuit();
+        return runUntilQuit(argc > 2 ? argv[2] : "");
 
     if (isMode(argc, argv, "parent"))
         return startAChildThenExit();
+
+    if (isMode(argc, argv, "detachedParent"))
+        return startADetachedChildThenExit();
 
     if (isMode(argc, argv, "detach"))
         return reportHandlesAcrossDetach();
