@@ -25,31 +25,36 @@ void ignoreSigPipeOnce()
     std::call_once(flag, [] { std::signal(SIGPIPE, SIG_IGN); });
 }
 
-// Copies the parent environment and applies overrides (replaced by name, else
-// appended). Built in the parent: posix_spawn execs without running arbitrary
-// code in the child, so there is no fork/setenv-in-child deadlock hazard.
-Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& overrides)
+bool isRemovedEntry(std::string_view entry, const Vector<std::string>& removed)
 {
-    auto entries = copyEnvironmentEntries();
+    auto name = entry.substr(0, entry.find('='));
 
-    for (const auto& var: overrides)
-    {
-        auto prefix = var.name + "=";
-        auto replaced = false;
+    for (const auto& candidate: removed)
+        if (candidate == name)
+            return true;
 
-        for (auto& entry: entries)
-            if (entry.starts_with(prefix))
-            {
-                entry = prefix + var.value;
-                replaced = true;
-                break;
-            }
+    return false;
+}
 
-        if (!replaced)
-            entries.push_back(prefix + var.value);
-    }
+Vector<std::string> copyEnvironmentEntriesWithout(const Vector<std::string>& removed)
+{
+    auto entries = Vector<std::string> {};
+
+    for (auto& entry: copyEnvironmentEntries())
+        if (!isRemovedEntry(entry, removed))
+            entries.push_back(entry);
 
     return entries;
+}
+
+bool inheritsErrorOutput(const ProcessOptions& options)
+{
+    return options.inheritErrorOutput && !options.mergeErrorOutput;
+}
+
+bool hasErrorPipe(const ProcessOptions& options)
+{
+    return !options.mergeErrorOutput && !inheritsErrorOutput(options);
 }
 
 bool startsInGroupOfItsOwn(const ProcessOptions& options)
@@ -73,7 +78,9 @@ Vector<char*> toCArray(Vector<std::string>& strings)
 
 struct Process::Native
 {
-    explicit Native(ProcessOptions options)
+    // By rvalue reference: GCC 15 at -march=x86-64-v3 reports an uninitialized
+    // read in the extra by-value move of ProcessOptions.
+    explicit Native(ProcessOptions&& options)
         : detached(options.detached)
         , leadsItsOwnGroup(startsInGroupOfItsOwn(options))
         , killsDescendants(options.killDescendants && !options.detached)
@@ -244,7 +251,8 @@ private:
         }
 
         const auto executable = argStrings.front();
-        auto envStrings = buildEnvironment(options.environment);
+        auto envStrings =
+            makeChildEnvironment(options.environment, options.removedEnvironment);
 
         auto argv = toCArray(argStrings);
         auto envp = toCArray(envStrings);
@@ -253,21 +261,16 @@ private:
         int outPipe[2] = {-1, -1};
         int errPipe[2] = {-1, -1};
 
-        const auto merge = options.mergeErrorOutput;
-
-        if (options.captureOutput && !createPipes(inPipe, outPipe, errPipe, !merge))
+        if (options.captureOutput
+            && !createPipes(inPipe, outPipe, errPipe, hasErrorPipe(options)))
             return;
 
         auto actions = posix_spawn_file_actions_t {};
         posix_spawn_file_actions_init(&actions);
 
         if (options.captureOutput)
-        {
-            posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO);
-            posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
-            posix_spawn_file_actions_adddup2(
-                &actions, merge ? outPipe[1] : errPipe[1], STDERR_FILENO);
-        }
+            addPipeRedirects(actions,
+                             getChildPipeEnds(options, inPipe, outPipe, errPipe));
 
         if (!options.workingDirectory.empty()
             && !addSpawnWorkingDirectory(actions, options.workingDirectory))
@@ -307,6 +310,38 @@ private:
             adoptPipes(inPipe, outPipe, errPipe);
     }
 
+    // The pipe ends the child's stdin, stdout and stderr are dup'd onto; a
+    // negative error end leaves the child the launcher's own stderr.
+    struct ChildPipeEnds
+    {
+        int input = -1;
+        int output = -1;
+        int error = -1;
+    };
+
+    static ChildPipeEnds getChildPipeEnds(const ProcessOptions& options,
+                                          int (&in)[2],
+                                          int (&out)[2],
+                                          int (&err)[2])
+    {
+        auto ends = ChildPipeEnds {in[0], out[1], err[1]};
+
+        if (options.mergeErrorOutput)
+            ends.error = out[1];
+
+        return ends;
+    }
+
+    static void addPipeRedirects(posix_spawn_file_actions_t& actions,
+                                 const ChildPipeEnds& ends)
+    {
+        posix_spawn_file_actions_adddup2(&actions, ends.input, STDIN_FILENO);
+        posix_spawn_file_actions_adddup2(&actions, ends.output, STDOUT_FILENO);
+
+        if (ends.error >= 0)
+            posix_spawn_file_actions_adddup2(&actions, ends.error, STDERR_FILENO);
+    }
+
     static void setSpawnFlags(posix_spawnattr_t& attr,
                               [[maybe_unused]] posix_spawn_file_actions_t& actions,
                               const ProcessOptions& options)
@@ -322,6 +357,10 @@ private:
         {
             for (auto fd: {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO})
                 posix_spawn_file_actions_addinherit_np(&actions, fd);
+        }
+        else if (inheritsErrorOutput(options))
+        {
+            posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO);
         }
 #endif
 
@@ -635,5 +674,35 @@ std::string Process::output() const
 std::string Process::errorOutput() const
 {
     return impl->errorOutput();
+}
+
+// Copies the parent environment without the removed names and applies
+// overrides (replaced by name, else appended). Built in the parent:
+// posix_spawn execs without running arbitrary code in the child, so there is
+// no fork/setenv-in-child deadlock hazard.
+Vector<std::string>
+    makeChildEnvironment(const Vector<EnvironmentVariable>& overrides,
+                         const Vector<std::string>& removed)
+{
+    auto entries = copyEnvironmentEntriesWithout(removed);
+
+    for (const auto& var: overrides)
+    {
+        auto prefix = var.name + "=";
+        auto replaced = false;
+
+        for (auto& entry: entries)
+            if (entry.starts_with(prefix))
+            {
+                entry = prefix + var.value;
+                replaced = true;
+                break;
+            }
+
+        if (!replaced)
+            entries.push_back(prefix + var.value);
+    }
+
+    return entries;
 }
 } // namespace eacp::Processes
