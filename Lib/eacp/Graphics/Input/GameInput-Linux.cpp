@@ -1,6 +1,7 @@
 #include "GameInputBackend.h"
 #include "EvdevGamepad-Linux.h"
 #include <eacp/Core/Utils/Logging.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <linux/input.h>
 #include <fcntl.h>
@@ -131,7 +132,7 @@ bool isEventNode(std::string_view name)
 
     return std::all_of(name.begin() + (std::ptrdiff_t) prefix.size(),
                        name.end(),
-                       [](char c) { return c >= '0' && c <= '9'; });
+                       Strings::isAsciiDigit);
 }
 
 std::string devicePath(const std::string& node)

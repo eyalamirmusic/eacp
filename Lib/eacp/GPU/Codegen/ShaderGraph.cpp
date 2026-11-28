@@ -3,6 +3,8 @@
 #include "../Frame/ComputePass.h"
 #include "PackedScalars.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <algorithm>
 #include <bit>
 #include <cassert>
@@ -139,14 +141,13 @@ bool isStorageWrite(StatementKind kind)
 
 [[maybe_unused]] bool isIdentifier(std::string_view name)
 {
-    auto isLetter = [](char c)
-    { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; };
+    auto isLetter = [](char c) { return Strings::isAsciiLetter(c) || c == '_'; };
 
     if (name.empty() || !isLetter(name.front()))
         return false;
 
     auto isLetterOrDigit = [&isLetter](char c)
-    { return isLetter(c) || (c >= '0' && c <= '9'); };
+    { return isLetter(c) || Strings::isAsciiDigit(c); };
 
     return std::all_of(name.begin(), name.end(), isLetterOrDigit);
 }

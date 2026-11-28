@@ -2,6 +2,8 @@
 
 #include "../MIL/Half.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <algorithm>
 #include <bit>
 
@@ -48,9 +50,8 @@ bool hasPositiveDims(const Shape& shape)
 
 bool isIdentifierCharacter(char character, bool first)
 {
-    auto isLetter = (character >= 'a' && character <= 'z')
-                    || (character >= 'A' && character <= 'Z') || character == '_';
-    auto isDigit = character >= '0' && character <= '9';
+    auto isLetter = Strings::isAsciiLetter(character) || character == '_';
+    auto isDigit = Strings::isAsciiDigit(character);
     return isLetter || (!first && isDigit);
 }
 

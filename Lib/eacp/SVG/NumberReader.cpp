@@ -1,5 +1,7 @@
 #include "NumberReader.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 namespace eacp::SVG
 {
 
@@ -10,14 +12,9 @@ bool isAsciiSpace(char c)
     return std::isspace(static_cast<unsigned char>(c)) != 0;
 }
 
-bool isAsciiDigit(char c)
-{
-    return std::isdigit(static_cast<unsigned char>(c)) != 0;
-}
-
 bool isNumberStart(char c)
 {
-    return isAsciiDigit(c) || c == '-' || c == '+' || c == '.';
+    return Strings::isAsciiDigit(c) || c == '-' || c == '+' || c == '.';
 }
 } // namespace
 
@@ -65,13 +62,13 @@ float NumberReader::readFloat()
     if (!atEnd() && (peek() == '-' || peek() == '+'))
         ++pos;
 
-    while (!atEnd() && isAsciiDigit(peek()))
+    while (!atEnd() && Strings::isAsciiDigit(peek()))
         ++pos;
 
     if (!atEnd() && peek() == '.')
     {
         ++pos;
-        while (!atEnd() && isAsciiDigit(peek()))
+        while (!atEnd() && Strings::isAsciiDigit(peek()))
             ++pos;
     }
 
@@ -80,7 +77,7 @@ float NumberReader::readFloat()
         ++pos;
         if (!atEnd() && (peek() == '-' || peek() == '+'))
             ++pos;
-        while (!atEnd() && isAsciiDigit(peek()))
+        while (!atEnd() && Strings::isAsciiDigit(peek()))
             ++pos;
     }
 

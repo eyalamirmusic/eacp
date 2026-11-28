@@ -5,6 +5,7 @@
 #include "../WebView.h"
 
 #include <eacp/Core/Utils/Format.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <filesystem>
 #include <fstream>
@@ -101,8 +102,7 @@ std::string sanitizeSnapshotName(const std::string& name)
     out.reserve(name.size());
     for (auto c: name)
     {
-        auto ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-                  || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '/'
+        auto ok = Strings::isAsciiAlphanumeric(c) || c == '.' || c == '_' || c == '/'
                   || c == '-';
         out.push_back(ok ? c : '_');
     }
