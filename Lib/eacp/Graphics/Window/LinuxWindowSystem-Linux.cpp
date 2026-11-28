@@ -9,6 +9,7 @@
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Format.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
 #include <cctype>
@@ -106,10 +107,9 @@ std::string linuxFileUri(const std::string& path)
     for (auto character: path)
     {
         const auto byte = (unsigned char) character;
-        const auto unreserved =
-            (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z')
-            || (byte >= '0' && byte <= '9') || byte == '-' || byte == '_'
-            || byte == '.' || byte == '~' || byte == '/';
+        const auto unreserved = Strings::isAsciiAlphanumeric(character)
+                                || byte == '-' || byte == '_' || byte == '.'
+                                || byte == '~' || byte == '/';
 
         if (unreserved)
         {

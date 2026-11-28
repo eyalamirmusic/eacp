@@ -1,5 +1,7 @@
 #include "Reloadable.h"
 
+#include "../Utils/Strings.h"
+
 #include <stdexcept>
 
 namespace eacp::Plugins
@@ -41,8 +43,7 @@ std::string_view funcsigType(std::string_view signature)
 
 bool isIdentifierCharacter(char c)
 {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-           || c == '_';
+    return Strings::isAsciiAlphanumeric(c) || c == '_';
 }
 
 bool startsKeywordAt(std::string_view text, std::size_t at, std::string_view word)

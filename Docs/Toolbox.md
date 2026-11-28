@@ -13,6 +13,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `equalsCaseInsensitive(a, b)` — ASCII case-insensitive compare
 - `lastNonEmptyLine(text)` — the last line with content
 - `lineContaining(text, needle)` — the first line containing a substring
+- `isAsciiDigit(c)` / `isAsciiLetter(c)` / `isAsciiAlphanumeric(c)` — locale-independent ASCII character tests
 - `hexCharToInt(c)` — one hex digit to its value
 - `widen(utf8)` / `narrow(wide)` — UTF-8 to and from `std::wstring`
 - `toString(value)` — strings, bool, char, enums and numbers to text

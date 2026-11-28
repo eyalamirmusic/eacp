@@ -45,6 +45,11 @@ Vector<std::string>
 // The parts with separator between each, empty parts included.
 std::string join(const Vector<std::string>& parts, std::string_view separator);
 
+// Locale-independent; a byte above 0x7F, so any negative char, is false.
+bool isAsciiDigit(char c);
+bool isAsciiLetter(char c);
+bool isAsciiAlphanumeric(char c);
+
 int hexCharToInt(char c);
 
 // A hexadecimal number, with or without a leading "0x" or "0X", the whole of

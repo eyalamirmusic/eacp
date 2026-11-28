@@ -1,6 +1,7 @@
 #include "Files.h"
 #include "FilesPlatform.h"
 #include "StdPath.h"
+#include "Strings.h"
 
 #include "../Platform/Platform.h"
 #include "../Plugins/ModuleInfo.h"
@@ -542,8 +543,7 @@ namespace
 {
 bool isAllDigits(std::string_view text)
 {
-    return std::all_of(
-        text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; });
+    return std::all_of(text.begin(), text.end(), Strings::isAsciiDigit);
 }
 
 int parseLeadingNumber(std::string_view digits)

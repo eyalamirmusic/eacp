@@ -366,6 +366,21 @@ std::string join(const Vector<std::string>& parts, std::string_view separator)
     return joined;
 }
 
+bool isAsciiDigit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+bool isAsciiLetter(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+bool isAsciiAlphanumeric(char c)
+{
+    return isAsciiLetter(c) || isAsciiDigit(c);
+}
+
 int hexCharToInt(char c)
 {
     if (c >= '0' && c <= '9')
@@ -442,11 +457,6 @@ std::optional<int> tryParseInt(const std::string& s)
 
 namespace
 {
-bool isAsciiDigit(char c)
-{
-    return c >= '0' && c <= '9';
-}
-
 bool startsWithHexPrefix(std::string_view s)
 {
     return s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');

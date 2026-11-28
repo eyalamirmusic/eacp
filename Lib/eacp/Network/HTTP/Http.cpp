@@ -664,15 +664,10 @@ void appendDecodedPercentEscape(std::string& out, const std::string& src, int& i
 
 namespace
 {
-bool isAsciiAlphanumeric(unsigned char c)
+bool isUnreservedUrlChar(char c)
 {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-           || (c >= '0' && c <= '9');
-}
-
-bool isUnreservedUrlChar(unsigned char c)
-{
-    return isAsciiAlphanumeric(c) || c == '-' || c == '_' || c == '.' || c == '~';
+    return Strings::isAsciiAlphanumeric(c) || c == '-' || c == '_' || c == '.'
+           || c == '~';
 }
 
 void appendPercentEscape(std::string& out, unsigned char c)
@@ -692,7 +687,7 @@ std::string urlEncode(const std::string& text)
 
     for (auto c: text)
     {
-        if (isUnreservedUrlChar((unsigned char) c))
+        if (isUnreservedUrlChar(c))
             result.push_back(c);
         else
             appendPercentEscape(result, (unsigned char) c);

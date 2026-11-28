@@ -7,6 +7,7 @@
 #include "SVGPathParser.h"
 
 #include <eacp/Core/Utils/Base64.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/UI/UI.h>
 
 #include <algorithm>
@@ -508,9 +509,9 @@ void SVGComponent::applyPresentationAttributes(Style& style,
     // 600 up, which is where the format puts the boundary.
     auto weight = read("font-weight");
     if (!weight.empty())
-        style.bold = weight == "bold" || weight == "bolder"
-                     || (std::isdigit(static_cast<unsigned char>(weight.front()))
-                         && std::stof(weight) >= 600.f);
+        style.bold =
+            weight == "bold" || weight == "bolder"
+            || (Strings::isAsciiDigit(weight.front()) && std::stof(weight) >= 600.f);
 
     auto slant = read("font-style");
     if (!slant.empty())

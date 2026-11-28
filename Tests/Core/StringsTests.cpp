@@ -181,6 +181,67 @@ auto tToLower = test("Strings/toLower") = []
     check(eacp::Strings::toLower("").empty());
 };
 
+using eacp::Strings::isAsciiAlphanumeric;
+using eacp::Strings::isAsciiDigit;
+using eacp::Strings::isAsciiLetter;
+
+constexpr auto firstNonAsciiByte = 0x80;
+constexpr auto lastByte = 0xFF;
+constexpr auto nulByte = char {0x00};
+constexpr auto deleteByte = char {0x7F};
+
+auto tIsAsciiDigit = test("Strings/isAsciiDigit") = []
+{
+    for (auto c: std::string_view {"0123456789"})
+        check(isAsciiDigit(c));
+
+    for (auto c: std::string_view {"aZ/:. -+"})
+        check(!isAsciiDigit(c));
+
+    check(!isAsciiDigit(nulByte));
+    check(!isAsciiDigit(deleteByte));
+};
+
+auto tIsAsciiLetter = test("Strings/isAsciiLetter accepts both cases") = []
+{
+    for (auto c: std::string_view {"abcxyzABCXYZ"})
+        check(isAsciiLetter(c));
+
+    for (auto c: std::string_view {"09@[`{_ -"})
+        check(!isAsciiLetter(c));
+
+    check(!isAsciiLetter(nulByte));
+    check(!isAsciiLetter(deleteByte));
+};
+
+auto tIsAsciiAlphanumeric = test("Strings/isAsciiAlphanumeric") = []
+{
+    for (auto c: std::string_view {"azAZ09"})
+        check(isAsciiAlphanumeric(c));
+
+    for (auto c: std::string_view {"/:@[`{_ -.~"})
+        check(!isAsciiAlphanumeric(c));
+
+    check(!isAsciiAlphanumeric(nulByte));
+    check(!isAsciiAlphanumeric(deleteByte));
+};
+
+auto tAsciiTestsRejectHighBytes =
+    test("Strings/ASCII character tests reject every byte above 0x7F") = []
+{
+    for (auto byte = firstNonAsciiByte; byte <= lastByte; ++byte)
+    {
+        const auto asChar = static_cast<char>(byte);
+
+        if constexpr (std::is_signed_v<char>)
+            check(asChar < 0);
+
+        check(!isAsciiDigit(asChar));
+        check(!isAsciiLetter(asChar));
+        check(!isAsciiAlphanumeric(asChar));
+    }
+};
+
 auto tTryParseInteger = test("Strings/tryParse integers are strict") = []
 {
     using eacp::Strings::tryParse;
